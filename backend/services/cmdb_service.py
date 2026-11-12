@@ -515,6 +515,160 @@ def _raise_if_referenced(conn, label: str, refs: list[tuple[str, str, str]]) -> 
         raise ValueError(f"Cannot delete {label}: still referenced by " + "; ".join(blockers))
 
 
+def _postgres_foreign_key_source_columns(
+    conn,
+    *,
+    referenced_table: str,
+    referenced_column: str = 'id',
+) -> set[tuple[str, str, str]]:
+    """Find every current-schema column with an FK to one target key."""
+    rows = conn.execute(
+        """
+        SELECT source_namespace.nspname AS table_schema,
+               source_relation.relname AS table_name,
+               source_attribute.attname AS column_name
+          FROM pg_constraint AS foreign_key
+          JOIN pg_class AS source_relation
+            ON source_relation.oid = foreign_key.conrelid
+          JOIN pg_namespace AS source_namespace
+            ON source_namespace.oid = source_relation.relnamespace
+          JOIN pg_class AS target_relation
+            ON target_relation.oid = foreign_key.confrelid
+          JOIN pg_namespace AS target_namespace
+            ON target_namespace.oid = target_relation.relnamespace
+          JOIN LATERAL unnest(foreign_key.conkey) WITH ORDINALITY
+               AS source_key(attribute_number, position) ON TRUE
+          JOIN LATERAL unnest(foreign_key.confkey) WITH ORDINALITY
+               AS target_key(attribute_number, position)
+            ON target_key.position = source_key.position
+          JOIN pg_attribute AS source_attribute
+            ON source_attribute.attrelid = source_relation.oid
+           AND source_attribute.attnum = source_key.attribute_number
+          JOIN pg_attribute AS target_attribute
+            ON target_attribute.attrelid = target_relation.oid
+           AND target_attribute.attnum = target_key.attribute_number
+         WHERE foreign_key.contype = 'f'
+           AND source_namespace.nspname = current_schema()
+           AND target_namespace.nspname = current_schema()
+           AND target_relation.relname = ?
+           AND target_attribute.attname = ?
+         ORDER BY source_namespace.nspname, source_relation.relname,
+                  source_attribute.attname
+        """,
+        (referenced_table, referenced_column),
+    ).fetchall()
+    return {
+        (
+            str(_row_to_dict(row)['table_schema']),
+            str(_row_to_dict(row)['table_name']),
+            str(_row_to_dict(row)['column_name']),
+        )
+        for row in rows
+    }
+
+
+def _postgres_legacy_vrf_reference_columns(conn) -> set[tuple[str, str, str]]:
+    """Find known mutable VRF references that predate IPAM foreign keys."""
+    rows = conn.execute(
+        """
+        SELECT table_namespace.nspname AS table_schema,
+               relation.relname AS table_name,
+               attribute.attname AS column_name
+          FROM pg_attribute AS attribute
+          JOIN pg_class AS relation ON relation.oid = attribute.attrelid
+          JOIN pg_namespace AS table_namespace
+            ON table_namespace.oid = relation.relnamespace
+         WHERE table_namespace.nspname = current_schema()
+           AND relation.relkind IN ('r', 'p')
+           AND attribute.attnum > 0
+           AND NOT attribute.attisdropped
+           AND relation.relname IN ('interfaces', 'ip_addresses', 'vlan_business_bindings')
+           AND attribute.attname = 'vrf_id'
+         ORDER BY table_namespace.nspname, relation.relname, attribute.attname
+        """
+    ).fetchall()
+    return {
+        (
+            str(_row_to_dict(row)['table_schema']),
+            str(_row_to_dict(row)['table_name']),
+            str(_row_to_dict(row)['column_name']),
+        )
+        for row in rows
+    }
+
+
+def _quote_postgres_identifier(value: str) -> str:
+    """Quote a PostgreSQL identifier read from the system catalog."""
+    return '"' + str(value).replace('"', '""') + '"'
+
+
+def _set_vrf_maintenance_lock_timeout(conn) -> None:
+    """Bound waits for the row/table locks used by VRF maintenance."""
+    conn.execute("SET LOCAL lock_timeout = '2s'")
+
+
+def _vrf_lock_contention_error(exc: Exception) -> ValueError | None:
+    sqlstate = str(getattr(exc, 'sqlstate', '') or getattr(exc, 'pgcode', '') or '')
+    if sqlstate in {'55P03', '40P01'}:
+        return ValueError(
+            'VRF is being changed or referenced by another active transaction; retry shortly'
+        )
+    return None
+
+
+def _lock_legacy_scope_reference_tables(conn) -> None:
+    """Block writes to scope columns that are not protected by a target FK.
+
+    A row lock on the VRF/address-space parent serializes all FK-checked
+    references. Only the active CMDB/IPAM tables that retain mutable VRF IDs
+    without FKs need a table lock; discovery snapshots and observations are
+    historical evidence and stay writable and retained.
+    """
+    vrf_fk_columns = _postgres_foreign_key_source_columns(
+        conn, referenced_table='vrfs',
+    )
+    legacy_columns = _postgres_legacy_vrf_reference_columns(conn) - vrf_fk_columns
+    tables = sorted({(schema, table) for schema, table, _ in legacy_columns})
+    for schema, table in tables:
+        conn.execute(
+            f"LOCK TABLE {_quote_postgres_identifier(schema)}."
+            f"{_quote_postgres_identifier(table)} IN SHARE ROW EXCLUSIVE MODE"
+        )
+
+
+def _scope_references(
+    conn,
+    *,
+    target_table: str,
+    target_id: str,
+    ignored_columns: set[tuple[str, str, str]] | None = None,
+) -> list[tuple[str, str, bool]]:
+    """Check all FK and active legacy references to a VRF or IPAM space."""
+    foreign_key_columns = _postgres_foreign_key_source_columns(
+        conn, referenced_table=target_table,
+    )
+    raw_columns = (
+        _postgres_legacy_vrf_reference_columns(conn)
+        if target_table == 'vrfs' else set()
+    )
+    references = foreign_key_columns | raw_columns
+    references.difference_update(ignored_columns or set())
+
+    references_found: list[tuple[str, str, bool]] = []
+    for schema, table, column in sorted(references):
+        relation = (
+            f"{_quote_postgres_identifier(schema)}."
+            f"{_quote_postgres_identifier(table)}"
+        )
+        quoted_column = _quote_postgres_identifier(column)
+        row = conn.execute(
+            f"SELECT 1 FROM {relation} WHERE {quoted_column} = ? LIMIT 1",
+            (target_id,),
+        ).fetchone()
+        references_found.append((table, column, bool(row)))
+    return references_found
+
+
 def _distinct_interface_counts(conn) -> dict[str, int]:
     """Count one interface identity per device for CMDB device summaries.
 
@@ -2842,55 +2996,167 @@ def create_vrf(conn, *, vrf_name: str, rd: str = '', description: str = '',
 
 
 def update_vrf(conn, vrf_id: str, **fields) -> dict:
-    existing = get_vrf(conn, vrf_id)
-    if 'tenant_id' in fields and fields['tenant_id'] is not None:
-        mapping = conn.execute(
-            'SELECT security_tenant_id FROM ipam_address_spaces WHERE vrf_id = ?',
+    requested_fields = {
+        key: fields[key]
+        for key in ('vrf_name', 'rd', 'description', 'tenant_id')
+        if key in fields and fields[key] is not None
+    }
+    if not requested_fields:
+        return get_vrf(conn, vrf_id)
+
+    try:
+        _set_vrf_maintenance_lock_timeout(conn)
+        existing_row = conn.execute(
+            'SELECT * FROM vrfs WHERE id = ? FOR UPDATE',
             (vrf_id,),
         ).fetchone()
-        target_tenant = str(fields['tenant_id'] or _DEFAULT_TENANT)
-        if mapping and str(mapping['security_tenant_id']) != target_tenant:
-            raise ValueError('VRF tenant cannot change while an IPAM address-space mapping exists')
-    if any(key in fields and fields[key] is not None for key in ('vrf_name', 'tenant_id')):
-        target_name = fields.get('vrf_name', existing.get('vrf_name'))
-        target_tenant = fields.get('tenant_id', existing.get('tenant_id')) or _DEFAULT_TENANT
-        dup = conn.execute(
-            "SELECT 1 FROM vrfs WHERE vrf_name = ? AND COALESCE(tenant_id, ?) = ? AND id != ?",
-            (target_name, _DEFAULT_TENANT, target_tenant, vrf_id),
+        if not existing_row:
+            raise ValueError(f"VRF not found: {vrf_id}")
+        existing = _row_to_dict(existing_row)
+        mapping = conn.execute(
+            "SELECT id, security_tenant_id, name FROM ipam_address_spaces "
+            "WHERE vrf_id = ? FOR UPDATE",
+            (vrf_id,),
         ).fetchone()
-        if dup:
-            raise ValueError(f"VRF name already exists in tenant: {target_name}")
-    updates, params = [], []
-    for key in ('vrf_name', 'rd', 'description', 'tenant_id'):
-        if key in fields and fields[key] is not None:
-            updates.append(f"{key} = ?")
-            params.append(fields[key])
-    if not updates:
+
+        target_name = requested_fields.get('vrf_name', existing.get('vrf_name'))
+        target_tenant = requested_fields.get('tenant_id', existing.get('tenant_id')) or _DEFAULT_TENANT
+        if mapping and str(mapping['security_tenant_id']) != str(target_tenant):
+            raise ValueError('VRF tenant cannot change while an IPAM address-space mapping exists')
+
+        if 'vrf_name' in requested_fields or 'tenant_id' in requested_fields:
+            duplicate = conn.execute(
+                "SELECT 1 FROM vrfs WHERE vrf_name = ? "
+                "AND COALESCE(tenant_id, ?) = ? AND id != ?",
+                (target_name, _DEFAULT_TENANT, target_tenant, vrf_id),
+            ).fetchone()
+            if duplicate:
+                raise ValueError(f"VRF name already exists in tenant: {target_name}")
+
+        if mapping and 'vrf_name' in requested_fields:
+            collision = conn.execute(
+                "SELECT 1 FROM ipam_address_spaces "
+                "WHERE security_tenant_id = ? AND lower(btrim(name)) = lower(btrim(?)) "
+                "AND id != ? LIMIT 1",
+                (mapping['security_tenant_id'], target_name, mapping['id']),
+            ).fetchone()
+            if collision:
+                raise ValueError(
+                    'IPAM address-space name already exists in this security tenant'
+                )
+
+        updates: list[str] = []
+        params: list = []
+        for key in ('vrf_name', 'rd', 'description', 'tenant_id'):
+            if key in requested_fields:
+                updates.append(f"{key} = ?")
+                value = requested_fields[key]
+                if key == 'tenant_id' and not value:
+                    value = _DEFAULT_TENANT
+                params.append(value)
+        params.append(vrf_id)
+        conn.execute(f"UPDATE vrfs SET {', '.join(updates)} WHERE id = ?", params)
+
+        if mapping and 'vrf_name' in requested_fields:
+            conn.execute(
+                "UPDATE ipam_address_spaces "
+                "SET name = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
+                (target_name, _utc_now(), mapping['id']),
+            )
+
+        _bump_cmdb_reference_versions(conn, reference_domain="vrfs")
+        conn.commit()
         return get_vrf(conn, vrf_id)
-    params.append(vrf_id)
-    conn.execute(f"UPDATE vrfs SET {', '.join(updates)} WHERE id = ?", params)
-    _bump_cmdb_reference_versions(conn, reference_domain="vrfs")
-    conn.commit()
-    return get_vrf(conn, vrf_id)
+    except Exception as exc:
+        conn.rollback()
+        lock_error = _vrf_lock_contention_error(exc)
+        if lock_error:
+            raise lock_error from exc
+        constraint_name = getattr(getattr(exc, 'diag', None), 'constraint_name', '')
+        if constraint_name == 'uq_vrfs_tenant_name':
+            raise ValueError(f"VRF name already exists in tenant: {fields.get('vrf_name')}") from exc
+        if constraint_name == 'uq_ipam_address_spaces_tenant_name':
+            raise ValueError(
+                'IPAM address-space name already exists in this security tenant'
+            ) from exc
+        raise
 
 
 def delete_vrf(conn, vrf_id: str) -> None:
-    get_vrf(conn, vrf_id)
-    mapping = conn.execute(
-        'SELECT id FROM ipam_address_spaces WHERE vrf_id = ?',
-        (vrf_id,),
-    ).fetchone()
-    if mapping:
-        raise ValueError('VRF cannot be deleted while an IPAM address-space mapping exists')
-    _raise_if_referenced(conn, "VRF", [
-        ('interfaces', 'vrf_id', vrf_id),
-        ('prefixes', 'vrf_id', vrf_id),
-        ('ip_addresses', 'vrf_id', vrf_id),
-    ])
-    conn.execute("DELETE FROM vrfs WHERE id = ?", (vrf_id,))
-    _bump_cmdb_reference_versions(conn, reference_domain="vrfs")
-    conn.commit()
-    logger.info(f"[CmdbService] Deleted VRF {vrf_id}")
+    try:
+        _set_vrf_maintenance_lock_timeout(conn)
+        _lock_legacy_scope_reference_tables(conn)
+        vrf_row = conn.execute(
+            'SELECT * FROM vrfs WHERE id = ? FOR UPDATE',
+            (vrf_id,),
+        ).fetchone()
+        if not vrf_row:
+            raise ValueError(f"VRF not found: {vrf_id}")
+
+        mapping = conn.execute(
+            'SELECT id FROM ipam_address_spaces WHERE vrf_id = ? FOR UPDATE',
+            (vrf_id,),
+        ).fetchone()
+        space_id = str(mapping['id']) if mapping else ''
+        mapping_column = ("ipam_address_spaces", "vrf_id")
+        ignored_vrf_columns = set()
+        if mapping:
+            current_schema_row = conn.execute(
+                'SELECT current_schema() AS schema_name'
+            ).fetchone()
+            schema_name = str(_row_to_dict(current_schema_row).get('schema_name') or 'public')
+            ignored_vrf_columns.add((schema_name, *mapping_column))
+
+        vrf_references = _scope_references(
+            conn,
+            target_table='vrfs',
+            target_id=vrf_id,
+            ignored_columns=ignored_vrf_columns,
+        )
+        space_references = (
+            _scope_references(
+                conn,
+                target_table='ipam_address_spaces',
+                target_id=space_id,
+            )
+            if mapping else []
+        )
+        vrf_blockers = [
+            f"{table}.{column}"
+            for table, column, is_referenced in vrf_references
+            if is_referenced
+        ]
+        space_blockers = [
+            f"{table}.{column}"
+            for table, column, is_referenced in space_references
+            if is_referenced
+        ]
+        if vrf_blockers or space_blockers:
+            blocker_groups = []
+            if vrf_blockers:
+                blocker_groups.append('VRF references: ' + ', '.join(vrf_blockers))
+            if space_blockers:
+                blocker_groups.append(
+                    f"IPAM address space {space_id} references: "
+                    + ', '.join(space_blockers)
+                )
+            raise ValueError(
+                'VRF cannot be deleted while resources or contexts still reference it: '
+                + '; '.join(blocker_groups)
+            )
+
+        if mapping:
+            conn.execute('DELETE FROM ipam_address_spaces WHERE id = ?', (space_id,))
+        conn.execute("DELETE FROM vrfs WHERE id = ?", (vrf_id,))
+        _bump_cmdb_reference_versions(conn, reference_domain="vrfs")
+        conn.commit()
+        logger.info(f"[CmdbService] Deleted VRF {vrf_id}")
+    except Exception as exc:
+        conn.rollback()
+        lock_error = _vrf_lock_contention_error(exc)
+        if lock_error:
+            raise lock_error from exc
+        raise
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

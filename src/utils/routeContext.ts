@@ -20,7 +20,7 @@ export function getRouteContext(pathname: string): RouteContext {
   let automationPage = '';
   let inventorySubPage = 'devices';
   let changeOrderPage = '';
-  let ipamPage = 'locate';
+  let ipamPage = 'ips';
   let cmdbPage = 'credentials';
 
   // 1. Dashboard / Home
@@ -218,7 +218,7 @@ export function getRouteContext(pathname: string): RouteContext {
     } else if (second === 'fhrp') {
       ipamPage = 'fhrp';
     } else {
-      ipamPage = 'locate';
+      ipamPage = 'ips';
     }
   }
   // 13. CMDB (/cmdb/...)

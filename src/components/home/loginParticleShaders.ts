@@ -109,6 +109,8 @@ uniform sampler2D stateTexture;
 uniform float time;
 uniform float pixelRatio;
 uniform float particleScale;
+uniform vec2 ringCenter;
+uniform float fallbackMotion;
 
 varying float vScale;
 varying float vBrightness;
@@ -117,14 +119,41 @@ varying vec4 vSeed;
 
 void main() {
   vec4 state = texture2D(stateTexture, referenceUv);
-  vScale = state.z;
-  vBrightness = state.w;
-  vLocalPosition = state.xy;
+  vec2 position = state.xy;
+  float scale = state.z;
+  float brightness = state.w;
+
+  if (fallbackMotion > 0.5) {
+    float phase = seed.x * 6.2831853;
+    vec2 fromRing = state.xy - ringCenter;
+    float distanceToRing = length(fromRing);
+    vec2 direction = fromRing / max(distanceToRing, 0.0001);
+    vec2 tangent = vec2(-direction.y, direction.x);
+    float pointerInfluence = 1.0 - smoothstep(0.12, 0.72, distanceToRing);
+    float wave = sin(time * 2.1 + phase);
+    vec2 ambientDrift = vec2(
+      sin(time * 0.9 + phase),
+      cos(time * 1.1 + phase * 1.7)
+    ) * 0.004;
+    vec2 pointerDrift = (direction * wave * 0.03 + tangent * cos(time * 1.7 + phase) * 0.012)
+      * pointerInfluence;
+    position = state.xy + ambientDrift + pointerDrift;
+
+    float ringRadius = 0.175 + sin(time) * 0.03 + cos(time * 3.0) * 0.02;
+    float ringDistance = abs(distanceToRing - ringRadius);
+    float ringIntensity = 1.0 - smoothstep(0.025, 0.12, ringDistance);
+    scale = state.z * (0.85 + wave * 0.08) + ringIntensity * 0.45;
+    brightness = state.w * 0.5 + scale * 0.25;
+  }
+
+  vScale = scale;
+  vBrightness = brightness;
+  vLocalPosition = position;
   vSeed = seed;
 
-  vec4 viewPosition = modelViewMatrix * vec4(state.xy, 0.0, 1.0);
+  vec4 viewPosition = modelViewMatrix * vec4(position, 0.0, 1.0);
   gl_Position = projectionMatrix * viewPosition;
-  gl_PointSize = state.z * 7.0 * pixelRatio * 0.5 * particleScale;
+  gl_PointSize = scale * 7.0 * pixelRatio * 0.5 * particleScale;
 }
 `;
 

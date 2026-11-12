@@ -987,8 +987,10 @@ def _load_eligible_devices(
         query = (
             "SELECT d.*, p.connection_driver AS profile_connection_driver, "
             "p.platform_code AS profile_platform_code, "
-            "p.parser_platform AS profile_parser_platform "
-            "FROM devices d LEFT JOIN platform_profiles p ON p.id = d.platform_profile_id"
+            "p.parser_platform AS profile_parser_platform, "
+            "pa.device_role AS physical_asset_device_role "
+            "FROM devices d LEFT JOIN platform_profiles p ON p.id = d.platform_profile_id "
+            "LEFT JOIN physical_assets pa ON pa.id = d.asset_id"
             f"{where}"
         )
         rows = (
@@ -4879,12 +4881,22 @@ def _load_arp_sweep_devices(
     run_id: str = '',
     device_ids: set[str] | None = None,
 ) -> tuple[list[dict], int, int]:
-    """Select ARP-capable devices and skip devices in retry backoff."""
+    """Select explicitly classified access switches and APs for endpoint ARP."""
     all_eligible = _load_eligible_devices(
         allow_snmp_only=True,
         include_snmp_unconfigured=True,
         include_snmp_table_platforms=True,
     )
+    # Terminal discovery is intentionally edge-only. Prefer the CMDB topology
+    # role when present; devices.role is the legacy fallback. Generic "switch"
+    # is not enough evidence to classify a device as an access switch.
+    terminal_devices = []
+    for device in all_eligible:
+        role_value = device.get('physical_asset_device_role') or device.get('role')
+        role = normalize_device_role(role_value)
+        if role in {'access', 'access-layer-switch', '接入交换机', 'ap', 'wireless-ap', '无线ap', '无线接入点'}:
+            terminal_devices.append(device)
+    all_eligible = terminal_devices
     if device_ids is not None:
         all_eligible = [device for device in all_eligible if str(device.get('id') or '') in device_ids]
     state_by_device = _load_arp_collection_state()
@@ -4893,8 +4905,7 @@ def _load_arp_sweep_devices(
     skipped_backoff = 0
 
     for device in all_eligible:
-        # Global ARP collection follows SNMP availability, not role/SVI
-        # defaults. An explicit per-device opt-out remains authoritative.
+        # Explicit per-device opt-out remains authoritative.
         if explicit_collector_override(device, 'arp') is False:
             continue
         candidate = dict(device)
@@ -4961,11 +4972,46 @@ def _load_scheduled_snmp_arp_contexts(
 ) -> list[dict[str, Any]]:
     """Return one polling spec per exact active SNMP routing-context key."""
     if is_v3 is False:
+        conn = get_db_connection()
+        try:
+            contexts = [dict(row) for row in conn.execute(
+                """SELECT context_source, context_type, local_context_key, local_context_name
+                     FROM ipam_device_routing_contexts
+                    WHERE device_id = ? AND status = 'active'
+                    ORDER BY context_source, local_context_key, context_type""",
+                (device_id,),
+            ).fetchall()]
+        finally:
+            conn.close()
+
+        # SNMPv2c has no contextName selector. When no VRF or unresolved
+        # context is configured, its ordinary ARP table is Global. Resolve it
+        # automatically only if the tenant has one active Global address space
+        # (the projection below enforces that uniqueness); configured VRFs
+        # remain unresolved instead of being mistaken for Global.
+        if any(str(row.get("context_type") or "").strip().lower() in {"vrf", "unknown"} for row in contexts):
+            return [{
+                "context_source": "snmp", "context_type": "unknown",
+                "local_context_key": "", "local_context_name": "",
+                "request_context_name": "",
+            }]
+        if len(contexts) == 1 and str(contexts[0].get("context_type") or "").strip().lower() == "global":
+            mapping = contexts[0]
+            return [{
+                "context_source": "snmp", "context_type": "global",
+                "local_context_key": str(mapping.get("local_context_key") or "global"),
+                "local_context_name": str(mapping.get("local_context_name") or "Global / default"),
+                "request_context_name": "",
+            }]
+        if not contexts:
+            return [{
+                "context_source": "snmp", "context_type": "global",
+                "local_context_key": "global", "local_context_name": "Global / default",
+                "request_context_name": "",
+            }]
         return [{
-            "context_source": "snmp",
-            "context_type": "unknown",
-            "local_context_key": "",
-            "local_context_name": "",
+            "context_source": "snmp", "context_type": "unknown",
+            "local_context_key": "", "local_context_name": "",
             "request_context_name": "",
         }]
 

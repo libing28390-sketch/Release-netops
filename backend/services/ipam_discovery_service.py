@@ -1081,6 +1081,62 @@ def _list_filter(item: dict[str, Any], *, site_id: str, vrf_id: str, device_id: 
     return True
 
 
+def _supersede_older_endpoint_context_observations(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """For one tenant/site/IP/MAC/VLAN identity, keep the latest sample.
+
+    Current endpoint rows are stored per routing context. If that context is
+    later resolved or reclassified, an older successful snapshot can otherwise
+    remain visible beside the newer one. Keep both only when the latest sample
+    is tied across contexts; that case needs explicit scope review.
+    """
+    groups: dict[tuple[str, ...], list[tuple[int, datetime, tuple[str, ...]]]] = {}
+    for index, item in enumerate(items):
+        if str(item.get("source_type") or "") not in {"arp", "ndp"}:
+            continue
+        if not item.get("ip") or not item.get("mac") or not item.get("source_device_id"):
+            continue
+        observed_at, timestamp_status = _parse_time(item.get("observed_at"))
+        if timestamp_status != "valid" or observed_at is None:
+            continue
+        identity = (
+            str(item.get("source_type") or ""),
+            str(item.get("tenant_id") or ""),
+            str(item.get("site_id") or ""),
+            str(item.get("ip") or ""),
+            _normalized_mac(item.get("mac")),
+            str(item.get("vlan") or ""),
+        )
+        context = (
+            str(item.get("scope_status") or ""),
+            str(item.get("address_space_id") or ""),
+            str(item.get("vrf_id") or ""),
+            str(item.get("source_device_id") or ""),
+            str(item.get("context_source") or ""),
+            str(item.get("context_type") or ""),
+            str(item.get("local_context_key") or ""),
+        )
+        groups.setdefault(identity, []).append((index, observed_at, context))
+
+    superseded_indices: set[int] = set()
+    for group in groups.values():
+        contexts = {context for _index, _observed_at, context in group}
+        if len(contexts) < 2:
+            continue
+        latest_at = max(observed_at for _index, observed_at, _context in group)
+        latest_contexts = {
+            context for _index, observed_at, context in group if observed_at == latest_at
+        }
+        if len(latest_contexts) != 1:
+            continue
+        latest_context = next(iter(latest_contexts))
+        superseded_indices.update(
+            index for index, observed_at, context in group
+            if observed_at < latest_at and context != latest_context
+        )
+
+    return [item for index, item in enumerate(items) if index not in superseded_indices]
+
+
 def _terminal_identity_key(item: dict[str, Any]) -> tuple[Any, ...]:
     if (item.get("scope_status") == "resolved" or item.get('vrf_context_inferred')) and item.get("ip"):
         return (
@@ -1766,6 +1822,55 @@ def _current_endpoint_projection(
     if not source_rows:
         return []
 
+    unmapped_global_tenants = {
+        str(row.get("tenant_id") or DEFAULT_TENANT_ID)
+        for row in source_rows
+        if str(row.get("context_type") or "").strip().lower() == "global"
+        and not str(row.get("address_space_id") or "").strip()
+    }
+    global_spaces_by_tenant: dict[str, list[dict[str, Any]]] = {}
+    if unmapped_global_tenants:
+        tenant_marks = ",".join("?" for _ in unmapped_global_tenants)
+        global_rows = conn.execute(
+            f"""SELECT id, security_tenant_id, name, kind, vrf_id, status
+                  FROM ipam_address_spaces
+                 WHERE kind = 'global' AND status = 'active'
+                   AND COALESCE(NULLIF(btrim(security_tenant_id), ''), ?) IN ({tenant_marks})""",
+            (DEFAULT_TENANT_ID, *sorted(unmapped_global_tenants)),
+        ).fetchall()
+        for raw in global_rows:
+            space = dict(raw)
+            global_spaces_by_tenant.setdefault(
+                str(space.get("security_tenant_id") or DEFAULT_TENANT_ID).strip() or DEFAULT_TENANT_ID, [],
+            ).append(space)
+        # A device's collector explicitly reported the global table. If its
+        # tenant has exactly one active Global domain, that is an unambiguous
+        # address-space mapping even when no per-device context row was stored.
+        for row in source_rows:
+            if str(row.get("context_type") or "").strip().lower() != "global":
+                continue
+            tenant_id = str(row.get("tenant_id") or DEFAULT_TENANT_ID)
+            candidates = global_spaces_by_tenant.get(tenant_id, [])
+            if not str(row.get("address_space_id") or "").strip() and len(candidates) == 1:
+                space = candidates[0]
+                row["address_space_id"] = str(space.get("id") or "")
+                row["resolved_context_type"] = "global"
+                row["address_space_name"] = str(space.get("name") or "")
+                row["mapped_vrf_id"] = ""
+
+    from services.ipam_inventory_scope import load_inventory_catalog, match_inventory_prefix
+    prefix_catalog, _prefix_sites, _prefix_vrfs = load_inventory_catalog(conn)
+    active_prefix_ids = {
+        str(row["id"])
+        for row in conn.execute(
+            """SELECT id FROM prefixes
+                 WHERE COALESCE(is_active, 1) = 1
+                   AND COALESCE(status, 'active') = 'active'
+                   AND COALESCE(address_space_id, '') <> ''"""
+        ).fetchall()
+    }
+    prefix_catalog = [item for item in prefix_catalog if str(item.get("id") or "") in active_prefix_ids]
+
     device_ids = sorted({str(row.get("source_device_id") or "") for row in source_rows if row.get("source_device_id")})
     device_marks = ",".join("?" for _ in device_ids)
     device_rows = conn.execute(
@@ -1882,6 +1987,7 @@ def _current_endpoint_projection(
         context_status = (
             "explicit_vrf" if resolved_type == "vrf"
             else "explicit_global" if resolved_type == "global"
+            else "explicit_global" if str(row.get("context_type") or "").strip().lower() == "global"
             else "unknown"
         )
         ipam_key = (tenant_id, space_id, address) if resolved else (tenant_id, "", address)
@@ -1894,6 +2000,14 @@ def _current_endpoint_projection(
         ]
         ipam_conflict = len(active_candidates) > 1
         selected_ipam = active_candidates[0] if len(active_candidates) == 1 else None
+        suggested_prefix = None
+        if resolved and not selected_ipam:
+            suggested_prefix = match_inventory_prefix(
+                address,
+                (tenant_id, f"space:{space_id}"),
+                site_id,
+                prefix_catalog,
+            )
         registration_status = (
             "registered" if selected_ipam
             else "unregistered" if resolved and not ipam_conflict
@@ -1926,6 +2040,8 @@ def _current_endpoint_projection(
             "ip_mac_conflict": False,
             "subnet_id": str((selected_ipam or {}).get("subnet_id") or ""),
             "subnet_prefix": str((selected_ipam or {}).get("subnet_prefix") or ""),
+            "suggested_subnet_id": str((suggested_prefix or {}).get("id") or ""),
+            "suggested_subnet_prefix": str((suggested_prefix or {}).get("prefix") or ""),
             "source_type": normalized_source,
             "observation_source": normalized_source,
             "source_device_id": str(row.get("source_device_id") or ""),
@@ -2493,7 +2609,7 @@ def list_current_discovered_endpoints(
     """List replaceable current ARP/FDB projections and explicit mappings only."""
     if network_scope not in {"all", "business_vlan"}:
         raise ValueError("Unsupported discovered endpoint network_scope")
-    if endpoint_class not in {'all', 'infrastructure', 'access_host', 'candidate'}:
+    if endpoint_class not in {'all', 'terminal', 'infrastructure', 'access_host', 'candidate'}:
         raise ValueError('Unsupported endpoint_class')
     conn = get_db_connection()
     try:
@@ -2505,11 +2621,42 @@ def list_current_discovered_endpoints(
         )
         fdb_projection = _current_fdb_endpoint_projection(conn, device_id=device_id.strip())
         all_items = [*arp_projection, *ndp_projection, *fdb_projection]
+        # The terminal inventory is sourced only from explicitly classified
+        # access switches and APs. Keep other devices' observations in storage
+        # for IP locator/reconciliation, but do not present them as endpoint
+        # collection results here. Generic "switch" is not an access role.
+        source_device_ids = sorted({
+            str(item.get("source_device_id") or "") for item in all_items
+            if item.get("source_device_id")
+        })
+        if source_device_ids:
+            marks = ",".join("?" for _ in source_device_ids)
+            role_rows = conn.execute(
+                f"""SELECT d.id, COALESCE(NULLIF(pa.device_role, ''), d.role, '') AS role
+                      FROM devices d
+                      LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                     WHERE d.id IN ({marks})""",
+                tuple(source_device_ids),
+            ).fetchall()
+            from services.collection_plan_service import normalize_device_role
+            terminal_role_ids = {
+                str(row["id"]): normalize_device_role(row["role"])
+                for row in role_rows
+                if normalize_device_role(row["role"]) in {
+                    "access", "access-layer-switch", "接入交换机", "ap",
+                    "wireless-ap", "无线ap", "无线接入点",
+                }
+            }
+            all_items = [
+                item for item in all_items
+                if str(item.get("source_device_id") or "") in terminal_role_ids
+            ]
         if visible_scopes is not None:
             all_items = [
                 item for item in all_items
                 if (str(item.get("tenant_id") or ""), str(item.get("site_id") or "")) in visible_scopes
             ]
+        all_items = _supersede_older_endpoint_context_observations(all_items)
         interface_keys, managed_keys, managed_addresses = _current_infrastructure_ip_keys(conn, visible_scopes)
         _classify_current_endpoint_rows(all_items, fdb_projection, interface_keys, managed_keys, managed_addresses)
 
@@ -2554,7 +2701,7 @@ def list_current_discovered_endpoints(
 
         visible_items = list(all_items)
         query = q.strip().lower()
-        filtered_source_items = [
+        scope_filtered_items = [
             item for item in all_items
             if _list_filter(
                 item,
@@ -2562,7 +2709,13 @@ def list_current_discovered_endpoints(
                 query=query, kind=kind, evidence_status=evidence_status,
                 registration_status=registration_status,
             )
-            and (endpoint_class == 'all' or item.get('endpoint_class') == endpoint_class)
+        ]
+        terminal_classes = {'access_host', 'candidate', 'mac_only'}
+        filtered_source_items = [
+            item for item in scope_filtered_items
+            if endpoint_class == 'all'
+            or (endpoint_class == 'terminal' and item.get('endpoint_class') in terminal_classes)
+            or item.get('endpoint_class') == endpoint_class
         ]
         filtered_source_items.sort(
             key=lambda item: (item.get("observed_at") or "", item.get("id") or ""), reverse=True,
@@ -2586,11 +2739,11 @@ def list_current_discovered_endpoints(
         vrf_options = [{"id": key, "name": vrf_options_by_id[key]} for key in sorted(vrf_options_by_id)]
         devices_by_id = {
             str(item.get("source_device_id") or ""): str(item.get("source_device_name") or item.get("source_device_id") or "")
-            for item in filtered_source_items if item.get("source_device_id")
+            for item in scope_filtered_items if item.get("source_device_id")
         }
         device_options = [{"id": key, "name": devices_by_id[key]} for key in sorted(devices_by_id)]
-        arp_items = [item for item in filtered_source_items if item.get("ip")]
-        mac_items = [item for item in filtered_source_items if not item.get("ip") and item.get("mac")]
+        arp_items = [item for item in scope_filtered_items if item.get("ip")]
+        mac_items = [item for item in scope_filtered_items if not item.get("ip") and item.get("mac")]
         distinct_ips: dict[tuple[str, ...], str] = {}
         class_rank = {'candidate': 0, 'access_host': 1, 'infrastructure': 2}
         for item in arp_items:
@@ -2599,9 +2752,9 @@ def list_current_discovered_endpoints(
             proposed = str(item.get('endpoint_class') or 'candidate')
             if class_rank.get(proposed, 0) >= class_rank.get(current, 0):
                 distinct_ips[key] = proposed
-        complete = bool(filtered_source_items) and all(
+        complete = bool(scope_filtered_items) and all(
             item.get("coverage_complete") and item.get("scope_status") == "resolved"
-            and item.get("evidence_status") == "recent" for item in filtered_source_items
+            and item.get("evidence_status") == "recent" for item in scope_filtered_items
         )
         summary = {
             "discovered_ip_count": len(arp_items),
@@ -2613,10 +2766,10 @@ def list_current_discovered_endpoints(
             "mac_only_count": len(mac_items),
             "registered_count": sum(item.get("registration_status") == "registered" for item in arp_items),
             "unregistered_count": sum(item.get("registration_status") == "unregistered" for item in arp_items),
-            "scope_pending_count": sum(item.get("scope_status") != "resolved" for item in filtered_source_items),
-            "conflict_count": sum(bool(item.get("ip_mac_conflict")) for item in filtered_source_items),
-            "path_ambiguity_count": sum(bool(item.get("path_ambiguity")) for item in filtered_source_items),
-            "coverage_status": "complete" if complete else "partial" if filtered_source_items else "unavailable",
+            "scope_pending_count": sum(item.get("scope_status") != "resolved" for item in scope_filtered_items),
+            "conflict_count": sum(bool(item.get("ip_mac_conflict")) for item in scope_filtered_items),
+            "path_ambiguity_count": sum(bool(item.get("path_ambiguity")) for item in scope_filtered_items),
+            "coverage_status": "complete" if complete else "partial" if scope_filtered_items else "unavailable",
             "coverage_reason": "仅使用最新成功的当前 ARP/FDB 上下文行；未成功的最新尝试可能保留上一成功代次。",
             "source_last_success_at": max((str(item.get("last_success_at") or "") for item in visible_items), default=""),
         }
@@ -2647,6 +2800,7 @@ def get_current_discovered_endpoint(
             items = [item for item in items if (
                 str(item.get('tenant_id') or ''), str(item.get('site_id') or '')
             ) in visible_scopes]
+        items = _supersede_older_endpoint_context_observations(items)
         interface_keys, managed_keys, managed_addresses = _current_infrastructure_ip_keys(conn, visible_scopes)
         _classify_current_endpoint_rows(items, fdb_items, interface_keys, managed_keys, managed_addresses)
         matches = [item for item in items if item.get("id") == observation_id]
@@ -2695,11 +2849,14 @@ def register_current_endpoint_observation(
         # Read both scopes without locks first. All writers that can claim an
         # address identity then take the address-space advisory lock before
         # locking Prefix, address space, or address rows.
-        observation_matches = [
+        current_observations = [
             item for item in [
                 *_current_endpoint_projection(conn, observation_source="arp"),
                 *_current_endpoint_projection(conn, observation_source="ndp"),
             ]
+        ]
+        observation_matches = [
+            item for item in _supersede_older_endpoint_context_observations(current_observations)
             if item.get("id") == observation_id
         ]
         if not observation_matches:
@@ -2709,6 +2866,19 @@ def register_current_endpoint_observation(
         pre_displayed = observation_matches[0]
         if pre_displayed.get("source_type") not in {"arp", "ndp"} or not pre_displayed.get("ip"):
             raise ValueError("registration_requires_ip_observation")
+        interface_ip_keys, managed_device_ip_keys, managed_device_ips = _current_infrastructure_ip_keys(conn)
+        observed_scope_ip = (
+            str(pre_displayed.get("tenant_id") or DEFAULT_TENANT_ID),
+            str(pre_displayed.get("site_id") or ""),
+            str(pre_displayed.get("ip") or ""),
+        )
+        if (
+            observed_scope_ip in interface_ip_keys
+            or observed_scope_ip in managed_device_ip_keys
+            or (observed_scope_ip[0], observed_scope_ip[2]) in managed_device_ips
+            or _is_virtual_gateway_mac(pre_displayed.get("mac"))
+        ):
+            raise ValueError("infrastructure_address_not_terminal")
         pre_prefix_row = conn.execute(
             """SELECT id, prefix, tenant_id, site_id, vrf_id, address_space_id,
                       status, is_active
@@ -2726,7 +2896,7 @@ def register_current_endpoint_observation(
         if not address_space_id:
             raise ValueError("subnet_address_space_required")
         pre_space = conn.execute(
-            """SELECT security_tenant_id, status FROM ipam_address_spaces
+            """SELECT security_tenant_id, status, kind, vrf_id FROM ipam_address_spaces
                  WHERE id = ?""",
             (address_space_id,),
         ).fetchone()
@@ -2737,6 +2907,14 @@ def register_current_endpoint_observation(
             or str(pre_space["status"] or "") != "active"
         ):
             raise ValueError("subnet_address_space_not_active")
+        source_context_status = str(pre_displayed.get("vrf_context_status") or "unknown")
+        if source_context_status == "explicit_global" and str(pre_space["kind"] or "") != "global":
+            raise ValueError("observation_address_space_mismatch")
+        if source_context_status == "explicit_vrf" and (
+            str(pre_space["kind"] or "") != "vrf"
+            or str(pre_prefix.get("vrf_id") or "") != str(pre_displayed.get("vrf_id") or "")
+        ):
+            raise ValueError("observation_address_space_mismatch")
         if (
             pre_displayed.get("scope_status") == "resolved"
             and str(pre_displayed.get("address_space_id") or "") != address_space_id
@@ -2793,6 +2971,12 @@ def register_current_endpoint_observation(
             raise ValueError("subnet_address_space_not_active")
 
         displayed, current = _current_endpoint_is_current(conn, observation_id)
+        latest_observations = _supersede_older_endpoint_context_observations([
+            *_current_endpoint_projection(conn, observation_source="arp"),
+            *_current_endpoint_projection(conn, observation_source="ndp"),
+        ])
+        if not any(item.get("id") == observation_id for item in latest_observations):
+            raise ValueError("observation_not_current")
         if (
             displayed.get("scope_status") == "resolved"
             and str(displayed.get("address_space_id") or "") != address_space_id

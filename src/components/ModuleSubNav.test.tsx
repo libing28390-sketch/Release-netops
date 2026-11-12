@@ -21,22 +21,21 @@ function setup() {
 }
 
 describe('IPAM module navigation', () => {
-  it('keeps both groups usable and independently collapsible', () => {
+  it('expands all IPAM groups by default and keeps them independently collapsible', () => {
     const nav = setup();
     const workspace = nav.getByRole('button', { name: 'IPAM 工作台' });
     const addressSpace = nav.getByRole('button', { name: '地址空间' });
     expect(workspace.compareDocumentPosition(addressSpace) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(addressSpace.getAttribute('aria-expanded')).toBe('true');
-    fireEvent.click(workspace);
     expect(workspace.getAttribute('aria-expanded')).toBe('true');
     expect(addressSpace.getAttribute('aria-expanded')).toBe('true');
-    expect(nav.getByRole('button', { name: 'IP 地址' })).toBeTruthy();
+    fireEvent.click(workspace);
+    expect(workspace.getAttribute('aria-expanded')).toBe('false');
+    expect(addressSpace.getAttribute('aria-expanded')).toBe('true');
     expect(nav.getByRole('button', { name: '网段' })).toBeTruthy();
     fireEvent.click(addressSpace);
     expect(nav.queryByRole('button', { name: '网段' })).toBeNull();
-    expect(nav.getByRole('button', { name: 'IP 地址' })).toBeTruthy();
     fireEvent.click(workspace);
-    expect(nav.queryByRole('button', { name: 'IP 地址' })).toBeNull();
+    expect(nav.getByRole('button', { name: 'IP 地址' })).toBeTruthy();
     fireEvent.click(addressSpace);
     expect(nav.getByRole('button', { name: '网段' })).toBeTruthy();
   });
@@ -44,7 +43,6 @@ describe('IPAM module navigation', () => {
   it('moves IP addresses into the workspace while preserving prefix context', () => {
     const nav = setup();
     const workspace = nav.getByRole('button', { name: 'IPAM 工作台' });
-    fireEvent.click(workspace);
     const region = document.getElementById(workspace.getAttribute('aria-controls')!);
     expect(region).toBeTruthy();
     fireEvent.click(within(region!).getByRole('button', { name: 'IP 地址' }));
@@ -56,7 +54,6 @@ describe('IPAM module navigation', () => {
   it('places discovered endpoints directly after IP addresses in the IPAM workbench', () => {
     const nav = setup();
     const workspace = nav.getByRole('button', { name: 'IPAM 工作台' });
-    fireEvent.click(workspace);
     const region = document.getElementById(workspace.getAttribute('aria-controls')!);
     expect(region).toBeTruthy();
     const ipAddresses = within(region!).getByRole('button', { name: 'IP 地址' });

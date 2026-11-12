@@ -47,12 +47,12 @@ describe('DiscoveredEndpointsTab', () => {
     expect(screen.getByRole('columnheader', { name: '上一次时间' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: '站点' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'VRF' })).toBeTruthy();
-    expect(screen.getByRole('columnheader', { name: '观察来源' })).toBeTruthy();
-    expect(screen.getByRole('columnheader', { name: '观察设备' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: '来源' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: '采集设备' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: '观察接口与路径' })).toBeTruthy();
     const endpointRow = screen.getByRole('row', { name: /10\.10\.1\.21/ });
     expect(endpointRow.querySelectorAll('td')).toHaveLength(13);
-    expect(within(endpointRow).getByText('ARP 观察')).toBeTruthy();
+    expect(within(endpointRow).getByText('ARP', { exact: true })).toBeTruthy();
     expect(within(endpointRow).getByText('WH-DC-01')).toBeTruthy();
     expect(within(endpointRow).getByText('PROD')).toBeTruthy();
     expect(within(endpointRow).getByText('SW-01')).toBeTruthy();
@@ -89,6 +89,15 @@ describe('DiscoveredEndpointsTab', () => {
     expect(fetchMock.mock.calls.some(([input]) => String(input) === '/api/ipam/endpoints/obs-1')).toBe(true);
   });
 
+  it('opens registration from a current IP row without writing before confirmation', async () => {
+    renderPage();
+    const row = await screen.findByRole('row', { name: /10\.10\.1\.21/ });
+    fireEvent.click(within(row).getByRole('button', { name: '登记到 IPAM' }));
+    const dialog = await screen.findByRole('dialog', { name: '登记到 IPAM' });
+    expect(within(dialog).getByRole('button', { name: '确认登记' }).hasAttribute('disabled')).toBe(true);
+    expect(vi.mocked(fetch).mock.calls.some(call => call[1]?.method === 'POST')).toBe(false);
+  });
+
   it('exports site, VRF, access device, and access port as separate fields', async () => {
     const blobs: Blob[] = [];
     class ExportURL extends URL {
@@ -108,8 +117,8 @@ describe('DiscoveredEndpointsTab', () => {
 
     const csv = await blobs[1].text();
     const [header, row] = csv.replace(/^\uFEFF/, '').split('\r\n');
-    expect(header).toBe('"IP","MAC","判定","判定依据","观察来源","主机名","IPAM 登记","站点","VRF","VLAN","观察设备","观察接口与路径","观察时间","证据状态"');
-    expect(row).toContain('"待核主机候选","尚无唯一的当前接入口证据","ARP 观察","","未登记","WH-DC-01","PROD","20","SW-01",""');
+    expect(header).toBe('"IP","MAC","判定","判定依据","来源","IPAM 主机名","IPAM 登记","站点","VRF","VLAN","采集设备","观察接口与路径","观察时间","证据状态"');
+    expect(row).toContain('"待核主机候选","尚无唯一的当前接入口证据","ARP","","未登记","WH-DC-01","PROD","20","SW-01",""');
   });
 
   it('shows missing source as pending and leaves other missing values blank', async () => {
@@ -170,7 +179,7 @@ describe('DiscoveredEndpointsTab', () => {
       { label: '观察接口', value: '' },
       { label: '路径判定', value: '' },
       { label: '范围状态', value: 'resolved' },
-      { label: '记录来源', value: '来源待确认' },
+      { label: '来源', value: '来源待确认' },
       { label: '上一次时间', value: '' },
     ]);
   });
@@ -402,7 +411,7 @@ describe('DiscoveredEndpointsTab', () => {
     await screen.findByText('已准备 1 条记录，请选择格式下载。');
     const csv = await blobs[1].text();
     const [header, row] = csv.replace(/^\uFEFF/, '').split('\r\n');
-    expect(header).toBe('"IP","MAC","判定","判定依据","观察来源","主机名","IPAM 登记","站点","VRF","VLAN","观察设备","观察接口与路径","观察时间","证据状态"');
+    expect(header).toBe('"IP","MAC","判定","判定依据","来源","IPAM 主机名","IPAM 登记","站点","VRF","VLAN","采集设备","观察接口与路径","观察时间","证据状态"');
     expect(row.startsWith('"","00:11:22:33:44:99","仅 MAC 观察","只有 MAC 观察，没有 IP","FDB / MAC 观察（不登记 IP）"')).toBe(true);
     expect(row).toContain('"MAC 观察（未创建 IP） 范围待确认"');
     expect(row).not.toMatch(/"\d{1,3}(?:\.\d{1,3}){3}"/);
@@ -425,7 +434,7 @@ describe('DiscoveredEndpointsTab', () => {
     renderPage('en');
 
     const endpointRow = await screen.findByRole('row', { name: /10\.10\.1\.21/ });
-    expect(screen.getByRole('columnheader', { name: 'Observation source' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Source' })).toBeTruthy();
     expect(within(endpointRow).getByText('IPv6 Neighbor Discovery (ND)')).toBeTruthy();
     fireEvent.click(within(endpointRow).getByRole('button', { name: 'View details' }));
     const dialog = await screen.findByRole('dialog', { name: 'Endpoint details' });

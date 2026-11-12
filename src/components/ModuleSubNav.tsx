@@ -145,7 +145,18 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
     group.children.some(child => checkChildActive(child, pathname))
   ) || (pathname.startsWith('/ai') ? navConfig.find(g => g.id === 'ai-center-group') : undefined);
 
-  const [expandedNestedIds, setExpandedNestedIds] = useState<string[]>([]);
+  const [expandedNestedIds, setExpandedNestedIds] = useState<string[]>(() =>
+    currentGroup?.id === 'ipam-group'
+      ? currentGroup.children.filter(child => child.children?.length).map(child => child.id)
+      : [],
+  );
+
+  useEffect(() => {
+    if (currentGroup?.id !== 'ipam-group') return;
+    setExpandedNestedIds(currentGroup.children
+      .filter(child => child.children?.length)
+      .map(child => child.id));
+  }, [currentGroup?.id]);
 
   // Reveal the active section without closing other sections the user opened.
   useEffect(() => {

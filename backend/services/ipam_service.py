@@ -9,6 +9,7 @@ import ipaddress
 import logging
 import hashlib
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
@@ -1493,10 +1494,15 @@ def get_prefix_gateway_candidates(
         conn.close()
 
 
+def _is_loopback_interface_name(interface_name: str) -> bool:
+    """Recognize canonical loopback names without matching unrelated `lo...` names."""
+    name = str(interface_name or '').strip().casefold()
+    return bool(re.fullmatch(r'(?:loopback\d*|lo\d*)(?:\.\d+)?', name))
+
+
 def _loopback_prefix_length(interface_name: str, ip_obj: ipaddress._BaseAddress) -> Optional[int]:
     """Use a host prefix only when the interface is explicitly a loopback."""
-    name = str(interface_name or '').strip().lower()
-    if name.startswith('loopback') or name.startswith('lo'):
+    if _is_loopback_interface_name(interface_name):
         return 32 if ip_obj.version == 4 else 128
     return None
 
@@ -1518,6 +1524,44 @@ def _interface_prefix_candidate_id(
         json.dumps([prefix, *scope_identity], ensure_ascii=True, separators=(',', ':')).encode()
     ).hexdigest()[:24]
     return f'{prefix}|{digest}'
+
+
+def _registered_interface_scope_matches(conn, source_refs: set[str]) -> dict[str, list[dict]]:
+    """Load active, explicitly registered interface IP provenance by source_ref.
+
+    A matching ledger row can resolve the address space for that single
+    observation. It never creates or implies a device routing-context mapping.
+    """
+    normalized_refs = sorted({str(value or '').strip() for value in source_refs if str(value or '').strip()})
+    if not normalized_refs:
+        return {}
+
+    matches: dict[str, list[dict]] = {}
+    # Keep each query bounded for imports with many current interfaces.
+    for start in range(0, len(normalized_refs), 500):
+        ref_chunk = normalized_refs[start:start + 500]
+        placeholders = ', '.join(_PH for _ in ref_chunk)
+        rows = conn.execute(
+            f'''SELECT ip.source_ref, ip.device_id, ip.interface_name,
+                       COALESCE(host(ip.address_inet), ip.address) AS address,
+                       p.id AS prefix_id, p.prefix_cidr, p.tenant_id, p.site_id,
+                       p.vrf_id, p.address_space_id,
+                       space.security_tenant_id, space.vrf_id AS space_vrf_id
+                  FROM ip_addresses ip
+                  JOIN prefixes p ON p.id = ip.subnet_id
+                  JOIN ipam_address_spaces space ON space.id = p.address_space_id
+                 WHERE ip.source_type = 'interface_collection'
+                   AND COALESCE(ip.status, 'active') = 'active'
+                   AND p.status = 'active'
+                   AND space.status = 'active'
+                   AND ip.source_ref IN ({placeholders})''',
+            tuple(ref_chunk),
+        ).fetchall()
+        for row in rows:
+            source_ref = str(row['source_ref'] or '').strip()
+            if source_ref:
+                matches.setdefault(source_ref, []).append(dict(row))
+    return matches
 
 
 def _load_interface_prefix_candidates(
@@ -1658,6 +1702,13 @@ def _load_interface_prefix_candidates(
         (str(row['address_space_id'] or ''), str(row['prefix'] or '')): dict(row)
         for row in existing_rows if row['address_space_id']
     }
+    registered_scope_matches = _registered_interface_scope_matches(
+        conn,
+        {
+            str(row.get('_source_ref') or row.get('id') or '').strip()
+            for row in interface_rows
+        },
+    )
 
     candidates: dict[str, dict] = {}
     skipped: list[dict] = []
@@ -1721,6 +1772,40 @@ def _load_interface_prefix_candidates(
         site_id = str(row['site_id'] or '')
         address_space_id = str(row.get('address_space_id') or '')
         vrf_id = str(row.get('mapped_vrf_id') or '')
+        scope_resolution_source = ''
+        if not address_space_id:
+            source_ref = str(row.get('_source_ref') or row.get('id') or '').strip()
+            observation_matches = []
+            for match in registered_scope_matches.get(source_ref, []):
+                try:
+                    registered_address = str(ipaddress.ip_address(str(match.get('address') or '').strip()))
+                except ValueError:
+                    continue
+                if (
+                    str(match.get('device_id') or '') == str(row.get('device_id') or '')
+                    and normalize_interface_name(str(match.get('interface_name') or ''))
+                    == normalize_interface_name(str(row.get('interface_name') or ''))
+                    and registered_address == str(ip_obj)
+                    and str(match.get('prefix_cidr') or match.get('prefix') or '') == prefix
+                    and str(match.get('tenant_id') or 'tenant-default') == tenant_id
+                    and str(match.get('security_tenant_id') or '') == tenant_id
+                    and str(match.get('site_id') or '') == site_id
+                    and str(match.get('address_space_id') or '')
+                ):
+                    observation_matches.append(match)
+            distinct_scope_matches = {
+                (
+                    str(match.get('address_space_id') or ''),
+                    str(match.get('prefix_id') or ''),
+                    str(match.get('vrf_id') or match.get('space_vrf_id') or ''),
+                ): match
+                for match in observation_matches
+            }
+            if len(distinct_scope_matches) == 1:
+                matched_scope = next(iter(distinct_scope_matches.values()))
+                address_space_id = str(matched_scope.get('address_space_id') or '')
+                vrf_id = str(matched_scope.get('vrf_id') or matched_scope.get('space_vrf_id') or '')
+                scope_resolution_source = 'registered_interface_ip'
         vrf_unknown = not bool(address_space_id)
         vrf_defaulted = False
         candidate_id = _interface_prefix_candidate_id(
@@ -1742,6 +1827,9 @@ def _load_interface_prefix_candidates(
             'vrf_scope_pending': vrf_unknown,
             'vrf_scope_defaulted': vrf_defaulted,
             'scope_review_reason': '设备本地上下文未映射到明确地址空间' if vrf_unknown else '',
+            '_scope_resolution_sources': set(),
+            '_scope_resolution_observation_count': 0,
+            '_observation_count': 0,
             'existing_prefix_id': (existing_prefix or {}).get('id'),
             'existing_prefix_name': (existing_prefix or {}).get('name') or '',
             'interface_count': 0,
@@ -1750,7 +1838,28 @@ def _load_interface_prefix_candidates(
             '_interface_keys': set(),
             '_ip_keys': set(),
             '_site_ids': set(),
+            '_search_values': set(),
         })
+        item['_search_values'].update(
+            str(value).strip()
+            for value in (
+                prefix,
+                row.get('hostname'),
+                row.get('device_ip'),
+                row.get('interface_name'),
+                address,
+                tenant_id,
+                site_id,
+                site_catalog.get(site_id, {}).get('name'),
+                site_catalog.get(site_id, {}).get('code'),
+                address_space_id,
+                vrf_id,
+                row.get('_context_source'),
+                row.get('_context_type'),
+                row.get('_local_context_key'),
+            )
+            if value is not None and str(value).strip()
+        )
         interface_identity = (
             str(row.get('device_id') or ''),
             normalize_interface_name(str(row.get('interface_name') or '')),
@@ -1765,6 +1874,10 @@ def _load_interface_prefix_candidates(
             item['_site_ids'].add(site_id)
             if len(item['_site_ids']) > 1 and not item.get('existing_prefix_id'):
                 item['site_id'] = None
+        item['_observation_count'] += 1
+        if scope_resolution_source:
+            item['_scope_resolution_sources'].add(scope_resolution_source)
+            item['_scope_resolution_observation_count'] += 1
         if include_all_interfaces or len(item['interfaces']) < 3:
             item['interfaces'].append({
                 'interface_id': row['id'],
@@ -1781,6 +1894,15 @@ def _load_interface_prefix_candidates(
             })
 
     for item in candidates.values():
+        item['_search_text'] = ' '.join(sorted(item.pop('_search_values', set()))).casefold()
+        if (
+            item['_scope_resolution_sources'] == {'registered_interface_ip'}
+            and item['_scope_resolution_observation_count'] == item['_observation_count']
+        ):
+            item['scope_resolution_source'] = 'registered_interface_ip'
+        item.pop('_scope_resolution_sources', None)
+        item.pop('_scope_resolution_observation_count', None)
+        item.pop('_observation_count', None)
         item.pop('_interface_keys', None)
         item.pop('_ip_keys', None)
         item.pop('_site_ids', None)
@@ -1806,7 +1928,7 @@ def _load_interface_prefix_candidates(
 
 
 def preview_interface_prefixes(
-    *, page: int = 1, page_size: int = 25, status: str = 'all',
+    *, page: int = 1, page_size: int = 25, status: str = 'all', q: str = '',
     visible_scopes: set[tuple[str, str]] | None = None,
 ) -> dict:
     """Preview canonical prefixes that can be generated from current interfaces."""
@@ -1816,6 +1938,9 @@ def preview_interface_prefixes(
         raise ValueError('page_size 必须在 1 到 100 之间')
     if status not in {'all', 'to_create', 'existing', 'scope_pending', 'global_default'}:
         raise ValueError('status 必须为 all、to_create、existing、scope_pending 或 global_default')
+    search_query = ' '.join(str(q or '').split()).casefold()
+    if len(search_query) > 120:
+        raise ValueError('q 最多 120 个字符')
 
     conn = get_db_connection()
     try:
@@ -1845,14 +1970,17 @@ def preview_interface_prefixes(
         preview['skipped'] = []
         preview['skipped_truncated_count'] = 0
 
-    filtered_candidates = [
-        item for item in preview['candidates']
-        if status == 'all'
-        or (status != 'global_default' and item['status'] == status)
-    ]
+    filtered_candidates = []
+    for item in preview['candidates']:
+        matches_status = status == 'all' or (status != 'global_default' and item['status'] == status)
+        matches_query = not search_query or search_query in str(item.get('_search_text') or '').casefold()
+        if matches_status and matches_query:
+            filtered_candidates.append(item)
     filtered_count = len(filtered_candidates)
     start = (page - 1) * page_size
     total_pages = (filtered_count + page_size - 1) // page_size
+    for item in preview['candidates']:
+        item.pop('_search_text', None)
     return {
         'source': preview['source'],
         'source_label': preview['source_label'],
@@ -1872,6 +2000,431 @@ def preview_interface_prefixes(
         'skipped': preview['skipped'],
         'skipped_truncated_count': preview['skipped_truncated_count'],
     }
+
+
+def preview_interface_prefix_import(
+    candidate_ids: list[str],
+    *,
+    address_space_overrides: dict[str, str] | None = None,
+    allowed_scopes: set[tuple[str, str]] | None = None,
+) -> dict:
+    """Read-only preview of the exact selected interface import targets.
+
+    Original loader candidate IDs remain the source identities. Candidates are
+    merged only after they resolve to the same tenant, explicit address space,
+    and canonical CIDR. Unresolved candidates retain isolated pending groups.
+    """
+    requested_ids = sorted({str(value or '').strip() for value in candidate_ids if str(value or '').strip()})
+    if not requested_ids:
+        raise ValueError('candidate_ids 不能为空')
+
+    overrides: dict[str, str] = {}
+    for raw_key, raw_value in (address_space_overrides or {}).items():
+        key = str(raw_key or '').strip()
+        value = str(raw_value or '').strip()
+        if not key or not value:
+            raise ValueError('地址空间覆盖必须包含候选 ID 和地址空间 ID')
+        overrides[key] = value
+    if set(overrides) - set(requested_ids):
+        raise ValueError('地址空间覆盖只能用于本次选择的候选')
+
+    conn = get_db_connection()
+    try:
+        loaded = _load_interface_prefix_candidates(conn, include_all_interfaces=True)
+        by_id = {
+            str(candidate.get('candidate_id') or ''): candidate
+            for candidate in loaded['candidates']
+        }
+        selected: list[dict] = []
+        for candidate_id in requested_ids:
+            candidate = by_id.get(candidate_id)
+            if candidate is None:
+                raise LookupError('候选不存在或无权访问，请刷新预览')
+            owner_scope = (
+                str(candidate.get('tenant_id') or 'tenant-default'),
+                str(candidate.get('site_id') or ''),
+            )
+            if allowed_scopes is not None and owner_scope not in allowed_scopes:
+                raise LookupError('候选不存在或无权访问，请刷新预览')
+            selected.append(candidate)
+
+        selected_by_id = {
+            str(candidate.get('candidate_id') or ''): candidate
+            for candidate in selected
+        }
+        for candidate_id in overrides:
+            candidate = selected_by_id[candidate_id]
+            if candidate.get('address_space_id'):
+                raise ValueError('地址空间覆盖只能用于归属待确认的候选')
+
+        resolved_candidates: list[dict] = []
+        for source in selected:
+            candidate = dict(source)
+            candidate_id = str(candidate.get('candidate_id') or '')
+            tenant_id = str(candidate.get('tenant_id') or 'tenant-default')
+            selected_space_id = overrides.get(candidate_id)
+            known_vrf_ids = {
+                str(candidate.get('vrf_id') or '').strip(),
+                *{
+                    str(item.get('local_context_key') or '').strip()
+                    for item in (candidate.get('interfaces') or [])
+                    if str(item.get('context_type') or '').strip().casefold() == 'vrf'
+                },
+            }
+            known_vrf_ids.discard('')
+
+            if selected_space_id:
+                address_space = _get_address_space(conn, selected_space_id, tenant_id)
+                if not address_space or str(address_space.get('status') or '') != 'active':
+                    raise ValueError('地址空间无效、未启用或与候选租户不匹配')
+                target_vrf_id = str(address_space.get('vrf_id') or '').strip()
+                if known_vrf_ids and (not target_vrf_id or known_vrf_ids != {target_vrf_id}):
+                    raise ValueError('所选地址空间与接口已知 VRF 不兼容')
+                candidate['address_space_id'] = str(address_space['id'])
+                candidate['vrf_id'] = target_vrf_id or None
+                candidate['_preview_space'] = address_space
+            elif candidate.get('address_space_id'):
+                address_space = _get_address_space(
+                    conn, str(candidate['address_space_id']), tenant_id,
+                )
+                if not address_space or str(address_space.get('status') or '') != 'active':
+                    raise ValueError('候选映射的地址空间无效、未启用或与候选租户不匹配')
+                target_vrf_id = str(address_space.get('vrf_id') or '').strip()
+                if known_vrf_ids and target_vrf_id and known_vrf_ids != {target_vrf_id}:
+                    raise ValueError('候选映射的地址空间与接口已知 VRF 不兼容')
+                candidate['address_space_id'] = str(address_space['id'])
+                candidate['vrf_id'] = target_vrf_id or None
+                candidate['_preview_space'] = address_space
+            else:
+                candidate['address_space_id'] = None
+                candidate['_preview_space'] = None
+            resolved_candidates.append(candidate)
+
+        groups_by_key: dict[tuple, dict] = {}
+        selected_candidate_group: dict[str, tuple] = {}
+        for candidate in resolved_candidates:
+            candidate_id = str(candidate['candidate_id'])
+            tenant_id = str(candidate.get('tenant_id') or 'tenant-default')
+            address_space_id = str(candidate.get('address_space_id') or '')
+            prefix = str(candidate.get('prefix') or '')
+            if address_space_id:
+                key = (tenant_id, address_space_id, prefix)
+                status = 'to_create'
+            else:
+                # Pending scopes are deliberately unique to their original
+                # candidate, even when another source reports the same CIDR.
+                key = (tenant_id, '', prefix, candidate_id)
+                status = 'scope_pending'
+            selected_candidate_group[candidate_id] = key
+            group = groups_by_key.setdefault(key, {
+                '_tenant_id': tenant_id,
+                '_address_space_id': address_space_id or None,
+                '_prefix': prefix,
+                '_status': status,
+                '_candidate_ids': set(),
+                '_interface_keys': set(),
+                '_ip_keys': set(),
+                '_interfaces': [],
+                '_interfaces_by_key': {},
+                '_blockers': set(),
+                '_existing_prefix_id': None,
+            })
+            group['_candidate_ids'].add(candidate_id)
+            if status == 'scope_pending':
+                group['_blockers'].add(f'{prefix} 尚未明确归属地址空间')
+
+            for interface in candidate.get('interfaces') or []:
+                interface_key = (
+                    str(interface.get('device_id') or ''),
+                    normalize_interface_name(str(interface.get('interface_name') or '')),
+                )
+                if interface_key not in group['_interface_keys']:
+                    group['_interface_keys'].add(interface_key)
+                    group['_interfaces_by_key'][interface_key] = dict(interface)
+                try:
+                    address = str(ipaddress.ip_address(str(interface.get('address') or '').strip()))
+                except ValueError:
+                    continue
+                group['_ip_keys'].add(address)
+
+        explicit_space_ids = sorted({
+            str(group['_address_space_id'])
+            for group in groups_by_key.values()
+            if group['_address_space_id']
+        })
+        prefixes_by_space: dict[str, list[dict]] = {space_id: [] for space_id in explicit_space_ids}
+        if explicit_space_ids:
+            placeholders = ', '.join(_PH for _ in explicit_space_ids)
+            prefix_rows = conn.execute(
+                f'''SELECT id, prefix, prefix_cidr, address_space_id, tenant_id, vrf_id
+                      FROM prefixes
+                     WHERE address_space_id IN ({placeholders})''',
+                tuple(explicit_space_ids),
+            ).fetchall()
+            for row in prefix_rows:
+                prefixes_by_space.setdefault(str(row['address_space_id'] or ''), []).append(dict(row))
+
+        exact_prefix_ids: dict[tuple[str, str], str] = {}
+        desired_prefixes = {
+            (str(group['_address_space_id']), str(group['_prefix']))
+            for group in groups_by_key.values() if group['_address_space_id']
+        }
+        for space_id, prefix in desired_prefixes:
+            for row in prefixes_by_space.get(space_id, []):
+                if str(row.get('prefix_cidr') or '') == prefix:
+                    exact_prefix_ids[(space_id, prefix)] = str(row.get('id') or '')
+                    break
+
+        legacy_by_prefix: dict[str, list[dict]] = {}
+        desired_cidrs = sorted({prefix for _, prefix in desired_prefixes})
+        for start in range(0, len(desired_cidrs), 500):
+            cidr_chunk = desired_cidrs[start:start + 500]
+            if not cidr_chunk:
+                continue
+            placeholders = ', '.join(_PH for _ in cidr_chunk)
+            legacy_rows = conn.execute(
+                f'''SELECT id, prefix, prefix_cidr, tenant_id, vrf_id, site_id
+                      FROM prefixes
+                     WHERE address_space_id IS NULL
+                       AND prefix_cidr IN ({placeholders})''',
+                tuple(cidr_chunk),
+            ).fetchall()
+            for row in legacy_rows:
+                legacy_by_prefix.setdefault(str(row['prefix_cidr'] or ''), []).append(dict(row))
+
+        for group in groups_by_key.values():
+            space_id = str(group['_address_space_id'] or '')
+            if not space_id:
+                continue
+            prefix = str(group['_prefix'])
+            exact_prefix_id = exact_prefix_ids.get((space_id, prefix))
+            if exact_prefix_id:
+                group['_status'] = 'existing'
+                group['_existing_prefix_id'] = exact_prefix_id
+                continue
+
+            address_space = next(
+                candidate.get('_preview_space')
+                for candidate in resolved_candidates
+                if str(candidate.get('address_space_id') or '') == space_id
+                and str(candidate.get('tenant_id') or 'tenant-default') == str(group['_tenant_id'])
+            )
+            target_vrf_id = str((address_space or {}).get('vrf_id') or '')
+            if any(
+                str(legacy.get('tenant_id') or 'tenant-default') == str(group['_tenant_id'])
+                and str(legacy.get('vrf_id') or '') == target_vrf_id
+                for legacy in legacy_by_prefix.get(prefix, [])
+            ):
+                group['_blockers'].add(
+                    f'{prefix} 已存在未映射的旧 Prefix，请先明确映射地址空间'
+                )
+
+            try:
+                target_network = ipaddress.ip_network(prefix, strict=False)
+            except ValueError:
+                group['_blockers'].add(f'{prefix} 不是有效网段')
+                continue
+            for existing_prefix in prefixes_by_space.get(space_id, []):
+                existing_text = str(existing_prefix.get('prefix') or '')
+                try:
+                    existing_network = ipaddress.ip_network(existing_text, strict=False)
+                except ValueError:
+                    continue
+                if existing_network.version != target_network.version or not existing_network.overlaps(target_network):
+                    continue
+                if existing_network == target_network:
+                    # The generator's fast exact lookup is keyed on prefix_cidr.
+                    # A legacy-shaped row missing that canonical field would
+                    # otherwise fail later in _validate_prefix_overlap.
+                    group['_blockers'].add(f'{prefix} 与目标地址空间中的网段冲突')
+                elif not (target_network.subnet_of(existing_network) or existing_network.subnet_of(target_network)):
+                    group['_blockers'].add(f'{prefix} 与目标地址空间中的网段存在重叠')
+
+        addresses_by_space: dict[str, set[str]] = {}
+        for group in groups_by_key.values():
+            space_id = str(group['_address_space_id'] or '')
+            if space_id:
+                addresses_by_space.setdefault(space_id, set()).update(group['_ip_keys'])
+
+        existing_addresses: dict[tuple[str, str], list[dict]] = {}
+        active_vips: set[tuple[str, str]] = set()
+        for space_id, addresses in addresses_by_space.items():
+            ordered_addresses = sorted(addresses)
+            for start in range(0, len(ordered_addresses), 250):
+                address_chunk = ordered_addresses[start:start + 250]
+                if not address_chunk:
+                    continue
+                placeholders = ', '.join(_PH for _ in address_chunk)
+                rows = conn.execute(
+                    f'''SELECT ip.id, ip.subnet_id, ip.address_space_id, ip.status,
+                               COALESCE(host(ip.address_inet), ip.address) AS canonical_address,
+                               p.address_space_id AS prefix_address_space_id
+                          FROM ip_addresses ip
+                          LEFT JOIN prefixes p ON p.id = ip.subnet_id
+                         WHERE (ip.address_space_id = {_PH} OR p.address_space_id = {_PH})
+                           AND COALESCE(host(ip.address_inet), ip.address) IN ({placeholders})''',
+                    (space_id, space_id, *address_chunk),
+                ).fetchall()
+                for row in rows:
+                    try:
+                        address = str(ipaddress.ip_address(str(row.get('canonical_address') or '').strip()))
+                    except ValueError:
+                        continue
+                    key = (space_id, address)
+                    existing_addresses.setdefault(key, []).append(dict(row))
+
+                if _table_exists(conn, 'ipam_vips'):
+                    vip_rows = conn.execute(
+                        f'''SELECT COALESCE(host(address_inet), '') AS address, status
+                              FROM ipam_vips
+                             WHERE address_space_id = {_PH}
+                               AND address_inet IN ({', '.join(f'CAST({_PH} AS inet)' for _ in address_chunk)})''',
+                        (space_id, *address_chunk),
+                    ).fetchall()
+                    for row in vip_rows:
+                        if str(row.get('status') or 'active') not in {'released', 'deprecated', 'disabled'}:
+                            try:
+                                active_vips.add((space_id, str(ipaddress.ip_address(str(row.get('address') or '')))))
+                            except ValueError:
+                                continue
+
+        selected_prefixes_for_address: dict[tuple[str, str], set[str]] = {}
+        for group in groups_by_key.values():
+            space_id = str(group['_address_space_id'] or '')
+            if not space_id:
+                continue
+            for address in group['_ip_keys']:
+                selected_prefixes_for_address.setdefault((space_id, address), set()).add(str(group['_prefix']))
+        for (space_id, address), selected_prefixes in selected_prefixes_for_address.items():
+            if len(selected_prefixes) > 1:
+                blockers_text = f'{address} 在同一地址空间的多个目标网段中重复出现'
+                for group in groups_by_key.values():
+                    if str(group['_address_space_id'] or '') == space_id and address in group['_ip_keys']:
+                        group['_blockers'].add(blockers_text)
+
+        for group in groups_by_key.values():
+            space_id = str(group['_address_space_id'] or '')
+            if not space_id:
+                continue
+            expected_prefix_id = str(group['_existing_prefix_id'] or '')
+            for address in group['_ip_keys']:
+                rows = existing_addresses.get((space_id, address), [])
+                exact_rows = [row for row in rows if str(row.get('subnet_id') or '') == expected_prefix_id and expected_prefix_id]
+                active_space_rows = [
+                    row for row in rows
+                    if str(row.get('address_space_id') or '') == space_id
+                    and str(row.get('status') or 'active') not in {'released', 'available'}
+                ]
+                if exact_rows or active_space_rows:
+                    continue
+                if (space_id, address) in active_vips:
+                    group['_blockers'].add(f'{address} 与目标地址空间中的 VIP 冲突')
+                    continue
+                # With no exact target Prefix, an active formal address in the
+                # same space would make the original generation skip this IP.
+                conflicting_rows = [
+                    row for row in rows
+                    if str(row.get('status') or 'active') not in {'released', 'available'}
+                ]
+                if conflicting_rows:
+                    group['_blockers'].add(f'{address} 已在目标地址空间的其他网段登记')
+
+        blockers: list[str] = []
+        for group in groups_by_key.values():
+            blockers.extend(sorted(group['_blockers']))
+        blockers = list(dict.fromkeys(blockers))
+
+        sorted_groups = sorted(
+            groups_by_key.items(),
+            key=lambda entry: (
+                entry[1]['_prefix'], entry[1]['_tenant_id'],
+                entry[1]['_address_space_id'] or '', tuple(sorted(entry[1]['_candidate_ids'])),
+            ),
+        )
+        public_groups: list[dict] = []
+        known_scope_ip_counts: set[tuple[str, str]] = set()
+        pending_scope_ip_counts: set[tuple[str, str]] = set()
+        unique_interfaces: set[tuple[str, str, str]] = set()
+        pending_candidate_ids: set[str] = set()
+        new_addresses: set[tuple[str, str]] = set()
+        existing_address_keys: set[tuple[str, str]] = set()
+        for key, group in sorted_groups:
+            candidate_id_list = sorted(group['_candidate_ids'])
+            tenant_id = str(group['_tenant_id'])
+            space_id = str(group['_address_space_id'] or '')
+            prefix = str(group['_prefix'])
+            if space_id:
+                group_id_payload = [tenant_id, space_id, prefix]
+                for address in group['_ip_keys']:
+                    ip_key = (space_id, address)
+                    known_scope_ip_counts.add(ip_key)
+                    rows = existing_addresses.get(ip_key, [])
+                    exact_prefix_id = str(group['_existing_prefix_id'] or '')
+                    exact_exists = any(
+                        str(row.get('subnet_id') or '') == exact_prefix_id and exact_prefix_id
+                        for row in rows
+                    )
+                    active_elsewhere_exists = any(
+                        str(row.get('address_space_id') or '') == space_id
+                        and str(row.get('status') or 'active') not in {'released', 'available'}
+                        for row in rows
+                    )
+                    if exact_exists or active_elsewhere_exists:
+                        existing_address_keys.add(ip_key)
+                    elif (space_id, address) not in active_vips:
+                        new_addresses.add(ip_key)
+            else:
+                group_id_payload = [tenant_id, '', prefix, candidate_id_list]
+                pending_candidate_ids.update(candidate_id_list)
+                for address in group['_ip_keys']:
+                    pending_scope_ip_counts.add((candidate_id_list[0], address))
+            group_id = f"{prefix}|{hashlib.sha256(json.dumps(group_id_payload, ensure_ascii=True, separators=(',', ':')).encode()).hexdigest()[:24]}"
+            for interface in group['_interfaces_by_key'].values():
+                unique_interfaces.add((
+                    tenant_id,
+                    str(interface.get('device_id') or ''),
+                    normalize_interface_name(str(interface.get('interface_name') or '')),
+                ))
+            interfaces = sorted(
+                group['_interfaces_by_key'].values(),
+                key=lambda item: (
+                    str(item.get('device_name') or ''),
+                    str(item.get('interface_name') or ''),
+                    str(item.get('address') or ''),
+                ),
+            )[:5]
+            public_group = {
+                'group_id': group_id,
+                'candidate_ids': candidate_id_list,
+                'prefix': prefix,
+                'tenant_id': tenant_id,
+                'address_space_id': group['_address_space_id'],
+                'status': group['_status'],
+                'interface_count': len(group['_interface_keys']),
+                'ip_count': len(group['_ip_keys']),
+                'interfaces': interfaces,
+                'source_count': len(candidate_id_list),
+            }
+            if group['_existing_prefix_id']:
+                public_group['existing_prefix_id'] = group['_existing_prefix_id']
+            public_groups.append(public_group)
+
+        return {
+            'selected_candidate_count': len(requested_ids),
+            'prefix_count': len(public_groups),
+            'new_prefix_count': sum(1 for group in public_groups if group['status'] == 'to_create'),
+            'existing_prefix_count': sum(1 for group in public_groups if group['status'] == 'existing'),
+            'pending_candidate_count': len(pending_candidate_ids),
+            'interface_count': len(unique_interfaces),
+            'ip_count': len(known_scope_ip_counts) + len(pending_scope_ip_counts),
+            'new_address_count': len(new_addresses),
+            'existing_address_count': len(existing_address_keys),
+            'can_generate': not blockers and not pending_candidate_ids,
+            'blockers': blockers,
+            'groups': public_groups,
+        }
+    finally:
+        conn.close()
 
 
 def generate_interface_prefixes(
@@ -2101,9 +2654,9 @@ def generate_interface_prefixes(
             # An address mask or SVI name does not establish business purpose.
             # Keep unknown purposes reviewable instead of silently calling them
             # server or transit networks. Explicit loopback names are evidence.
-            interface_names = [str(item.get('interface_name') or '').lower() for item in candidate['interfaces']]
+            interface_names = [str(item.get('interface_name') or '') for item in candidate['interfaces']]
             network_type = 'loopback' if interface_names and all(
-                name.startswith('loopback') or name.startswith('lo0') for name in interface_names
+                _is_loopback_interface_name(name) for name in interface_names
             ) else 'unclassified'
             conn.execute(
                 f'''INSERT INTO prefixes

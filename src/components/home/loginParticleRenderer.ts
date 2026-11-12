@@ -105,6 +105,7 @@ export function createLoginParticleRenderer(container: HTMLDivElement): () => vo
   const particleUniforms = {
     stateTexture: { value: references as THREE.Texture }, ringCenter: { value: ring },
     time: { value: 0 }, pixelRatio: { value: 1 }, particleScale: { value: 1 },
+    fallbackMotion: { value: 0 },
   };
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
@@ -165,7 +166,9 @@ export function createLoginParticleRenderer(container: HTMLDivElement): () => vo
   const syncAnimation = () => {
     cancelAnimationFrame(frame); frame = 0; lastFrame = 0;
     if (disposed || document.hidden || contextLost) return;
-    if ((motionPreference.matches && !pointerInside) || !canSimulate) {
+    const reducedMotionIdle = motionPreference.matches && !pointerInside;
+    particleUniforms.fallbackMotion.value = !canSimulate && !reducedMotionIdle ? 1 : 0;
+    if (reducedMotionIdle) {
       elapsed = 0; ring.set(0, 0); simulated = false;
       // Settle a single stationary frame instead of leaving half-grown points.
       for (let index = 0; index < (canSimulate ? 30 : 1); index++) render(1 / 60);
@@ -174,14 +177,40 @@ export function createLoginParticleRenderer(container: HTMLDivElement): () => vo
   const onPointerMove = (event: PointerEvent) => {
     if (event.pointerType === 'touch') return;
     const bounds = container.getBoundingClientRect();
-    const x = (event.clientX - bounds.left) / width * 2 - 1;
-    const y = -((event.clientY - bounds.top) / height * 2 - 1);
+    let pointerClientX = event.clientX;
+    let pointerClientY = event.clientY;
+    const obstacle = container.parentElement?.querySelector<HTMLElement>('[data-login-particle-obstacle]');
+    const obstacleBounds = obstacle?.getBoundingClientRect();
+    const pointerOverObstacle = obstacleBounds
+      && event.clientX >= obstacleBounds.left && event.clientX <= obstacleBounds.right
+      && event.clientY >= obstacleBounds.top && event.clientY <= obstacleBounds.bottom;
+    if (obstacleBounds && pointerOverObstacle) {
+      const margin = Math.min(44, Math.max(28, Math.min(obstacleBounds.width, obstacleBounds.height) * 0.1));
+      const candidates = [
+        { distance: event.clientX - obstacleBounds.left, x: obstacleBounds.left - margin, y: event.clientY },
+        { distance: obstacleBounds.right - event.clientX, x: obstacleBounds.right + margin, y: event.clientY },
+        { distance: event.clientY - obstacleBounds.top, x: event.clientX, y: obstacleBounds.top - margin },
+        { distance: obstacleBounds.bottom - event.clientY, x: event.clientX, y: obstacleBounds.bottom + margin },
+      ];
+      const visibleCandidates = candidates.filter(candidate =>
+        candidate.x >= bounds.left + 16 && candidate.x <= bounds.right - 16
+        && candidate.y >= bounds.top + 16 && candidate.y <= bounds.bottom - 16);
+      const nearestCandidates = visibleCandidates.length ? visibleCandidates : candidates;
+      const visibleTarget = nearestCandidates.reduce((nearest, candidate) =>
+        candidate.distance < nearest.distance ? candidate : nearest);
+      pointerClientX = Math.max(bounds.left + 8, Math.min(bounds.right - 8, visibleTarget.x));
+      pointerClientY = Math.max(bounds.top + 8, Math.min(bounds.bottom - 8, visibleTarget.y));
+    }
+    const x = (pointerClientX - bounds.left) / width * 2 - 1;
+    const y = -((pointerClientY - bounds.top) / height * 2 - 1);
+    const viewportX = (event.clientX - bounds.left) / width * 2 - 1;
+    const viewportY = -((event.clientY - bounds.top) / height * 2 - 1);
     const halfHeight = Math.tan(THREE.MathUtils.degToRad(20)) * camera.position.z;
     pointer.set(x * halfHeight * camera.aspect * 0.175, y * halfHeight * 0.175);
-    pointerInside = Math.abs(x) <= 1 && Math.abs(y) <= 1;
+    pointerInside = Math.abs(viewportX) <= 1 && Math.abs(viewportY) <= 1;
     // Reduced motion keeps the idle field still, while deliberate pointer input
     // can still move it. Resume only when no animation is already scheduled.
-    if (motionPreference.matches && pointerInside && !frame && canSimulate) syncAnimation();
+    if (motionPreference.matches && pointerInside && !frame) syncAnimation();
   };
   const onPointerLeave = () => {
     pointerInside = false;

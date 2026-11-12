@@ -113,7 +113,7 @@ const apps: AppEntry[] = [
   { id: 'monitor',    label: '实时监控',   labelEn: 'Monitoring',   desc: '设备状态与流量',     descEn: 'Status & traffic',     icon: Activity,          path: '/monitor/overview',   accent: '#1677ff' },
   { id: 'alerts',     label: '告警管理',   labelEn: 'Alerts',       desc: '告警查看与处置',     descEn: 'View & handle alerts', icon: Bell,              path: '/alerts/desk',        accent: '#fa8c16' },
   { id: 'assets',     label: '资产与配置', labelEn: 'Assets',       desc: '设备台账与资产',     descEn: 'Inventory & assets',   icon: Server,            path: '/assets/dashboard',   accent: '#1677ff' },
-  { id: 'ipam',       label: 'IPAM地址管理', labelEn: 'IPAM',       desc: '网段前缀与IP分配',    descEn: 'IPAM & prefixes',      icon: Globe,             path: '/ipam/locate',        accent: '#06b6d4' },
+  { id: 'ipam',       label: 'IPAM地址管理', labelEn: 'IPAM',       desc: '网段前缀与IP分配',    descEn: 'IPAM & prefixes',      icon: Globe,             path: '/ipam/ips',           accent: '#06b6d4' },
   { id: 'cmdb',       label: 'CMDB基础数据', labelEn: 'CMDB Core',  desc: '凭据、站点、VLAN', descEn: 'CMDB Core records',    icon: Database,          path: '/cmdb/credentials',   accent: '#6366f1' },
   { id: 'config',     label: '配置管理',   labelEn: 'Config',       desc: '备份、差异与合规',   descEn: 'Backup & compliance',  icon: FileCode2,         path: '/config/backup',      accent: '#722ed1' },
   { id: 'automation', label: '自动化',     labelEn: 'Automation',   desc: '作业执行与编排',     descEn: 'Jobs & orchestration', icon: Zap,               path: '/automation/quick-ops',   accent: '#0891b2' },

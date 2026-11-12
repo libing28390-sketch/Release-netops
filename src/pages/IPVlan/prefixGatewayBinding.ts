@@ -11,6 +11,8 @@ export interface GatewayCandidateEndpoint {
   address?: string | null;
   ip_address?: string | null;
   interface_type?: string | null;
+  address_space_id?: string | null;
+  scope_status?: string;
 }
 
 export interface GatewayCandidateResponse {
@@ -43,15 +45,40 @@ export function buildGatewayCandidateQuery(input: {
   return query;
 }
 
+export interface AutomaticGatewayBinding {
+  deviceId: string;
+  interfaceId: string;
+}
+
 export function getAutomaticGatewayBinding(
   source: GatewayBindingSource,
   response: GatewayCandidateResponse,
-): { deviceId: string; interfaceId: string } | null {
+  expectedAddressSpaceId?: string | null,
+): AutomaticGatewayBinding | null {
+  if (source === 'manual') return null;
+
   const selected = response.selected;
-  if (source === 'manual' || response.status !== 'matched' || !selected?.device_id) return null;
+  if (response.status === 'matched' && selected?.device_id) {
+    return {
+      deviceId: selected.device_id,
+      interfaceId: selected.interface_id || '',
+    };
+  }
+
+  const targetSpaceId = String(expectedAddressSpaceId || '').trim();
+  const endpoints = Array.isArray(response.endpoints) ? response.endpoints : [];
+  if (response.status !== 'no_candidate' || response.gateway_ip || !targetSpaceId || endpoints.length !== 1) return null;
+
+  const [onlyEndpoint] = endpoints;
+  if (
+    !onlyEndpoint.device_id
+    || onlyEndpoint.scope_status !== 'resolved'
+    || onlyEndpoint.address_space_id !== targetSpaceId
+  ) return null;
+
   return {
-    deviceId: selected.device_id,
-    interfaceId: selected.interface_id || '',
+    deviceId: onlyEndpoint.device_id,
+    interfaceId: onlyEndpoint.interface_id || '',
   };
 }
 

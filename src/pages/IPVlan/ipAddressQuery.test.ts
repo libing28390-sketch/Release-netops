@@ -2,10 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { buildIPAddressInventoryQuery } from './ipAddressQuery';
 
 describe('IPAM address inventory query', () => {
+  it('defaults the table to the formal ledger without mixing collected sources', () => {
+    const query = buildIPAddressInventoryQuery({
+      siteId: 'all', prefixId: '', search: '', statusFilter: 'all',
+      typeFilter: 'all', purposeFilter: 'all', isMatrixView: false,
+    });
+    expect(query.get('registered_only')).toBe('true');
+  });
   it('keeps read-only interface observations visible and preserves filters', () => {
     const query = buildIPAddressInventoryQuery({
       siteId: 'site-1', prefixId: 'prefix-2', search: ' 10.2.3.4 ',
       statusFilter: 'active', typeFilter: 'server', purposeFilter: 'business', isMatrixView: false,
+      includeObservations: true,
     });
     expect(query.get('registered_only')).toBe('false');
     expect(query.get('site_id')).toBe('site-1');

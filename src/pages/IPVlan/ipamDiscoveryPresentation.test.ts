@@ -56,7 +56,7 @@ describe('discovered endpoint query and presentation', () => {
   });
 
   it('distinguishes ARP, IPv6 ND, and FDB observations in both languages', () => {
-    expect(getDiscoveryObservationSourceLabel('arp', undefined, true)).toBe('ARP 观察');
+    expect(getDiscoveryObservationSourceLabel('arp', undefined, true)).toBe('ARP');
     expect(getDiscoveryObservationSourceLabel('ndp', undefined, true)).toBe('IPv6 邻居发现（ND）');
     expect(getDiscoveryObservationSourceLabel('fdb', undefined, true)).toBe('FDB / MAC 观察（不登记 IP）');
     expect(getDiscoveryObservationSourceLabel(undefined, 'fdb', true)).toBe('FDB / MAC 观察（不登记 IP）');

@@ -64,6 +64,7 @@ from services.ipam_service import (
     reserve_address,
     release_address,
     preview_interface_prefixes,
+    preview_interface_prefix_import,
     generate_interface_prefixes,
     get_prefix_gateway_candidates,
     rebuild_prefixes_hierarchy,
@@ -182,6 +183,11 @@ class InterfacePrefixGenerateRequest(BaseModel):
     candidate_ids: list[str] | None = None
     all_pending: bool = False
     vrf_overrides: dict[str, str] = Field(default_factory=dict)
+    address_space_overrides: dict[str, str] = Field(default_factory=dict)
+
+
+class InterfacePrefixImportPreviewRequest(BaseModel):
+    candidate_ids: list[str] = Field(min_length=1)
     address_space_overrides: dict[str, str] = Field(default_factory=dict)
 
 
@@ -747,13 +753,47 @@ def api_preview_interface_prefixes(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
     status: str = Query('all', pattern='^(all|to_create|existing|scope_pending|global_default)$'),
+    q: str = Query('', max_length=120),
     user=require_permission('prefix', 'view'),
 ):
     """Preview prefixes derived from current L3 interface collection only."""
-    return preview_interface_prefixes(
-        page=page, page_size=page_size, status=status,
-        visible_scopes=_ipam_current_visible_scopes(user, resource_type='prefix', action='view'),
-    )
+    preview_args = {
+        'page': page,
+        'page_size': page_size,
+        'status': status,
+        'visible_scopes': _ipam_current_visible_scopes(user, resource_type='prefix', action='view'),
+    }
+    if isinstance(q, str) and q.strip():
+        preview_args['q'] = q
+    return preview_interface_prefixes(**preview_args)
+
+
+@router.post('/ipam/prefixes/interface-import-preview')
+def api_preview_interface_prefix_import(
+    body: InterfacePrefixImportPreviewRequest,
+    user=require_permission('prefix', 'create'),
+):
+    """Check the exact selected interface sources against current IPAM data."""
+    allowed_scopes = _ipam_current_visible_scopes(user, resource_type='prefix', action='create')
+    for candidate_id, address_space_id in body.address_space_overrides.items():
+        if not str(candidate_id or '').strip() or not str(address_space_id or '').strip():
+            raise HTTPException(status_code=422, detail='地址空间覆盖必须填写候选 ID 和地址空间 ID')
+    try:
+        result = preview_interface_prefix_import(
+            body.candidate_ids,
+            address_space_overrides=body.address_space_overrides,
+            allowed_scopes=allowed_scopes,
+        )
+        for group in result.get('groups', []):
+            space_id = str(group.get('address_space_id') or '')
+            tenant_id = str(group.get('tenant_id') or '')
+            if space_id:
+                _enforce_address_space_scope(user, space_id, tenant_id, 'create')
+        return result
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 @router.get('/ipam/prefixes/classification-summary')
@@ -1732,7 +1772,7 @@ def api_list_discovered_endpoints(
         'all', pattern='^(all|business_vlan)$',
         description='Restrict discovered endpoints to active business VLAN prefixes',
     ),
-    endpoint_class: str = Query('all', pattern='^(all|infrastructure|access_host|candidate)$'),
+    endpoint_class: str = Query('all', pattern='^(all|terminal|infrastructure|access_host|candidate)$'),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     user=require_permission('ip_address', 'view'),

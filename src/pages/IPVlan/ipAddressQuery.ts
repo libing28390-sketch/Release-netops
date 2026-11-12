@@ -6,13 +6,14 @@ export interface IPAddressInventoryFilterInput {
   typeFilter: string;
   purposeFilter: string;
   isMatrixView: boolean;
+  includeObservations?: boolean;
 }
 
 /** Shared list/export filters for registered records and read-only observations. */
 export function buildIPAddressInventoryQuery(input: IPAddressInventoryFilterInput): URLSearchParams {
   const params = new URLSearchParams({
     site_id: input.siteId,
-    registered_only: 'false',
+    registered_only: String(!input.includeObservations && !input.isMatrixView),
   });
   if (input.prefixId) params.set('prefix_id', input.prefixId);
   if (input.search.trim()) params.set('q', input.search.trim());

@@ -435,7 +435,7 @@ def test_address_space_api_rejects_client_tenant_and_applies_resource_scopes(iso
     assert list_address_spaces(security_tenant_id='tenant-default') == []
 
 
-def test_vrf_create_materializes_space_and_scope_changes_or_delete_are_blocked(isolated_db):
+def test_vrf_materializes_space_and_blocks_tenant_change_but_allows_unused_delete(isolated_db):
     with get_db_connection() as conn:
         vrf = create_vrf(
             conn,
@@ -448,8 +448,11 @@ def test_vrf_create_materializes_space_and_scope_changes_or_delete_are_blocked(i
         ).fetchone()
         with pytest.raises(ValueError, match='tenant cannot change'):
             update_vrf(conn, vrf['id'], tenant_id='tenant-other')
-        with pytest.raises(ValueError, match='address-space mapping'):
-            delete_vrf(conn, vrf['id'])
+        delete_vrf(conn, vrf['id'])
+        assert conn.execute('SELECT 1 FROM vrfs WHERE id = ?', (vrf['id'],)).fetchone() is None
+        assert conn.execute(
+            'SELECT 1 FROM ipam_address_spaces WHERE vrf_id = ?', (vrf['id'],),
+        ).fetchone() is None
 
 
 def test_prefix_address_space_resolution_requires_fresh_explicit_confirmation(isolated_db, monkeypatch):

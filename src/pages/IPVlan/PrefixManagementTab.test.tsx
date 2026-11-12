@@ -7,6 +7,116 @@ import PrefixManagementTab from './PrefixManagementTab';
 const response = (payload: unknown) => ({ ok: true, status: 200, json: async () => payload }) as Response;
 const failure = (status: number, payload: unknown) => ({ ok: false, status, json: async () => payload }) as Response;
 
+type TestInterfaceCandidate = {
+  candidate_id: string;
+  prefix: string;
+  tenant_id?: string;
+  vrf_id?: string | null;
+  address_space_id?: string | null;
+  status?: string;
+  interfaces?: Array<{ device_name?: string; interface_name?: string; address?: string }>;
+};
+
+type TestAddressSpace = {
+  id: string;
+  kind: string;
+  vrf_id?: string | null;
+  security_tenant_id?: string;
+};
+
+function makeInterfaceImportPreview(
+  request: { candidate_ids: string[]; address_space_overrides?: Record<string, string> },
+  candidates: TestInterfaceCandidate[],
+  addressSpaces: TestAddressSpace[] = [],
+) {
+  const grouped = new Map<string, {
+    group_id: string;
+    candidate_ids: string[];
+    prefix: string;
+    address_space_id: string | null;
+    status: 'to_create' | 'existing' | 'scope_pending';
+    source_count: number;
+    interface_count: number;
+    ip_count: number;
+    interfaces: Array<{ device_name: string; interface_name: string; address: string }>;
+  }>();
+  for (const candidateId of request.candidate_ids) {
+    const candidate = candidates.find((item) => item.candidate_id === candidateId);
+    if (!candidate) continue;
+    const vrfSpace = candidate.vrf_id
+      ? addressSpaces.find((space) => space.kind === 'vrf'
+        && space.vrf_id === candidate.vrf_id
+        && (!candidate.tenant_id || space.security_tenant_id === candidate.tenant_id))
+      : undefined;
+    const addressSpaceId = request.address_space_overrides?.[candidateId]
+      || candidate.address_space_id
+      || vrfSpace?.id
+      || null;
+    const groupKey = `${addressSpaceId || 'pending'}:${candidate.prefix}`;
+    let group = grouped.get(groupKey);
+    if (!group) {
+      group = {
+        group_id: groupKey,
+        candidate_ids: [],
+        prefix: candidate.prefix,
+        address_space_id: addressSpaceId,
+        status: addressSpaceId ? 'to_create' : 'scope_pending',
+        source_count: 0,
+        interface_count: 0,
+        ip_count: 0,
+        interfaces: [],
+      };
+      grouped.set(groupKey, group);
+    }
+    group.candidate_ids.push(candidateId);
+    group.source_count += 1;
+    const sourceInterfaces = candidate.interfaces || [];
+    group.interfaces.push(...sourceInterfaces.map((source) => ({
+      device_name: source.device_name || '',
+      interface_name: source.interface_name || '',
+      address: source.address || '',
+    })));
+  }
+  const groups = Array.from(grouped.values()).map((group) => {
+    group.interface_count = group.interfaces.length;
+    group.ip_count = new Set(group.interfaces.map((item) => item.address).filter(Boolean)).size;
+    return group;
+  });
+  const newGroups = groups.filter((group) => group.status === 'to_create');
+  const existingGroups = groups.filter((group) => group.status === 'existing');
+  const pendingGroups = groups.filter((group) => group.status === 'scope_pending');
+  const ipCount = new Set(groups.flatMap((group) => group.interfaces.map((item) => item.address)).filter(Boolean)).size;
+  return {
+    selected_candidate_count: request.candidate_ids.length,
+    prefix_count: groups.length,
+    new_prefix_count: newGroups.length,
+    existing_prefix_count: existingGroups.length,
+    pending_candidate_count: pendingGroups.length,
+    interface_count: groups.reduce((total, group) => total + group.interface_count, 0),
+    ip_count: ipCount,
+    new_address_count: ipCount,
+    existing_address_count: 0,
+    can_generate: pendingGroups.length === 0,
+    blockers: pendingGroups.length > 0 ? ['请确认网络归属'] : [],
+    groups,
+  };
+}
+
+async function confirmInterfaceImport() {
+  const dialog = await screen.findByRole('dialog', { name: '核对导入结果' });
+  const confirm = await within(dialog).findByRole('button', { name: '确认导入' });
+  await waitFor(() => expect((confirm as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(confirm);
+}
+
+const openMoreActionsForPrefix = async (prefix: string) => {
+  const prefixLink = await screen.findByText(prefix);
+  const row = prefixLink.closest('tr');
+  if (!row) throw new Error(`Could not find table row for ${prefix}`);
+  fireEvent.click(within(row).getByRole('button', { name: /^管理 / }));
+  return row;
+};
+
 describe('PrefixManagementTab creation defaults', () => {
   beforeEach(() => {
     localStorage.removeItem('netops_token');
@@ -132,7 +242,7 @@ describe('PrefixManagementTab creation defaults', () => {
     fireEvent.change(within(dialog).getByRole('textbox', { name: '新全局地址空间名称' }), { target: { value: '园区 B 默认域' } });
     fireEvent.click(within(dialog).getByRole('button', { name: '创建全局空间' }));
     const spaceSelect = within(dialog).getByRole('combobox', { name: '所属地址空间' }) as HTMLSelectElement;
-    await screen.findByRole('option', { name: '园区 B 默认域 · 全局' });
+    await screen.findByRole('option', { name: '全局（无 VRF） · 园区 B 默认域' });
     expect(spaceSelect.value).toBe('space-global-explicit');
 
     fireEvent.change(within(dialog).getByPlaceholderText('e.g. 10.1.1.0/24'), { target: { value: '10.88.50.0/24' } });
@@ -323,8 +433,9 @@ describe('PrefixManagementTab creation defaults', () => {
     }));
 
     render(<MemoryRouter><PrefixManagementTab language="zh" t={(key) => key} /></MemoryRouter>);
-    expect(await screen.findByText('地址空间待确认')).toBeTruthy();
-    fireEvent.click(await screen.findByRole('button', { name: '确认地址空间' }));
+    expect(await screen.findByText('网络归属未确认')).toBeTruthy();
+    const prefixRow = await openMoreActionsForPrefix('10.88.40.0/24');
+    fireEvent.click(within(prefixRow).getByRole('button', { name: '确认网络归属' }));
     const dialog = await screen.findByRole('dialog', { name: '确认地址空间' });
     fireEvent.change(within(dialog).getByRole('combobox', { name: '目标地址空间' }), { target: { value: space.id } });
     expect(await within(dialog).findByText('登记 IP')).toBeTruthy();
@@ -437,7 +548,8 @@ describe('PrefixManagementTab creation defaults', () => {
     }));
 
     render(<MemoryRouter><PrefixManagementTab language="zh" t={(key) => key} /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole('button', { name: '确认地址空间' }));
+    const prefixRow = await openMoreActionsForPrefix('10.88.70.0/24');
+    fireEvent.click(within(prefixRow).getByRole('button', { name: '确认网络归属' }));
     const dialog = await screen.findByRole('dialog', { name: '确认地址空间' });
     fireEvent.change(within(dialog).getByRole('textbox', { name: '新全局地址空间名称' }), { target: { value: 'Campus A default' } });
     fireEvent.click(within(dialog).getByRole('button', { name: '创建并选中' }));
@@ -488,7 +600,8 @@ describe('PrefixManagementTab creation defaults', () => {
     }));
 
     render(<MemoryRouter><PrefixManagementTab language="zh" t={(key) => key} /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole('button', { name: '确认地址空间' }));
+    const prefixRow = await openMoreActionsForPrefix('10.88.90.0/24');
+    fireEvent.click(within(prefixRow).getByRole('button', { name: '确认网络归属' }));
     const dialog = await screen.findByRole('dialog', { name: '确认地址空间' });
     fireEvent.change(within(dialog).getByRole('textbox', { name: '新全局地址空间名称' }), { target: { value: 'Campus A default' } });
     fireEvent.click(within(dialog).getByRole('button', { name: '创建并选中' }));
@@ -538,7 +651,8 @@ describe('PrefixManagementTab creation defaults', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     render(<MemoryRouter><PrefixManagementTab language="zh" t={(key) => key} /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole('button', { name: '确认地址空间' }));
+    const prefixRow = await openMoreActionsForPrefix('10.88.60.0/24');
+    fireEvent.click(within(prefixRow).getByRole('button', { name: '确认网络归属' }));
     const dialog = await screen.findByRole('dialog', { name: '确认地址空间' });
     fireEvent.change(within(dialog).getByRole('combobox', { name: '目标地址空间' }), { target: { value: space.id } });
     expect(await within(dialog).findByText('Address conflict must be resolved first.')).toBeTruthy();
@@ -546,45 +660,182 @@ describe('PrefixManagementTab creation defaults', () => {
     expect(resolvePosts).toBe(0);
   });
 
-  it('keeps missing snapshot scope pending until an operator selects an address space', async () => {
-    const candidate = {
-      candidate_id: 'pending-vrf-candidate',
-      prefix: '10.88.50.0/24',
+  it('selects pending candidates across pages and requires explicit confirmation before using the only Global space', async () => {
+    const candidates = Array.from({ length: 26 }, (_value, index) => ({
+      candidate_id: `pending-candidate-${index}`,
+      prefix: `10.88.${index}.0/24`,
       tenant_id: 'tenant-default',
       site_id: 'site-1',
       vrf_id: null,
+      address_space_id: null,
       status: 'scope_pending',
       vrf_scope_pending: true,
-      vrf_scope_defaulted: false,
-      scope_review_reason: '接口快照未包含 VRF，请明确选择全局或租户 VRF',
       interface_count: 1,
       ip_count: 1,
       interfaces: [{
         interface_id: null,
-        device_id: 'device-1',
-        device_name: 'core-1',
-        interface_name: 'Vlan-interface50',
-        address: '10.88.50.1',
+        device_id: `device-${index}`,
+        device_name: `core-${index}`,
+        interface_name: `Vlan-interface${index}`,
+        address: `10.88.${index}.1`,
       }],
+    }));
+    const globalSpace = {
+      id: 'space-global-campus-b', name: 'Campus B default', kind: 'global', vrf_id: null, vrf_name: null,
+      security_tenant_id: 'tenant-default', status: 'active', revision: 1,
     };
-    const addressSpaces = [{
-      id: 'space-global-campus-b',
-      name: 'Campus B default',
-      kind: 'global',
-      vrf_id: null,
-      vrf_name: null,
-      security_tenant_id: 'tenant-default',
-      status: 'active',
-      revision: 1,
-    }];
-    const requests: Array<{ url: string; body?: Record<string, unknown>; headers?: HeadersInit }> = [];
+    const requests: Array<{ body?: Record<string, unknown>; headers?: HeadersInit }> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url === '/api/ipam/address-spaces') return response({ items: addressSpaces });
-      if (url === '/api/ipam/prefixes/generate-from-interfaces') {
-        requests.push({ url, body: JSON.parse(String(init?.body || '{}')), headers: init?.headers });
-        return response({ created_prefixes: 1, created_addresses: 1, skipped_addresses: [] });
+      if (url === '/api/ipam/address-spaces') return response({ items: [globalSpace] });
+      if (url === '/api/ipam/prefixes/generate-from-interfaces' && init?.method === 'POST') {
+        requests.push({ body: JSON.parse(String(init.body || '{}')), headers: init.headers });
+        return response({ created_prefixes: 26, created_addresses: 26, skipped_addresses: [] });
       }
+      if (url.startsWith('/api/ipam/prefixes/interface-candidates?')) {
+        const query = new URL(url, 'http://localhost').searchParams;
+        const page = Number(query.get('page') || 1);
+        const pageItems = candidates.slice((page - 1) * 25, page * 25);
+        return response({
+          candidates: pageItems, candidate_count: 26, existing_count: 0, to_create_count: 0,
+          interface_count: 26, vrf_pending_count: 26, skipped_count: 0, page,
+          page_size: 25, filtered_count: 26, total_pages: 2,
+        });
+      }
+      if (url === '/api/ipam/prefixes/interface-import-preview' && init?.method === 'POST') {
+        return response(makeInterfaceImportPreview(JSON.parse(String(init.body || '{}')), candidates, [globalSpace]));
+      }
+      if (url.startsWith('/api/ipam/subnets?')) return response({ items: [], total: 0 });
+      if (url.startsWith('/api/ipam/prefixes/classification-summary?')) return response({
+        total: 0, auto_count: 0, manual_count: 0, unclassified_count: 0,
+        mixed_count: 0, conflict_count: 0, reuse_count: 0, stale_count: 0,
+      });
+      return response([]);
+    }));
+
+    render(<MemoryRouter><PrefixManagementTab language="zh" t={(key) => key} /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: '从接口 IP 生成' }));
+    const generationDialog = await screen.findByRole('dialog', { name: '从接口采集生成 IPAM 网段' });
+
+    const firstCheckbox = await within(generationDialog).findByRole('checkbox', { name: '选择网段 10.88.0.0/24' });
+    expect((firstCheckbox as HTMLInputElement).disabled).toBe(false);
+    fireEvent.click(within(generationDialog).getByRole('button', { name: '选择本页' }));
+    expect(screen.getByText('已明确选择 25 个网段')).toBeTruthy();
+    expect((screen.getByRole('button', { name: /生成所选/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('alert').textContent).toContain('10.88.0.0/24');
+
+    fireEvent.click(within(generationDialog).getByRole('button', { name: '下一页' }));
+    const lastCheckbox = await within(generationDialog).findByRole('checkbox', { name: '选择网段 10.88.25.0/24' });
+    fireEvent.click(lastCheckbox);
+    expect(screen.getByText('已明确选择 26 个网段')).toBeTruthy();
+    fireEvent.click(within(generationDialog).getByRole('button', { name: '上一页' }));
+    expect((await within(generationDialog).findByRole('checkbox', { name: '选择网段 10.88.0.0/24' }) as HTMLInputElement).checked).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: '确认无 VRF，使用 Global 并应用 (26)' }));
+    expect(screen.getByText('已选 26 个候选；其中 0 个待确认地址空间')).toBeTruthy();
+    expect(screen.getAllByText('本次已确认 · 待生成')).toHaveLength(25);
+    expect((screen.getByRole('button', { name: /生成所选/ }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: '生成所选 (26)' }));
+    await confirmInterfaceImport();
+    expect(await screen.findByText('已创建 26 个网段，并登记 26 个接口 IP')).toBeTruthy();
+    expect(requests).toHaveLength(1);
+    expect(requests[0].body?.candidate_ids).toHaveLength(26);
+    expect(Object.keys(requests[0].body?.address_space_overrides as Record<string, string>)).toHaveLength(26);
+    expect(Object.values(requests[0].body?.address_space_overrides as Record<string, string>).every((spaceId) => spaceId === globalSpace.id)).toBe(true);
+    expect(new Headers(requests[0].headers).get('Idempotency-Key')).toBeTruthy();
+  });
+
+  it('requires a target when multiple Globals exist and keeps known VRF candidates on their matching VRF', async () => {
+    const candidates = [
+      {
+        candidate_id: 'unknown-scope-candidate', prefix: '10.88.90.0/24', tenant_id: 'tenant-default',
+        site_id: 'site-1', vrf_id: null, address_space_id: null, status: 'scope_pending', vrf_scope_pending: true,
+        interface_count: 1, ip_count: 1,
+        interfaces: [{ interface_id: null, device_id: 'device-1', device_name: 'core-1', interface_name: 'Vlan90', address: '10.88.90.1' }],
+      },
+      {
+        candidate_id: 'known-vrf-pending-candidate', prefix: '10.88.91.0/24', tenant_id: 'tenant-default',
+        site_id: 'site-1', vrf_id: 'vrf-prod', address_space_id: null, status: 'scope_pending', vrf_scope_pending: true,
+        interface_count: 1, ip_count: 1,
+        interfaces: [{ interface_id: null, device_id: 'device-2', device_name: 'core-2', interface_name: 'Vlan91', address: '10.88.91.1' }],
+      },
+    ];
+    const spaces = [
+      { id: 'space-global-a', name: 'Global A', kind: 'global', vrf_id: null, vrf_name: null, security_tenant_id: 'tenant-default', status: 'active', revision: 1 },
+      { id: 'space-global-b', name: 'Global B', kind: 'global', vrf_id: null, vrf_name: null, security_tenant_id: 'tenant-default', status: 'active', revision: 1 },
+      { id: 'space-global-other-tenant', name: 'Global other tenant', kind: 'global', vrf_id: null, vrf_name: null, security_tenant_id: 'tenant-other', status: 'active', revision: 1 },
+      { id: 'space-vrf-prod', name: 'Production', kind: 'vrf', vrf_id: 'vrf-prod', vrf_name: 'PROD', security_tenant_id: 'tenant-default', status: 'active', revision: 1 },
+      { id: 'space-vrf-prod-other-tenant', name: 'Production other tenant', kind: 'vrf', vrf_id: 'vrf-prod', vrf_name: 'PROD', security_tenant_id: 'tenant-other', status: 'active', revision: 1 },
+    ];
+    let generateBody: Record<string, unknown> | null = null;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/ipam/address-spaces') return response({ items: spaces });
+      if (url.startsWith('/api/ipam/prefixes/interface-candidates?')) return response({
+        candidates, candidate_count: 2, existing_count: 0, to_create_count: 0,
+        interface_count: 2, vrf_pending_count: 2, skipped_count: 0, page: 1,
+        page_size: 25, filtered_count: 2, total_pages: 1,
+      });
+      if (url === '/api/ipam/prefixes/interface-import-preview' && init?.method === 'POST') {
+        return response(makeInterfaceImportPreview(JSON.parse(String(init.body || '{}')), candidates, spaces));
+      }
+      if (url === '/api/ipam/prefixes/generate-from-interfaces' && init?.method === 'POST') {
+        generateBody = JSON.parse(String(init.body || '{}'));
+        return response({ created_prefixes: 2, created_addresses: 2, skipped_addresses: [] });
+      }
+      if (url.startsWith('/api/ipam/subnets?')) return response({ items: [], total: 0 });
+      if (url.startsWith('/api/ipam/prefixes/classification-summary?')) return response({
+        total: 0, auto_count: 0, manual_count: 0, unclassified_count: 0,
+        mixed_count: 0, conflict_count: 0, reuse_count: 0, stale_count: 0,
+      });
+      return response([]);
+    }));
+
+    render(<MemoryRouter><PrefixManagementTab language="zh" t={(key) => key} /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: '从接口 IP 生成' }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: '选择网段 10.88.90.0/24' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择网段 10.88.91.0/24' }));
+
+    const globalTarget = screen.getByRole('combobox', { name: '无 VRF 候选的目标 Global 地址空间' });
+    expect((globalTarget as HTMLSelectElement).value).toBe('');
+    expect(within(globalTarget).queryByRole('option', { name: /other tenant/i })).toBeNull();
+    const confirmGlobal = screen.getByRole('button', { name: '确认无 VRF，使用 Global 并应用 (1)' });
+    expect((confirmGlobal as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(globalTarget, { target: { value: 'space-global-b' } });
+    fireEvent.click(confirmGlobal);
+
+    const bulkVrfTarget = screen.getByRole('combobox', { name: '批量目标 VRF 地址空间' });
+    expect(within(bulkVrfTarget).getByRole('option', { name: /VRF：PROD · Production/ })).toBeTruthy();
+    expect(within(bulkVrfTarget).queryByRole('option', { name: /other tenant/i })).toBeNull();
+
+    const knownVrfSpace = screen.getByRole('combobox', { name: '为 10.88.91.0/24' });
+    expect(within(knownVrfSpace).queryByRole('option', { name: /Global/ })).toBeNull();
+    expect(within(knownVrfSpace).getByRole('option', { name: /Production/ })).toBeTruthy();
+    expect((knownVrfSpace as HTMLSelectElement).value).toBe('');
+    fireEvent.change(knownVrfSpace, { target: { value: 'space-vrf-prod' } });
+    fireEvent.click(screen.getByRole('button', { name: '生成所选 (2)' }));
+    await confirmInterfaceImport();
+
+    expect(await screen.findByText('已创建 2 个网段，并登记 2 个接口 IP')).toBeTruthy();
+    expect(generateBody).toMatchObject({
+      candidate_ids: ['unknown-scope-candidate', 'known-vrf-pending-candidate'],
+      address_space_overrides: {
+        'unknown-scope-candidate': 'space-global-b',
+        'known-vrf-pending-candidate': 'space-vrf-prod',
+      },
+    });
+  });
+
+  it('shows the Global space creation path when no active Global space exists', async () => {
+    const candidate = {
+      candidate_id: 'no-global-scope-candidate', prefix: '10.88.92.0/24', tenant_id: 'tenant-default',
+      site_id: 'site-1', vrf_id: null, address_space_id: null, status: 'scope_pending', vrf_scope_pending: true,
+      interface_count: 1, ip_count: 1,
+      interfaces: [{ interface_id: null, device_id: 'device-1', device_name: 'core-1', interface_name: 'Vlan92', address: '10.88.92.1' }],
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/ipam/address-spaces') return response({ items: [] });
       if (url.startsWith('/api/ipam/prefixes/interface-candidates?')) return response({
         candidates: [candidate], candidate_count: 1, existing_count: 0, to_create_count: 0,
         interface_count: 1, vrf_pending_count: 1, skipped_count: 0, page: 1,
@@ -595,36 +846,63 @@ describe('PrefixManagementTab creation defaults', () => {
         total: 0, auto_count: 0, manual_count: 0, unclassified_count: 0,
         mixed_count: 0, conflict_count: 0, reuse_count: 0, stale_count: 0,
       });
-      if (url === '/api/cmdb/sites' || url === '/api/cmdb/vrfs' || url === '/api/cmdb/vlans' || url === '/api/devices?mode=light') {
-        return response([]);
-      }
       return response([]);
     }));
 
     render(<MemoryRouter><PrefixManagementTab language="zh" t={(key) => key} /></MemoryRouter>);
     fireEvent.click(await screen.findByRole('button', { name: '从接口 IP 生成' }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: '选择网段 10.88.92.0/24' }));
 
-    expect(await screen.findByText('10.88.50.0/24')).toBeTruthy();
-    expect(screen.getAllByText('范围待确认').length).toBeGreaterThanOrEqual(1);
-    const chooseSpace = screen.getByRole('combobox', { name: '为 10.88.50.0/24' });
-    expect((chooseSpace as HTMLSelectElement).value).toBe('');
-    expect(within(chooseSpace).queryByRole('option', { name: '全局/默认' })).toBeNull();
-    const checkbox = screen.getByRole('checkbox', { name: '选择网段 10.88.50.0/24' });
-    expect((checkbox as HTMLInputElement).disabled).toBe(true);
-    expect((screen.getByRole('button', { name: /生成全部待创建项/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('button', { name: '创建全局空间' })).toBeTruthy();
+    expect(screen.getByText(/当前没有可用的 Global 地址空间。请先使用上方“创建全局空间”入口/)).toBeTruthy();
+    expect((screen.getByRole('button', { name: '确认无 VRF，使用 Global 并应用 (1)' }) as HTMLButtonElement).disabled).toBe(true);
+  });
 
-    fireEvent.change(chooseSpace, { target: { value: 'space-global-campus-b' } });
-    expect((chooseSpace as HTMLSelectElement).value).toBe('space-global-campus-b');
-    expect((checkbox as HTMLInputElement).disabled).toBe(false);
-    fireEvent.click(checkbox);
-    fireEvent.click(screen.getByRole('button', { name: /生成所选/ }));
+  it('generates an already mapped Global candidate without asking for scope confirmation', async () => {
+    const globalSpace = {
+      id: 'space-global-mapped', name: 'Campus A default', kind: 'global', vrf_id: null, vrf_name: null,
+      security_tenant_id: 'tenant-default', status: 'active', revision: 1,
+    };
+    const candidate = {
+      candidate_id: 'mapped-global-candidate', prefix: '10.88.93.0/24', tenant_id: 'tenant-default',
+      site_id: 'site-1', vrf_id: null, address_space_id: globalSpace.id, status: 'to_create', vrf_scope_pending: false,
+      interface_count: 1, ip_count: 1,
+      interfaces: [{ interface_id: null, device_id: 'device-1', device_name: 'core-1', interface_name: 'Vlan93', address: '10.88.93.1' }],
+    };
+    let generateBody: Record<string, unknown> | null = null;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/ipam/address-spaces') return response({ items: [globalSpace] });
+      if (url.startsWith('/api/ipam/prefixes/interface-candidates?')) return response({
+        candidates: [candidate], candidate_count: 1, existing_count: 0, to_create_count: 1,
+        interface_count: 1, vrf_pending_count: 0, skipped_count: 0, page: 1,
+        page_size: 25, filtered_count: 1, total_pages: 1,
+      });
+      if (url === '/api/ipam/prefixes/interface-import-preview' && init?.method === 'POST') {
+        return response(makeInterfaceImportPreview(JSON.parse(String(init.body || '{}')), [candidate], [globalSpace]));
+      }
+      if (url === '/api/ipam/prefixes/generate-from-interfaces' && init?.method === 'POST') {
+        generateBody = JSON.parse(String(init.body || '{}'));
+        return response({ created_prefixes: 1, created_addresses: 1, skipped_addresses: [] });
+      }
+      if (url.startsWith('/api/ipam/subnets?')) return response({ items: [], total: 0 });
+      if (url.startsWith('/api/ipam/prefixes/classification-summary?')) return response({
+        total: 0, auto_count: 0, manual_count: 0, unclassified_count: 0,
+        mixed_count: 0, conflict_count: 0, reuse_count: 0, stale_count: 0,
+      });
+      return response([]);
+    }));
+
+    render(<MemoryRouter><PrefixManagementTab language="zh" t={(key) => key} /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: '从接口 IP 生成' }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: '选择网段 10.88.93.0/24' }));
+    expect(screen.queryByRole('combobox', { name: '为 10.88.93.0/24' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /确认无 VRF/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '生成所选 (1)' }));
+    await confirmInterfaceImport();
     expect(await screen.findByText('已创建 1 个网段，并登记 1 个接口 IP')).toBeTruthy();
-    expect(requests).toHaveLength(1);
-    expect(requests[0].body).toMatchObject({
-      candidate_ids: ['pending-vrf-candidate'],
-      address_space_overrides: { 'pending-vrf-candidate': 'space-global-campus-b' },
-    });
-    expect(new Headers(requests[0].headers).get('Idempotency-Key')).toBeTruthy();
+    expect(generateBody).toMatchObject({ candidate_ids: ['mapped-global-candidate'] });
+    expect(generateBody).not.toHaveProperty('address_space_overrides');
   });
 
   it('lets the backend resolve a known VRF candidate without a manual space override', async () => {
@@ -666,6 +944,9 @@ describe('PrefixManagementTab creation defaults', () => {
         interface_count: 1, vrf_pending_count: 0, skipped_count: 0, page: 1,
         page_size: 25, filtered_count: 1, total_pages: 1,
       });
+      if (url === '/api/ipam/prefixes/interface-import-preview' && init?.method === 'POST') {
+        return response(makeInterfaceImportPreview(JSON.parse(String(init.body || '{}')), [candidate], [space]));
+      }
       if (url === '/api/ipam/prefixes/generate-from-interfaces' && init?.method === 'POST') {
         generateBody = JSON.parse(String(init.body || '{}'));
         generateHeaders = init.headers;
@@ -685,6 +966,7 @@ describe('PrefixManagementTab creation defaults', () => {
     expect((checkbox as HTMLInputElement).disabled).toBe(false);
     fireEvent.click(checkbox);
     fireEvent.click(screen.getByRole('button', { name: /生成所选/ }));
+    await confirmInterfaceImport();
     expect(await screen.findByText('已创建 1 个网段，并登记 1 个接口 IP')).toBeTruthy();
 
     expect(generateBody).toMatchObject({ candidate_ids: ['known-vrf-candidate'] });
@@ -726,13 +1008,28 @@ describe('PrefixManagementTab creation defaults', () => {
 
     const prefixCell = await screen.findByText('10.88.60.0/24');
     let row = prefixCell.closest('tr')!;
-    fireEvent.click(within(row).getByRole('button', { name: '编辑' }));
+    const rowManageButton = within(row).getByRole('button', { name: /^管理 / });
+    fireEvent.click(rowManageButton);
+    expect(within(row).getByRole('link', { name: '管理 IP' }).getAttribute('href')).toBe('/ipam/ips?prefix_id=prefix-write');
+    fireEvent.click(within(row).getByRole('button', { name: '编辑网段（用途、网关等）' }));
     const editDialog = await screen.findByRole('dialog', { name: '编辑网段' });
     fireEvent.click(within(editDialog).getByRole('button', { name: '确定保存' }));
     await waitFor(() => expect(requests.some((request) => request.method === 'PUT')).toBe(true));
     expect(requests.find((request) => request.method === 'PUT')?.body).toMatchObject({ expected_revision: 23 });
 
     row = screen.getByText('10.88.60.0/24').closest('tr')!;
+    fireEvent.click(within(row).getByRole('button', { name: /^管理 / }));
+    expect(within(row).getByRole('button', { name: '迁移网络归属' })).toBeTruthy();
+    expect(within(row).getByRole('button', { name: '管理地址池' })).toBeTruthy();
+    expect(within(row).getByRole('button', { name: '编辑网段（用途、网关等）' })).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(within(row).queryByRole('button', { name: '迁移网络归属' })).toBeNull());
+    expect(document.activeElement).toBe(within(row).getByRole('button', { name: /^管理 / }));
+
+    fireEvent.click(within(row).getByRole('button', { name: /^管理 / }));
+    fireEvent.pointerDown(document.body);
+    await waitFor(() => expect(within(row).queryByRole('button', { name: '删除' })).toBeNull());
+    fireEvent.click(within(row).getByRole('button', { name: /^管理 / }));
     fireEvent.click(within(row).getByRole('button', { name: '删除' }));
     fireEvent.click(await screen.findByRole('button', { name: '确认删除' }));
     await waitFor(() => expect(requests.some((request) => request.method === 'DELETE')).toBe(true));
@@ -924,7 +1221,7 @@ describe('PrefixManagementTab creation defaults', () => {
       status: 'no_candidate', selected: null, endpoints: [], gateway_ip: '10.1.1.1',
     }, 'manual-device');
 
-    expect(await within(dialog).findByText('没有匹配的网关接口候选；已保留人工设备选择。')).toBeTruthy();
+    expect(await within(dialog).findByText('没有接口与填写的网关 IP 匹配；已保留人工设备选择。')).toBeTruthy();
     const gatewayDevice = within(dialog).getByRole('option', { name: 'Manual Gateway (192.0.2.1)' }).closest('select') as HTMLSelectElement;
     expect(gatewayDevice.value).toBe('manual-device');
   });
@@ -975,6 +1272,123 @@ describe('PrefixManagementTab creation defaults', () => {
     expect(await within(dialog).findByText('多个接口与网关 IP 完全匹配，无法唯一选择；当前未自动关联。')).toBeTruthy();
     const gatewayDevice = within(dialog).getByRole('option', { name: '未绑定' }).closest('select') as HTMLSelectElement;
     expect(gatewayDevice.value).toBe('');
+  });
+
+  it('keeps purpose uncertainty separate from system-maintained classification', async () => {
+    const prefix = {
+      id: 'auto-unclassified', revision: 1, prefix: '10.87.1.0/24', network: '10.87.1.0', prefix_len: 24,
+      vrf_id: null, vrf_name: null, address_space_id: 'space-global', address_space_name: 'Campus A default',
+      address_space_kind: 'global', scope_status: 'resolved', vlan_id: null, vlan_name: null,
+      site_id: 'site-1', site_name: 'Campus A', site_code: 'A', tenant_id: 'tenant-default', tenant_name: '',
+      status: 'active', name: 'Auto but unknown purpose', gateway: '', description: '', total_ips: 254,
+      used_ips: 0, active_ips: 0, utilization: 0, network_type: 'unclassified', classification_status: 'auto',
+      gateway_device_id: null, gateway_device_name: null, gateway_interface_id: null, traceable: 1,
+    };
+    const prefixQueries: string[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith('/api/ipam/subnets?')) {
+        prefixQueries.push(url);
+        return response({ items: [prefix], total: 21 });
+      }
+      if (url.startsWith('/api/ipam/prefixes/classification-summary?')) return response({
+        total: 21, auto_count: 21, manual_count: 0, unclassified_count: 21,
+        mixed_count: 0, conflict_count: 0, reuse_count: 0, stale_count: 0,
+      });
+      if (url === '/api/ipam/address-spaces') return response({ items: [{
+        id: 'space-global', name: 'Campus A default', kind: 'global', vrf_id: null, vrf_name: null,
+        security_tenant_id: 'tenant-default', status: 'active', revision: 1,
+      }] });
+      return response([]);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<MemoryRouter><PrefixManagementTab language="zh" t={(key) => key} /></MemoryRouter>);
+
+    const row = (await screen.findByText(prefix.prefix)).closest('tr')!;
+    expect(within(row).getByText('用途未确定')).toBeTruthy();
+    expect(within(row).getByText('全局（无 VRF）')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /用途未确定: 21/ })).toBeTruthy();
+    fireEvent.click(screen.getByText('用途维护方式'));
+    fireEvent.click(screen.getByRole('button', { name: /系统维护: 21/ }));
+
+    expect(await screen.findByText('当前分类筛选：系统维护 · 21 条网段记录')).toBeTruthy();
+    await waitFor(() => expect(prefixQueries.some((query) => (
+      new URL(query, 'http://localhost').searchParams.get('classification') === 'auto'
+    ))).toBe(true));
+  });
+
+  it('shows explicit Global and VRF ownership and leaves unmapped scope unconfirmed', async () => {
+    const prefixes = [
+      {
+        id: 'global-prefix', revision: 1, prefix: '10.87.2.0/24', network: '10.87.2.0', prefix_len: 24,
+        vrf_id: null, vrf_name: null, address_space_id: 'space-global', address_space_name: 'Campus A default',
+        address_space_kind: 'global', scope_status: 'resolved', vlan_id: null, vlan_name: null,
+        site_id: 'site-1', site_name: 'Campus A', site_code: 'A', tenant_id: 'tenant-default', tenant_name: '',
+        status: 'active', name: 'Global prefix', gateway: '', description: '', total_ips: 254, used_ips: 0,
+        active_ips: 0, utilization: 0, network_type: 'unclassified', gateway_device_id: null,
+        gateway_device_name: null, gateway_interface_id: null, traceable: 1,
+      },
+      {
+        id: 'vrf-global-prefix', revision: 1, prefix: '10.87.3.0/24', network: '10.87.3.0', prefix_len: 24,
+        vrf_id: 'vrf-global', vrf_name: 'global', address_space_id: 'space-vrf-global', address_space_name: 'global',
+        address_space_kind: 'vrf', scope_status: 'resolved', vlan_id: null, vlan_name: null,
+        site_id: 'site-1', site_name: 'Campus A', site_code: 'A', tenant_id: 'tenant-default', tenant_name: '',
+        status: 'active', name: 'VRF prefix', gateway: '', description: '', total_ips: 254, used_ips: 0,
+        active_ips: 0, utilization: 0, network_type: 'server', gateway_device_id: null,
+        gateway_device_name: null, gateway_interface_id: null, traceable: 1,
+      },
+      {
+        id: 'pending-prefix', revision: 1, prefix: '10.87.4.0/24', network: '10.87.4.0', prefix_len: 24,
+        vrf_id: 'vrf-unconfirmed', vrf_name: 'Unconfirmed VRF hint', address_space_id: null, address_space_name: null,
+        address_space_kind: null, scope_status: 'scope_pending', vlan_id: null, vlan_name: null,
+        site_id: 'site-1', site_name: 'Campus A', site_code: 'A', tenant_id: 'tenant-default', tenant_name: '',
+        status: 'active', name: 'Unconfirmed prefix', gateway: '', description: '', total_ips: 254, used_ips: 0,
+        active_ips: 0, utilization: 0, network_type: 'unclassified', gateway_device_id: null,
+        gateway_device_name: null, gateway_interface_id: null, traceable: 1,
+      },
+    ];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith('/api/ipam/subnets?')) return response({ items: prefixes, total: prefixes.length });
+      if (url === '/api/ipam/subnets/tree') return response(prefixes);
+      if (url.startsWith('/api/ipam/prefixes/classification-summary?')) return response({
+        total: prefixes.length, auto_count: 0, manual_count: 0, unclassified_count: 2,
+        mixed_count: 0, conflict_count: 0, reuse_count: 0, stale_count: 0,
+      });
+      if (url === '/api/ipam/address-spaces') return response({ items: [
+        { id: 'space-global', name: 'Campus A default', kind: 'global', vrf_id: null, vrf_name: null, security_tenant_id: 'tenant-default', status: 'active', revision: 1 },
+        { id: 'space-vrf-global', name: 'global', kind: 'vrf', vrf_id: 'vrf-global', vrf_name: 'global', security_tenant_id: 'tenant-default', status: 'active', revision: 1 },
+      ] });
+      return response([]);
+    }));
+
+    render(<MemoryRouter><PrefixManagementTab language="zh" t={(key) => key} /></MemoryRouter>);
+
+    const globalRow = (await screen.findByText('10.87.2.0/24')).closest('tr')!;
+    expect(within(globalRow).getByText('全局（无 VRF）')).toBeTruthy();
+    expect(within(globalRow).getByText('Campus A default')).toBeTruthy();
+    const vrfRow = screen.getByText('10.87.3.0/24').closest('tr')!;
+    expect(within(vrfRow).getByText('VRF global')).toBeTruthy();
+    expect(within(vrfRow).queryByText('global')).toBeNull();
+    const pendingRow = screen.getByText('10.87.4.0/24').closest('tr')!;
+    expect(within(pendingRow).getByText('网络归属未确认')).toBeTruthy();
+    expect(within(pendingRow).queryByText('VRF Unconfirmed VRF hint')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '新增网段' }));
+    const dialog = await screen.findByRole('dialog', { name: '新增网段' });
+    const addressSpace = within(dialog).getByRole('combobox', { name: '所属地址空间' });
+    expect(within(addressSpace).getByRole('option', { name: '全局（无 VRF） · Campus A default' })).toBeTruthy();
+    expect(within(addressSpace).getByRole('option', { name: 'VRF：global' })).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '新增网段' })).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: '层次树视图' }));
+    const treeRow = (await screen.findByText('10.87.2.0/24')).closest('tr')!;
+    fireEvent.click(within(treeRow).getByRole('button', { name: /^管理 / }));
+    expect(within(treeRow).getByRole('link', { name: '管理 IP' }).getAttribute('href')).toBe('/ipam/ips?prefix_id=global-prefix');
+    expect(within(treeRow).getByRole('button', { name: '编辑网段（用途、网关等）' })).toBeTruthy();
+    expect(within(treeRow).getByRole('button', { name: '迁移网络归属' })).toBeTruthy();
   });
 
   it('separates unmapped duplicate CIDRs from confirmed cross-site reuse', async () => {

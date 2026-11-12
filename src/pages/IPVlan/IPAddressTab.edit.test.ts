@@ -160,6 +160,20 @@ describe('IP address edit source', () => {
     expect(observedPrefixScopeLabel('vrf_unavailable', true)).toBe('VRF 待确认');
     expect(observedPrefixScopeLabel('unmatched', true)).toBe('未匹配网段');
     expect(observedPrefixScopeLabel('global_default', true)).toBe('全局/默认');
+    expect(observedPrefixScopeLabel('scope_pending', true)).toBe('地址空间待确认');
+    expect(observedPrefixScopeLabel('matched', true)).toBe('已匹配地址空间内网段');
+    expect(observedPrefixScopeLabel(undefined, true)).toBe('地址空间待确认');
+    expect(observedPrefixScopeLabel('scope_pending', false)).toBe('Address space needs confirmation');
+  });
+
+  it('identifies an interface observation device without calling it an endpoint access switch', () => {
+    expect(getIPAddressDeviceAssignmentDisplay({
+      device_id: 'router-1', bound_device_hostname: 'router-a',
+      switch_name: 'router-a', source: 'interface_cli', is_discovered: true,
+    }, true)).toBe('采集设备: router-a · IPAM 未登记');
+    expect(getIPAddressDeviceAssignmentDisplay({
+      device_id: 'router-1', source: 'interface_cli', is_discovered: true,
+    }, false)).toBe('Collected device: router-1 · Not registered in IPAM');
   });
 
   it('explains how many current-page IP observations are temporarily reserved', () => {

@@ -1698,6 +1698,11 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const listRequestControllerRef = useRef<AbortController | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  useEffect(() => {
+    if (tab !== 'interfaces' || !notice) return;
+    const timer = window.setTimeout(() => setNotice(''), 8000);
+    return () => window.clearTimeout(timer);
+  }, [tab, notice]);
   const [credentialJobStatus, setCredentialJobStatus] = useState<any | null>(null);
   const [credentialJobDetailsOpen, setCredentialJobDetailsOpen] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -3979,16 +3984,28 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         {notice && (
           <div className="mb-4 px-4 py-3 rounded-2xl text-sm flex items-center gap-2 border bg-emerald-50 text-emerald-700 border-emerald-200">
             <Check size={16} />
-            {notice}
+            <span className="flex-1">{notice}</span>
+            <button type="button" onClick={() => setNotice('')} aria-label={zh ? '关闭提示' : 'Dismiss notification'}>
+              <X size={16} />
+            </button>
           </div>
         )}
 
         {tab === 'interfaces' && (interfaceJobStatus?.job_id || interfaceJobSummary?.job_id || interfaceSyncing) && (
+          <div>
+            {!interfaceSyncing && !interfaceJobStatus?.job_id && interfaceJobSummary?.job_id && (
+              <div className="flex justify-end mb-1">
+                <button type="button" onClick={() => setInterfaceJobSummary(null)} className="text-xs text-slate-500 hover:text-slate-700 flex items-center gap-1">
+                  <X size={14} />{zh ? '关闭采集结果' : 'Dismiss collection result'}
+                </button>
+              </div>
+            )}
           <CmdbInterfaceCollectionProgress
             job={interfaceJobStatus || interfaceJobSummary}
             language={language}
             loading={interfaceSyncing && !interfaceJobStatus?.job_id}
           />
+          </div>
         )}
 
         {tab === 'credentials' && credentialJobStatus?.job_id && (() => {

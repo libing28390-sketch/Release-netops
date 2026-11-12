@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ChevronDown, Eye, Info, RefreshCw, Search, Terminal, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Eye, Info, Plus, RefreshCw, Search, Terminal, X } from 'lucide-react';
+import EndpointRegistrationDialog from './EndpointRegistrationDialog';
+import { Link } from 'react-router-dom';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
 import { DataTable, DataTableFrame } from '../../components/DataTable';
@@ -9,6 +11,7 @@ import { useEscapeClose } from '../../hooks/useEscapeClose';
 import { fetchAllIpamExportItems } from './ipamExport';
 import {
   buildDiscoveredEndpointQuery,
+  canRegisterEndpoint,
   getEndpointClassLabel,
   getEndpointClassReason,
   getDiscoveryCollectionStatusLabel,
@@ -75,7 +78,7 @@ const initialFilters: DiscoveredEndpointFilters = {
   query: '',
   kind: 'ip',
   networkScope: 'all',
-  endpointClass: 'all',
+  endpointClass: 'terminal',
   evidenceStatus: '',
   registrationStatus: '',
   page: 1,
@@ -112,6 +115,7 @@ function normalizeEndpoint(value: unknown): DiscoveredEndpointRow | null {
     site_id: nullableText('site_id'),
     site_name: nullableText('site_name'),
     vrf_id: nullableText('vrf_id'),
+    address_space_id: nullableText('address_space_id'),
     vrf_name: nullableText('vrf_name'),
     vrf_context_inferred: row.vrf_context_inferred === true,
     scope_status: typeof row.scope_status === 'string' ? row.scope_status : undefined,
@@ -199,6 +203,13 @@ const DiscoveredEndpointsTab: React.FC<DiscoveredEndpointsTabProps> = ({ languag
   const [detail, setDetail] = useState<DiscoveryDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
+  const [registerItem, setRegisterItem] = useState<DiscoveredEndpointRow | null>(null);
+  const [registrationNotice, setRegistrationNotice] = useState('');
+  useEffect(() => {
+    if (!registrationNotice) return;
+    const timer = window.setTimeout(() => setRegistrationNotice(''), 8000);
+    return () => window.clearTimeout(timer);
+  }, [registrationNotice]);
   useEscapeClose(Boolean(selected), () => setSelected(null));
 
   const authHeaders = useCallback((): Record<string, string> => {
@@ -325,12 +336,12 @@ const DiscoveredEndpointsTab: React.FC<DiscoveredEndpointsTabProps> = ({ languag
 
   const applySearch = () => updateFilter('query', searchDraft);
   const visibleRows = useMemo(() => items, [items]);
-  const advancedFilterCount = [filters.vrfId, filters.evidenceStatus, filters.registrationStatus, filters.endpointClass !== 'all' ? filters.endpointClass : ''].filter(Boolean).length;
+  const advancedFilterCount = [filters.vrfId, filters.evidenceStatus, filters.registrationStatus, !['all', 'terminal'].includes(filters.endpointClass) ? filters.endpointClass : ''].filter(Boolean).length;
   const exportAll = useCallback(async () => {
     const rows = await fetchAllIpamExportItems<DiscoveredEndpointRow>('/api/ipam/endpoints', buildDiscoveredEndpointQuery(filters));
     return {
-      headers: ['IP', 'MAC', zh ? '判定' : 'Classification', zh ? '判定依据' : 'Classification evidence', zh ? '观察来源' : 'Observation source', zh ? '主机名' : 'Hostname', zh ? 'IPAM 登记' : 'IPAM registration', zh ? '站点' : 'Site', 'VRF', 'VLAN', zh ? '观察设备' : 'Observed device', zh ? '观察接口与路径' : 'Observed interface and path', zh ? '观察时间' : 'Observed at', zh ? '证据状态' : 'Evidence status'],
-      rows: rows.map(item => [item.ip || '', item.mac || '', getEndpointClassLabel(item.endpoint_class, zh), getEndpointClassReason(item.endpoint_class_reason, zh), getDiscoveryObservationSourceLabel(item.observation_source, item.source_type, zh), item.hostname?.trim() || '', item.registration_status ? `${getDiscoveryRegistrationLabel(item.registration_status, zh)} ${item.scope_status === 'scope_pending' ? (zh ? '范围待确认' : 'Scope pending') : ''} ${item.subnet_prefix || ''}`.trim() : item.subnet_prefix || '', item.site_name || '', item.vrf_context_inferred ? '' : item.vrf_name || '', item.vlan || '', item.switch_name || '', [item.switch_port || '', getDiscoveryPathLabel(item, zh), item.path_ambiguity ? (zh ? '路径有歧义' : 'Path ambiguous') : ''].filter(Boolean).join(' · '), item.observed_at || '', item.evidence_status ? getDiscoveryEvidenceLabel(item.evidence_status, zh) : '']),
+      headers: ['IP', 'MAC', zh ? '判定' : 'Classification', zh ? '判定依据' : 'Classification evidence', zh ? '来源' : 'Source', zh ? 'IPAM 主机名' : 'IPAM hostname', zh ? 'IPAM 登记' : 'IPAM registration', zh ? '站点' : 'Site', 'VRF', 'VLAN', zh ? '采集设备' : 'Collector device', zh ? '观察接口与路径' : 'Observed interface and path', zh ? '观察时间' : 'Observed at', zh ? '证据状态' : 'Evidence status'],
+      rows: rows.map(item => [item.ip || '', item.mac || '', getEndpointClassLabel(item.endpoint_class, zh), getEndpointClassReason(item.endpoint_class_reason, zh), getDiscoveryObservationSourceLabel(item.observation_source, item.source_type, zh), item.hostname?.trim() || '', item.registration_status ? `${getDiscoveryRegistrationLabel(item.registration_status, zh)} ${item.scope_status === 'scope_pending' ? (zh ? '范围待确认' : 'Scope pending') : ''} ${item.subnet_prefix || ''}`.trim() : item.subnet_prefix || '', item.site_name || '', item.vrf_context_inferred ? '' : item.vrf_name || '', item.vlan || '', item.source_device_name || item.switch_name || '', [item.switch_port || '', getDiscoveryPathLabel(item, zh), item.path_ambiguity ? (zh ? '路径有歧义' : 'Path ambiguous') : ''].filter(Boolean).join(' · '), item.observed_at || '', item.evidence_status ? getDiscoveryEvidenceLabel(item.evidence_status, zh) : '']),
     };
   }, [filters, zh]);
 
@@ -341,8 +352,15 @@ const DiscoveredEndpointsTab: React.FC<DiscoveredEndpointsTabProps> = ({ languag
         compact
         icon={Terminal}
         title={zh ? '发现终端' : 'Discovered Endpoints'}
-        subtitle={zh ? '区分当前 ARP 观察、基础设施地址与有接入口证据的主机候选；观察结果不代表资产归属。' : 'Separate ARP observations, infrastructure addresses, and host candidates with access-port evidence; observations do not establish asset ownership.'}
+        subtitle={zh ? '默认只显示主机候选和接入口主机；命中 CMDB 管理地址或当前接口 IP 的基础设施地址会从列表隐藏，摘要仍统计其数量，可在更多筛选中查看。IPAM 主机名是地址台账名称；采集设备显示实际读取 ARP / ND 的设备。' : 'By default, show host candidates and access hosts only. Infrastructure addresses matching CMDB management/interface IPs are hidden from the list, counted in the summary, and available in More filters. IPAM hostname is the ledger name; collector device is the device that read ARP / ND.'}
       />
+
+      <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--ui-fg-muted)]">
+        <span>{zh ? '确认归属后，可在行内登记 IP；仅 MAC 记录不能登记为 IP。' : 'Register an IP from its row after confirming scope. MAC-only records cannot be registered as IPs.'}</span>
+        <Link className="text-cyan-700 underline" to="/ipam/prefixes">{zh ? '维护网段 / 地址空间' : 'Manage prefixes / address spaces'}</Link>
+        <Link className="text-cyan-700 underline" to="/ipam/ips">{zh ? '查看 IPAM 台账' : 'IPAM ledger'}</Link>
+      </div>
+      {registrationNotice && <div role="status" className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-800">{registrationNotice}<button type="button" className="ml-3 underline" onClick={() => setRegistrationNotice('')}>{zh ? '关闭' : 'Dismiss'}</button></div>}
 
       {summary && (
         <section aria-label={zh ? '发现摘要' : 'Discovery summary'} className="grid grid-cols-2 items-stretch gap-2 sm:grid-cols-4 xl:grid-cols-8">
@@ -424,6 +442,7 @@ const DiscoveredEndpointsTab: React.FC<DiscoveredEndpointsTabProps> = ({ languag
               {zh ? '主机判定' : 'Host classification'}
               <select aria-label={zh ? '主机判定筛选' : 'Filter by host classification'} value={filters.endpointClass} onChange={(event) => updateFilter('endpointClass', event.target.value as DiscoveredEndpointFilters['endpointClass'])} className="h-9 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-2 text-[var(--ui-text-body)] text-[var(--ui-fg)]">
                 <option value="all">{zh ? '全部判定' : 'All classifications'}</option>
+                <option value="terminal">{zh ? '终端候选（默认）' : 'Terminal candidates (default)'}</option>
                 <option value="access_host">{zh ? '接入口主机候选' : 'Access-port host candidates'}</option>
                 <option value="candidate">{zh ? '待核主机候选' : 'Host candidates pending review'}</option>
                 <option value="infrastructure">{zh ? '基础设施地址' : 'Infrastructure addresses'}</option>
@@ -477,13 +496,13 @@ const DiscoveredEndpointsTab: React.FC<DiscoveredEndpointsTabProps> = ({ languag
                 <th>IP</th>
                 <th>MAC</th>
                 <th>{zh ? '主机判定' : 'Host classification'}</th>
-                <th>{zh ? '观察来源' : 'Observation source'}</th>
-                <th>{zh ? '主机名' : 'Hostname'}</th>
+                <th>{zh ? '来源' : 'Source'}</th>
+                <th>{zh ? 'IPAM 主机名' : 'IPAM hostname'}</th>
                 <th>{zh ? 'IPAM 登记' : 'IPAM registration'}</th>
                 <th>{zh ? '站点' : 'Site'}</th>
                 <th>VRF</th>
                 <th>VLAN</th>
-                <th>{zh ? '观察设备' : 'Observed device'}</th>
+                <th>{zh ? '采集设备' : 'Collector device'}</th>
                 <th>{zh ? '观察接口与路径' : 'Observed interface and path'}</th>
                 <th>{zh ? '上一次时间' : 'Last seen'}</th>
                 <TableActionHeader>{zh ? '操作' : 'Actions'}</TableActionHeader>
@@ -500,13 +519,18 @@ const DiscoveredEndpointsTab: React.FC<DiscoveredEndpointsTabProps> = ({ languag
                     <td>{item.site_name || ''}</td>
                     <td>{item.vrf_context_inferred ? '' : item.vrf_name || ''}</td>
                     <td>{item.vlan || ''}</td>
-                    <td>{item.switch_name || ''}</td>
+                    <td>{item.source_device_name || item.switch_name || ''}</td>
                     <td>
                       <div>{item.switch_port || ''}{item.path_ambiguity && <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] text-amber-800" title={item.path_ambiguity_reason}>{zh ? '路径歧义' : 'Path ambiguous'}</span>}</div>
                       {getDiscoveryPathLabel(item, zh) && <div className="text-[10px] text-[var(--ui-fg-muted)]" title={item.path_evidence || undefined}>{getDiscoveryPathLabel(item, zh)}</div>}
                     </td>
                     <td title={item.observed_at ? formatObserved(item.observed_at) : undefined} className="tabular-nums">{item.observed_at ? formatObservedCompact(item.observed_at) : ''}</td>
-                    <TableActionCell><ActionIconButton icon={Eye} label={zh ? '查看详情' : 'View details'} onClick={() => setSelected(item)} /></TableActionCell>
+                    <TableActionCell>
+                      <div className="flex justify-end gap-1">
+                        <ActionIconButton icon={Eye} label={zh ? '查看详情' : 'View details'} onClick={() => setSelected(item)} />
+                        {canRegisterEndpoint(item) && <ActionIconButton icon={Plus} label={zh ? '登记到 IPAM' : 'Register in IPAM'} onClick={() => setRegisterItem(item)} />}
+                      </div>
+                    </TableActionCell>
                   </tr>
                 )) : (
                   <tr><td colSpan={13} className="py-12 text-center text-[var(--ui-text-body)] text-[var(--ui-fg-muted)]">{zh ? '当前筛选没有发现记录。清除筛选或更换条件后重试。' : 'No discovery records match the current filters. Clear or change the filters.'}</td></tr>
@@ -517,6 +541,12 @@ const DiscoveredEndpointsTab: React.FC<DiscoveredEndpointsTabProps> = ({ languag
         </div>
         <Pagination currentPage={filters.page} totalItems={total} itemsPerPage={filters.pageSize} onPageChange={(page) => setFilters((current) => ({ ...current, page }))} onItemsPerPageChange={(pageSize) => setFilters((current) => ({ ...current, page: 1, pageSize }))} language={language} alwaysVisible />
       </DataTableFrame>
+
+      {registerItem && <EndpointRegistrationDialog key={registerItem.id} item={registerItem} zh={zh} onClose={() => setRegisterItem(null)} onRegistered={() => {
+        setRegistrationNotice(zh ? `已登记 IP ${registerItem.ip}，可在 IPAM 台账补充用途、设备和接口。` : `Registered ${registerItem.ip}. Edit its purpose, device, and interface in the IPAM ledger.`);
+        setRegisterItem(null);
+        void loadList();
+      }} />}
 
       {selected && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-3" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}>
@@ -543,7 +573,7 @@ const DiscoveredEndpointsTab: React.FC<DiscoveredEndpointsTabProps> = ({ languag
                       [zh ? '观察接口' : 'Observed interface', detail.switch_port || ''],
                       [zh ? '路径判定' : 'Path classification', getDiscoveryPathLabel(detail, zh)],
                       [zh ? '范围状态' : 'Scope status', detail.scope_status === 'scope_pending' ? (zh ? '待确认' : 'Pending') : (detail.scope_status || '')],
-                      [zh ? '记录来源' : 'Observation source', getDiscoveryObservationSourceLabel(detail.observation_source, detail.source_type, zh)],
+                      [zh ? '来源' : 'Source', getDiscoveryObservationSourceLabel(detail.observation_source, detail.source_type, zh)],
                       ...(detail.generation !== undefined ? [[zh ? '当前成功代次' : 'Current successful generation', String(detail.generation)]] : []),
                       ...(detail.last_success_generation !== undefined ? [[zh ? '最近成功代次' : 'Last successful generation', String(detail.last_success_generation)]] : []),
                       ...(detail.latest_attempt_generation !== undefined ? [[zh ? '最新尝试代次' : 'Latest attempt generation', String(detail.latest_attempt_generation)]] : []),

@@ -9,7 +9,7 @@ export interface DiscoveredEndpointFilters {
   query: string;
   kind: DiscoveryKind;
   networkScope: 'business_vlan' | 'all';
-  endpointClass: 'all' | 'infrastructure' | 'access_host' | 'candidate';
+  endpointClass: 'all' | 'terminal' | 'infrastructure' | 'access_host' | 'candidate';
   evidenceStatus: string;
   registrationStatus: string;
   page: number;
@@ -24,12 +24,18 @@ export interface DiscoveredEndpointRow {
   site_id?: string | null;
   site_name?: string | null;
   vrf_id?: string | null;
+  address_space_id?: string | null;
+  address_space_name?: string | null;
   vrf_name?: string | null;
+  address_space_kind?: 'global' | 'vrf' | string;
+  vrf_context_status?: string;
   vrf_context_inferred?: boolean;
   scope_status?: string;
   registration_status?: string;
   subnet_id?: string | null;
   subnet_prefix?: string | null;
+  suggested_subnet_id?: string | null;
+  suggested_subnet_prefix?: string | null;
   source_device_id?: string | null;
   source_device_name?: string | null;
   switch_id?: string | null;
@@ -63,6 +69,15 @@ export interface DiscoveredEndpointRow {
 export interface DiscoveryFilterOption {
   id: string;
   name: string;
+}
+
+export function canRegisterEndpoint(item: DiscoveredEndpointRow): boolean {
+  const source = (item.observation_source || item.source_type || '').toLowerCase();
+  return Boolean(item.ip && item.observed_at)
+    && ['arp', 'ndp'].includes(source)
+    && item.endpoint_class !== 'infrastructure'
+    && item.registration_status !== 'registered'
+    && !['stale', 'conflict'].includes(item.evidence_status || '');
 }
 
 export function buildDiscoveredEndpointQuery(filters: DiscoveredEndpointFilters): URLSearchParams {
@@ -207,7 +222,7 @@ export function getDiscoveryObservationSourceLabel(observationSource: unknown, s
   if (!normalizedSource) return zh ? '来源待确认' : 'Source pending';
 
   const labels: Record<string, [string, string]> = {
-    arp: ['ARP 观察', 'ARP observation'],
+    arp: ['ARP', 'ARP'],
     ndp: ['IPv6 邻居发现（ND）', 'IPv6 Neighbor Discovery (ND)'],
     fdb: ['FDB / MAC 观察（不登记 IP）', 'FDB / MAC observation (no IP registration)'],
   };

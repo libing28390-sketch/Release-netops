@@ -720,7 +720,7 @@ const App: React.FC = () => {
       '/credentials': '/management/credentials',
     };
     if (p === '/ipam') {
-      navigate('/ipam/locate', { replace: true });
+      navigate('/ipam/ips', { replace: true });
     } else if (p === '/cmdb') {
       navigate('/cmdb/credentials', { replace: true });
     } else if (redirects[p]) {

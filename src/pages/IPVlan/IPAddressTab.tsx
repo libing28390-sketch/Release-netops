@@ -52,7 +52,7 @@ interface IPAddress {
   site_name?: string;
   subnet_prefix?: string;
   observed_prefix?: string;
-  prefix_match_status?: 'global_default' | 'vrf_unavailable' | 'unmatched';
+  prefix_match_status?: 'global_default' | 'vrf_unavailable' | 'unmatched' | 'scope_pending' | 'matched';
   interface_admin_status?: string;
   interface_oper_status?: string;
   subnet_name?: string;
@@ -71,6 +71,15 @@ interface IPAddress {
   observed_switch_port?: string;
   observed_hostname?: string;
   observed_mac_address?: string;
+  observed_source_device_name?: string;
+  observed_source_type?: string;
+  observed_context_type?: string;
+  observed_context_key?: string;
+  observed_arp_interface?: string;
+  context_type?: string;
+  local_context_key?: string;
+  scope_status?: string;
+  address_space_id?: string;
   vlan?: string;
   observed_vlan?: string;
   observed_switch_id?: string;
@@ -216,6 +225,10 @@ export function getIPAddressDeviceAssignmentDisplay(address: Pick<IPAddress,
     ? address.bound_device_hostname || address.asset_hostname || address.device_id
     : (zh ? '未绑定' : 'Unassigned');
   const observedSwitch = address.observed_switch_name || address.switch_name || '';
+  if (address.source === 'interface_cli') {
+    const sourceDevice = address.bound_device_hostname || observedSwitch || address.device_id || '-';
+    return `${zh ? '采集设备' : 'Collected device'}: ${sourceDevice} · ${zh ? 'IPAM 未登记' : 'Not registered in IPAM'}`;
+  }
   if (observedSwitch) {
     return `${zh ? '登记' : 'Assigned'}: ${assignedDevice} · ${zh ? '接入' : 'Access'}: ${observedSwitch}`;
   }
@@ -232,8 +245,11 @@ function assetInfoLabel(address: IPAddress, zh: boolean): string {
 
 export function observedPrefixScopeLabel(status: IPAddress['prefix_match_status'], zh: boolean): string {
   if (status === 'vrf_unavailable') return zh ? 'VRF 待确认' : 'VRF needs confirmation';
+  if (status === 'scope_pending') return zh ? '地址空间待确认' : 'Address space needs confirmation';
   if (status === 'unmatched') return zh ? '未匹配网段' : 'No matching prefix';
-  return zh ? '全局/默认' : 'Global/default';
+  if (status === 'matched') return zh ? '已匹配地址空间内网段' : 'Matching prefix in address space';
+  if (status === 'global_default') return zh ? '全局/默认' : 'Global/default';
+  return zh ? '地址空间待确认' : 'Address space needs confirmation';
 }
 
 export function formatPendingDiscoveryWarning(count: number, zh: boolean): string {
@@ -733,6 +749,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   // Get search params
   const params = new URLSearchParams(location.search);
   const prefixIdParam = params.get('prefix_id') || '';
+  const [includeObservations, setIncludeObservations] = useState(params.get('view') === 'sources');
 
   const [addresses, setAddresses] = useState<IPAddress[]>([]);
   const [prefixes, setPrefixes] = useState<Prefix[]>([]);
@@ -840,6 +857,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     let loadSucceeded = false;
     try {
       const query = buildIPAddressInventoryQuery({
+        includeObservations,
         siteId: selectedSiteId,
         prefixId: selectedPrefixId,
         search,
@@ -923,7 +941,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
         setLoading(false);
       }
     }
-  }, [selectedPrefixId, selectedSiteId, search, statusFilter, typeFilter, purposeFilter, page, isMatrixView, authHeaders, zh]);
+  }, [selectedPrefixId, selectedSiteId, search, statusFilter, typeFilter, purposeFilter, page, isMatrixView, includeObservations, authHeaders, zh]);
 
   useEffect(() => {
     fetchLookups();
@@ -1167,6 +1185,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
 
   const exportData = useCallback(async () => {
     const params = buildIPAddressInventoryQuery({
+      includeObservations,
       siteId: selectedSiteId,
       prefixId: selectedPrefixId,
       search,
@@ -1207,7 +1226,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
         },
       },
     ], allAddresses);
-  }, [selectedSiteId, selectedPrefixId, search, statusFilter, isMatrixView, typeFilter, purposeFilter, zh]);
+  }, [selectedSiteId, selectedPrefixId, search, statusFilter, isMatrixView, includeObservations, typeFilter, purposeFilter, zh]);
 
   // Form handling
   const openForm = async (ipItem: IPAddress | null = null, quickAllocation = false) => {
@@ -1390,9 +1409,13 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       <PageHero
         icon={MapPin}
         title={zh ? 'IP地址分配管理' : 'IP Address Management'}
-        subtitle={zh ? '精细管理每一个网段内的IP分配，区分网段用途、IP用途、设备角色与生命周期' : 'Manage prefix and IP purposes separately from device roles and lifecycle.'}
+        subtitle={zh ? '默认展示正式登记台账；采集来源可单独展开核查，ARP 接入位置与 IP 分配设备分别维护。' : 'The default view is the registered ledger. Include collected sources for review; access location and assigned device are maintained separately.'}
         actions={
           <div className="flex items-center gap-2">
+            {!isMatrixView && <label className="flex items-center gap-2 text-xs text-[var(--ui-fg-muted)]">
+              <input type="checkbox" checked={includeObservations} onChange={event => { setIncludeObservations(event.target.checked); setPage(1); }} />
+              {zh ? '包含采集来源' : 'Include collected sources'}
+            </label>}
             {!loading && (!isMatrixView || !canUseMatrix) && <TableExportMenu tableRef={addressTableRef} exportData={exportData} filename="ipam-addresses" language={zh ? 'zh' : 'en'} disabled={paginatedAddresses.length === 0} />}
             <button
               onClick={() => openForm(null)}
@@ -1555,7 +1578,9 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
 
       <section role="note" aria-label={zh ? 'IPAM 地址台账说明' : 'IPAM address ledger scope'} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-2.5 text-[11px] leading-4 text-slate-600">
         <p>
-          {zh
+          {!includeObservations && !isMatrixView
+            ? (zh ? `当前正式台账共 ${loading ? '—' : totalItems} 条。选择网段后可登记 IP；采集到的终端可从“发现终端”登记。` : `${loading ? '—' : totalItems} registered records. Select a prefix to register an IP, or register a collected endpoint from Discovered Endpoints.`)
+            : zh
             ? `当前筛选共 ${loading ? '—' : totalItems} 条记录；已登记 ${loading ? '—' : inventorySummary.manual}，含接口观察 ${loading ? '—' : inventorySummary.interface_observed}，终端发现 ${loading ? '—' : inventorySummary.discovered}。当前站点共 ${siteScopedPrefixes.length} 个网段。观察数量可与登记重叠，采集记录不代表当前在线。`
             : `${loading ? '—' : totalItems} records: ${loading ? '—' : inventorySummary.manual} registered, ${loading ? '—' : inventorySummary.interface_observed} with interface observations, ${loading ? '—' : inventorySummary.discovered} discovered endpoints, across ${siteScopedPrefixes.length} prefixes. Observation counts may overlap registrations and do not prove current availability.`}
         </p>
@@ -1716,7 +1741,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       <td className="bg-[var(--ui-surface)] px-3 py-3 text-gray-600 group-hover:bg-[var(--ui-surface-muted)] xl:sticky xl:z-20" style={{ left: 170 }}>
                         <span className="font-mono text-[10px] text-gray-700">{getIPAddressRegisteredPrefixLabel(node.subnet_prefix, zh)}</span>
                         {node.source === 'interface_cli' && node.observed_prefix && (
-                          <span className="mt-1 block break-all font-mono text-[9px] font-semibold text-[var(--ui-fg-muted)]" title={zh ? '接口快照没有提供VRF，网段归属仍需核实' : 'The interface snapshot has no VRF context; prefix scope still needs review'}>
+                          <span className="mt-1 block break-all font-mono text-[9px] font-semibold text-[var(--ui-fg-muted)]" title={zh ? '接口观察网段来自采集的 IP 和掩码；与 IPAM 正式网段的归属需按地址空间核对' : 'The observed prefix comes from the collected IP and mask; IPAM prefix association is checked within its address space'}>
                             {zh
                               ? `接口观察 ${node.observed_prefix} · ${observedPrefixScopeLabel(node.prefix_match_status, zh)}`
                               : `Observed ${node.observed_prefix} · ${observedPrefixScopeLabel(node.prefix_match_status, zh)}`}
@@ -1743,6 +1768,16 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                         }`}>
                           <span className="whitespace-nowrap">{getIPAddressSourceLabel(node, zh)}</span>
                         </span>
+                        {(includeObservations && (node.is_discovered || node.source === 'manual+discovered')) && <details className="mt-1 max-w-xs text-[10px] font-normal text-[var(--ui-fg-muted)]">
+                          <summary className="cursor-pointer">{zh ? '查看来源依据' : 'Source evidence'}</summary>
+                          <dl className="mt-1 space-y-1 whitespace-normal break-words">
+                            <div><dt className="inline">{zh ? '来源设备：' : 'Source device: '}</dt><dd className="inline">{node.observed_source_device_name || node.bound_device_hostname || node.switch_name || (zh ? '未提供' : 'Not provided')}</dd></div>
+                            <div><dt className="inline">{zh ? '来源：' : 'Source: '}</dt><dd className="inline">{node.source === 'interface_cli' ? (zh ? '接口采集' : 'Interface collection') : node.observed_source_type?.toUpperCase() || (zh ? '发现缓存' : 'Discovery cache')}</dd></div>
+                            <div><dt className="inline">{zh ? '设备上下文：' : 'Device context: '}</dt><dd className="inline">{node.local_context_key || node.observed_context_key || (zh ? '未提供，不能据此认定 Global' : 'Not provided; Global is unconfirmed')}</dd></div>
+                            <div><dt className="inline">{zh ? '地址空间：' : 'Address space: '}</dt><dd className="inline">{node.address_space_id ? (zh ? '已确认' : 'Confirmed') : (zh ? '待确认' : 'Pending confirmation')}</dd></div>
+                            {node.observed_arp_interface && <div>{zh ? 'ARP 来源接口：' : 'ARP source interface: '}{node.observed_arp_interface}</div>}
+                          </dl>
+                        </details>}
                       </td>
                       <td className="px-3 py-3">
                         {(() => {

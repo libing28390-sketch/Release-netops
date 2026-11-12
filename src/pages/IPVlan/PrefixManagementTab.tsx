@@ -7,28 +7,26 @@ import {
   Pencil,
   TableProperties,
   GitBranch,
-  Settings,
   X,
   PlusCircle,
   Eye,
   Info,
-  Package,
-  ArrowRightLeft,
   RefreshCw,
   Check,
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  MoreHorizontal,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
-import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
+import { ActionButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 import { TableExportMenu } from '../../components/ui/TableExportMenu';
 import { buildVisibleIpamExportData, fetchAllIpamExportItems } from './ipamExport';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
 import { DEFAULT_TENANT_ID } from '../../types/cmdb';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { isValidIPv4, isValidIPv6, toNum } from './helpers';
 import IPPoolTab from './IPPoolTab';
 import {
@@ -51,6 +49,7 @@ import {
 } from './prefixClassificationFilters';
 
 import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
+import InterfaceImportReview, { type InterfaceImportRequest } from './InterfaceImportReview';
 interface Prefix {
   id: string;
   revision: number;
@@ -217,19 +216,169 @@ type InterfaceCandidateFilter = 'to_create' | 'existing' | 'scope_pending' | 'al
 const DEFAULT_NEW_PREFIX_NETWORK_TYPE = 'unclassified';
 
 function prefixAddressSpaceLabel(prefix: Prefix, zh: boolean): string {
+  const ownership = prefixNetworkOwnership(prefix, zh);
+  return [ownership.label, ownership.detail].filter(Boolean).join(' · ');
+}
+
+interface PrefixNetworkOwnership {
+  label: string;
+  detail?: string;
+  unconfirmed: boolean;
+}
+
+function prefixNetworkOwnership(prefix: Prefix, zh: boolean): PrefixNetworkOwnership {
   if (prefix.scope_status === 'scope_pending' || !prefix.address_space_id) {
-    const pending = zh ? '地址空间待确认' : 'Address space pending';
-    return prefix.vrf_name ? `${pending} · ${zh ? 'VRF' : 'VRF'} ${prefix.vrf_name}` : pending;
+    return { label: zh ? '网络归属未确认' : 'Network ownership unconfirmed', unconfirmed: true };
   }
-  return prefix.address_space_name || (prefix.address_space_kind === 'vrf'
-    ? prefix.vrf_name || prefix.vrf_id || (zh ? 'VRF' : 'VRF')
-    : (zh ? '全局地址空间' : 'Global address space'));
+
+  const addressSpaceName = prefix.address_space_name?.trim() || '';
+  if (prefix.address_space_kind === 'global') {
+    const genericGlobalNames = new Set(['global', 'global address space', '全局', '全局地址空间']);
+    return {
+      label: zh ? '全局（无 VRF）' : 'Global (no VRF)',
+      detail: addressSpaceName && !genericGlobalNames.has(addressSpaceName.toLowerCase())
+        ? addressSpaceName
+        : undefined,
+      unconfirmed: false,
+    };
+  }
+
+  if (prefix.address_space_kind === 'vrf') {
+    const vrfName = prefix.vrf_name?.trim() || prefix.vrf_id?.trim() || '';
+    const label = vrfName ? `${zh ? 'VRF' : 'VRF'} ${vrfName}` : addressSpaceName || 'VRF';
+    return {
+      label,
+      detail: addressSpaceName && addressSpaceName !== label && addressSpaceName !== vrfName ? addressSpaceName : undefined,
+      unconfirmed: false,
+    };
+  }
+
+  return {
+    label: addressSpaceName || prefix.address_space_id,
+    unconfirmed: false,
+  };
+}
+
+function PrefixNetworkOwnershipCell({ prefix, zh }: { prefix: Prefix; zh: boolean }) {
+  const ownership = prefixNetworkOwnership(prefix, zh);
+  return (
+    <span className={`block ${ownership.unconfirmed ? 'text-amber-700' : 'text-gray-700'}`}>
+      <span>{ownership.label}</span>
+      {ownership.detail && <span className="mt-0.5 block text-[10px] font-normal text-gray-500">{ownership.detail}</span>}
+    </span>
+  );
+}
+
+interface PrefixRowActionsProps {
+  prefix: Prefix;
+  zh: boolean;
+  onEdit: () => void;
+  onResolveOwnership: () => void;
+  onMoveOwnership: () => void;
+  onManagePools: () => void;
+  onDelete: () => void;
+}
+
+function PrefixRowActions({
+  prefix,
+  zh,
+  onEdit,
+  onResolveOwnership,
+  onMoveOwnership,
+  onManagePools,
+  onDelete,
+}: PrefixRowActionsProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuId = React.useId();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const hasConfirmedOwnership = Boolean(prefix.address_space_id) && prefix.scope_status !== 'scope_pending';
+  const closeMenu = useCallback(() => {
+    setMenuOpen(false);
+    triggerRef.current?.focus();
+  }, []);
+
+  useEscapeClose(menuOpen, closeMenu);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOnOutsidePointer);
+    return () => document.removeEventListener('pointerdown', closeOnOutsidePointer);
+  }, [menuOpen]);
+  useEffect(() => {
+    if (!menuOpen) return;
+    menuRef.current?.querySelector<HTMLElement>('a[href], button')?.focus();
+  }, [menuOpen]);
+
+  const runMenuAction = (action: () => void) => {
+    setMenuOpen(false);
+    action();
+  };
+
+  return (
+    <div ref={rootRef} className="relative inline-flex whitespace-nowrap text-[11px]">
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="true"
+        aria-expanded={menuOpen}
+        aria-controls={menuId}
+        aria-label={zh ? `管理 ${prefix.prefix}` : `Manage ${prefix.prefix}`}
+        onClick={() => setMenuOpen((current) => !current)}
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowDown' && !menuOpen) {
+            event.preventDefault();
+            setMenuOpen(true);
+          }
+        }}
+        className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 font-bold text-gray-700 hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+      >
+        <span>{zh ? '管理' : 'Manage'}</span>
+        <MoreHorizontal size={14} aria-hidden="true" />
+      </button>
+      {menuOpen && (
+        <div
+          ref={menuRef}
+          id={menuId}
+          className="absolute right-0 top-full z-40 mt-1 min-w-40 rounded-lg border border-gray-200 bg-white p-1 text-left shadow-lg"
+        >
+          <Link
+            to={`/ipam/ips?prefix_id=${encodeURIComponent(prefix.id)}`}
+            onClick={() => setMenuOpen(false)}
+            className="block w-full rounded-md px-3 py-2 text-left text-[11px] font-semibold text-cyan-800 hover:bg-cyan-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+          >
+            {zh ? '管理 IP' : 'Manage IPs'}
+          </Link>
+          <button type="button" onClick={() => runMenuAction(onEdit)} className="block w-full rounded-md px-3 py-2 text-left text-[11px] font-semibold text-gray-700 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500">
+            {zh ? '编辑网段（用途、网关等）' : 'Edit prefix (purpose, gateway, etc.)'}
+          </button>
+          <button type="button" onClick={() => runMenuAction(hasConfirmedOwnership ? onMoveOwnership : onResolveOwnership)} className="block w-full rounded-md px-3 py-2 text-left text-[11px] font-semibold text-gray-700 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500">
+            {hasConfirmedOwnership ? (zh ? '迁移网络归属' : 'Move network ownership') : (zh ? '确认网络归属' : 'Confirm network ownership')}
+          </button>
+          <button type="button" onClick={() => runMenuAction(onManagePools)} className="block w-full rounded-md px-3 py-2 text-left text-[11px] font-semibold text-gray-700 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500">
+            {zh ? '管理地址池' : 'Manage address pools'}
+          </button>
+          <button type="button" onClick={() => runMenuAction(onDelete)} className="block w-full rounded-md px-3 py-2 text-left text-[11px] font-semibold text-rose-700 hover:bg-rose-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500">
+            {zh ? '删除' : 'Delete'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function addressSpaceOptionLabel(space: AddressSpace, zh: boolean): string {
-  return space.kind === 'vrf'
-    ? `${space.name} · ${space.vrf_name || space.vrf_id || 'VRF'}`
-    : `${space.name} · ${zh ? '全局' : 'Global'}`;
+  if (space.kind === 'vrf') {
+    const vrfName = space.vrf_name || space.vrf_id || space.name;
+    const spaceName = space.name && space.name !== vrfName ? ` · ${space.name}` : '';
+    return `${zh ? 'VRF：' : 'VRF: '}${vrfName}${spaceName}`;
+  }
+  const genericGlobalNames = new Set(['global', 'global address space', '全局', '全局地址空间']);
+  const spaceName = space.name && !genericGlobalNames.has(space.name.toLowerCase()) ? ` · ${space.name}` : '';
+  return `${zh ? '全局（无 VRF）' : 'Global (no VRF)'}${spaceName}`;
 }
 
 function addressSpaceBlockerLabel(
@@ -335,6 +484,52 @@ function gatewayCandidateEndpointLabel(endpoint: GatewayCandidateEndpoint, zh: b
   ].filter(Boolean).join(' · ');
 }
 
+function gatewayCandidateStatusMessage(
+  response: GatewayCandidateResponse,
+  source: GatewayBindingSource,
+  zh: boolean,
+): string {
+  if (response.status === 'matched') {
+    return source === 'manual'
+      ? (zh ? `发现唯一候选 ${response.selected ? gatewayCandidateEndpointLabel(response.selected, zh) : ''}；已保留当前人工设备选择。` : `Unique candidate found${response.selected ? `: ${gatewayCandidateEndpointLabel(response.selected, zh)}` : ''}; the manual device selection is preserved.`)
+      : (zh ? `已按唯一证据自动关联：${response.selected ? gatewayCandidateEndpointLabel(response.selected, zh) : '设备'}` : `Automatically bound from unique evidence: ${response.selected ? gatewayCandidateEndpointLabel(response.selected, zh) : 'device'}`);
+  }
+  if (response.status === 'needs_site') return zh ? '请先选择物理站点，再匹配网关候选。' : 'Choose a physical site to match gateway candidates.';
+  if (response.status === 'scope_pending') return getGatewayScopePendingMessage(source, zh);
+  if (response.status === 'ambiguous' || response.status === 'no_unique_gateway') {
+    if (source === 'manual') return response.status === 'ambiguous'
+      ? (zh ? '多个接口与网关 IP 完全匹配，无法唯一选择；已保留人工设备选择。' : 'Multiple interfaces exactly match this gateway IP; the manual device selection is preserved.')
+      : (zh ? '发现多个接口端点，没有唯一网关证据；已保留人工设备选择。' : 'Multiple interface endpoints have no unique gateway evidence; the manual device selection is preserved.');
+    return response.status === 'ambiguous'
+      ? (zh ? '多个接口与网关 IP 完全匹配，无法唯一选择；当前未自动关联。' : 'Multiple interfaces exactly match this gateway IP; no automatic binding was selected.')
+      : (zh ? '发现多个接口端点，没有唯一网关证据；当前未绑定网关。' : 'Multiple interface endpoints have no unique gateway evidence; no gateway is bound.');
+  }
+
+  if (response.endpoints.length > 0 && response.endpoints.some((endpoint) => endpoint.scope_status !== 'resolved')) {
+    return source === 'manual'
+      ? (zh ? '发现接口候选，但它们的 VRF / 全局归属尚未映射到当前地址空间；已保留人工设备选择。' : 'Interface candidates exist, but their VRF / Global scope is not mapped to this address space; the manual device choice is preserved.')
+      : (zh ? '发现接口候选，但它们的 VRF / 全局归属尚未映射到当前地址空间，因此不能自动关联。可先维护设备路由上下文，或在下方手动选择候选设备。' : 'Interface candidates exist, but their VRF / Global scope is not mapped to this address space, so they cannot be auto-bound. Map the device routing context or choose a candidate below.');
+  }
+  if (response.gateway_ip) {
+    return source === 'manual'
+      ? (zh ? '没有接口与填写的网关 IP 匹配；已保留人工设备选择。' : 'No interface matches the entered gateway IP; the manual device selection is preserved.')
+      : (zh ? '没有接口与填写的网关 IP 匹配，当前未关联设备。' : 'No interface matches the entered gateway IP; no device is bound.');
+  }
+  if (response.endpoints.length > 1) {
+    return source === 'manual'
+      ? (zh ? `找到 ${response.endpoints.length} 个接口候选；已保留人工设备选择。` : `${response.endpoints.length} interface candidates were found; the manual device choice is preserved.`)
+      : (zh ? `找到 ${response.endpoints.length} 个接口候选，无法确定哪一个是网关；请填写网关 IP 或手动选择设备。` : `${response.endpoints.length} interface candidates were found; the gateway is ambiguous. Enter its IP or choose a device manually.`);
+  }
+  if (response.endpoints.length === 1) {
+    return source === 'manual'
+      ? (zh ? '找到唯一接口候选；已保留人工设备选择。' : 'A unique interface candidate was found; the manual device choice is preserved.')
+      : (zh ? '找到一个接口候选，但它没有确认属于当前地址空间；当前未自动关联。' : 'One interface candidate was found, but it is not confirmed in this address space; it was not auto-bound.');
+  }
+  return source === 'manual'
+    ? (zh ? '当前网段没有接口候选；已保留人工设备选择。' : 'No interface candidate was found in this prefix; the manual device choice is preserved.')
+    : (zh ? '当前网段没有接口候选；请填写网关 IP 或手动选择设备。' : 'No interface candidate was found in this prefix; enter a gateway IP or choose a device manually.');
+}
+
 const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }) => {
   const treeTableRef = useRef<HTMLTableElement>(null);
   const prefixTableRef = useRef<HTMLTableElement>(null);
@@ -354,6 +549,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const [siteFilter, setSiteFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [classificationFilter, setClassificationFilter] = useState<PrefixClassificationFilter>('all');
+  const [classificationMethodOpen, setClassificationMethodOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedRevisions, setSelectedRevisions] = useState<Record<string, number>>({});
   const [collapsedSites, setCollapsedSites] = useState<Record<string, boolean>>({});
@@ -387,6 +583,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const [batchAddressSpaceError, setBatchAddressSpaceError] = useState('');
   const [batchAddressSpaceResult, setBatchAddressSpaceResult] = useState('');
   const [showInterfaceGeneration, setShowInterfaceGeneration] = useState(false);
+  const [interfaceImportReviewRequest, setInterfaceImportReviewRequest] = useState<InterfaceImportRequest | null>(null);
   const [poolManagerPrefix, setPoolManagerPrefix] = useState<Prefix | null>(null);
   useEscapeClose(showAddEdit, () => { setShowAddEdit(false); setEditingPrefix(null); });
   useEscapeClose(Boolean(showDeleteConfirm), () => setShowDeleteConfirm(null));
@@ -396,7 +593,10 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   useEscapeClose(Boolean(poolManagerPrefix), () => setPoolManagerPrefix(null));
   const [interfaceCandidates, setInterfaceCandidates] = useState<InterfacePrefixCandidate[]>([]);
   const [selectedInterfaceCandidates, setSelectedInterfaceCandidates] = useState<Set<string>>(new Set());
+  const [selectedInterfaceCandidateSnapshots, setSelectedInterfaceCandidateSnapshots] = useState<Record<string, InterfacePrefixCandidate>>({});
   const [selectedInterfaceSpaces, setSelectedInterfaceSpaces] = useState<Record<string, string>>({});
+  const [bulkInterfaceSpaceId, setBulkInterfaceSpaceId] = useState('');
+  const [bulkGlobalInterfaceSpaceId, setBulkGlobalInterfaceSpaceId] = useState('');
   const [interfaceSkipped, setInterfaceSkipped] = useState<Array<{ device_name: string; interface_name: string; address: string; reason: string }>>([]);
   const [interfaceCandidateSummary, setInterfaceCandidateSummary] = useState<InterfaceCandidateSummary>({
     candidate_count: 0,
@@ -413,9 +613,12 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     total_pages: 0,
   });
   const [interfaceCandidateFilter, setInterfaceCandidateFilter] = useState<InterfaceCandidateFilter>('all');
+  const [interfaceCandidateSearchInput, setInterfaceCandidateSearchInput] = useState('');
+  const [interfaceCandidateSearch, setInterfaceCandidateSearch] = useState('');
   const [interfaceGenerationLoading, setInterfaceGenerationLoading] = useState(false);
   const [interfaceCandidatesLoading, setInterfaceCandidatesLoading] = useState(false);
   const [interfaceGenerationError, setInterfaceGenerationError] = useState('');
+  const [interfaceGenerationScopeError, setInterfaceGenerationScopeError] = useState('');
   const [interfaceGenerationResult, setInterfaceGenerationResult] = useState('');
   const [showSkippedDetails, setShowSkippedDetails] = useState(false);
   const [showGenerateAllPendingConfirm, setShowGenerateAllPendingConfirm] = useState(false);
@@ -447,20 +650,59 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       || candidate.address_space_id
       || findVrfAddressSpace(candidate.vrf_id)?.id
       || '';
+  const interfaceCandidateHasResolvedSpace = (candidate: InterfacePrefixCandidate) =>
+    Boolean(selectedInterfaceSpaces[candidate.candidate_id]
+      || candidate.address_space_id
+      || (!candidate.vrf_scope_pending && candidate.vrf_id && findVrfAddressSpace(candidate.vrf_id)));
   const interfaceCandidateNeedsManualSpace = (candidate: InterfacePrefixCandidate) =>
-    Boolean(candidate.vrf_scope_pending || !candidate.vrf_id || !findVrfAddressSpace(candidate.vrf_id));
+    Boolean(candidate.vrf_scope_pending || (!candidate.vrf_id && !candidate.address_space_id));
   const interfaceCandidateSpaceOptions = (candidate: InterfacePrefixCandidate) =>
     addressSpaces.filter((space) => space.status === 'active'
+      && (!candidate.tenant_id || space.security_tenant_id === candidate.tenant_id)
       && (!candidate.vrf_id || (space.kind === 'vrf' && space.vrf_id === candidate.vrf_id)));
-  const interfaceCandidateHasExplicitSpace = (candidate: InterfacePrefixCandidate) =>
-    Boolean(interfaceCandidateAddressSpaceId(candidate))
-      && (!interfaceCandidateNeedsManualSpace(candidate)
-        || Boolean(selectedInterfaceSpaces[candidate.candidate_id] || candidate.address_space_id));
+  const selectedInterfaceCandidateItems = Array.from(selectedInterfaceCandidates)
+    .map((candidateId) => selectedInterfaceCandidateSnapshots[candidateId]
+      || interfaceCandidates.find((candidate) => candidate.candidate_id === candidateId))
+    .filter((candidate): candidate is InterfacePrefixCandidate => Boolean(candidate));
+  const selectedInterfacePendingScopeCandidates = selectedInterfaceCandidateItems
+    .filter((candidate) => Boolean(candidate.vrf_scope_pending) && !interfaceCandidateHasResolvedSpace(candidate));
+  const selectedInterfaceUnscopedCandidates = selectedInterfacePendingScopeCandidates
+    .filter((candidate) => !candidate.vrf_id);
+  const selectedInterfaceCommonVrfSpaces = addressSpaces.filter((space) =>
+    space.status === 'active'
+    && space.kind === 'vrf'
+    && selectedInterfacePendingScopeCandidates.length > 0
+    && selectedInterfacePendingScopeCandidates.every((candidate) =>
+      (!candidate.tenant_id || candidate.tenant_id === space.security_tenant_id)
+      && (!candidate.vrf_id || candidate.vrf_id === space.vrf_id)));
+  const activeGlobalInterfaceSpaces = addressSpaces.filter((space) => space.status === 'active' && space.kind === 'global');
+  const selectedInterfaceCommonGlobalSpaces = activeGlobalInterfaceSpaces.filter((space) =>
+    selectedInterfaceUnscopedCandidates.length > 0
+    && selectedInterfaceUnscopedCandidates.every((candidate) =>
+      !candidate.tenant_id || candidate.tenant_id === space.security_tenant_id));
+  const selectedInterfaceCandidatesMissingSpace = selectedInterfaceCandidateItems.filter((candidate) => {
+    if (interfaceCandidateHasResolvedSpace(candidate)) return false;
+    return Boolean(candidate.vrf_scope_pending || !candidate.vrf_id);
+  });
+  const selectedInterfaceCandidateMetadataMissing = selectedInterfaceCandidates.size - selectedInterfaceCandidateItems.length;
+  const selectedInterfaceHasMissingSpace = selectedInterfaceCandidatesMissingSpace.length > 0
+    || selectedInterfaceCandidateMetadataMissing > 0;
+  const selectedInterfaceMissingSpaceLabels = selectedInterfaceCandidatesMissingSpace.map((candidate) => candidate.prefix);
+  const selectedInterfaceMissingSpaceMessage = selectedInterfaceHasMissingSpace
+    ? (zh
+      ? `已选候选中有 ${selectedInterfaceCandidatesMissingSpace.length + selectedInterfaceCandidateMetadataMissing} 项尚未确认地址空间${selectedInterfaceMissingSpaceLabels.length > 0 ? `：${selectedInterfaceMissingSpaceLabels.slice(0, 3).join('、')}${selectedInterfaceMissingSpaceLabels.length > 3 ? '…' : ''}` : ''}。请先批量或逐项选择地址空间，再生成。`
+      : `${selectedInterfaceCandidatesMissingSpace.length + selectedInterfaceCandidateMetadataMissing} selected candidates still need an address space${selectedInterfaceMissingSpaceLabels.length > 0 ? `: ${selectedInterfaceMissingSpaceLabels.slice(0, 3).join(', ')}${selectedInterfaceMissingSpaceLabels.length > 3 ? '…' : ''}` : ''}. Choose a space for each candidate before generating.`)
+    : '';
   const gatewayBindingSourceRef = useRef<GatewayBindingSource>('none');
   const gatewayCandidateRequestId = useRef(0);
   const [gatewayCandidates, setGatewayCandidates] = useState<GatewayCandidateResponse | null>(null);
   const [gatewayCandidatesLoading, setGatewayCandidatesLoading] = useState(false);
   const [gatewayCandidatesError, setGatewayCandidatesError] = useState('');
+  const gatewayCandidateDevices = Array.from(new Map(
+    (gatewayCandidates?.endpoints || [])
+      .filter((endpoint) => endpoint.device_id)
+      .map((endpoint) => [endpoint.device_id as string, endpoint]),
+  ).values());
   const [scopeResolutionPrefix, setScopeResolutionPrefix] = useState<Prefix | null>(null);
   const [scopeResolutionMode, setScopeResolutionMode] = useState<'resolve' | 'move'>('resolve');
   const [scopeResolutionSpaceId, setScopeResolutionSpaceId] = useState('');
@@ -821,12 +1063,19 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     }
   }, [search, siteFilter, statusFilter, familyFilter, page, pageSize, classificationFilter, authHeaders, zh]);
 
-  const loadInterfaceCandidates = async (requestedPage = 1, status: InterfaceCandidateFilter = interfaceCandidateFilter) => {
+  const loadInterfaceCandidates = async (
+    requestedPage = 1,
+    status: InterfaceCandidateFilter = interfaceCandidateFilter,
+    searchQuery = interfaceCandidateSearch,
+  ) => {
     const requestId = ++interfaceCandidateRequestId.current;
     setInterfaceCandidatesLoading(true);
     setInterfaceGenerationError('');
+    setInterfaceGenerationScopeError('');
     try {
       const query = new URLSearchParams({ page: String(requestedPage), page_size: '25', status });
+      const normalizedSearch = searchQuery.trim();
+      if (normalizedSearch) query.set('q', normalizedSearch);
       const res = await fetch(`/api/ipam/prefixes/interface-candidates?${query.toString()}`, { headers: authHeaders() });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -841,6 +1090,24 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
 
       const candidates = Array.isArray(data?.candidates) ? data.candidates : [];
       setInterfaceCandidates(candidates);
+      setSelectedInterfaceCandidateSnapshots((current) => {
+        const next = { ...current };
+        candidates.forEach((candidate) => {
+          if (selectedInterfaceCandidates.has(candidate.candidate_id)) {
+            next[candidate.candidate_id] = candidate;
+          }
+        });
+        return next;
+      });
+      setSelectedInterfaceSpaces((current) => {
+        const next = { ...current };
+        candidates.forEach((candidate) => {
+          if (selectedInterfaceCandidates.has(candidate.candidate_id) && !candidate.vrf_scope_pending) {
+            delete next[candidate.candidate_id];
+          }
+        });
+        return next;
+      });
       setInterfaceSkipped(Array.isArray(data?.skipped) ? data.skipped : []);
       setInterfaceCandidateSummary({
         candidate_count: Number(data?.candidate_count || 0),
@@ -869,50 +1136,153 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     setInterfaceGenerationError('');
     setInterfaceGenerationResult('');
     setSelectedInterfaceCandidates(new Set());
+    setSelectedInterfaceCandidateSnapshots({});
     setSelectedInterfaceSpaces({});
+    setBulkInterfaceSpaceId('');
+    setBulkGlobalInterfaceSpaceId('');
+    setInterfaceGenerationScopeError('');
     setInterfaceCandidateFilter('all');
+    setInterfaceCandidateSearchInput('');
+    setInterfaceCandidateSearch('');
     setInterfaceCandidatePage((current) => ({ ...current, page: 1 }));
     setShowSkippedDetails(false);
     setShowGenerateAllPendingConfirm(false);
     setShowInterfaceGeneration(true);
-    await loadInterfaceCandidates(1, 'all');
+    await loadInterfaceCandidates(1, 'all', '');
   };
 
-  const toggleInterfaceCandidate = (candidateId: string) => {
+  const toggleInterfaceCandidate = (candidate: InterfacePrefixCandidate) => {
+    const candidateId = candidate.candidate_id;
     const next = new Set(selectedInterfaceCandidates);
-    if (next.has(candidateId)) next.delete(candidateId);
+    const isSelected = next.has(candidateId);
+    if (isSelected) next.delete(candidateId);
     else next.add(candidateId);
     setSelectedInterfaceCandidates(next);
+    setSelectedInterfaceCandidateSnapshots((current) => {
+      const updated = { ...current };
+      if (isSelected) delete updated[candidateId];
+      else updated[candidateId] = candidate;
+      return updated;
+    });
+    setBulkInterfaceSpaceId('');
+    setBulkGlobalInterfaceSpaceId('');
+    setInterfaceGenerationScopeError('');
   };
 
   const selectVisibleInterfaceCandidates = () => {
-    const visibleIds = interfaceCandidates
-      .filter(interfaceCandidateHasExplicitSpace)
-      .map((candidate) => candidate.candidate_id);
+    const visibleIds = interfaceCandidates.map((candidate) => candidate.candidate_id);
     const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((candidateId) => selectedInterfaceCandidates.has(candidateId));
     const next = new Set(selectedInterfaceCandidates);
+    const nextSnapshots = { ...selectedInterfaceCandidateSnapshots };
     visibleIds.forEach((candidateId) => {
-      if (allVisibleSelected) next.delete(candidateId);
-      else next.add(candidateId);
+      if (allVisibleSelected) {
+        next.delete(candidateId);
+        delete nextSnapshots[candidateId];
+      } else {
+        next.add(candidateId);
+        const candidate = interfaceCandidates.find((item) => item.candidate_id === candidateId);
+        if (candidate) nextSnapshots[candidateId] = candidate;
+      }
     });
     setSelectedInterfaceCandidates(next);
+    setSelectedInterfaceCandidateSnapshots(nextSnapshots);
+    setBulkInterfaceSpaceId('');
+    setBulkGlobalInterfaceSpaceId('');
+    setInterfaceGenerationScopeError('');
   };
 
-  const generateFromInterfaces = async (allPending = false) => {
-    if (allPending ? interfaceCandidateSummary.to_create_count === 0 : selectedInterfaceCandidates.size === 0) return;
+  const applyBulkInterfaceSpace = () => {
+    const targetSpace = selectedInterfaceCommonVrfSpaces.find((space) => space.id === bulkInterfaceSpaceId);
+    if (!targetSpace || selectedInterfacePendingScopeCandidates.length === 0) return;
+    setSelectedInterfaceSpaces((current) => ({
+      ...current,
+      ...Object.fromEntries(selectedInterfacePendingScopeCandidates.map((candidate) => [candidate.candidate_id, targetSpace.id])),
+    }));
+    setInterfaceGenerationScopeError('');
+  };
+
+  const confirmUnscopedCandidatesUseGlobal = () => {
+    const targetSpace = selectedInterfaceCommonGlobalSpaces.find((space) => space.id === bulkGlobalInterfaceSpaceId)
+      || (selectedInterfaceCommonGlobalSpaces.length === 1 ? selectedInterfaceCommonGlobalSpaces[0] : undefined);
+    if (!targetSpace || selectedInterfaceUnscopedCandidates.length === 0) return;
+    setSelectedInterfaceSpaces((current) => ({
+      ...current,
+      ...Object.fromEntries(selectedInterfaceUnscopedCandidates.map((candidate) => [candidate.candidate_id, targetSpace.id])),
+    }));
+    setInterfaceGenerationScopeError('');
+  };
+
+  const generateFromInterfaces = async (allPending = false, confirmedRequest?: InterfaceImportRequest) => {
+    if (!confirmedRequest && (allPending ? interfaceCandidateSummary.to_create_count === 0 : selectedInterfaceCandidates.size === 0)) return;
+    if (!confirmedRequest && !allPending) {
+      const missingCandidates = selectedInterfaceCandidateItems.filter((candidate) => {
+        if (selectedInterfaceSpaces[candidate.candidate_id] || candidate.address_space_id) return false;
+        return Boolean(candidate.vrf_scope_pending || !candidate.vrf_id);
+      });
+      const missingMetadataCount = selectedInterfaceCandidateMetadataMissing;
+      const invalidVrfOverride = selectedInterfaceCandidateItems.find((candidate) => {
+        const overrideId = selectedInterfaceSpaces[candidate.candidate_id];
+        if (!overrideId || !candidate.vrf_id) return false;
+        const target = addressSpaces.find((space) => space.id === overrideId && space.status === 'active');
+        return !target
+          || (candidate.tenant_id && target.security_tenant_id !== candidate.tenant_id)
+          || target.kind !== 'vrf'
+          || target.vrf_id !== candidate.vrf_id;
+      });
+      if (missingCandidates.length > 0 || missingMetadataCount > 0) {
+        const names = missingCandidates.map((candidate) => candidate.prefix).slice(0, 5);
+        const message = zh
+          ? `所选候选仍缺少地址空间${names.length ? `：${names.join('、')}${missingCandidates.length > names.length ? '…' : ''}` : ''}${missingMetadataCount ? `；另有 ${missingMetadataCount} 项候选信息已失效，请刷新` : ''}。`
+          : `Selected candidates still need an address space${names.length ? `: ${names.join(', ')}${missingCandidates.length > names.length ? '…' : ''}` : ''}${missingMetadataCount ? `; ${missingMetadataCount} candidate records are unavailable. Refresh the preview` : ''}.`;
+        setInterfaceGenerationScopeError(message);
+        return;
+      }
+      if (invalidVrfOverride) {
+        setInterfaceGenerationScopeError(zh
+          ? `${invalidVrfOverride.prefix} 已知 VRF ${invalidVrfOverride.vrf_id}，只能使用该 VRF 的地址空间。`
+          : `${invalidVrfOverride.prefix} has known VRF ${invalidVrfOverride.vrf_id}; choose an address space for that VRF.`);
+        return;
+      }
+    }
+    setInterfaceGenerationScopeError('');
+    if (!confirmedRequest) {
+      let candidateIds = Array.from(selectedInterfaceCandidates);
+      const addressSpaceOverrides = Object.fromEntries(
+        Object.entries(selectedInterfaceSpaces)
+          .filter(([candidateId, addressSpaceId]) => candidateIds.includes(candidateId)
+            && Boolean(addressSpaceId)
+            && selectedInterfaceCandidateItems.some((candidate) => candidate.candidate_id === candidateId && !candidate.address_space_id)),
+      );
+      if (allPending) {
+        try {
+          const firstResponse = await fetch('/api/ipam/prefixes/interface-candidates?page=1&page_size=100&status=to_create', { headers: authHeaders() });
+          const firstPage = await firstResponse.json().catch(() => ({}));
+          if (!firstResponse.ok || !Array.isArray(firstPage.candidates)) throw new Error(firstPage?.detail || (zh ? '无法读取待创建候选，请刷新后重试。' : 'Could not load pending candidates. Refresh and retry.'));
+          candidateIds = firstPage.candidates.map((candidate: InterfacePrefixCandidate) => candidate.candidate_id);
+          const totalPages = Math.max(1, Number(firstPage.total_pages) || 1);
+          for (let pageNumber = 2; pageNumber <= totalPages; pageNumber += 1) {
+            const response = await fetch(`/api/ipam/prefixes/interface-candidates?page=${pageNumber}&page_size=100&status=to_create`, { headers: authHeaders() });
+            const pageData = await response.json().catch(() => ({}));
+            if (!response.ok || !Array.isArray(pageData.candidates)) throw new Error(pageData?.detail || (zh ? '待创建候选已变化，请刷新后重试。' : 'Pending candidates changed. Refresh and retry.'));
+            candidateIds.push(...pageData.candidates.map((candidate: InterfacePrefixCandidate) => candidate.candidate_id));
+          }
+        } catch (error) {
+          setInterfaceGenerationError(error instanceof Error ? error.message : String(error));
+          return;
+        }
+      }
+      setInterfaceImportReviewRequest({
+        candidate_ids: candidateIds,
+        ...(Object.keys(addressSpaceOverrides).length > 0 ? { address_space_overrides: addressSpaceOverrides } : {}),
+      });
+      return;
+    }
     setInterfaceGenerationLoading(true);
     setInterfaceGenerationError('');
     try {
-      const addressSpaceOverrides = Object.fromEntries(
-        Object.entries(selectedInterfaceSpaces)
-          .filter(([candidateId, addressSpaceId]) => selectedInterfaceCandidates.has(candidateId) && Boolean(addressSpaceId)),
-      );
       const requestBody = allPending
         ? { all_pending: true }
-        : {
-          candidate_ids: Array.from(selectedInterfaceCandidates),
-          ...(Object.keys(addressSpaceOverrides).length > 0 ? { address_space_overrides: addressSpaceOverrides } : {}),
-        };
+        : confirmedRequest;
       const res = await fetch('/api/ipam/prefixes/generate-from-interfaces', {
         method: 'POST',
         headers: {
@@ -932,6 +1302,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         throw new Error(message);
       }
       pendingInterfaceGeneration.current = null;
+      setInterfaceImportReviewRequest(null);
       setInterfaceGenerationResult(
         zh
           ? `已创建 ${data.created_prefixes || 0} 个网段，并登记 ${data.created_addresses || 0} 个接口 IP`
@@ -939,6 +1310,10 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       );
       setShowGenerateAllPendingConfirm(false);
       setSelectedInterfaceCandidates(new Set());
+      setSelectedInterfaceCandidateSnapshots({});
+      setSelectedInterfaceSpaces({});
+      setBulkInterfaceSpaceId('');
+      setBulkGlobalInterfaceSpaceId('');
       setInterfaceCandidateFilter('all');
       await loadData({ silent: true });
       await loadInterfaceCandidates(1, 'all');
@@ -1002,14 +1377,25 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
           return;
         }
 
+        const automaticBinding = getAutomaticGatewayBinding(
+          gatewayBindingSourceRef.current,
+          data,
+          form.address_space_id,
+        );
+        const automaticEndpoint = automaticBinding
+          ? data.selected?.device_id === automaticBinding.deviceId
+            ? data.selected
+            : (Array.isArray(data.endpoints) ? data.endpoints : []).find((endpoint) =>
+              endpoint.device_id === automaticBinding.deviceId
+              && (endpoint.interface_id || '') === automaticBinding.interfaceId)
+          : null;
         setGatewayCandidates({
-          status: data.status,
-          selected: data.selected || null,
+          status: automaticBinding && automaticEndpoint ? 'matched' : data.status,
+          selected: automaticEndpoint || data.selected || null,
           endpoints: Array.isArray(data.endpoints) ? data.endpoints : [],
           gateway_ip: data.gateway_ip || null,
         });
-        const automaticBinding = getAutomaticGatewayBinding(gatewayBindingSourceRef.current, data);
-        if (automaticBinding) {
+        if (automaticBinding && automaticEndpoint) {
           gatewayBindingSourceRef.current = 'auto';
           setForm((current) => gatewayBindingSourceRef.current === 'manual'
             ? current
@@ -1057,7 +1443,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     user: { label: 'User Access', labelZh: '办公/用户网', color: 'bg-violet-50 text-violet-600 border-violet-500/10' },
     user_access: { label: 'User Access', labelZh: '办公/用户网', color: 'bg-violet-50 text-violet-600 border-violet-500/10' },
     network_service: { label: 'Network Service', labelZh: '网络服务', color: 'bg-cyan-50 text-cyan-600 border-cyan-500/10' },
-    unclassified: { label: 'Unclassified', labelZh: '待确认', color: 'bg-slate-50 text-slate-600 border-slate-500/10' },
+    unclassified: { label: 'Unclassified', labelZh: '用途未确定', color: 'bg-slate-50 text-slate-600 border-slate-500/10' },
     wireless: { label: 'Wireless', labelZh: '无线网', color: 'bg-sky-50 text-sky-600 border-sky-500/10' },
     voice: { label: 'Voice', labelZh: '语音网', color: 'bg-fuchsia-50 text-fuchsia-600 border-fuchsia-500/10' },
     dmz: { label: 'DMZ', labelZh: 'DMZ隔离', color: 'bg-orange-50 text-orange-600 border-orange-500/10' },
@@ -1662,7 +2048,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       { header: zh ? 'Prefix网段' : 'Prefix / CIDR', value: (prefix) => prefix.prefix },
       { header: zh ? '网段名称' : 'Name', value: (prefix) => prefix.name || '-' },
       { header: zh ? '用途' : 'Role', value: roleText },
-      { header: zh ? '所属地址空间' : 'Address space', value: (prefix) => prefixAddressSpaceLabel(prefix, zh) },
+      { header: zh ? '网络归属' : 'Network ownership', value: (prefix) => prefixAddressSpaceLabel(prefix, zh) },
       { header: zh ? '所属VLAN' : 'VLAN', value: (prefix) => prefix.vlan_id ? `VLAN ${prefix.vlan_id}` : '-' },
       { header: zh ? '网关IP' : 'Gateway IP', value: (prefix) => prefix.gateway || '-' },
       { header: zh ? '网关设备' : 'Gateway Device', value: (prefix) => prefix.gateway_device_name || '-' },
@@ -1677,15 +2063,18 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   }, [viewMode, treeData, matchFamily, search, siteFilter, statusFilter, familyFilter, classificationFilter, pageSize, zh, language]);
 
   const classificationCards = classificationSummary ? [
-    { key: 'auto', label: zh ? '自动分类' : 'Auto', value: classificationSummary.auto_count, tone: 'text-cyan-700 bg-cyan-50' },
-    { key: 'manual', label: zh ? '人工保护' : 'Manual', value: classificationSummary.manual_count, tone: 'text-violet-700 bg-violet-50' },
-    { key: 'unclassified', label: zh ? '待确认' : 'Unclassified', value: classificationSummary.unclassified_count, tone: 'text-slate-700 bg-slate-100' },
+    { key: 'unclassified', label: zh ? '用途未确定' : 'Purpose unconfirmed', value: classificationSummary.unclassified_count, tone: 'text-slate-700 bg-slate-100' },
     { key: 'mixed', label: zh ? '混合网段' : 'Mixed', value: classificationSummary.mixed_count, tone: 'text-amber-700 bg-amber-50' },
     { key: 'conflict', label: zh ? '地址冲突' : 'Address conflicts', value: classificationSummary.conflict_count, tone: 'text-rose-700 bg-rose-50' },
     { key: 'reuse', label: zh ? '跨站点复用' : 'Cross-site reuse', value: classificationSummary.reuse_count ?? 0, tone: 'text-blue-700 bg-blue-50' },
     { key: 'stale', label: zh ? '已老化' : 'Stale', value: classificationSummary.stale_count, tone: 'text-gray-600 bg-gray-100' },
   ] as const : [];
-  const activeClassificationLabel = classificationCards.find((item) => item.key === classificationFilter)?.label || '';
+  const classificationMethodCards = classificationSummary ? [
+    { key: 'auto', label: zh ? '系统维护' : 'System maintained', value: classificationSummary.auto_count, tone: 'text-cyan-700 bg-cyan-50' },
+    { key: 'manual', label: zh ? '人工锁定' : 'Manually locked', value: classificationSummary.manual_count, tone: 'text-violet-700 bg-violet-50' },
+  ] as const : [];
+  const activeClassificationLabel = [...classificationCards, ...classificationMethodCards]
+    .find((item) => item.key === classificationFilter)?.label || '';
   const handleClassificationCardClick = (classification: PrefixClassificationCategory) => {
     setClassificationFilter((current) => togglePrefixClassificationFilter(current, classification));
     setPage(1);
@@ -1727,9 +2116,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
             })()}
           </td>
           <td className="px-4 py-4 text-xs font-medium">
-            <span className={node.scope_status === 'scope_pending' || !node.address_space_id ? 'text-amber-700' : 'text-gray-600'}>
-              {prefixAddressSpaceLabel(node, zh)}
-            </span>
+            <PrefixNetworkOwnershipCell prefix={node} zh={zh} />
           </td>
           <td className="px-4 py-4">
             {node.vlan_id ? (
@@ -1763,36 +2150,15 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
           <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.total_ips}</td>
           <td className="px-4 py-4 text-xs font-semibold text-gray-600 tabular-nums">{node.utilization}%</td>
           <td className="pr-6 py-4 text-right">
-            <ActionIconGroup label={zh ? '前缀操作' : 'Prefix actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
-              {(!node.address_space_id || node.scope_status === 'scope_pending') && (
-                <ActionIconButton
-                  icon={Settings}
-                  label={zh ? '确认地址空间' : 'Resolve address space'}
-                  onClick={() => openAddressSpaceResolution(node)}
-                />
-              )}
-              {node.address_space_id && node.scope_status !== 'scope_pending' && (
-                <ActionIconButton
-                  icon={ArrowRightLeft}
-                  label={zh ? '迁移地址空间' : 'Move address space'}
-                  onClick={() => openAddressSpaceMove(node)}
-                />
-              )}
-              <ActionIconButton
-                icon={Package}
-                label={zh ? '分配范围 / 地址池' : 'Allocation ranges / pools'}
-                onClick={() => setPoolManagerPrefix(node)}
-              />
-              <ActionIconButton
-                icon={Pencil}
-                label={zh ? '编辑' : 'Edit'}
-                onClick={() => openForm(node)}
-              />
-              <ActionIconButton
-                icon={Trash2}
-                label={zh ? '删除' : 'Delete'}
-                variant="danger"
-                onClick={() => setShowDeleteConfirm(node.id)}
+            <ActionIconGroup label={zh ? '前缀操作' : 'Prefix actions'}>
+              <PrefixRowActions
+                prefix={node}
+                zh={zh}
+                onEdit={() => openForm(node)}
+                onResolveOwnership={() => openAddressSpaceResolution(node)}
+                onMoveOwnership={() => openAddressSpaceMove(node)}
+                onManagePools={() => setPoolManagerPrefix(node)}
+                onDelete={() => setShowDeleteConfirm(node.id)}
               />
             </ActionIconGroup>
           </td>
@@ -1806,8 +2172,10 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden space-y-4 px-4 py-4 sm:px-6 sm:py-5">
       <PageHero
         icon={Network}
-        title={zh ? 'Prefix前缀网段管理' : 'Prefix Management'}
-        subtitle={zh ? '按明确地址空间管理前缀层次，并关联 VRF、VLAN 与物理站点' : 'Manage prefix hierarchies within explicit address spaces with VRF, VLAN, and site associations.'}
+        title={zh ? '网段管理' : 'Prefix Management'}
+        subtitle={zh
+          ? '接口导入会同时登记网段和设备接口 IP；用途未确定时打开“管理”选择“编辑网段”，日常登记与分配也从“管理”进入。'
+          : 'Interface imports register prefixes and device interface IPs. Open “Manage” to edit a prefix or manage IP registration and allocation.'}
         className="[&>div:first-child]:flex-wrap [&>div:first-child>div:last-child]:max-w-full"
         actions={
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -1956,7 +2324,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               </p>
             </div>
           )}
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
+          <div aria-label={zh ? '用途与异常筛选' : 'Purpose and anomaly filters'} className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
             {classificationCards.map((item) => (
               <button
                 key={item.key}
@@ -1980,6 +2348,39 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               </button>
             ))}
           </div>
+          <details
+            open={classificationMethodOpen || classificationFilter === 'auto' || classificationFilter === 'manual'}
+            onToggle={(event) => setClassificationMethodOpen(event.currentTarget.open)}
+            className="mt-2 rounded-xl border border-gray-200 bg-gray-50/70 px-3 py-2"
+          >
+            <summary className="cursor-pointer list-none text-[11px] font-bold text-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500">
+              <span className="inline-flex items-center gap-1.5">
+                <ChevronRight size={13} className="transition-transform open:rotate-90" aria-hidden="true" />
+                {zh ? '用途维护方式' : 'Purpose maintenance method'}
+              </span>
+            </summary>
+            <p className="mt-2 text-[11px] leading-relaxed text-gray-500">
+              {zh
+                ? '系统维护表示尚未人工锁定，不代表用途已识别；它可以与“用途未确定”同时成立。人工锁定表示用途由人工设置并受系统维护保护。'
+                : 'System maintained means the purpose is not manually locked; it does not mean the purpose is known. It can overlap with “Purpose unconfirmed”. Manually locked means a person set the purpose and system maintenance will preserve it.'}
+            </p>
+            <div className="mt-2 grid grid-cols-2 gap-2 sm:max-w-xl">
+              {classificationMethodCards.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  aria-pressed={classificationFilter === item.key}
+                  aria-label={`${item.label}: ${item.value}. ${zh ? '点击筛选此类网段' : 'Click to filter this category'}`}
+                  title={zh ? '用途维护方式与用途是否已识别是两个维度。' : 'Purpose maintenance method and whether the purpose is known are separate dimensions.'}
+                  onClick={() => handleClassificationCardClick(item.key)}
+                  className={`w-full rounded-xl border border-black/5 px-3 py-2 text-left transition hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 focus-visible:ring-offset-2 ${item.tone} ${classificationFilter === item.key ? 'ring-2 ring-cyan-600 ring-offset-1 shadow-sm' : ''}`}
+                >
+                  <span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">{item.label}</span>
+                  <span className="block text-lg font-extrabold tabular-nums">{item.value}</span>
+                </button>
+              ))}
+            </div>
+          </details>
           {classificationFilter !== 'all' && (
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-cyan-100 bg-cyan-50/70 px-3 py-2 text-[11px] text-cyan-900" role="status" aria-live="polite">
               <span>{zh ? `当前分类筛选：${activeClassificationLabel} · ${totalPrefixes} 条网段记录` : `Classification filter: ${activeClassificationLabel} · ${totalPrefixes} prefix records`}</span>
@@ -2068,7 +2469,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   <th className="pl-6 py-4">{zh ? 'Prefix网段' : 'Prefix / CIDR'}</th>
                   <th className="px-4 py-4">{zh ? '网段名称' : 'Name'}</th>
                   <th className="px-4 py-4">{zh ? '用途' : 'Role'}</th>
-                  <th className="px-4 py-4">{zh ? '所属地址空间' : 'Address Space'}</th>
+                  <th className="px-4 py-4">{zh ? '网络归属' : 'Network ownership'}</th>
                   <th className="px-4 py-4">{zh ? '所属VLAN' : 'VLAN'}</th>
                   <th className="px-4 py-4">{zh ? '网关IP' : 'Gateway IP'}</th>
                   <th className="px-4 py-4">{zh ? '网关设备' : 'Gateway Device'}</th>
@@ -2111,7 +2512,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   <th className="px-4 py-4">{zh ? 'Prefix网段' : 'Prefix / CIDR'}</th>
                   <th className="px-4 py-4">{zh ? '网段名称' : 'Name'}</th>
                   <th className="px-4 py-4">{zh ? '用途' : 'Role'}</th>
-                  <th className="px-4 py-4">{zh ? '所属地址空间' : 'Address Space'}</th>
+                  <th className="px-4 py-4">{zh ? '网络归属' : 'Network ownership'}</th>
                   <th className="px-4 py-4">{zh ? '所属VLAN' : 'VLAN'}</th>
                   <th className="px-4 py-4">{zh ? '网关IP' : 'Gateway IP'}</th>
                   <th className="px-4 py-4">{zh ? '网关设备' : 'Gateway Device'}</th>
@@ -2192,8 +2593,8 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                                 {hasVip ? <span className="whitespace-nowrap px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-pink-50 text-pink-700 border border-pink-200">VIP</span> : null}
                                 {hasDhcp ? <span className="whitespace-nowrap px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-sky-50 text-sky-700 border border-sky-200">DHCP</span> : null}
                                 {node.manual_override ? (
-                                  <span title={zh ? '人工覆盖，自动分类不会改写' : 'Manual override protected from automatic rewrite'} className="whitespace-nowrap px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-violet-50 text-violet-700 border border-violet-200">
-                                    {zh ? '人工' : 'Manual'}
+                                  <span title={zh ? '用途由人工锁定，系统维护不会改写' : 'Purpose is manually locked and will not be changed by system maintenance'} className="whitespace-nowrap px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-violet-50 text-violet-700 border border-violet-200">
+                                    {zh ? '人工锁定' : 'Manually locked'}
                                   </span>
                                 ) : null}
                                 {node.mixed_network ? (
@@ -2215,11 +2616,9 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                             );
                           })()}
                         </td>
-                          <td className="whitespace-nowrap px-4 py-4 text-xs font-medium">
-                            <span className={node.scope_status === 'scope_pending' || !node.address_space_id ? 'text-amber-700' : 'text-gray-600'}>
-                              {prefixAddressSpaceLabel(node, zh)}
-                            </span>
-                          </td>
+                        <td className="whitespace-nowrap px-4 py-4 text-xs font-medium">
+                          <PrefixNetworkOwnershipCell prefix={node} zh={zh} />
+                        </td>
                         <td className="px-4 py-4">
                           {node.vlan_id ? (
                             <span className="whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-600 border border-indigo-500/10">
@@ -2251,39 +2650,16 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                         <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.active_ips || 0}</td>
                         <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.total_ips}</td>
                         <td className="px-4 py-4 text-xs font-semibold text-gray-600 tabular-nums">{node.utilization}%</td>
-                        <TableActionCell className="pr-6 py-4 text-right">
-                          <ActionIconGroup label={zh ? '前缀操作' : 'Prefix actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
-                            {(!node.address_space_id || node.scope_status === 'scope_pending') && (
-                              <ActionIconButton
-                                icon={Settings}
-                                label={zh ? '确认地址空间' : 'Resolve address space'}
-                                onClick={() => openAddressSpaceResolution(node)}
-                              />
-                            )}
-                            {node.address_space_id && node.scope_status !== 'scope_pending' && (
-                              <ActionIconButton
-                                icon={ArrowRightLeft}
-                                label={zh ? '迁移地址空间' : 'Move address space'}
-                                onClick={() => openAddressSpaceMove(node)}
-                              />
-                            )}
-                            <ActionIconButton
-                              icon={Package}
-                              label={zh ? '分配范围 / 地址池' : 'Allocation ranges / pools'}
-                              onClick={() => setPoolManagerPrefix(node)}
-                            />
-                            <ActionIconButton
-                              icon={Pencil}
-                              label={zh ? '编辑' : 'Edit'}
-                              onClick={() => openForm(node)}
-                            />
-                            <ActionIconButton
-                              icon={Trash2}
-                              label={zh ? '删除' : 'Delete'}
-                              variant="danger"
-                              onClick={() => setShowDeleteConfirm(node.id)}
-                            />
-                          </ActionIconGroup>
+                        <TableActionCell className="pr-6 py-4 text-right" label={zh ? '前缀操作' : 'Prefix actions'}>
+                          <PrefixRowActions
+                            prefix={node}
+                            zh={zh}
+                            onEdit={() => openForm(node)}
+                            onResolveOwnership={() => openAddressSpaceResolution(node)}
+                            onMoveOwnership={() => openAddressSpaceMove(node)}
+                            onManagePools={() => setPoolManagerPrefix(node)}
+                            onDelete={() => setShowDeleteConfirm(node.id)}
+                          />
                         </TableActionCell>
                       </tr>}
                       </React.Fragment>
@@ -2333,7 +2709,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-100 px-4 py-4 sm:px-6">
                 <div className="min-w-0">
                   <h3 className="font-bold text-gray-900">{zh ? '从接口采集生成 IPAM 网段' : 'Generate IPAM Prefixes from Interfaces'}</h3>
-                <p className="mt-1 text-xs text-gray-500">{zh ? '使用最后一次成功的 CMDB 接口快照。接口快照缺少 VRF 时必须逐项选择地址空间；不会默认归到全局。' : 'Uses the last successful CMDB interface snapshot. Choose a target space for each candidate without VRF context; it is never defaulted to global.'}</p>
+                <p className="mt-1 text-xs text-gray-500">{zh ? '使用最后一次成功的 CMDB 接口快照。可先勾选再批量选择地址空间；确认无 VRF 就是确认归入 Global，必须选定具体全局空间。未知范围不会自动归到全局，已有 VRF 的候选只可使用对应 VRF 地址空间。' : 'Uses the last successful CMDB interface snapshot. Select candidates first, then apply one address space in bulk. Confirming there is no VRF means assigning the selected Global space. Unknown scope is never defaulted to Global, and a known VRF can use only its matching VRF space.'}</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
                   {interfaceCandidates.length > 0 && <>
@@ -2374,6 +2750,11 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                     <button type="button" onClick={() => loadInterfaceCandidates(interfaceCandidatePage.page, interfaceCandidateFilter)} disabled={interfaceCandidatesLoading} className="shrink-0 rounded-lg bg-white px-3 py-1.5 text-rose-700 shadow-sm hover:bg-rose-100 disabled:opacity-50">
                       {zh ? '重试' : 'Retry'}
                     </button>
+                  </div>
+                )}
+                {(interfaceGenerationScopeError || selectedInterfaceMissingSpaceMessage) && (
+                  <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800">
+                    {interfaceGenerationScopeError || selectedInterfaceMissingSpaceMessage}
                   </div>
                 )}
                 {addressSpacesError && (
@@ -2420,6 +2801,88 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                     </div>
                   ))}
                   </div>
+                {selectedInterfaceCandidates.size > 0 && (
+                  <section aria-label={zh ? '批量确认接口候选地址空间' : 'Bulk interface candidate address-space assignment'} className="space-y-3 rounded-2xl border border-cyan-100 bg-cyan-50/50 p-3.5">
+                    <div>
+                      <div className="text-xs font-bold text-gray-800">
+                        {zh ? `已选 ${selectedInterfaceCandidates.size} 个候选；其中 ${selectedInterfacePendingScopeCandidates.length} 个待确认地址空间` : `${selectedInterfaceCandidates.size} candidates selected; ${selectedInterfacePendingScopeCandidates.length} need address-space confirmation`}
+                      </div>
+                      <p className="mt-1 text-[10px] leading-relaxed text-gray-600">
+                        {zh ? '批量选择只修改本次生成选项，不写入设备上下文。已知 VRF 的候选只接受相同 VRF 的空间。' : 'Bulk selection changes only this generation request and does not write device context mappings. Candidates with a known VRF accept only a space for that VRF.'}
+                      </p>
+                    </div>
+                    {selectedInterfacePendingScopeCandidates.length > 0 && (
+                      <div className="grid gap-2 sm:grid-cols-[minmax(180px,1fr)_auto] sm:items-end">
+                        <label className="block text-[10px] font-semibold text-gray-700">
+                          <span>{zh ? '统一选择待确认候选的 VRF 地址空间' : 'Choose one VRF space for the selected pending candidates'}</span>
+                          <select
+                            aria-label={zh ? '批量目标 VRF 地址空间' : 'Bulk target VRF address space'}
+                            value={bulkInterfaceSpaceId}
+                            onChange={(event) => setBulkInterfaceSpaceId(event.target.value)}
+                            disabled={addressSpacesLoading || Boolean(addressSpacesError) || interfaceCandidatesLoading || interfaceGenerationLoading || Boolean(interfaceGenerationError)}
+                            className="mt-1 block w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-normal text-gray-700 disabled:opacity-50"
+                          >
+                            <option value="">{zh ? '请选择 VRF 地址空间' : 'Select a VRF address space'}</option>
+                            {selectedInterfaceCommonVrfSpaces.map((space) => (
+                              <option key={space.id} value={space.id}>{addressSpaceOptionLabel(space, zh)}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={applyBulkInterfaceSpace}
+                          disabled={!bulkInterfaceSpaceId || !selectedInterfaceCommonVrfSpaces.some((space) => space.id === bulkInterfaceSpaceId) || addressSpacesLoading || Boolean(addressSpacesError) || interfaceCandidatesLoading || interfaceGenerationLoading || Boolean(interfaceGenerationError)}
+                          className="rounded-lg border border-cyan-200 bg-white px-3 py-2 text-[10px] font-bold text-cyan-800 hover:bg-cyan-100 disabled:opacity-50"
+                        >
+                          {zh ? `应用到已选待确认项 (${selectedInterfacePendingScopeCandidates.length})` : `Apply to selected pending items (${selectedInterfacePendingScopeCandidates.length})`}
+                        </button>
+                      </div>
+                    )}
+                    {selectedInterfaceUnscopedCandidates.length > 0 && (
+                      <div className="grid gap-2 rounded-xl border border-amber-200 bg-white/80 p-3 sm:grid-cols-[minmax(180px,1fr)_auto] sm:items-end">
+                        {selectedInterfaceCommonGlobalSpaces.length === 1 ? (
+                          <div className="text-[10px] font-semibold text-amber-900">
+                            <span>{zh ? `确认以下 ${selectedInterfaceUnscopedCandidates.length} 个无 VRF 候选使用唯一可用的 Global 空间：` : `Confirm these ${selectedInterfaceUnscopedCandidates.length} candidates have no VRF and use the only available Global space:`}</span>
+                            <div className="mt-1 rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-normal text-gray-700">{addressSpaceOptionLabel(selectedInterfaceCommonGlobalSpaces[0], zh)}</div>
+                          </div>
+                        ) : selectedInterfaceCommonGlobalSpaces.length > 1 ? (
+                          <label className="block text-[10px] font-semibold text-amber-900">
+                            <span>{zh ? `确认以下 ${selectedInterfaceUnscopedCandidates.length} 个无 VRF 候选使用 Global：选择目标全局地址空间` : `Confirm these ${selectedInterfaceUnscopedCandidates.length} candidates have no VRF: choose the target Global space`}</span>
+                            <select
+                              aria-label={zh ? '无 VRF 候选的目标 Global 地址空间' : 'Target Global address space for candidates without VRF'}
+                              value={bulkGlobalInterfaceSpaceId}
+                              onChange={(event) => setBulkGlobalInterfaceSpaceId(event.target.value)}
+                              disabled={addressSpacesLoading || Boolean(addressSpacesError) || interfaceCandidatesLoading || interfaceGenerationLoading || Boolean(interfaceGenerationError)}
+                              className="mt-1 block w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-normal text-gray-700 disabled:opacity-50"
+                            >
+                              <option value="">{zh ? '请选择具体 Global 地址空间' : 'Select a specific Global address space'}</option>
+                              {selectedInterfaceCommonGlobalSpaces.map((space) => (
+                                <option key={space.id} value={space.id}>{addressSpaceOptionLabel(space, zh)}</option>
+                              ))}
+                            </select>
+                          </label>
+                        ) : (
+                          <div className="text-[10px] font-semibold text-amber-900">
+                            {activeGlobalInterfaceSpaces.length === 0
+                              ? (zh ? '当前没有可用的 Global 地址空间。请先使用上方“创建全局空间”入口创建并刷新列表，再确认无 VRF。' : 'No active Global space is available. Create one with the “Create global space” control above and refresh before confirming no VRF.')
+                              : (zh ? '没有一个 Global 同时属于全部已选候选的安全租户。请按租户分批选择，或逐项指定地址空间。' : 'No Global space belongs to every selected candidate tenant. Select candidates by tenant or assign spaces individually.')}
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={confirmUnscopedCandidatesUseGlobal}
+                          disabled={(selectedInterfaceCommonGlobalSpaces.length === 0 || (selectedInterfaceCommonGlobalSpaces.length > 1 && !selectedInterfaceCommonGlobalSpaces.some((space) => space.id === bulkGlobalInterfaceSpaceId))) || addressSpacesLoading || Boolean(addressSpacesError) || interfaceCandidatesLoading || interfaceGenerationLoading || Boolean(interfaceGenerationError)}
+                          className="rounded-lg bg-amber-600 px-3 py-2 text-[10px] font-bold text-white hover:bg-amber-700 disabled:opacity-50"
+                        >
+                          {zh ? `确认无 VRF，使用 Global 并应用 (${selectedInterfaceUnscopedCandidates.length})` : `Confirm no VRF, use Global and apply (${selectedInterfaceUnscopedCandidates.length})`}
+                        </button>
+                        <p className="text-[10px] leading-relaxed text-amber-800 sm:col-span-2">
+                          {zh ? `必须明确确认无 VRF 并使用 Global${selectedInterfaceCommonGlobalSpaces.length > 1 ? '；存在多个可用 Global 时需选择目标。' : '。'}已知 VRF 的候选不会被此操作覆盖。` : `Explicitly confirm no VRF and use Global${selectedInterfaceCommonGlobalSpaces.length > 1 ? '; choose the target from the available Global spaces.' : '.'} Candidates with a known VRF are excluded from this action.`}
+                        </p>
+                      </div>
+                    )}
+                  </section>
+                )}
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap gap-1.5" role="tablist" aria-label={zh ? '候选状态筛选' : 'Candidate status filter'}>
                     {([
@@ -2449,12 +2912,66 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                       ? (zh ? '正在更新候选项…' : 'Updating candidates…')
                       : (zh ? `当前筛选 ${interfaceCandidatePage.filtered_count.toLocaleString()} 项` : `${interfaceCandidatePage.filtered_count.toLocaleString()} filtered`)}</span>
                     <button type="button" onClick={selectVisibleInterfaceCandidates} disabled={interfaceCandidates.length === 0 || interfaceCandidatesLoading || interfaceGenerationLoading} className="rounded-lg border border-gray-200 px-2.5 py-1.5 font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50">
-                      {interfaceCandidates.filter(interfaceCandidateHasExplicitSpace).length > 0 && interfaceCandidates
-                        .filter(interfaceCandidateHasExplicitSpace)
+                      {interfaceCandidates.length > 0 && interfaceCandidates
                         .every((candidate) => selectedInterfaceCandidates.has(candidate.candidate_id))
                         ? (zh ? '取消本页选择' : 'Clear page selection')
                         : (zh ? '选择本页' : 'Select page')}
                     </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <label className="relative min-w-0 flex-1">
+                    <Search size={14} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input
+                      type="search"
+                      aria-label={zh ? '搜索接口候选网段' : 'Search interface prefix candidates'}
+                      value={interfaceCandidateSearchInput}
+                      maxLength={120}
+                      placeholder={zh ? '按网段、IP、设备或接口搜索' : 'Search by prefix, IP, device, or interface'}
+                      onChange={(event) => setInterfaceCandidateSearchInput(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          const normalizedSearch = interfaceCandidateSearchInput.trim();
+                          setInterfaceCandidateSearch(normalizedSearch);
+                          setInterfaceCandidatePage((current) => ({ ...current, page: 1 }));
+                          void loadInterfaceCandidates(1, interfaceCandidateFilter, normalizedSearch);
+                        }
+                      }}
+                      disabled={interfaceGenerationLoading}
+                      className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-xs outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100 disabled:bg-gray-50"
+                    />
+                  </label>
+                  <div className="flex shrink-0 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const normalizedSearch = interfaceCandidateSearchInput.trim();
+                        setInterfaceCandidateSearch(normalizedSearch);
+                        setInterfaceCandidatePage((current) => ({ ...current, page: 1 }));
+                        void loadInterfaceCandidates(1, interfaceCandidateFilter, normalizedSearch);
+                      }}
+                      disabled={interfaceCandidatesLoading || interfaceGenerationLoading}
+                      className="rounded-lg bg-cyan-600 px-3 py-2 text-[11px] font-bold text-white hover:bg-cyan-700 disabled:opacity-50"
+                    >
+                      {zh ? '搜索' : 'Search'}
+                    </button>
+                    {(interfaceCandidateSearch || interfaceCandidateSearchInput) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setInterfaceCandidateSearchInput('');
+                          setInterfaceCandidateSearch('');
+                          setInterfaceCandidatePage((current) => ({ ...current, page: 1 }));
+                          void loadInterfaceCandidates(1, interfaceCandidateFilter, '');
+                        }}
+                        disabled={interfaceCandidatesLoading || interfaceGenerationLoading}
+                        className="rounded-lg border border-gray-200 px-3 py-2 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                      >
+                        {zh ? '清除' : 'Clear'}
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -2485,8 +3002,8 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                             aria-label={`${zh ? '选择网段' : 'Select prefix'} ${candidate.prefix}`}
                             type="checkbox"
                             checked={selectedInterfaceCandidates.has(candidate.candidate_id)}
-                            onChange={() => toggleInterfaceCandidate(candidate.candidate_id)}
-                            disabled={interfaceCandidatesLoading || interfaceGenerationLoading || Boolean(interfaceGenerationError) || !interfaceCandidateHasExplicitSpace(candidate)}
+                            onChange={() => toggleInterfaceCandidate(candidate)}
+                            disabled={interfaceCandidatesLoading || interfaceGenerationLoading || Boolean(interfaceGenerationError)}
                             className="rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
                           />
                           <div className="min-w-0">
@@ -2504,10 +3021,13 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                             <select
                               aria-label={`${zh ? '为' : 'Choose address space for'} ${candidate.prefix}`}
                               value={selectedInterfaceSpaces[candidate.candidate_id] || candidate.address_space_id || ''}
-                              onChange={(event) => setSelectedInterfaceSpaces((current) => ({
-                                ...current, [candidate.candidate_id]: event.target.value,
-                              }))}
-                              disabled={addressSpacesLoading || interfaceCandidatesLoading || interfaceGenerationLoading}
+                              onChange={(event) => {
+                                setSelectedInterfaceSpaces((current) => ({
+                                  ...current, [candidate.candidate_id]: event.target.value,
+                                }));
+                                setInterfaceGenerationScopeError('');
+                              }}
+                              disabled={addressSpacesLoading || Boolean(addressSpacesError) || interfaceCandidatesLoading || interfaceGenerationLoading}
                               className="min-w-0 rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-[10px] text-gray-700"
                             >
                               <option value="">{zh ? '请选择地址空间' : 'Select address space'}</option>
@@ -2523,9 +3043,15 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                                 : (zh ? '地址空间待配置' : 'Address space pending');
                             })()}
                           </span>}
-                          <span className={`inline-flex items-center gap-1 text-[10px] font-bold ${candidate.status === 'existing' ? 'text-emerald-600' : candidate.status === 'scope_pending' ? 'text-amber-600' : 'text-cyan-600'}`}>
-                            {candidate.status === 'existing' ? <Check size={13} /> : candidate.status === 'scope_pending' ? <AlertTriangle size={13} /> : <Plus size={13} />}
-                            {candidate.status === 'existing' ? (zh ? '已存在' : 'Existing') : candidate.status === 'scope_pending' ? (zh ? '归属待确认' : 'Scope review') : (zh ? '待创建' : 'To create')}
+                          <span className={`inline-flex items-center gap-1 text-[10px] font-bold ${candidate.status === 'existing' ? 'text-emerald-600' : candidate.status === 'scope_pending' && !interfaceCandidateHasResolvedSpace(candidate) ? 'text-amber-600' : 'text-cyan-600'}`}>
+                            {candidate.status === 'existing' || (candidate.status === 'scope_pending' && interfaceCandidateHasResolvedSpace(candidate))
+                              ? <Check size={13} />
+                              : candidate.status === 'scope_pending' ? <AlertTriangle size={13} /> : <Plus size={13} />}
+                            {candidate.status === 'existing'
+                              ? (zh ? '已存在' : 'Existing')
+                              : candidate.status === 'scope_pending' && interfaceCandidateHasResolvedSpace(candidate)
+                                ? (zh ? '本次已确认 · 待生成' : 'Confirmed for this run · Ready to generate')
+                                : candidate.status === 'scope_pending' ? (zh ? '归属待确认' : 'Scope review') : (zh ? '待创建' : 'To create')}
                           </span>
                         </div>
                       ))}
@@ -2573,7 +3099,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                     {zh ? `生成全部待创建项 (${interfaceCandidateSummary.to_create_count.toLocaleString()})` : `Generate all pending (${interfaceCandidateSummary.to_create_count.toLocaleString()})`}
                   </button>
                   <button type="button" onClick={() => setShowInterfaceGeneration(false)} className="rounded-xl px-3 py-2 text-xs font-semibold text-gray-500 hover:bg-gray-100">{zh ? '关闭' : 'Close'}</button>
-                  <button type="button" onClick={() => generateFromInterfaces(false)} disabled={interfaceGenerationLoading || interfaceCandidatesLoading || Boolean(interfaceGenerationError) || selectedInterfaceCandidates.size === 0} className="rounded-xl bg-cyan-500 px-4 py-2 text-xs font-bold text-white hover:bg-cyan-600 disabled:opacity-50">
+                  <button type="button" onClick={() => generateFromInterfaces(false)} disabled={interfaceGenerationLoading || interfaceCandidatesLoading || Boolean(interfaceGenerationError) || selectedInterfaceCandidates.size === 0 || selectedInterfaceHasMissingSpace} className="rounded-xl bg-cyan-500 px-4 py-2 text-xs font-bold text-white hover:bg-cyan-600 disabled:opacity-50">
                     {interfaceGenerationLoading ? (zh ? '处理中…' : 'Processing…') : (zh ? `生成所选 (${selectedInterfaceCandidates.size})` : `Generate selected (${selectedInterfaceCandidates.size})`)}
                   </button>
                 </div>
@@ -2611,6 +3137,21 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
           </div>
         )}
       </AnimatePresence>
+
+      {interfaceImportReviewRequest && <InterfaceImportReview
+        request={interfaceImportReviewRequest}
+        spaceLabels={Object.fromEntries(addressSpaces.map((space) => [
+          space.id,
+          space.kind === 'global'
+            ? (zh ? '全局（无 VRF）' : 'Global (no VRF)')
+            : `${zh ? 'VRF' : 'VRF'}: ${space.name || space.vrf_id || space.id}`,
+        ]))}
+        zh={zh}
+        submitting={interfaceGenerationLoading}
+        generationError={interfaceGenerationError}
+        onBack={() => setInterfaceImportReviewRequest(null)}
+        onConfirm={(request) => void generateFromInterfaces(false, request)}
+      />}
 
       {/* Add / Edit Modal */}
       <AnimatePresence>
@@ -2958,16 +3499,21 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                       value={form.gateway_device_id}
                       onChange={(e) => {
                         gatewayBindingSourceRef.current = 'manual';
+                        const matchingEndpoints = e.target.value
+                          ? gatewayCandidates?.endpoints.filter((endpoint) => endpoint.device_id === e.target.value) || []
+                          : [];
                         setForm((current) => ({
                           ...current,
                           gateway_device_id: e.target.value,
-                          gateway_interface_id: '',
+                          gateway_interface_id: matchingEndpoints.length === 1 ? matchingEndpoints[0].interface_id || '' : '',
                         }));
                       }}
                       className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     >
                       <option value="">{zh ? '未绑定' : 'None'}</option>
-                      {form.gateway_device_id && !devices.some((device: any) => String(device.id) === form.gateway_device_id) && (
+                      {form.gateway_device_id
+                        && !devices.some((device: any) => String(device.id) === form.gateway_device_id)
+                        && !gatewayCandidateDevices.some((endpoint) => endpoint.device_id === form.gateway_device_id) && (
                         <option value={form.gateway_device_id}>
                           {gatewayCandidates?.selected?.device_id === form.gateway_device_id
                             ? gatewayCandidates.selected.device_name || form.gateway_device_id
@@ -2977,6 +3523,13 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                       {devices.map((d: any) => (
                         <option key={d.id} value={d.id}>{d.hostname} ({d.ip_address})</option>
                       ))}
+                      {gatewayCandidateDevices
+                        .filter((endpoint) => !devices.some((device: any) => String(device.id) === endpoint.device_id))
+                        .map((endpoint) => (
+                          <option key={endpoint.device_id} value={endpoint.device_id || ''}>
+                            {gatewayCandidateEndpointLabel(endpoint, zh)}
+                          </option>
+                        ))}
                     </select>
                     {(gatewayCandidatesLoading || gatewayCandidatesError || gatewayCandidates) && (
                       <div
@@ -2993,25 +3546,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                         <p>
                           {gatewayCandidatesError || (gatewayCandidatesLoading
                             ? (zh ? '正在读取最新成功接口快照中的网关候选…' : 'Checking gateway candidates from the latest successful interface snapshot…')
-                            : gatewayCandidates?.status === 'needs_site'
-                              ? (zh ? '请先选择物理站点，再匹配网关候选。' : 'Choose a physical site to match gateway candidates.')
-                              : gatewayCandidates?.status === 'scope_pending'
-                                ? getGatewayScopePendingMessage(gatewayBindingSourceRef.current, zh)
-                              : gatewayCandidates?.status === 'matched'
-                                ? gatewayBindingSourceRef.current === 'manual'
-                                  ? (zh ? `发现唯一候选 ${gatewayCandidates.selected ? gatewayCandidateEndpointLabel(gatewayCandidates.selected, zh) : ''}；已保留当前人工设备选择。` : `Unique candidate found${gatewayCandidates.selected ? `: ${gatewayCandidateEndpointLabel(gatewayCandidates.selected, zh)}` : ''}; the manual device selection is preserved.`)
-                                  : (zh ? `已按唯一证据自动关联：${gatewayCandidates.selected ? gatewayCandidateEndpointLabel(gatewayCandidates.selected, zh) : '设备'}` : `Automatically bound from unique evidence: ${gatewayCandidates.selected ? gatewayCandidateEndpointLabel(gatewayCandidates.selected, zh) : 'device'}`)
-                                : gatewayCandidates?.status === 'no_unique_gateway' || gatewayCandidates?.status === 'ambiguous'
-                                  ? gatewayBindingSourceRef.current === 'manual'
-                                    ? gatewayCandidates?.status === 'ambiguous'
-                                      ? (zh ? '多个接口与网关 IP 完全匹配，无法唯一选择；已保留人工设备选择。' : 'Multiple interfaces exactly match this gateway IP; the manual device selection is preserved.')
-                                      : (zh ? '发现多个接口端点，没有唯一网关证据；已保留人工设备选择。' : 'Multiple interface endpoints have no unique gateway evidence; the manual device selection is preserved.')
-                                    : gatewayCandidates?.status === 'ambiguous'
-                                      ? (zh ? '多个接口与网关 IP 完全匹配，无法唯一选择；当前未自动关联。' : 'Multiple interfaces exactly match this gateway IP; no automatic binding was selected.')
-                                      : (zh ? '发现接口端点，但没有唯一证据确认网关；当前未绑定网关。' : 'Interface endpoints were found, but there is no unique gateway evidence; no gateway is bound.')
-                                  : gatewayBindingSourceRef.current === 'manual'
-                                    ? (zh ? '没有匹配的网关接口候选；已保留人工设备选择。' : 'No matching gateway-interface candidate was found; the manual device selection is preserved.')
-                                    : (zh ? '未找到匹配的网关接口候选，当前未绑定网关。' : 'No matching gateway-interface candidate was found; no gateway is bound.'))}
+                            : gatewayCandidateStatusMessage(gatewayCandidates as GatewayCandidateResponse, gatewayBindingSourceRef.current, zh))}
                         </p>
                         {gatewayCandidates && gatewayCandidates.endpoints.length > 0 && (
                           <ul className="mt-1 list-disc space-y-0.5 pl-4 font-medium">

@@ -600,7 +600,7 @@ describe('CMDB observed-only row actions', () => {
     expect(within(observedRow as HTMLElement).queryByRole('button', { name: 'Delete' })).toBeNull();
   });
 
-  it('retains the terminal interface collection summary after polling stops and a later start fails', async () => {
+  it.each(['automatic', 'manual'] as const)('dismisses the terminal notice (%s) while retaining collection details after a later start fails', async (dismissal) => {
     const terminalJob = {
       job_id: 'interface-job-final',
       status: 'succeeded',
@@ -647,8 +647,21 @@ describe('CMDB observed-only row actions', () => {
     expect(screen.getByText('Interface collection finished: 2 succeeded, 0 failed.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'View details' })).toBeTruthy();
 
+    if (dismissal === 'manual') {
+      fireEvent.click(screen.getByRole('button', { name: 'Dismiss notification' }));
+      expect(screen.queryByText('Interface collection finished: 2 succeeded, 0 failed.')).toBeNull();
+    } else {
+      await waitFor(() => {
+        expect(screen.queryByText('Interface collection finished: 2 succeeded, 0 failed.')).toBeNull();
+      }, { timeout: 10000 });
+    }
+    expect(screen.getByText('Completed 2 / 2')).toBeTruthy();
+
     fireEvent.click(screen.getByRole('button', { name: 'Collect Interfaces' }));
     expect(await screen.findByText('Permission denied')).toBeTruthy();
     expect(screen.getByText('Completed 2 / 2')).toBeTruthy();
-  });
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss collection result' }));
+    expect(screen.queryByText('Completed 2 / 2')).toBeNull();
+    expect(screen.getByText('Permission denied')).toBeTruthy();
+  }, 15000);
 });

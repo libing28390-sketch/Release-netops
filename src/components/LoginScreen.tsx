@@ -183,7 +183,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
           transition={{ duration: 0.5, delay: 0.1, ease: 'easeOut' }}
           className="w-full max-w-[390px]"
         >
-          <div className="rounded-3xl bg-white/80 backdrop-blur-xl border border-gray-200/70 p-7 sm:p-8 shadow-[0_20px_50px_rgba(0,0,0,0.04)] transition-all">
+          <div data-login-particle-obstacle className="rounded-3xl bg-white/80 backdrop-blur-xl border border-gray-200/70 p-7 sm:p-8 shadow-[0_20px_50px_rgba(0,0,0,0.04)] transition-all">
             <div className="mb-5">
               <h2 className="text-lg font-bold tracking-tight text-gray-950">
                 {mfaRequired ? '双因子二次验证 (MFA)' : t('welcomeBack')}
