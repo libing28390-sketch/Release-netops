@@ -1,0 +1,33 @@
+# nexora-action-code: get_ospf_neighbors
+Value Filldown PROCESS_ID (\d+)
+Value Required NEIGHBOR_ID (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})
+Value PRIORITY (\d+)
+Value STATE (\S+)
+Value BFD_STATE (Up|Down|AdminDown|Init|None|-|\S+)
+Value DEAD_TIME (\S+)
+Value ADDRESS (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})
+Value INTERFACE (.+?)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^OSPF\s+[Pp]rocess\s+${PROCESS_ID}
+  ^\s*Neighbor\s+ID\s+Pri\s+State\s+BFD\s+State\s+Dead\s+Time\s+Address\s+Interface -> TableBfd
+  ^\s*Neighbor\s+ID\s+Pri\s+State\s+Dead\s+Time\s+Address\s+Interface -> TableNoBfd
+  # Direct data row with BFD State
+  ^\s*${NEIGHBOR_ID}\s+${PRIORITY}\s+${STATE}\s+${BFD_STATE}\s+${DEAD_TIME}\s+${ADDRESS}\s+${INTERFACE}\s*$$ -> Record
+  # Direct data row without BFD State
+  ^\s*${NEIGHBOR_ID}\s+${PRIORITY}\s+${STATE}\s+${DEAD_TIME}\s+${ADDRESS}\s+${INTERFACE}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next
+
+TableBfd
+  ^-+ -> Next
+  ^\s*${NEIGHBOR_ID}\s+${PRIORITY}\s+${STATE}\s+${BFD_STATE}\s+${DEAD_TIME}\s+${ADDRESS}\s+${INTERFACE}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next
+
+TableNoBfd
+  ^-+ -> Next
+  ^\s*${NEIGHBOR_ID}\s+${PRIORITY}\s+${STATE}\s+${DEAD_TIME}\s+${ADDRESS}\s+${INTERFACE}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next

@@ -1,0 +1,6 @@
+Value SYNCHRONIZED (synchronized|unsynchronized)
+Value STRATUM (\d+)
+Value REFERENCE (.*)
+
+Start
+  ^Clock is\s+${SYNCHRONIZED},\s+stratum\s+${STRATUM},\s+${REFERENCE}\s*$$ -> Record

@@ -1,0 +1,38 @@
+# nexora-action-code: get_lldp_neighbors
+Value Required NEIGHBOR (\S+)
+Value LOCAL_INTERFACE (\S+)
+Value NEIGHBOR_INTERFACE (\S+(?:\s+[0-9\/\.\:\-_]+)?)
+Value CAPABILITIES ([A-Za-z0-9](?:,\s*[A-Za-z0-9])*)
+Value HOLD_TIME (\d+\S*(?:\s+\d+\S*)?)
+
+Start
+  ^Capability\s+codes: -> Header
+  ^System\s+Name\s+Local\s+Intf -> TableNew
+  ^Device\s+ID\s+Local\s+Intf -> TableOld
+  ^.*#\s*show\s+ -> Next
+  ^\s*$$
+  ^. -> Next
+
+Header
+  ^System\s+Name\s+Local\s+Intf -> TableNew
+  ^Device\s+ID\s+Local\s+Intf -> TableOld
+  ^\s*$$
+  ^. -> Next
+
+TableNew
+  ^\s*${NEIGHBOR}\s+${LOCAL_INTERFACE}\s+${NEIGHBOR_INTERFACE}\s+${CAPABILITIES}\s+${HOLD_TIME}\s*$$ -> CheckWrap
+  ^\s*[A-Za-z0-9\-_]+\s*$$ -> Next
+  ^\s*$$
+  ^. -> Next
+
+CheckWrap
+  ^\s*[A-Za-z0-9\-_]+\s*$$ -> Record TableNew
+  ^\s*${NEIGHBOR}\s+${LOCAL_INTERFACE}\s+${NEIGHBOR_INTERFACE}\s+${CAPABILITIES}\s+${HOLD_TIME}\s*$$ -> Continue.Record
+  ^\s*${NEIGHBOR}\s+${LOCAL_INTERFACE}\s+${NEIGHBOR_INTERFACE}\s+${CAPABILITIES}\s+${HOLD_TIME}\s*$$ -> CheckWrap
+  ^\s*$$ -> Record TableNew
+  ^. -> Record TableNew
+
+TableOld
+  ^\s*${NEIGHBOR}\s+${LOCAL_INTERFACE}\s+${HOLD_TIME}\s+${CAPABILITIES}\s+${NEIGHBOR_INTERFACE}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next

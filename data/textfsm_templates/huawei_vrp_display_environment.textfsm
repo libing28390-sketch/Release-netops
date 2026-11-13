@@ -1,0 +1,12 @@
+Value SLOT_ID (\d+)
+Value CURRENT_TEMPERATURE (\d+)
+Value LOW_LIMIT (\d+)
+Value HIGH_LIMIT (\d+)
+
+Start
+  ^\s*${SLOT_ID}\s+${CURRENT_TEMPERATURE}\s+${LOW_LIMIT}\s+${HIGH_LIMIT}\s*$$ -> Record
+  ^Environment information:
+  ^Temperature information:
+  ^SlotID\s+CurrentTemperature
+  ^\s*\(deg c\s*\)\s+\(deg c\s*\)\s+\(deg c\s*\)
+  ^-+

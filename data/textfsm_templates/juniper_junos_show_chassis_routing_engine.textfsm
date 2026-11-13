@@ -1,0 +1,34 @@
+Value SLOT (\d+)
+Value CURRENT_STATE (\S+)
+Value DRAM_MB (\d+)
+Value MEMORY_UTIL_PCT (\d+)
+Value CPU_USER (\d+)
+Value CPU_BACKGROUND (\d+)
+Value CPU_KERNEL (\d+)
+Value CPU_INTERRUPT (\d+)
+Value CPU_IDLE (\d+)
+Value CPU_1MIN (\d+\.\d+)
+Value CPU_5MIN (\d+\.\d+)
+Value CPU_15MIN (\d+\.\d+)
+Value UPTIME (.+?)
+
+Start
+  # Slot 0:
+  ^\s*Slot\s+${SLOT}: -> Continue.Record
+  # Current state   Master
+  ^\s*Current\s+state\s+${CURRENT_STATE}
+  # DRAM   1024 MB
+  ^\s*DRAM\s+${DRAM_MB}\s+MB
+  # Memory utilization   74 percent
+  ^\s*Memory\s+utilization\s+${MEMORY_UTIL_PCT}\s+percent
+  # CPU utilization:
+  #   User       2 percent
+  ^\s*User\s+${CPU_USER}\s+percent
+  ^\s*Background\s+${CPU_BACKGROUND}\s+percent
+  ^\s*Kernel\s+${CPU_KERNEL}\s+percent
+  ^\s*Interrupt\s+${CPU_INTERRUPT}\s+percent
+  ^\s*Idle\s+${CPU_IDLE}\s+percent
+  # Load averages: 0.04  0.09  0.12
+  ^\s*Load\s+averages:\s+${CPU_1MIN}\s+${CPU_5MIN}\s+${CPU_15MIN}
+  # Uptime  15 days, 1:23
+  ^\s*Uptime\s+${UPTIME}$$

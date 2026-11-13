@@ -1,0 +1,60 @@
+Value Filldown INTERFACE (\S+)
+Value Required TRANSCEIVER_TYPE (\S(?:.*\S)?)
+Value CONNECTOR_TYPE (\S(?:.*\S)?)
+Value WAVELENGTH (\S(?:.*\S)?)
+Value TRANSFER_DISTANCE (\S(?:.*\S)?)
+Value DIGITAL_DIAGNOSTIC_MONITORING (\S(?:.*\S)?)
+Value VENDOR_NAME (\S(?:.*\S)?)
+Value VENDOR_PART_NUMBER (\S(?:.*\S)?)
+Value ORDERING_NAME (.*)
+Value MANU_SERIAL_NUMBER (\S(?:.*\S)?)
+Value MANUFACTURING_DATE (\S(?:.*\S)?)
+Value ALARM (RX\s+power\s+low)
+Value TEMPERATURE (\S(?:.*\S)?)
+Value VOLTAGE (\S(?:.*\S)?)
+Value BIAS_CURRENT (\S(?:.*\S)?)
+Value BIAS_HIGH_THRESHOLD (\S(?:.*\S)?)
+Value BIAS_LOW_THRESHOLD (\S(?:.*\S)?)
+Value CURRENT_RX_POWER (\S(?:.*\S)?)
+Value DEFAULT_RX_POWER_HIGH_THRESHOLD (\S(?:.*\S)?)
+Value DEFAULT_RX_POWER_LOW_THRESHOLD (\S(?:.*\S)?)
+Value CURRENT_TX_POWER (\S(?:.*\S)?)
+Value DEFAULT_TX_POWER_HIGH_THRESHOLD (\S(?:.*\S)?)
+Value DEFAULT_TX_POWER_LOW_THRESHOLD (\S(?:.*\S)?)
+Value USER_SET_RX_POWER_HIGH_THRESHOLD (\S(?:.*\S)?)
+Value USER_SET_RX_POWER_LOW_THRESHOLD (\S(?:.*\S)?)
+Value USER_SET_TX_POWER_HIGH_THRESHOLD (\S(?:.*\S)?)
+Value USER_SET_TX_POWER_LOW_THRESHOLD (\S(?:.*\S)?)
+
+Start
+  ^${INTERFACE}\s+transceiver\s+information:\s*$$
+  ^\s*Transceiver\s+Type\s*:\s*${TRANSCEIVER_TYPE}\s*$$
+  ^\s*Connector\s+Type\s*:\s*${CONNECTOR_TYPE}\s*$$
+  ^\s*Wavelength\(nm\)\s*:\s*${WAVELENGTH}\s*$$
+  ^\s*Transfer\s+Distance\(m\)\s*:\s*${TRANSFER_DISTANCE}\s*$$
+  ^\s*Digital\s+Diagnostic\s+Monitoring\s*:\s*${DIGITAL_DIAGNOSTIC_MONITORING}\s*$$
+  ^\s*Vendor\s+Name\s*:\s*${VENDOR_NAME}\s*$$
+  ^\s*Vendor\s+Part\s+Number\s*:\s*${VENDOR_PART_NUMBER}\s*$$
+  ^\s*Ordering\s+Name\s*:\s*${ORDERING_NAME}\s*$$
+  ^\s*Manu\.\s+Serial\s+Number\s*:\s*${MANU_SERIAL_NUMBER}\s*$$
+  ^\s*Manufacturing\s+Date\s*:\s*${MANUFACTURING_DATE}\s*$$
+  ^\s*${ALARM}\s*$$
+  ^\s*Temperature\(Celsius\)\s*:\s*${TEMPERATURE}\s*$$
+  ^\s*Voltage\(V\)\s*:\s*${VOLTAGE}\s*$$
+  ^\s*Bias\s+Current\(mA\)\s*:\s*${BIAS_CURRENT}\s*$$
+  ^\s*Bias\s+High\s+Threshold\(mA\)\s*:\s*${BIAS_HIGH_THRESHOLD}\s*$$
+  ^\s*Bias\s+Low\s+Threshold\(mA\)\s*:\s*${BIAS_LOW_THRESHOLD}\s*$$
+  ^\s*Current\s+Rx\s+Power\(dBM\)\s*:\s*${CURRENT_RX_POWER}\s*$$
+  ^\s*Default\s+Rx\s+Power\s+High\s+Threshold\(dBM\)\s*:\s*${DEFAULT_RX_POWER_HIGH_THRESHOLD}\s*$$
+  ^\s*Default\s+Rx\s+Power\s+Low\s+Threshold\(dBM\)\s*:\s*${DEFAULT_RX_POWER_LOW_THRESHOLD}\s*$$
+  ^\s*Current\s+Tx\s+Power\(dBM\)\s*:\s*${CURRENT_TX_POWER}\s*$$
+  ^\s*Default\s+Tx\s+Power\s+High\s+Threshold\(dBM\)\s*:\s*${DEFAULT_TX_POWER_HIGH_THRESHOLD}\s*$$
+  ^\s*Default\s+Tx\s+Power\s+Low\s+Threshold\(dBM\)\s*:\s*${DEFAULT_TX_POWER_LOW_THRESHOLD}\s*$$
+  ^\s*User\s+Set\s+Rx\s+Power\s+High\s+Threshold\(dBM\)\s*:\s*${USER_SET_RX_POWER_HIGH_THRESHOLD}\s*$$
+  ^\s*User\s+Set\s+Rx\s+Power\s+Low\s+Threshold\(dBM\)\s*:\s*${USER_SET_RX_POWER_LOW_THRESHOLD}\s*$$
+  ^\s*User\s+Set\s+Tx\s+Power\s+High\s+Threshold\(dBM\)\s*:\s*${USER_SET_TX_POWER_HIGH_THRESHOLD}\s*$$
+  ^\s*User\s+Set\s+Tx\s+Power\s+Low\s+Threshold\(dBM\)\s*:\s*${USER_SET_TX_POWER_LOW_THRESHOLD}\s*$$ -> Record
+  ^\s*-+\s*$$
+  ^\s*(?:Common|Manufacture|Alarm|Diagnostic)\s+information:\s*$$
+  ^\s*$$
+  ^.*$$

@@ -1,0 +1,11 @@
+Value Required TIMESTAMP (\d{4}\s+\S+\s+\d+\s+\d{2}:\d{2}:\d{2})
+Value HOSTNAME (\S+)
+Value Required FACILITY ([^-\s]+)
+Value Required SEVERITY (\d+)
+Value Required MNEMONIC ([^:]+)
+Value MESSAGE (.*)
+
+Start
+  ^\s*${TIMESTAMP}\s+${HOSTNAME}\s+%${FACILITY}-${SEVERITY}-${MNEMONIC}:\s*${MESSAGE}\s*$$ -> Record
+  ^\s*$$
+  ^.*

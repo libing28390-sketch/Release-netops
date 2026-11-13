@@ -1,0 +1,17 @@
+Value Filldown SLOT (\d+)
+Value Required SUBSLOT (\d+)
+Value Required PORTNUM (\d+)
+Value PCB_VERSION (\S+)
+Value FPGA_VERSION (\S+)
+Value CPLD_VERSION (\S+)
+Value BOOTROM_VERSION (\S+)
+Value ADDRESS_MODE (\S+)
+Value TYPE (\S+)
+Value Required STATE (\S+)
+
+Start
+  ^\s*Slot\s+${SLOT}\s*:?[ \t]*$$
+  ^\s*SubSNo\s+PortNum\s+PCBVer\s+FPGAVer\s+CPLDVer\s+BootRomVer\s+AddrLM\s+Type\s+State\s*$$
+  ^\s*${SUBSLOT}\s+${PORTNUM}\s+${PCB_VERSION}\s+${FPGA_VERSION}\s+${CPLD_VERSION}\s+${BOOTROM_VERSION}\s+${ADDRESS_MODE}\s+${TYPE}\s+${STATE}\s*$$ -> Record
+  ^\s*$$
+  ^.*$$

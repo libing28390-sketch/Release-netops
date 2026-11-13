@@ -1,0 +1,17 @@
+Value Required LOCAL_INTERFACE (\S+)
+Value DEST_MAC (\S+)
+Value CHASSIS_ID (\S+)
+Value HOLDTIME (\d+)
+Value CAPABILITIES ([A-Z\s]+|NULL)
+Value NEIGHBOR_INTERFACE (\S+)
+Value NEIGHBOR_NAME (\S+)
+
+Start
+  ^Interface\s+Dest-MAC
+  ^----------------------------------------------------------------------------------------------------------------------------------
+  ^\s*Capability Codes:
+  ^\s*The total neighbor number:
+  ^${LOCAL_INTERFACE}\s+${DEST_MAC}\s+${CHASSIS_ID}\s+${HOLDTIME}\s+${CAPABILITIES}\s+.*?\s+${NEIGHBOR_INTERFACE}\s+${NEIGHBOR_NAME}\s*$$ -> Record
+  ^${LOCAL_INTERFACE}\s+${DEST_MAC}\s+${CHASSIS_ID}\s+${HOLDTIME}\s+${CAPABILITIES}\s+${NEIGHBOR_INTERFACE}\s+${NEIGHBOR_NAME}\s*$$ -> Record
+  ^${LOCAL_INTERFACE}\s+${DEST_MAC}\s+${CHASSIS_ID}\s+${HOLDTIME}\s+${CAPABILITIES}\s+${NEIGHBOR_NAME}\s*$$ -> Record
+  ^${LOCAL_INTERFACE}\s+${DEST_MAC}\s+${CHASSIS_ID}\s+${HOLDTIME}\s*$$ -> Record

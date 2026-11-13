@@ -1,0 +1,26 @@
+Value Required INTERFACE (\S+)
+Value Required LINK ((?:UP|DOWN|ADM|Stby))
+Value PROTOCOL ((?:UP|DOWN|--)(?:\(s\))?)
+Value MAIN_IP (\S+)
+Value SPEED (\S+)
+Value DUPLEX (\S+)
+Value TYPE ((?:A|T|H|-))
+Value PVID ((?:\d+|-))
+Value DESCRIPTION (.*)
+
+Start
+  ^\s*(?:The\s+)?[Bb]rief\s+information\s+(?:of|on|about)\s+interfaces?(?:\(s\))?\s+(?:under|in)\s+route\s+mode:\s*$$ -> RouteMode
+  ^\s*(?:The\s+)?[Bb]rief\s+information\s+(?:of|on|about)\s+interfaces?(?:\(s\))?\s+(?:under|in)\s+bridge\s+mode:\s*$$ -> BridgeMode
+  ^\s*$$
+  ^.*
+
+RouteMode
+  ^\s*(?:The\s+)?[Bb]rief\s+information\s+(?:of|on|about)\s+interfaces?(?:\(s\))?\s+(?:under|in)\s+bridge\s+mode:\s*$$ -> BridgeMode
+  ^\s*${INTERFACE}\s+${LINK}\s+${PROTOCOL}\s+${MAIN_IP}(?:\s+${DESCRIPTION})?\s*$$ -> Record
+  ^\s*$$
+  ^.*
+
+BridgeMode
+  ^\s*${INTERFACE}\s+${LINK}\s+${SPEED}\s+${DUPLEX}\s+${TYPE}\s+${PVID}(?:\s+${DESCRIPTION})?\s*$$ -> Record
+  ^\s*$$
+  ^.*

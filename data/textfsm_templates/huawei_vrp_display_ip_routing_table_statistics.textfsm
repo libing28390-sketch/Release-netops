@@ -1,0 +1,17 @@
+Value PROTO (\S+)
+Value ROUTE_COUNT (\d+)
+Value ACTIVE_COUNT (\d+)
+Value ADDED_COUNT (\d+)
+Value DELETED_COUNT (\d+)
+Value FREED_COUNT (\d+)
+
+Start
+  # 跳过表头和空行
+  ^\s*Summary\s+Prefixes
+  ^\s*Proto(col)?\s+route\s+active
+  ^\s*-+
+  # 匹配数据行: Direct 3 3 3 0 [0]
+  # 格式: Protocol  Route  Active  Added  Deleted  [Freed]
+  ^\s*${PROTO}\s+${ROUTE_COUNT}\s+${ACTIVE_COUNT}\s+${ADDED_COUNT}\s+${DELETED_COUNT}(?:\s+${FREED_COUNT})?\s*$$ -> Record
+  ^\s*$$
+  ^.* -> Continue

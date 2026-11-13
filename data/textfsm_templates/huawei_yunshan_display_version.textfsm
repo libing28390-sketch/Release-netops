@@ -1,0 +1,31 @@
+# nexora-action-code: get_version
+# Huawei YunShan OS has a different banner/version line from VRP V5/V8.
+Value Filldown,Required OS_NAME (YunShan\s*OS)
+Value Required VERSION ([0-9][A-Za-z0-9_.-]*)
+Value PRODUCT_VERSION ([^)]+)
+Value Required MODEL ([A-Za-z0-9_.-]+)
+Value UPTIME (.+)
+Value PATCH_VERSION (\S+)
+
+Start
+  ^\s*(?:Huawei|HUAWEI)\s+Versatile\s+Routing\s+Platform\s+Software\s*$$
+  ^\s*(?:Huawei|HUAWEI)\s+${OS_NAME}\s*$$
+  ^\s*(?:Huawei\s+)?${OS_NAME},?\s+Version\s+${VERSION}\s+\(${PRODUCT_VERSION}\)\s*$$
+  ^\s*Version\s+${VERSION}\s+\(${PRODUCT_VERSION}\)\s*$$
+  ^\s*Copyright.*$$
+  ^\s*(?:Huawei|HUAWEI)\s+${MODEL}\s+(?:Router\s+)?uptime\s+is\s+${UPTIME}\s*$$ -> Chassis
+  ^\s*\d{4}-\d{2}-\d{2}\s+.*$$
+  ^\s*<[^>]+>.*$$
+  ^\s*$$
+  ^. -> Error
+
+Chassis
+  ^\s*Patch\s+[Vv]ersion\s*:\s*${PATCH_VERSION}\s*$$
+  ^\s*MPU.*$$ -> Hardware
+  ^\s*$$
+  ^\s*<[^>]+>.*$$
+  ^. -> Error
+
+Hardware
+  ^\s*Patch\s+[Vv]ersion\s*:\s*${PATCH_VERSION}\s*$$
+  ^.*$$

@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-9/command_reference/b_179_9300_cr/interface_and_hardware_commands.html",
+  "vendor": "Cisco",
+  "platform": "IOS-XE 17.9",
+  "model_family": "Catalyst 9300",
+  "command": "show environment temperature",
+  "source_note": "Official Cisco IOS XE command reference example."
+}

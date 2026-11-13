@@ -1,0 +1,30 @@
+# nexora-action-code: get_vlan_table
+Value Required VLAN_ID (\d+)
+Value TYPE (\S+)
+Value STATUS (\S+)
+Value VLAN_NAME (\S+)
+Value PORTS (.*)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^\s*NO\.\s+VID\s+VLAN-Name\s+Owner\s+Mode\s+Interface -> TableS3330
+  ^\s*VLAN\s+Type\s+Status\s+Name\s+Member\s+Ports -> TableNSS
+  # 无表头时兜底匹配
+  ^\s*${VLAN_ID}\s+${TYPE}\s+${STATUS}\s+${VLAN_NAME}\s+${PORTS}\s*$$ -> Record
+  ^\s*\d+\s+${VLAN_ID}\s+${VLAN_NAME}\s+${TYPE}\s+${STATUS}\s+${PORTS}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next
+
+TableNSS
+  ^-+ -> Next
+  ^\s*${VLAN_ID}\s+${TYPE}\s+${STATUS}\s+${VLAN_NAME}\s+${PORTS}\s*$$ -> Record
+  ^\s*${VLAN_ID}\s+${TYPE}\s+${STATUS}\s+${VLAN_NAME}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next
+
+TableS3330
+  ^-+ -> Next
+  ^\s*\d+\s+${VLAN_ID}\s+${VLAN_NAME}\s+${TYPE}\s+${STATUS}\s+${PORTS}\s*$$ -> Record
+  ^\s*\d+\s+${VLAN_ID}\s+${VLAN_NAME}\s+${TYPE}\s+${STATUS}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next

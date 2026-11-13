@@ -1,0 +1,17 @@
+Value Filldown SHELF (\d+)
+Value Filldown SLOT (\d+|\S+)
+Value BOARD_TYPE (\S+)
+Value I2C (\d+)
+Value ADDR (\d+)
+Value Required DESCRIPTION (.*?)
+Value STATUS (\S+)
+Value MINOR (-?\d+)
+Value MAJOR (-?\d+)
+Value FATAL (-?\d+)
+Value OVERHEAT (-?\d+)
+Value TEMPERATURE (-?\d+)
+
+Start
+  ^\s*\[shelf ${SHELF},\s+(?:slot\s+)?${SLOT}\]
+  ^${BOARD_TYPE}\s+${I2C}\s+${ADDR}\s+${DESCRIPTION}\s+${STATUS}\s+${MINOR}\s+${MAJOR}\s+${FATAL}\s+${OVERHEAT}\s+${TEMPERATURE}\s*$$ -> Record
+  ^ENV\s+${STATUS}\s+${OVERHEAT}\s+${MINOR}\s+${TEMPERATURE}\s*$$ -> Record

@@ -1,0 +1,52 @@
+# nexora-action-code: get_power
+Value Filldown SLOT (\d+)
+Value Required POWER_ID (\w+)
+Value MODEL (\S+)
+Value STATUS (Not Installed|Normal|Fault|abnormal|Abnormal|ok|OK|\S+)
+Value ATTRIBUTE (\S+)
+Value COEXIST (\S+)
+Value HARDWARE_VERSION (\S+)
+Value SERIAL_NUMBER (\S+)
+Value SUPPLY_POWER (\S+)
+Value EXCEPTION (\S+)
+Value TEMPERATURE (-?\d+(?:\.\d+)?)
+Value INPUT_VOLTAGE (\S+)
+Value INPUT_CURRENT (\S+)
+Value OUTPUT_VOLTAGE (\S+)
+Value OUTPUT_CURRENT (\S+)
+Value OUTPUT_POWER (\S+)
+Value MAX_POWER (\S+)
+Value CURRENT_POWER (\S+)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^Slot\s+${SLOT}: -> TableOld
+  ^\s*Power-id\s+Power-type\s+Status\s+Attribute\s+Coexist -> TableNewHW
+  ^\s*Power-id\s+Power-type\s+Temperature -> TableNewSensor
+  ^\s*Power\s+Status\s+Type\s+Max-Power\(W\)\s+Current-Power\(W\) -> TableOld
+  ^\s*$$
+  ^. -> Next
+
+TableNewHW
+  ^\s*[-+\s]+$$ -> Next
+  ^\s*${POWER_ID}\s+${MODEL}\s+${STATUS}\s+${ATTRIBUTE}\s+${COEXIST}\s+${HARDWARE_VERSION}\s+${SERIAL_NUMBER}\s+${SUPPLY_POWER}\s+${EXCEPTION}\s*$$ -> Record
+  ^\s*Power-id\s+Power-type\s+Temperature -> TableNewSensor
+  ^\s*$$
+  ^. -> Next
+
+TableNewSensor
+  ^\s*[-+\s]+$$ -> Next
+  ^\s*Input\s+Input\s+Output -> Next
+  ^\s*Power-id\s+Power-type\s+Temperature -> Next
+  ^\s*${POWER_ID}\s+${MODEL}\s+${TEMPERATURE}\s+${INPUT_VOLTAGE}\s+${INPUT_CURRENT}\s+${OUTPUT_VOLTAGE}\s+${OUTPUT_CURRENT}\s+${OUTPUT_POWER}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next
+
+TableOld
+  ^\s*Power\s+Status\s+Type\s+Max-Power\(W\)\s+Current-Power\(W\) -> Next
+  ^\s*[-+\s]+$$ -> Next
+  ^\s*${POWER_ID}\s+${STATUS}\s+${MODEL}\s+${MAX_POWER}\s+${CURRENT_POWER}\s*$$ -> Record
+  ^\s*${POWER_ID}\s+${STATUS}\s*${MODEL}\s+${MAX_POWER}\s+${CURRENT_POWER}\s*$$ -> Record
+  ^Slot\s+${SLOT}: -> Next
+  ^\s*$$
+  ^. -> Next

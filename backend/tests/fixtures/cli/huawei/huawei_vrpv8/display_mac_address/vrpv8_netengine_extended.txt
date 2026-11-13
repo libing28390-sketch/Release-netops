@@ -1,0 +1,11 @@
+[~CE] display mac-address static vlan 2
+MAC address table of slot 0:
+-------------------------------------------------------------------------------
+MAC Address    VLAN/BD/       PEVLAN CEVLAN Port            Type      LSP/LSR-ID
+               VSI/SI/EVPN                                            MAC-Tunnel
+-------------------------------------------------------------------------------
+00e0-fc12-3458 2              -      -      GE 0/1/1        static    -
+00e0-fc12-3456 2              -      -      GE 0/1/1        static    -
+00e0-fc12-3457 2              -      -      GE 0/2/1        static    -
+-------------------------------------------------------------------------------
+Total matching items on slot 0 displayed = 3

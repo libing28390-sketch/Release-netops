@@ -1,0 +1,10 @@
+Value SLOT (\d+)
+Value BOARD_NAME (\S+)
+Value BOARD_TEMP (\d+|n/a)
+Value CPU_TEMP (\d+|n/a)
+Value SWITCH_TEMP (\d+|n/a)
+
+Start
+  ^Temperature\(Celsius\):
+  ^Slot ID\s+Board Name\s+Board Temperature
+  ^${SLOT}\s+${BOARD_NAME}\s+${BOARD_TEMP}\s+${CPU_TEMP}\s+${SWITCH_TEMP}\s*$$ -> Record

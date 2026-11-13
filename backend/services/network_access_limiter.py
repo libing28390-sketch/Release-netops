@@ -1,0 +1,365 @@
+"""Shared concurrency gates for outbound network access.
+
+The platform has several collectors which historically maintained their own
+thread pools.  This module provides a single process-wide gate for SSH/CLI
+work and separate gates for SNMP and reachability probes.  It deliberately
+does not contain vendor logic; callers still own connection construction and
+timeouts.
+"""
+
+from __future__ import annotations
+
+from contextlib import asynccontextmanager, contextmanager
+import asyncio
+from dataclasses import dataclass
+import threading
+from typing import Any, Callable, Iterator
+
+from core.config import settings
+from services.network_access_lease_service import (
+    CMDB_SSH_DEVICE_CAPACITY,
+    CMDB_SSH_GLOBAL_CAPACITY,
+    CMDB_SSH_PURPOSE,
+    NETWORK_SSH_PURPOSE,
+    NetworkAccessLeaseError,
+    acquire_network_ssh_lease,
+)
+
+
+class NetworkAccessLimitError(TimeoutError):
+    """Raised when a network operation cannot obtain a slot in time."""
+
+
+def _positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(1, parsed)
+
+
+def _device_key(device: Any, username: str | None = None, port: int | None = None) -> str:
+    """Return a stable key without ever including a password or secret."""
+    if isinstance(device, dict):
+        device_id = device.get("id") or device.get("device_id")
+        host = device.get("ip_address") or device.get("ip") or device.get("hostname")
+        resolved_port = port or device.get("management_port") or device.get("port") or 22
+        resolved_user = username or device.get("username") or ""
+    else:
+        device_id = None
+        host = device
+        resolved_port = port or 22
+        resolved_user = username or ""
+    # Device id is preferred so a hostname/IP change does not create a second
+    # per-device lane.  The fallback is useful for collectors with partial rows.
+    return f"id:{device_id}" if device_id else f"host:{host}:{resolved_port}:{resolved_user}"
+
+
+def _managed_device_id(device: Any) -> str | None:
+    """Return only an explicit canonical DB id; never derive one from a host."""
+    if isinstance(device, dict):
+        value = device.get("id") or device.get("device_id")
+    else:
+        value = getattr(device, "id", None) or getattr(device, "device_id", None)
+    normalized = str(value).strip() if value is not None else ""
+    return normalized or None
+
+
+_SAFE_OPERATION_LABELS = {
+    "arp",
+    "cli",
+    "config_backup",
+    "inspection",
+    "ip_locator_command",
+    "ip_locator_connect",
+    "mac",
+    "neighbor",
+    "route",
+    "topology",
+}
+
+
+def _safe_operation_label(operation: Any) -> str:
+    candidate = str(operation or "").strip().lower()
+    return candidate if candidate in _SAFE_OPERATION_LABELS else "ssh"
+
+
+_DEFAULT_LEASE_FACTORY = object()
+
+
+@dataclass
+class _Counters:
+    ssh: int = 0
+    cmdb_ssh: int = 0
+    snmp: int = 0
+    probe: int = 0
+
+
+class NetworkAccessLimiter:
+    """Process-wide SSH/SNMP/probe concurrency controller.
+
+    Each SSH capacity class has a global semaphore and a per-device lock.
+    Existing callers retain the default pool; explicit CMDB sessions use a
+    separate bounded pool so they cannot occupy the default pool's slots.
+    """
+
+    def __init__(
+        self,
+        *,
+        ssh_global_limit: int | None = None,
+        ssh_per_device_limit: int | None = None,
+        snmp_global_limit: int | None = None,
+        probe_global_limit: int | None = None,
+        acquire_timeout: float | None = None,
+        ssh_lease_factory: Callable[..., Any] | None | object = _DEFAULT_LEASE_FACTORY,
+    ) -> None:
+        self.ssh_global_limit = _positive_int(
+            ssh_global_limit if ssh_global_limit is not None
+            else getattr(settings, "NETWORK_SSH_GLOBAL_CONCURRENCY", 20),
+            20,
+        )
+        self.ssh_per_device_limit = _positive_int(
+            ssh_per_device_limit if ssh_per_device_limit is not None
+            else getattr(settings, "NETWORK_SSH_PER_DEVICE_CONCURRENCY", 1),
+            1,
+        )
+        self.snmp_global_limit = _positive_int(
+            snmp_global_limit if snmp_global_limit is not None
+            else getattr(settings, "NETWORK_SNMP_GLOBAL_CONCURRENCY", 30),
+            30,
+        )
+        self.probe_global_limit = _positive_int(
+            probe_global_limit if probe_global_limit is not None
+            else getattr(settings, "NETWORK_PROBE_GLOBAL_CONCURRENCY", 50),
+            50,
+        )
+        self.acquire_timeout = float(
+            acquire_timeout if acquire_timeout is not None
+            else getattr(settings, "NETWORK_ACCESS_ACQUIRE_TIMEOUT", 120)
+        )
+        self._ssh_lease_factory = (
+            acquire_network_ssh_lease
+            if ssh_lease_factory is _DEFAULT_LEASE_FACTORY
+            else ssh_lease_factory
+        )
+
+        self._ssh_global = threading.BoundedSemaphore(self.ssh_global_limit)
+        self._cmdb_ssh_global = threading.BoundedSemaphore(CMDB_SSH_GLOBAL_CAPACITY)
+        self._snmp_global = threading.BoundedSemaphore(self.snmp_global_limit)
+        self._probe_global = threading.BoundedSemaphore(self.probe_global_limit)
+        self._snmp_async: asyncio.Semaphore | None = None
+        self._snmp_async_loop: asyncio.AbstractEventLoop | None = None
+        self._probe_async: asyncio.Semaphore | None = None
+        self._probe_async_loop: asyncio.AbstractEventLoop | None = None
+        self._device_locks: dict[str, threading.BoundedSemaphore] = {}
+        self._cmdb_device_locks: dict[str, threading.BoundedSemaphore] = {}
+        self._locks_guard = threading.Lock()
+        self._counter_guard = threading.Lock()
+        self._counters = _Counters()
+
+    def _device_lock(self, key: str, *, capacity_class: str = NETWORK_SSH_PURPOSE) -> threading.BoundedSemaphore:
+        with self._locks_guard:
+            locks = self._cmdb_device_locks if capacity_class == CMDB_SSH_PURPOSE else self._device_locks
+            capacity = CMDB_SSH_DEVICE_CAPACITY if capacity_class == CMDB_SSH_PURPOSE else self.ssh_per_device_limit
+            lock = locks.get(key)
+            if lock is None:
+                lock = threading.BoundedSemaphore(capacity)
+                locks[key] = lock
+            return lock
+
+    @staticmethod
+    def _acquire(semaphore: threading.BoundedSemaphore, timeout: float) -> bool:
+        return semaphore.acquire(timeout=max(0.0, timeout))
+
+    @contextmanager
+    def ssh(
+        self,
+        device: Any,
+        *,
+        username: str | None = None,
+        port: int | None = None,
+        operation: str = "cli",
+        timeout: float | None = None,
+        coordinated: bool = True,
+        capacity_class: str = NETWORK_SSH_PURPOSE,
+    ) -> Iterator[None]:
+        """Reserve local and, by default, PostgreSQL-shared SSH capacity."""
+        if capacity_class not in {NETWORK_SSH_PURPOSE, CMDB_SSH_PURPOSE}:
+            raise ValueError("Unknown SSH capacity class")
+        cmdb_capacity = capacity_class == CMDB_SSH_PURPOSE
+        global_semaphore = self._cmdb_ssh_global if cmdb_capacity else self._ssh_global
+        global_capacity = CMDB_SSH_GLOBAL_CAPACITY if cmdb_capacity else self.ssh_global_limit
+        device_capacity = CMDB_SSH_DEVICE_CAPACITY if cmdb_capacity else self.ssh_per_device_limit
+        counter_name = 'cmdb_ssh' if cmdb_capacity else 'ssh'
+        wait_timeout = self.acquire_timeout if timeout is None else timeout
+        key = _device_key(device, username=username, port=port)
+        device_lock = self._device_lock(key, capacity_class=capacity_class)
+        if not self._acquire(device_lock, wait_timeout):
+            raise NetworkAccessLimitError(
+                f"device concurrency limit reached for {key} "
+                f"(operation={_safe_operation_label(operation)})"
+            )
+        global_acquired = False
+        shared_lease = None
+        try:
+            if not self._acquire(global_semaphore, wait_timeout):
+                raise NetworkAccessLimitError(
+                    f"global SSH concurrency limit reached ({global_capacity})"
+                )
+            global_acquired = True
+            if coordinated and self._ssh_lease_factory is not None:
+                try:
+                    lease_options = dict(
+                        device_id=_managed_device_id(device),
+                        global_capacity=global_capacity,
+                        device_capacity=device_capacity,
+                        wait_timeout=wait_timeout,
+                    )
+                    if cmdb_capacity:
+                        lease_options['capacity_class'] = CMDB_SSH_PURPOSE
+                    shared_lease = self._ssh_lease_factory(**lease_options)
+                except NetworkAccessLeaseError as exc:
+                    raise NetworkAccessLimitError(str(exc)) from None
+            with self._counter_guard:
+                setattr(self._counters, counter_name, getattr(self._counters, counter_name) + 1)
+            try:
+                yield
+            finally:
+                with self._counter_guard:
+                    setattr(self._counters, counter_name, max(0, getattr(self._counters, counter_name) - 1))
+        finally:
+            try:
+                if shared_lease is not None:
+                    shared_lease.release()
+            finally:
+                try:
+                    if global_acquired:
+                        global_semaphore.release()
+                finally:
+                    device_lock.release()
+
+    @contextmanager
+    def snmp(self, *, timeout: float | None = None) -> Iterator[None]:
+        wait_timeout = self.acquire_timeout if timeout is None else timeout
+        if not self._acquire(self._snmp_global, wait_timeout):
+            raise NetworkAccessLimitError(
+                f"global SNMP concurrency limit reached ({self.snmp_global_limit})"
+            )
+        with self._counter_guard:
+            self._counters.snmp += 1
+        try:
+            yield
+        finally:
+            with self._counter_guard:
+                self._counters.snmp = max(0, self._counters.snmp - 1)
+            self._snmp_global.release()
+
+    @contextmanager
+    def probe(self, *, timeout: float | None = None) -> Iterator[None]:
+        wait_timeout = self.acquire_timeout if timeout is None else timeout
+        if not self._acquire(self._probe_global, wait_timeout):
+            raise NetworkAccessLimitError(
+                f"global probe concurrency limit reached ({self.probe_global_limit})"
+            )
+        with self._counter_guard:
+            self._counters.probe += 1
+        try:
+            yield
+        finally:
+            with self._counter_guard:
+                self._counters.probe = max(0, self._counters.probe - 1)
+            self._probe_global.release()
+
+    @asynccontextmanager
+    async def async_ssh(
+        self,
+        device: Any,
+        *,
+        username: str | None = None,
+        port: int | None = None,
+        operation: str = "cli",
+        timeout: float | None = None,
+        coordinated: bool = True,
+    ) -> Iterator[None]:
+        """Async adapter for scrapli/asyncssh collectors."""
+        lease = self.ssh(
+            device,
+            username=username,
+            port=port,
+            operation=operation,
+            timeout=timeout,
+            coordinated=coordinated,
+        )
+        await asyncio.to_thread(lease.__enter__)
+        try:
+            yield
+        finally:
+            await asyncio.to_thread(lease.__exit__, None, None, None)
+
+    @asynccontextmanager
+    async def async_snmp(self) -> Iterator[None]:
+        """Async SNMP gate shared by all OID GET/WALK operations."""
+        loop = asyncio.get_running_loop()
+        if self._snmp_async is None or self._snmp_async_loop is not loop:
+            self._snmp_async = asyncio.Semaphore(self.snmp_global_limit)
+            self._snmp_async_loop = loop
+        async with self._snmp_async:
+            with self._counter_guard:
+                self._counters.snmp += 1
+            try:
+                yield
+            finally:
+                with self._counter_guard:
+                    self._counters.snmp = max(0, self._counters.snmp - 1)
+
+    @asynccontextmanager
+    async def async_probe(self) -> Iterator[None]:
+        """Async probe gate for the A/B monitoring loops."""
+        loop = asyncio.get_running_loop()
+        if self._probe_async is None or self._probe_async_loop is not loop:
+            self._probe_async = asyncio.Semaphore(self.probe_global_limit)
+            self._probe_async_loop = loop
+        async with self._probe_async:
+            with self._counter_guard:
+                self._counters.probe += 1
+            try:
+                yield
+            finally:
+                with self._counter_guard:
+                    self._counters.probe = max(0, self._counters.probe - 1)
+
+    def snapshot(self) -> dict[str, int]:
+        with self._counter_guard:
+            return {
+                "active_ssh": self._counters.ssh,
+                "active_cmdb_ssh": self._counters.cmdb_ssh,
+                "cmdb_ssh_global_limit": CMDB_SSH_GLOBAL_CAPACITY,
+                "cmdb_ssh_per_device_limit": CMDB_SSH_DEVICE_CAPACITY,
+                "active_snmp": self._counters.snmp,
+                "active_probes": self._counters.probe,
+                "ssh_global_limit": self.ssh_global_limit,
+                "ssh_per_device_limit": self.ssh_per_device_limit,
+                "snmp_global_limit": self.snmp_global_limit,
+                "probe_global_limit": self.probe_global_limit,
+            }
+
+
+_LIMITER = NetworkAccessLimiter()
+
+
+def get_network_access_limiter() -> NetworkAccessLimiter:
+    return _LIMITER
+
+
+@contextmanager
+def limited_connect_handler(
+    device: Any,
+    connect_handler: Callable[..., Any],
+    **connection_params: Any,
+) -> Iterator[Any]:
+    """Wrap a Netmiko ``ConnectHandler`` context with the SSH gate."""
+    username = connection_params.get("username")
+    port = connection_params.get("port")
+    with _LIMITER.ssh(device, username=username, port=port):
+        with connect_handler(**connection_params) as client:
+            yield client

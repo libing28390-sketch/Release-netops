@@ -1,0 +1,4 @@
+Value TIME (.*)
+
+Start
+  ^${TIME}\s*$$ -> Record

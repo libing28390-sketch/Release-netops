@@ -1,0 +1,8 @@
+Value TOTAL_MEMORY (\d+)
+Value USED_MEMORY (\d+)
+Value USAGE_PCT (\d+)
+
+Start
+  ^\s*Total memory is\s+${TOTAL_MEMORY}\(\d+M\)\s+bytes
+  ^\s*Total memory used is\s+${USED_MEMORY}\(\d+M\)\s+bytes
+  ^\s*Current memory using percentage is\s+${USAGE_PCT}% -> Record

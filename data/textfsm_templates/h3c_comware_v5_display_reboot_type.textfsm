@@ -1,0 +1,9 @@
+# Comware V5 reboot type for a slot.
+Value Filldown SLOT (\d+)
+Value Required REBOOT_TYPE (\S+)
+
+Start
+  ^.*display\s+reboot-type\s+slot\s+${SLOT}\s*$$
+  ^\s*The\s+rebooting\s+type\s+this\s+time\s+is:\s*${REBOOT_TYPE}\s*$$ -> Record
+  ^.*$$
+

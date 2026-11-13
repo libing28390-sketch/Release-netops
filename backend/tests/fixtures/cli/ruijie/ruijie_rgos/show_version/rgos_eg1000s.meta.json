@@ -1,0 +1,13 @@
+{
+  "vendor": "Ruijie",
+  "platform": "ruijie_rgos",
+  "software_family": "RGOS",
+  "model": "EG1000S",
+  "command": "show version",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.ruijie.com.cn/fw/wt/18252/",
+  "source_title": "新版NBR/EG如何查看软件和硬件版本",
+  "source_section": "show version",
+  "expected_record_count": 1,
+  "expected_fields": ["SYSTEM_DESCRIPTION", "SYSTEM_START_TIME", "SYSTEM_UPTIME", "SYSTEM_HARDWARE_VERSION", "SYSTEM_SOFTWARE_VERSION", "SYSTEM_BOOT_VERSION"]
+}

@@ -1,0 +1,20 @@
+# nexora-action-code: get_temperature
+# V5 S-series releases use both the old four-column table and the later
+# sensor table.  SLOT is carried from ``Slot 1`` into each sensor record.
+Value Filldown SLOT (\d+(?:/\d+)?)
+Value SENSOR (\S+)
+Value SENSOR_ID (\d+)
+Value Required TEMPERATURE (-?\d+|NA|--)
+Value LOWER (-?\d+|NA|--)
+Value WARNING (-?\d+|NA|--)
+Value ALARM (-?\d+|NA|--)
+
+Start
+  ^\s*Slot\s+${SLOT}\s*:?[ \t]*$$
+  ^\s*${SLOT}\s+${SENSOR}\s+${SENSOR_ID}\s+${TEMPERATURE}\s+${LOWER}\s+${WARNING}\s+${ALARM}(?:\s+\S+)?\s*$$ -> Record
+  ^\s*${SENSOR}\s+${SENSOR_ID}\s+${TEMPERATURE}\s+${LOWER}\s+${WARNING}(?:\s+${ALARM})?(?:\s+\S+)?\s*$$ -> Record
+  ^\s*${SLOT}\s+${TEMPERATURE}\s+${LOWER}\s+${WARNING}\s*$$ -> Record
+  ^\s*Slot(?:No)?\s+Temperature
+  ^\s*System\s+[Tt]emperature\s+information
+  ^\s*-+
+  ^\s*$$

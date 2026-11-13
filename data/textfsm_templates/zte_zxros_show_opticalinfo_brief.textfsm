@@ -1,0 +1,11 @@
+Value Required INTERFACE (\S+)
+Value TYPE (\S+)
+Value WAVELENGTH (\S+)
+Value RX_POWER (\S+)
+Value TX_POWER (\S+)
+Value STATUS (\S+)
+
+Start
+  ^Interface\s+Type\s+Wavelength
+  ^${INTERFACE}\s+${TYPE}\s+${WAVELENGTH}\s+${RX_POWER}\s+${TX_POWER}\s+${STATUS}\s*$$ -> Record
+  ^${INTERFACE}\s+${TYPE}\s*$$ -> Record
