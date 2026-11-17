@@ -112,6 +112,7 @@ services:
       - "NO_PROXY=${NO_PROXY:-localhost,127.0.0.1},seaweedfs,nexora-seaweedfs"
       - "no_proxy=${no_proxy:-localhost,127.0.0.1},seaweedfs,nexora-seaweedfs"
       - MONITORING_ARTIFACT_ROOT=/app/artifacts/monitoring
+      - TELEMETRY_STATUS_TOKEN_FILE=/app/data/telemetry-control/status.token
       - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set to a non-default secret}
       - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY must be set to a non-default secret}
       # AI settings are passed through from the existing .env contract. The
@@ -187,6 +188,7 @@ services:
       - LIBRENMS_REDIS_PASSWORD=
     volumes:
       - nexora-data:/app/data
+      - nexora-telemetry-status:/app/data/telemetry-control
       - nexora-vm-runtime:/app/data/vm-runtime
       - nexora-remote-desktop-recordings:/app/data/remote_desktop_recordings
       - nexora-backup:/app/backup
@@ -201,6 +203,7 @@ services:
       - default
       - librenms_control
       - remote_desktop_api
+      - telemetry_control
     restart: unless-stopped
     ulimits:
       nofile:
@@ -417,7 +420,7 @@ services:
   victoriametrics:
     image: victoriametrics/victoria-metrics:v1.103.0
     container_name: nexora-victoriametrics
-    mem_limit: ${VICTORIAMETRICS_MEM_LIMIT:-768m}
+    mem_limit: ${VICTORIAMETRICS_MEM_LIMIT:-2g}
     cpus: "${VICTORIAMETRICS_CPUS:-2.0}"
     pids_limit: 256
     environment:
@@ -441,6 +444,7 @@ services:
     networks:
       - default
       - librenms_metrics
+      - telemetry_storage
     depends_on:
       vm-runtime-volume-init:
         condition: service_completed_successfully
@@ -560,6 +564,102 @@ services:
     logging: *container-logging
     healthcheck:
       test: ["CMD", "wget", "-Y", "off", "-qO-", "http://127.0.0.1:8429/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  telemetry-vmagent:
+    image: victoriametrics/vmagent:v1.103.0
+    container_name: nexora-telemetry-vmagent
+    profiles: ["telemetry"]
+    mem_limit: ${TELEMETRY_VMAGENT_MEM_LIMIT:-512m}
+    cpus: "${TELEMETRY_VMAGENT_CPUS:-1.0}"
+    pids_limit: 128
+    command:
+      - "-promscrape.config=/etc/telemetry-vmagent/scrape.yml"
+      - "-remoteWrite.url=http://victoriametrics:8428/api/v1/write"
+      - "-remoteWrite.tmpDataPath=/var/lib/telemetry-vmagent"
+      - "-remoteWrite.maxDiskUsagePerURL=${TELEMETRY_VMAGENT_MAX_DISK_USAGE:-16GiB}"
+      - "-remoteWrite.maxBlockSize=1MiB"
+      - "-remoteWrite.maxRowsPerBlock=1000"
+      - "-httpListenAddr=:8429"
+    volumes:
+      - ./monitoring/telemetry-vmagent/scrape.yml:/etc/telemetry-vmagent/scrape.yml:ro
+      - nexora-telemetry-vmagent-queue:/var/lib/telemetry-vmagent
+    expose:
+      - "8429"
+    networks:
+      - monitoring_internal
+      - telemetry_storage
+    depends_on:
+      victoriametrics:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging: *container-logging
+    healthcheck:
+      test: ["CMD", "wget", "-Y", "off", "-qO-", "http://127.0.0.1:8429/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  telemetry-collector:
+    image: nexora-netops
+    container_name: nexora-telemetry-collector
+    profiles: ["telemetry"]
+    user: "1000:1000"
+    read_only: true
+    mem_limit: ${TELEMETRY_COLLECTOR_MEM_LIMIT:-1g}
+    cpus: "${TELEMETRY_COLLECTOR_CPUS:-2.0}"
+    pids_limit: 128
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    command: ["python", "-m", "collectors.telemetry.server"]
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - TELEMETRY_GRPC_BIND=0.0.0.0:10051
+      - TELEMETRY_HEALTH_BIND=0.0.0.0:10052
+      - TELEMETRY_RECEIVER_CONFIG=/etc/nexora-collector/runtime/telemetry/receiver.json
+      - TELEMETRY_REMOTE_WRITE_URL=http://telemetry-vmagent:8429/api/v1/import/prometheus
+      - TELEMETRY_SERVER_CERT_FILE=/run/telemetry-certs/server.crt
+      - TELEMETRY_SERVER_KEY_FILE=/run/telemetry-certs/server.key
+      - TELEMETRY_CLIENT_CA_FILE=/run/telemetry-certs/client-ca.crt
+      - TELEMETRY_STATUS_TOKEN_FILE=/run/telemetry-control/status.token
+      - TELEMETRY_STATUS_URL=http://netops:8003/api/monitoring/telemetry/internal/status
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - ALL_PROXY=
+      - http_proxy=
+      - https_proxy=
+      - all_proxy=
+      - NO_PROXY=localhost,127.0.0.1,vmagent,victoriametrics
+      - no_proxy=localhost,127.0.0.1,vmagent,victoriametrics
+    ports:
+      # Keep the listener closed to remote devices by default. Set this to the
+      # dedicated management-interface address before enabling the profile.
+      - "${TELEMETRY_GRPC_BIND_IP:-127.0.0.1}:${TELEMETRY_GRPC_BIND_PORT:-10051}:10051"
+    volumes:
+      - nexora-monitoring-artifacts:/etc/nexora-collector:ro
+      - ${TELEMETRY_CERTS_DIR:-./secrets/telemetry}:/run/telemetry-certs:ro
+      - nexora-telemetry-status:/run/telemetry-control:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    networks:
+      - monitoring_internal
+      - telemetry_control
+    depends_on:
+      telemetry-vmagent:
+        condition: service_healthy
+      netops:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging: *container-logging
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:10052/health', timeout=3)"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -1043,6 +1143,10 @@ volumes:
     name: nexora-vmagent-queue
   nexora-monitoring-artifacts:
     name: nexora-monitoring-artifacts
+  nexora-telemetry-status:
+    name: nexora-telemetry-status
+  nexora-telemetry-vmagent-queue:
+    name: nexora-telemetry-vmagent-queue
   nexora-grafana-data:
     name: nexora-grafana-data
   nexora-seaweedfs-data:
@@ -1061,6 +1165,10 @@ networks:
   alert_notifications:
     internal: true
   monitoring_internal:
+    internal: true
+  telemetry_control:
+    internal: true
+  telemetry_storage:
     internal: true
   librenms_control:
     internal: true

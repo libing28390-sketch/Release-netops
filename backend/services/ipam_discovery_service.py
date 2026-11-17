@@ -2614,12 +2614,12 @@ def list_current_discovered_endpoints(
     conn = get_db_connection()
     try:
         arp_projection = _current_endpoint_projection(
-            conn, device_id=device_id.strip(), observation_source="arp",
+            conn, observation_source="arp",
         )
         ndp_projection = _current_endpoint_projection(
-            conn, device_id=device_id.strip(), observation_source="ndp",
+            conn, observation_source="ndp",
         )
-        fdb_projection = _current_fdb_endpoint_projection(conn, device_id=device_id.strip())
+        fdb_projection = _current_fdb_endpoint_projection(conn)
         all_items = [*arp_projection, *ndp_projection, *fdb_projection]
         # The terminal inventory is sourced only from explicitly classified
         # access switches and APs. Keep other devices' observations in storage
@@ -2656,6 +2656,7 @@ def list_current_discovered_endpoints(
                 item for item in all_items
                 if (str(item.get("tenant_id") or ""), str(item.get("site_id") or "")) in visible_scopes
             ]
+        device_option_source_items = list(all_items)
         all_items = _supersede_older_endpoint_context_observations(all_items)
         interface_keys, managed_keys, managed_addresses = _current_infrastructure_ip_keys(conn, visible_scopes)
         _classify_current_endpoint_rows(all_items, fdb_projection, interface_keys, managed_keys, managed_addresses)
@@ -2739,7 +2740,9 @@ def list_current_discovered_endpoints(
         vrf_options = [{"id": key, "name": vrf_options_by_id[key]} for key in sorted(vrf_options_by_id)]
         devices_by_id = {
             str(item.get("source_device_id") or ""): str(item.get("source_device_name") or item.get("source_device_id") or "")
-            for item in scope_filtered_items if item.get("source_device_id")
+            for item in device_option_source_items
+            if item.get("source_device_id")
+            and (not site_id.strip() or str(item.get("site_id") or "") == site_id.strip())
         }
         device_options = [{"id": key, "name": devices_by_id[key]} for key in sorted(devices_by_id)]
         arp_items = [item for item in scope_filtered_items if item.get("ip")]

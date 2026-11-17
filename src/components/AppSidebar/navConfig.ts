@@ -34,6 +34,7 @@ export const navConfig: NavGroup[] = [
         ],
       },
       { id: 'monitoring-collectors', label: '采集器管理', labelEn: 'Collectors', path: '/monitor/collectors', icon: 'CloudCog', requiredRole: 'Operator' },
+      { id: 'telemetry-management', label: 'Telemetry 采集', labelEn: 'Telemetry Collection', path: '/monitor/telemetry-management', icon: 'Activity' },
       { id: 'topology',          label: '网络拓扑',  labelEn: 'Topology',          path: '/monitor/topology',    icon: 'Network' },
     ],
   },

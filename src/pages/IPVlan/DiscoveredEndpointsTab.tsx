@@ -25,23 +25,6 @@ import {
   type DiscoveryFilterOption,
 } from './ipamDiscoveryPresentation';
 
-interface DiscoverySummary {
-  discovered_ip_count?: number;
-  distinct_ip_count?: number;
-  infrastructure_ip_count?: number;
-  access_host_ip_count?: number;
-  candidate_ip_count?: number;
-  mac_only_count?: number;
-  registered_count?: number;
-  unregistered_count?: number;
-  scope_pending_count?: number;
-  conflict_count?: number;
-  path_ambiguity_count?: number;
-  coverage_status?: string;
-  coverage_reason?: string;
-  source_last_success_at?: string | null;
-}
-
 interface DiscoveryObservation {
   source_type?: string;
   source_device_id?: string | null;
@@ -87,11 +70,6 @@ const initialFilters: DiscoveredEndpointFilters = {
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
-
-const readCount = (summary: DiscoverySummary | null, key: keyof DiscoverySummary): string => {
-  const value = summary?.[key];
-  return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : '—';
-};
 
 const authorizationError = (status: number, zh: boolean): string => {
   if (status === 401) return zh ? '登录状态已失效，请重新登录。' : 'Your session expired. Sign in again.';
@@ -193,7 +171,6 @@ const DiscoveredEndpointsTab: React.FC<DiscoveredEndpointsTabProps> = ({ languag
   const [searchDraft, setSearchDraft] = useState('');
   const [items, setItems] = useState<DiscoveredEndpointRow[]>([]);
   const [total, setTotal] = useState(0);
-  const [summary, setSummary] = useState<DiscoverySummary | null>(null);
   const [sites, setSites] = useState<DiscoveryFilterOption[]>([]);
   const [vrfs, setVrfs] = useState<DiscoveryFilterOption[]>([]);
   const [devices, setDevices] = useState<DeviceOption[]>([]);
@@ -237,14 +214,12 @@ const DiscoveredEndpointsTab: React.FC<DiscoveredEndpointsTabProps> = ({ languag
         setLoadError(message || (zh ? '加载发现终端失败，请稍后重试。' : 'Failed to load discovered endpoints. Retry shortly.'));
         setItems([]);
         setTotal(0);
-        setSummary(null);
         return;
       }
       const payload = asRecord(await response.json()) || {};
       const rawItems = Array.isArray(payload.items) ? payload.items : [];
       setItems(rawItems.map(normalizeEndpoint).filter((row): row is DiscoveredEndpointRow => row !== null));
       setTotal(typeof payload.total === 'number' && payload.total >= 0 ? payload.total : 0);
-      setSummary(asRecord(payload.summary) as DiscoverySummary | null);
       setSites(normalizeDiscoveryOptions(payload.sites, ['id', 'site_id'], ['name', 'site_name', 'label']));
       setVrfs(normalizeDiscoveryOptions(payload.vrfs, ['id', 'vrf_id'], ['name', 'vrf_name', 'label']));
       setDevices(normalizeDiscoveryOptions(payload.devices, ['id', 'device_id', 'source_device_id'], ['name', 'device_name', 'source_device_name', 'hostname'])
@@ -254,7 +229,6 @@ const DiscoveredEndpointsTab: React.FC<DiscoveredEndpointsTabProps> = ({ languag
       setLoadError(zh ? '网络错误，无法加载发现终端。' : 'Network error while loading discovered endpoints.');
       setItems([]);
       setTotal(0);
-      setSummary(null);
     } finally {
       if (currentRequest === requestSequence.current) listInFlight.current = false;
       if (!silent && !controller.signal.aborted && currentRequest === requestSequence.current) setLoading(false);
@@ -336,81 +310,49 @@ const DiscoveredEndpointsTab: React.FC<DiscoveredEndpointsTabProps> = ({ languag
 
   const applySearch = () => updateFilter('query', searchDraft);
   const visibleRows = useMemo(() => items, [items]);
-  const advancedFilterCount = [filters.vrfId, filters.evidenceStatus, filters.registrationStatus, !['all', 'terminal'].includes(filters.endpointClass) ? filters.endpointClass : ''].filter(Boolean).length;
+  const advancedFilterCount = [
+    filters.vrfId,
+    filters.evidenceStatus,
+    filters.registrationStatus,
+    filters.endpointClass !== initialFilters.endpointClass,
+    filters.kind !== initialFilters.kind,
+    filters.kind !== 'mac' && filters.networkScope !== initialFilters.networkScope,
+  ].filter(Boolean).length;
   const exportAll = useCallback(async () => {
     const rows = await fetchAllIpamExportItems<DiscoveredEndpointRow>('/api/ipam/endpoints', buildDiscoveredEndpointQuery(filters));
     return {
-      headers: ['IP', 'MAC', zh ? '判定' : 'Classification', zh ? '判定依据' : 'Classification evidence', zh ? '来源' : 'Source', zh ? 'IPAM 主机名' : 'IPAM hostname', zh ? 'IPAM 登记' : 'IPAM registration', zh ? '站点' : 'Site', 'VRF', 'VLAN', zh ? '采集设备' : 'Collector device', zh ? '观察接口与路径' : 'Observed interface and path', zh ? '观察时间' : 'Observed at', zh ? '证据状态' : 'Evidence status'],
-      rows: rows.map(item => [item.ip || '', item.mac || '', getEndpointClassLabel(item.endpoint_class, zh), getEndpointClassReason(item.endpoint_class_reason, zh), getDiscoveryObservationSourceLabel(item.observation_source, item.source_type, zh), item.hostname?.trim() || '', item.registration_status ? `${getDiscoveryRegistrationLabel(item.registration_status, zh)} ${item.scope_status === 'scope_pending' ? (zh ? '范围待确认' : 'Scope pending') : ''} ${item.subnet_prefix || ''}`.trim() : item.subnet_prefix || '', item.site_name || '', item.vrf_context_inferred ? '' : item.vrf_name || '', item.vlan || '', item.source_device_name || item.switch_name || '', [item.switch_port || '', getDiscoveryPathLabel(item, zh), item.path_ambiguity ? (zh ? '路径有歧义' : 'Path ambiguous') : ''].filter(Boolean).join(' · '), item.observed_at || '', item.evidence_status ? getDiscoveryEvidenceLabel(item.evidence_status, zh) : '']),
+      headers: ['IP', 'MAC', zh ? '终端类型' : 'Host type', zh ? '说明' : 'Notes', zh ? '来源' : 'Source', zh ? 'IPAM 主机名' : 'IPAM hostname', zh ? 'IPAM 登记' : 'IPAM registration', zh ? '站点' : 'Site', 'VRF', 'VLAN', zh ? '采集设备' : 'Collector device', zh ? '接入接口 / 路径' : 'Access port / path', zh ? '采集时间' : 'Collected at', zh ? '采集情况' : 'Collection condition'],
+      rows: rows.map(item => [item.ip || '', item.mac || '', getEndpointClassLabel(item.endpoint_class, zh), getEndpointClassReason(item.endpoint_class_reason, zh), getDiscoveryObservationSourceLabel(item.observation_source, item.source_type, zh), item.hostname?.trim() || '', item.registration_status ? `${(item.registration_status === 'scope_pending' ? (zh ? '未登记' : 'Unregistered') : getDiscoveryRegistrationLabel(item.registration_status, zh))} ${item.scope_status === 'scope_pending' ? (zh ? '所属网络待确认' : 'Scope pending') : ''} ${item.subnet_prefix || ''}`.trim() : item.subnet_prefix || '', item.site_name || '', item.vrf_context_inferred ? '' : item.vrf_name || '', item.vlan || '', item.source_device_name || item.switch_name || '', [item.switch_port || '', getDiscoveryPathLabel(item, zh), item.path_ambiguity ? (zh ? '路径有歧义' : 'Path ambiguous') : ''].filter(Boolean).join(' · '), item.observed_at || '', item.evidence_status ? getDiscoveryEvidenceLabel(item.evidence_status, zh) : '']),
     };
   }, [filters, zh]);
 
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden px-5 py-4 font-sans text-[var(--ui-text-body)] sm:px-6">
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto px-4 py-4 font-sans text-[var(--ui-text-body)] leading-relaxed sm:px-6">
       <PageHero
         compact
         icon={Terminal}
         title={zh ? '发现终端' : 'Discovered Endpoints'}
-        subtitle={zh ? '默认只显示主机候选和接入口主机；命中 CMDB 管理地址或当前接口 IP 的基础设施地址会从列表隐藏，摘要仍统计其数量，可在更多筛选中查看。IPAM 主机名是地址台账名称；采集设备显示实际读取 ARP / ND 的设备。' : 'By default, show host candidates and access hosts only. Infrastructure addresses matching CMDB management/interface IPs are hidden from the list, counted in the summary, and available in More filters. IPAM hostname is the ledger name; collector device is the device that read ARP / ND.'}
+        subtitle={zh ? '查终端 IP、MAC 和接入端口，需要纳管的地址可登记到 IPAM。' : 'Find host IPs, MACs, and access ports, then register addresses in IPAM.'}
+        actions={<Link className="text-[var(--ui-text-body)] font-medium text-[var(--ui-accent)] hover:underline" to="/ipam/ips">{zh ? 'IPAM 台账' : 'IPAM ledger'}</Link>}
       />
 
-      <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--ui-fg-muted)]">
-        <span>{zh ? '确认归属后，可在行内登记 IP；仅 MAC 记录不能登记为 IP。' : 'Register an IP from its row after confirming scope. MAC-only records cannot be registered as IPs.'}</span>
-        <Link className="text-cyan-700 underline" to="/ipam/prefixes">{zh ? '维护网段 / 地址空间' : 'Manage prefixes / address spaces'}</Link>
-        <Link className="text-cyan-700 underline" to="/ipam/ips">{zh ? '查看 IPAM 台账' : 'IPAM ledger'}</Link>
-      </div>
       {registrationNotice && <div role="status" className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-800">{registrationNotice}<button type="button" className="ml-3 underline" onClick={() => setRegistrationNotice('')}>{zh ? '关闭' : 'Dismiss'}</button></div>}
 
-      {summary && (
-        <section aria-label={zh ? '发现摘要' : 'Discovery summary'} className="grid grid-cols-2 items-stretch gap-2 sm:grid-cols-4 xl:grid-cols-8">
-          {([
-            ['discovered_ip_count', zh ? 'ARP/ND 观察条数' : 'ARP/ND observations'],
-            ['distinct_ip_count', zh ? '不同 IP（当前范围）' : 'Distinct IPs (current scope)'],
-            ['access_host_ip_count', zh ? '接入口主机候选' : 'Access-port host candidates'],
-            ['candidate_ip_count', zh ? '待核主机候选' : 'Host candidates pending review'],
-            ['infrastructure_ip_count', zh ? '基础设施地址' : 'Infrastructure addresses'],
-            ['mac_only_count', zh ? '仅 MAC 观察' : 'MAC-only observations'],
-            ['scope_pending_count', zh ? '范围待确认' : 'Scope pending'],
-            ['path_ambiguity_count', zh ? '路径待核' : 'Ambiguous paths'],
-          ] as const).map(([key, label]) => (
-            <div key={key} className="flex h-full min-h-16 flex-col justify-between rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] px-3 py-2">
-              <div className="text-[var(--ui-text-caption)] font-semibold text-[var(--muted-text)]">{label}</div>
-              <div className="text-[var(--ui-text-body)] font-bold tabular-nums text-[var(--ui-fg)]">{readCount(summary, key)}</div>
-            </div>
-          ))}
-        </section>
-      )}
-
       <div className="flex flex-shrink-0 flex-col gap-2 rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] p-3">
-        <div className="grid grid-cols-1 items-end gap-2 md:grid-cols-2 xl:grid-cols-[minmax(125px,0.9fr)_minmax(145px,1fr)_minmax(150px,1fr)_minmax(205px,1.5fr)_minmax(320px,2.2fr)]">
-        <label className="flex min-w-0 flex-col gap-1 text-[var(--ui-text-label)] font-semibold text-[var(--muted-text)]">
+        <div className="grid grid-cols-1 items-end gap-2 md:grid-cols-2 xl:grid-cols-[minmax(160px,1fr)_minmax(180px,1.2fr)_minmax(380px,3fr)]">
+        <label className="flex min-w-0 flex-col gap-1 text-[var(--ui-text-label)] font-medium text-[var(--ui-fg-muted)]">
           {zh ? '站点' : 'Site'}
           <select aria-label={zh ? '站点筛选' : 'Filter by site'} value={filters.siteId} onChange={(event) => setFilters((current) => ({ ...current, siteId: event.target.value, vrfId: '', deviceId: '', page: 1 }))} className="h-9 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-2 text-[var(--ui-text-body)] text-[var(--ui-fg)]">
             <option value="">{zh ? '全部站点' : 'All sites'}</option>
             {sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
           </select>
         </label>
-        <label className="flex min-w-0 flex-col gap-1 text-[var(--ui-text-label)] font-semibold text-[var(--muted-text)]">
+        <label className="flex min-w-0 flex-col gap-1 text-[var(--ui-text-label)] font-medium text-[var(--ui-fg-muted)]">
           {zh ? '来源设备' : 'Source device'}
           <select aria-label={zh ? '来源设备筛选' : 'Filter by source device'} value={filters.deviceId} onChange={(event) => updateFilter('deviceId', event.target.value)} className="h-9 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-2 text-[var(--ui-text-body)] text-[var(--ui-fg)]">
             <option value="">{zh ? '全部设备' : 'All devices'}</option>
             {devices.map((device) => <option key={device.id} value={device.id}>{device.label}</option>)}
-          </select>
-        </label>
-        <label className="flex min-w-0 flex-col gap-1 text-[var(--ui-text-label)] font-semibold text-[var(--muted-text)]">
-          {zh ? '记录类型' : 'Record type'}
-          <select aria-label={zh ? '记录类型筛选' : 'Filter by record type'} value={filters.kind} onChange={(event) => updateFilter('kind', event.target.value as DiscoveredEndpointFilters['kind'])} className="h-9 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-2 text-[var(--ui-text-body)] text-[var(--ui-fg)]">
-            <option value="ip">{zh ? 'IP 观察（默认）' : 'IP observations (default)'}</option>
-            <option value="mac">{zh ? '仅 MAC 观察（不登记 IP）' : 'MAC-only observations (no IP registration)'}</option>
-            <option value="all">{zh ? '全部记录' : 'All record types'}</option>
-          </select>
-        </label>
-        <label className="flex min-w-0 flex-col gap-1 text-[var(--ui-text-label)] font-semibold text-[var(--muted-text)]">
-          {zh ? '观察范围' : 'Observation scope'}
-          <select aria-label={zh ? '观察范围筛选' : 'Filter by observation scope'} value={filters.kind === 'mac' ? 'all' : filters.networkScope} disabled={filters.kind === 'mac'} onChange={(event) => updateFilter('networkScope', event.target.value as DiscoveredEndpointFilters['networkScope'])} className="h-9 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-2 text-[var(--ui-text-body)] text-[var(--ui-fg)] disabled:opacity-60">
-            <option value="business_vlan">{zh ? '已映射业务网段' : 'Mapped business networks'}</option>
-            <option value="all">{zh ? '全部当前 IP 观察（默认，含范围待确认）' : 'All current IP observations (default, including scope-pending)'}</option>
           </select>
         </label>
         <form onSubmit={(event) => { event.preventDefault(); applySearch(); }} className="flex min-w-0 items-end gap-1.5 xl:self-end">
@@ -427,8 +369,8 @@ const DiscoveredEndpointsTab: React.FC<DiscoveredEndpointsTabProps> = ({ languag
         {filters.kind !== 'mac' && filters.networkScope === 'business_vlan' && (
           <p className="text-[var(--ui-text-caption)] text-[var(--ui-fg-muted)]">
             {zh
-              ? '业务网段视图只显示可关联到活动业务 Prefix 的 IP；未知或待确认范围的当前记录，请切换到“全部当前 IP 观察”查看。结果仍受当前账号的站点和租户权限限制，系统不会自动归入 Global 或 VRF。'
-              : 'Business-network view shows IPs linked to active business prefixes. Switch to “All current IP observations” to review unknown or pending scopes. Results remain limited by your site and tenant permissions; the system will not assign them to Global or a VRF.'}
+              ? '这里只看已归入业务网段的 IP。找不到终端时，切回“全部采集结果”；所属网络尚未确认的记录也在那里。'
+              : 'Only IPs in managed business networks are shown. Switch to All collected records to include hosts whose network is still unresolved.'}
           </p>
         )}
         <details className="group border-t border-[var(--ui-border)] pt-2">
@@ -437,41 +379,56 @@ const DiscoveredEndpointsTab: React.FC<DiscoveredEndpointsTabProps> = ({ languag
             {advancedFilterCount > 0 && <span className="rounded-full bg-[var(--ui-accent)]/10 px-1.5 py-0.5 text-[var(--ui-text-caption)] text-[var(--ui-accent)]">{advancedFilterCount}</span>}
             <ChevronDown size={14} className="transition-transform group-open:rotate-180" />
           </summary>
-          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-4">
-            <label className="flex min-w-0 flex-col gap-1 text-[var(--ui-text-label)] font-semibold text-[var(--muted-text)]">
-              {zh ? '主机判定' : 'Host classification'}
-              <select aria-label={zh ? '主机判定筛选' : 'Filter by host classification'} value={filters.endpointClass} onChange={(event) => updateFilter('endpointClass', event.target.value as DiscoveredEndpointFilters['endpointClass'])} className="h-9 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-2 text-[var(--ui-text-body)] text-[var(--ui-fg)]">
-                <option value="all">{zh ? '全部判定' : 'All classifications'}</option>
-                <option value="terminal">{zh ? '终端候选（默认）' : 'Terminal candidates (default)'}</option>
-                <option value="access_host">{zh ? '接入口主机候选' : 'Access-port host candidates'}</option>
-                <option value="candidate">{zh ? '待核主机候选' : 'Host candidates pending review'}</option>
-                <option value="infrastructure">{zh ? '基础设施地址' : 'Infrastructure addresses'}</option>
+          <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <label className="flex min-w-0 flex-col gap-1 text-[var(--ui-text-label)] font-medium text-[var(--ui-fg-muted)]">
+              {zh ? '查看内容' : 'Show'}
+              <select aria-label={zh ? '查看内容筛选' : 'Filter by record type'} value={filters.kind} onChange={(event) => updateFilter('kind', event.target.value as DiscoveredEndpointFilters['kind'])} className="h-9 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-2 text-[var(--ui-text-body)] text-[var(--ui-fg)]">
+                <option value="ip">{zh ? 'IP 记录' : 'IP records'}</option>
+                <option value="mac">{zh ? '仅有 MAC' : 'MAC addresses only'}</option>
+                <option value="all">{zh ? '全部记录' : 'All record types'}</option>
               </select>
             </label>
-            <label className="flex min-w-0 flex-col gap-1 text-[var(--ui-text-label)] font-semibold text-[var(--muted-text)]">
+            <label className="flex min-w-0 flex-col gap-1 text-[var(--ui-text-label)] font-medium text-[var(--ui-fg-muted)]">
+              {zh ? '网段范围' : 'Network filter'}
+              <select aria-label={zh ? '网段范围筛选' : 'Filter by network'} value={filters.kind === 'mac' ? 'all' : filters.networkScope} disabled={filters.kind === 'mac'} onChange={(event) => updateFilter('networkScope', event.target.value as DiscoveredEndpointFilters['networkScope'])} className="h-9 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-2 text-[var(--ui-text-body)] text-[var(--ui-fg)] disabled:opacity-60">
+                <option value="business_vlan">{zh ? '仅已纳管业务网段' : 'Managed business networks only'}</option>
+                <option value="all">{zh ? '全部采集结果' : 'All collected records'}</option>
+              </select>
+            </label>
+            <label className="flex min-w-0 flex-col gap-1 text-[var(--ui-text-label)] font-medium text-[var(--ui-fg-muted)]">
+              {zh ? '终端类型' : 'Host type'}
+              <select aria-label={zh ? '终端类型筛选' : 'Filter by host classification'} value={filters.endpointClass} onChange={(event) => updateFilter('endpointClass', event.target.value as DiscoveredEndpointFilters['endpointClass'])} className="h-9 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-2 text-[var(--ui-text-body)] text-[var(--ui-fg)]">
+                <option value="all">{zh ? '终端和设备 IP' : 'Hosts and device IPs'}</option>
+                <option value="terminal">{zh ? '仅终端 IP（默认）' : 'Host IPs only (default)'}</option>
+                <option value="access_host">{zh ? '已定位接入口' : 'Access port located'}</option>
+                <option value="candidate">{zh ? '接入口待定位' : 'Port not yet located'}</option>
+                <option value="infrastructure">{zh ? '基础设施 IP' : 'Infrastructure IPs'}</option>
+              </select>
+            </label>
+            <label className="flex min-w-0 flex-col gap-1 text-[var(--ui-text-label)] font-medium text-[var(--ui-fg-muted)]">
               VRF
               <select aria-label={zh ? 'VRF筛选' : 'Filter by VRF'} value={filters.vrfId} onChange={(event) => updateFilter('vrfId', event.target.value)} className="h-9 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-2 text-[var(--ui-text-body)] text-[var(--ui-fg)]">
                 <option value="">{zh ? '全部 VRF' : 'All VRFs'}</option>
-                {vrfs.map((vrf) => <option key={vrf.id} value={vrf.id}>{vrf.name}</option>)}
+                {vrfs.map((vrf) => <option key={vrf.id} value={vrf.id}>{vrf.id === '__unknown__' ? (zh ? '所属网络待确认' : 'Network pending') : vrf.name}</option>)}
               </select>
             </label>
-            <label className="flex min-w-0 flex-col gap-1 text-[var(--ui-text-label)] font-semibold text-[var(--muted-text)]">
-              {zh ? '证据状态' : 'Evidence status'}
-              <select aria-label={zh ? '证据状态筛选' : 'Filter by evidence status'} value={filters.evidenceStatus} onChange={(event) => updateScopeStatusFilter('evidenceStatus', event.target.value)} className="h-9 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-2 text-[var(--ui-text-body)] text-[var(--ui-fg)]">
+            <label className="flex min-w-0 flex-col gap-1 text-[var(--ui-text-label)] font-medium text-[var(--ui-fg-muted)]">
+              {zh ? '采集情况' : 'Collection condition'}
+              <select aria-label={zh ? '采集情况筛选' : 'Filter by evidence status'} value={filters.evidenceStatus} onChange={(event) => updateScopeStatusFilter('evidenceStatus', event.target.value)} className="h-9 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-2 text-[var(--ui-text-body)] text-[var(--ui-fg)]">
                 <option value="">{zh ? '全部状态' : 'All statuses'}</option>
-                <option value="recent">{zh ? '近期观察' : 'Recent'}</option>
-                <option value="stale">{zh ? '当前成功代次较早' : 'Latest successful generation is old'}</option>
-                <option value="scope_pending">{zh ? '归属待确认' : 'Scope pending'}</option>
+                <option value="recent">{zh ? '最近采集' : 'Recent'}</option>
+                <option value="stale">{zh ? '采集记录较旧' : 'Older collection data'}</option>
+                <option value="scope_pending">{zh ? '所属网络待确认' : 'Scope pending'}</option>
                 <option value="conflict">{zh ? 'IP/MAC 冲突' : 'IP/MAC conflict'}</option>
               </select>
             </label>
-            <label className="flex min-w-0 flex-col gap-1 text-[var(--ui-text-label)] font-semibold text-[var(--muted-text)]">
+            <label className="flex min-w-0 flex-col gap-1 text-[var(--ui-text-label)] font-medium text-[var(--ui-fg-muted)]">
               {zh ? 'IPAM 登记状态' : 'IPAM registration'}
               <select aria-label={zh ? '登记状态筛选' : 'Filter by registration'} value={filters.registrationStatus} onChange={(event) => updateScopeStatusFilter('registrationStatus', event.target.value)} className="h-9 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-surface)] px-2 text-[var(--ui-text-body)] text-[var(--ui-fg)]">
                 <option value="">{zh ? '全部登记状态' : 'All registration states'}</option>
                 <option value="registered">{zh ? '已登记' : 'Registered'}</option>
                 <option value="unregistered">{zh ? '未登记' : 'Unregistered'}</option>
-                <option value="scope_pending">{zh ? '归属待确认' : 'Scope pending'}</option>
+                <option value="scope_pending">{zh ? '所属网络待确认' : 'Scope pending'}</option>
               </select>
             </label>
           </div>
@@ -480,49 +437,55 @@ const DiscoveredEndpointsTab: React.FC<DiscoveredEndpointsTabProps> = ({ languag
 
       {loadError && <div role="alert" className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-[var(--ui-text-body)] text-rose-800"><AlertTriangle size={15} /> <span className="flex-1">{loadError}</span><button type="button" onClick={() => void loadList()} className="font-bold underline">{zh ? '重试' : 'Retry'}</button></div>}
 
-      <DataTableFrame className="flex min-h-0 flex-1 flex-col">
+      <DataTableFrame className="flex min-h-[280px] flex-1 flex-col">
         <div className="flex items-center justify-between border-b border-[var(--ui-border)] px-4 py-2.5 text-[var(--ui-text-body)]">
-          <strong className="text-[var(--ui-fg)]">{zh ? '发现记录' : 'Discovered records'} <span className="ml-1 tabular-nums text-[var(--ui-fg-muted)]">{total.toLocaleString()}</span></strong>
-          <span className="inline-flex items-center gap-1 text-[var(--ui-text-caption)] text-[var(--ui-fg-muted)]"><Info size={12} />{zh ? '观察记录不代表终端在线状态' : 'Observations do not indicate that a host is online'}</span>
+          <strong className="text-[var(--ui-fg)]">{zh ? '查询结果' : 'Results'} <span className="ml-1 tabular-nums text-[var(--ui-fg-muted)]">{total.toLocaleString()}</span></strong>
+          <span className="inline-flex items-center gap-1 text-[var(--ui-text-caption)] text-[var(--ui-fg-muted)]"><Info size={12} />{zh ? '采集记录不代表当前在线' : 'Collection records do not indicate current online status'}</span>
         </div>
         <div className="min-h-0 flex-1 overflow-auto">
           {loading ? (
-            <div className="flex h-full min-h-40 items-center justify-center gap-2 text-[var(--ui-text-body)] text-[var(--muted-text)]"><RefreshCw size={14} className="animate-spin" />{zh ? '正在加载已有发现记录…' : 'Loading existing discovery records…'}</div>
+            <div className="flex h-full min-h-40 items-center justify-center gap-2 text-[var(--ui-text-body)] text-[var(--muted-text)]"><RefreshCw size={14} className="animate-spin" />{zh ? '正在加载采集记录…' : 'Loading existing discovery records…'}</div>
           ) : loadError ? (
             <div className="flex h-full min-h-40 items-center justify-center text-[var(--ui-text-body)] text-[var(--muted-text)]">{zh ? '无法显示列表，请修复错误后重试。' : 'The list is unavailable. Retry after resolving the error.'}</div>
           ) : (
-            <DataTable className="min-w-[1520px] text-[var(--ui-text-body)] text-left" exportConfig={{ filename: 'ipam-discovered-endpoints', exportData: exportAll, language: zh ? 'zh' : 'en', disabled: loading || visibleRows.length === 0 }}>
+            <DataTable className="min-w-[1080px] text-[var(--ui-text-body)] text-left [&_td]:align-top [&_td]:leading-relaxed" exportConfig={{ filename: 'ipam-discovered-endpoints', exportData: exportAll, language: zh ? 'zh' : 'en', disabled: loading || visibleRows.length === 0 }}>
               <thead><tr>
                 <th>IP</th>
                 <th>MAC</th>
-                <th>{zh ? '主机判定' : 'Host classification'}</th>
-                <th>{zh ? '来源' : 'Source'}</th>
-                <th>{zh ? 'IPAM 主机名' : 'IPAM hostname'}</th>
-                <th>{zh ? 'IPAM 登记' : 'IPAM registration'}</th>
-                <th>{zh ? '站点' : 'Site'}</th>
-                <th>VRF</th>
-                <th>VLAN</th>
-                <th>{zh ? '采集设备' : 'Collector device'}</th>
-                <th>{zh ? '观察接口与路径' : 'Observed interface and path'}</th>
-                <th>{zh ? '上一次时间' : 'Last seen'}</th>
+                <th>{zh ? '终端类型' : 'Host type'}</th>
+                <th>{zh ? '网络位置' : 'Network location'}</th>
+                <th>{zh ? '采集来源' : 'Collection source'}</th>
+                <th>{zh ? 'IPAM 台账' : 'IPAM ledger'}</th>
+                <th>{zh ? '接入接口 / 路径' : 'Access port / path'}</th>
+                <th>{zh ? '最近采集时间' : 'Last collected'}</th>
                 <TableActionHeader>{zh ? '操作' : 'Actions'}</TableActionHeader>
               </tr></thead>
               <tbody>
                 {visibleRows.length ? visibleRows.map((item) => (
                   <tr key={item.id}>
-                    <td className="font-mono font-semibold">{item.ip || ''}</td>
+                    <td className="font-mono font-medium">{item.ip || ''}</td>
                     <td className="font-mono">{item.mac || ''}</td>
-                    <td><div className="font-semibold">{getEndpointClassLabel(item.endpoint_class, zh)}</div><div className="text-[var(--ui-text-caption)] text-[var(--ui-fg-muted)]">{getEndpointClassReason(item.endpoint_class_reason, zh)}</div></td>
-                    <td>{getDiscoveryObservationSourceLabel(item.observation_source, item.source_type, zh)}</td>
-                    <td>{item.hostname?.trim() || ''}</td>
-                    <td>{item.registration_status && <div>{getDiscoveryRegistrationLabel(item.registration_status, zh)}</div>}{item.scope_status === 'scope_pending' && <div className="text-[var(--ui-text-caption)] text-amber-700">{zh ? '范围待确认' : 'Scope pending'}</div>}{item.subnet_prefix && <div className="font-mono text-[var(--ui-text-caption)] text-[var(--ui-fg-muted)]">{item.subnet_prefix}</div>}</td>
-                    <td>{item.site_name || ''}</td>
-                    <td>{item.vrf_context_inferred ? '' : item.vrf_name || ''}</td>
-                    <td>{item.vlan || ''}</td>
-                    <td>{item.source_device_name || item.switch_name || ''}</td>
+                    <td className="font-medium">{getEndpointClassLabel(item.endpoint_class, zh)}</td>
                     <td>
-                      <div>{item.switch_port || ''}{item.path_ambiguity && <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] text-amber-800" title={item.path_ambiguity_reason}>{zh ? '路径歧义' : 'Path ambiguous'}</span>}</div>
-                      {getDiscoveryPathLabel(item, zh) && <div className="text-[10px] text-[var(--ui-fg-muted)]" title={item.path_evidence || undefined}>{getDiscoveryPathLabel(item, zh)}</div>}
+                      {item.site_name && <div>{item.site_name}</div>}
+                      <div className="text-[var(--ui-text-label)] text-[var(--ui-fg-muted)]">
+                        {!item.vrf_context_inferred && item.vrf_name && <span>{item.vrf_name}</span>}
+                        {item.vlan && <span>{!item.vrf_context_inferred && item.vrf_name ? ' · ' : ''}VLAN {item.vlan}</span>}
+                      </div>
+                    </td>
+                    <td>
+                      <div>{getDiscoveryObservationSourceLabel(item.observation_source, item.source_type, zh)}</div>
+                      {(item.source_device_name || item.switch_name) && <div className="text-[var(--ui-text-label)] text-[var(--ui-fg-muted)]">{item.source_device_name || item.switch_name}</div>}
+                    </td>
+                    <td>
+                      {item.registration_status && item.registration_status !== 'scope_pending' && <div>{getDiscoveryRegistrationLabel(item.registration_status, zh)}</div>}
+                      {item.scope_status === 'scope_pending' && <div className="text-[var(--ui-text-caption)] text-amber-700">{zh ? '网络待确认' : 'Network pending'} <Link className="text-[var(--ui-accent)] hover:underline" to="/ipam/routing-contexts">{zh ? '确认' : 'Review'}</Link></div>}
+                      {item.hostname?.trim() && <div className="text-[var(--ui-text-label)] text-[var(--ui-fg-muted)]">{item.hostname.trim()}</div>}
+                      {item.subnet_prefix && <div className="font-mono text-[var(--ui-text-caption)] text-[var(--ui-fg-muted)]">{item.subnet_prefix}</div>}
+                    </td>
+                    <td>
+                      <div>{item.switch_port || ''}{item.path_ambiguity && <span className="ml-1 rounded bg-amber-100 px-1 text-[var(--ui-text-label)] text-amber-800" title={item.path_ambiguity_reason}>{zh ? '路径歧义' : 'Path ambiguous'}</span>}</div>
+                      {getDiscoveryPathLabel(item, zh) && <div className="text-[var(--ui-text-label)] text-[var(--ui-fg-muted)]" title={item.path_evidence || undefined}>{getDiscoveryPathLabel(item, zh)}</div>}
                     </td>
                     <td title={item.observed_at ? formatObserved(item.observed_at) : undefined} className="tabular-nums">{item.observed_at ? formatObservedCompact(item.observed_at) : ''}</td>
                     <TableActionCell>
@@ -533,13 +496,13 @@ const DiscoveredEndpointsTab: React.FC<DiscoveredEndpointsTabProps> = ({ languag
                     </TableActionCell>
                   </tr>
                 )) : (
-                  <tr><td colSpan={13} className="py-12 text-center text-[var(--ui-text-body)] text-[var(--ui-fg-muted)]">{zh ? '当前筛选没有发现记录。清除筛选或更换条件后重试。' : 'No discovery records match the current filters. Clear or change the filters.'}</td></tr>
+                  <tr><td colSpan={9} className="py-12 text-center text-[var(--ui-text-body)] text-[var(--ui-fg-muted)]">{zh ? '没有符合条件的记录，请调整筛选或重置。' : 'No discovery records match the current filters. Clear or change the filters.'}</td></tr>
                 )}
               </tbody>
             </DataTable>
           )}
         </div>
-        <Pagination currentPage={filters.page} totalItems={total} itemsPerPage={filters.pageSize} onPageChange={(page) => setFilters((current) => ({ ...current, page }))} onItemsPerPageChange={(pageSize) => setFilters((current) => ({ ...current, page: 1, pageSize }))} language={language} alwaysVisible />
+        {(total > filters.pageSize || filters.page > 1) && <Pagination currentPage={filters.page} totalItems={total} itemsPerPage={filters.pageSize} onPageChange={(page) => setFilters((current) => ({ ...current, page }))} onItemsPerPageChange={(pageSize) => setFilters((current) => ({ ...current, page: 1, pageSize }))} language={language} />}
       </DataTableFrame>
 
       {registerItem && <EndpointRegistrationDialog key={registerItem.id} item={registerItem} zh={zh} onClose={() => setRegisterItem(null)} onRegistered={() => {
@@ -564,22 +527,22 @@ const DiscoveredEndpointsTab: React.FC<DiscoveredEndpointsTabProps> = ({ languag
                     {[
                       ['IP', detail.ip || ''],
                       ['MAC', detail.mac || ''],
-                      [zh ? '主机判定' : 'Host classification', getEndpointClassLabel(detail.endpoint_class, zh)],
-                      [zh ? '判定依据' : 'Classification evidence', getEndpointClassReason(detail.endpoint_class_reason, zh)],
+                      [zh ? '终端类型' : 'Host type', getEndpointClassLabel(detail.endpoint_class, zh)],
+                      [zh ? '说明' : 'Notes', getEndpointClassReason(detail.endpoint_class_reason, zh)],
                       ['VLAN', detail.vlan || ''],
                       [zh ? '站点' : 'Site', detail.site_name || ''],
                       [zh ? '来源设备' : 'Source device', detail.source_device_name || ''],
-                      [zh ? '观察设备' : 'Observed device', detail.switch_name || ''],
-                      [zh ? '观察接口' : 'Observed interface', detail.switch_port || ''],
-                      [zh ? '路径判定' : 'Path classification', getDiscoveryPathLabel(detail, zh)],
-                      [zh ? '范围状态' : 'Scope status', detail.scope_status === 'scope_pending' ? (zh ? '待确认' : 'Pending') : (detail.scope_status || '')],
+                      [zh ? '关联交换机' : 'Related switch', detail.switch_name || ''],
+                      [zh ? '接入接口' : 'Access port', detail.switch_port || ''],
+                      [zh ? '接入路径' : 'Access path', getDiscoveryPathLabel(detail, zh)],
+                      [zh ? '网络归属' : 'Network assignment', detail.scope_status === 'resolved' ? (zh ? '已确认' : 'Confirmed') : detail.scope_status === 'scope_pending' ? (zh ? '所属网络待确认' : 'Network pending') : detail.scope_status === 'conflict' ? (zh ? '归属有冲突' : 'Conflicting assignment') : (zh ? '待核实' : 'Needs review')],
                       [zh ? '来源' : 'Source', getDiscoveryObservationSourceLabel(detail.observation_source, detail.source_type, zh)],
-                      ...(detail.generation !== undefined ? [[zh ? '当前成功代次' : 'Current successful generation', String(detail.generation)]] : []),
-                      ...(detail.last_success_generation !== undefined ? [[zh ? '最近成功代次' : 'Last successful generation', String(detail.last_success_generation)]] : []),
-                      ...(detail.latest_attempt_generation !== undefined ? [[zh ? '最新尝试代次' : 'Latest attempt generation', String(detail.latest_attempt_generation)]] : []),
+                      ...(detail.generation !== undefined ? [[zh ? '当前数据批次' : 'Current successful generation', String(detail.generation)]] : []),
+                      ...(detail.last_success_generation !== undefined ? [[zh ? '上次成功批次' : 'Last successful generation', String(detail.last_success_generation)]] : []),
+                      ...(detail.latest_attempt_generation !== undefined ? [[zh ? '最近采集批次' : 'Latest attempt generation', String(detail.latest_attempt_generation)]] : []),
                       ...(detail.collection_status ? [[zh ? '最新采集状态' : 'Latest collection status', getDiscoveryCollectionStatusLabel(detail.collection_status, zh)]] : []),
                       ...(detail.last_success_at ? [[zh ? '最近成功时间' : 'Last successful collection', formatObserved(detail.last_success_at)]] : []),
-                      [zh ? '上一次时间' : 'Last seen', detail.observed_at ? formatObserved(detail.observed_at) : ''],
+                      [zh ? '最近采集时间' : 'Last collected', detail.observed_at ? formatObserved(detail.observed_at) : ''],
                     ].map(([label, value]) => (
                       <div key={label}><dt className="text-[var(--ui-text-label)] text-[var(--ui-fg-muted)]">{label}</dt><dd className="mt-1 break-words font-medium">{value}</dd></div>
                     ))}

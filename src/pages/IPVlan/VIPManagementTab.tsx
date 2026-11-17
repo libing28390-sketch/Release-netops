@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   ShieldCheck,
   Plus,
@@ -45,6 +45,159 @@ interface PrefixOption {
   prefix: string;
   name?: string;
 }
+
+interface SearchableOption {
+  value: string;
+  label: string;
+  searchText?: string;
+  disabled?: boolean;
+}
+
+interface SearchablePickerProps {
+  id: string;
+  ariaLabel: string;
+  value: string;
+  options: SearchableOption[];
+  placeholder: string;
+  noResultsLabel: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}
+
+const SearchablePicker: React.FC<SearchablePickerProps> = ({
+  id,
+  ariaLabel,
+  value,
+  options,
+  placeholder,
+  noResultsLabel,
+  disabled = false,
+  onChange,
+}) => {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const selectedOption = value ? options.find((option) => option.value === value) || null : null;
+  const filteredOptions = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    const enabledOptions = options.filter((option) => !option.disabled);
+    return normalizedQuery
+      ? enabledOptions.filter((option) => `${option.label} ${option.searchText || ''}`.toLocaleLowerCase().includes(normalizedQuery))
+      : enabledOptions;
+  }, [options, query]);
+
+  useEffect(() => {
+    setQuery('');
+    setOpen(false);
+    setActiveIndex(-1);
+  }, [value]);
+
+  const selectOption = (option: SearchableOption) => {
+    onChange(option.value);
+    setQuery('');
+    setOpen(false);
+    setActiveIndex(-1);
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'ArrowDown') {
+      if (!query.trim()) return;
+      event.preventDefault();
+      setOpen(true);
+      setActiveIndex((current) => filteredOptions.length === 0
+        ? -1
+        : current < 0 ? 0 : Math.min(current + 1, filteredOptions.length - 1));
+    } else if (event.key === 'ArrowUp') {
+      if (!query.trim()) return;
+      event.preventDefault();
+      setOpen(true);
+      setActiveIndex((current) => filteredOptions.length === 0
+        ? -1
+        : current <= 0 ? filteredOptions.length - 1 : current - 1);
+    } else if (event.key === 'Enter' && open) {
+      event.preventDefault();
+      const option = filteredOptions[activeIndex]
+        || (filteredOptions.length === 1 ? filteredOptions[0] : null);
+      if (option) selectOption(option);
+    } else if (event.key === 'Escape' && open) {
+      event.preventDefault();
+      setOpen(false);
+      setActiveIndex(-1);
+    }
+  };
+
+  return (
+    <div
+      className="relative"
+      onBlur={(event) => {
+        const nextTarget = event.relatedTarget;
+        if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+          setOpen(false);
+          setActiveIndex(-1);
+          if (!value) setQuery('');
+        }
+      }}
+    >
+      <Search size={14} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+      <input
+        id={id}
+        type="text"
+        role="combobox"
+        aria-label={ariaLabel}
+        aria-autocomplete="list"
+        aria-expanded={open && !disabled}
+        aria-controls={open ? `${id}-options` : undefined}
+        aria-activedescendant={open && activeIndex >= 0 ? `${id}-option-${activeIndex}` : undefined}
+        autoComplete="off"
+        value={open ? query : selectedOption?.label || query}
+        placeholder={placeholder}
+        disabled={disabled}
+        onFocus={(event) => {
+          setActiveIndex(-1);
+          if (value) {
+            setQuery('');
+            event.currentTarget.select();
+          } else {
+            setOpen(Boolean(query.trim()));
+          }
+        }}
+        onChange={(event) => {
+          const nextQuery = event.target.value;
+          setQuery(nextQuery);
+          setOpen(Boolean(nextQuery.trim()));
+          setActiveIndex(-1);
+        }}
+        onKeyDown={handleKeyDown}
+        className="w-full rounded-xl border border-gray-150 bg-gray-50/50 py-2.5 pl-9 pr-9 text-xs font-medium outline-none transition-all focus:border-cyan-400 focus:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+      />
+      {open && !disabled && (
+        <div
+          id={`${id}-options`}
+          role="listbox"
+          aria-label={ariaLabel}
+          className="absolute left-0 top-full z-[60] mt-1 max-h-56 w-full overflow-y-auto rounded-xl border border-gray-200 bg-white py-1 shadow-xl"
+        >
+          {filteredOptions.length ? filteredOptions.map((option, index) => (
+            <div
+              key={`${option.value}-${index}`}
+              id={`${id}-option-${index}`}
+              role="option"
+              aria-selected={option.value === value}
+              className={`cursor-pointer px-3 py-2 text-xs ${index === activeIndex ? 'bg-cyan-50 text-cyan-800' : 'text-gray-700 hover:bg-gray-50'}`}
+              onMouseDown={(event) => event.preventDefault()}
+              onMouseEnter={() => setActiveIndex(index)}
+              onClick={() => selectOption(option)}
+            >
+              {option.label}
+            </div>
+          )) : (
+            <div role="status" className="px-3 py-2 text-xs text-gray-500">{noResultsLabel}</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 interface PendingCreateRequest {
   fingerprint: string;
@@ -96,6 +249,49 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
   });
   const [errorMsg, setErrorMsg] = useState('');
   const pendingCreateRequest = useRef<PendingCreateRequest | null>(null);
+
+  const prefixPickerOptions = useMemo(() => prefixes.map((prefix) => {
+    const name = prefix.name?.trim() || '';
+    const cidr = prefix.prefix?.trim() || '';
+    const label = name && cidr
+      ? (name.toLocaleLowerCase().includes(cidr.toLocaleLowerCase()) ? name : `${name} · ${cidr}`)
+      : name || cidr || prefix.id;
+    return { value: prefix.id, label, searchText: [prefix.id, name, cidr].filter(Boolean).join(' ') };
+  }), [prefixes]);
+
+  const devicePickerOptions = useMemo(() => [
+    { value: '', label: zh ? '不绑定设备' : 'No device', searchText: '' },
+    ...devices.map((device) => {
+      const name = String(device.hostname || device.name || device.id || '');
+      const address = String(device.ip_address || device.management_ip || device.ip || '');
+      const label = name && address && !name.toLocaleLowerCase().includes(address.toLocaleLowerCase())
+        ? `${name} · ${address}`
+        : name || address || String(device.id || '');
+      return {
+        value: String(device.id || ''),
+        label,
+        searchText: [device.id, device.hostname, device.name, device.ip_address, device.management_ip, device.ip]
+          .filter(Boolean)
+          .join(' '),
+      };
+    }),
+  ], [devices, zh]);
+  const backupDevicePickerOptions = useMemo(
+    () => devicePickerOptions.map((option) => (
+      option.value && option.value === form.device_id ? { ...option, disabled: true } : option
+    )),
+    [devicePickerOptions, form.device_id],
+  );
+
+  const vipModeOptions = [
+    { value: 'F5', label: 'F5 LTM' },
+    { value: 'HSRP', label: 'Cisco HSRP' },
+    { value: 'VRRP', label: 'VRRP' },
+    { value: 'anycast', label: zh ? '任播 Anycast' : 'Anycast' },
+    { value: 'Keepalived', label: 'Keepalived' },
+    { value: 'Nginx', label: 'Nginx Proxy' },
+    { value: 'SLB', label: 'Cloud SLB' },
+  ];
 
   const getCreateIdempotencyKey = (payload: unknown) => {
     const fingerprint = JSON.stringify(payload);
@@ -244,6 +440,12 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
 
   const handleSave = async () => {
     setErrorMsg('');
+    const primaryDeviceId = String(form.device_id || '').trim();
+    const standbyDeviceId = String(form.backup_device_id || '').trim();
+    if (primaryDeviceId && standbyDeviceId && primaryDeviceId === standbyDeviceId) {
+      setErrorMsg(zh ? '绑定控制主设备和备用设备不能选择同一台设备。' : 'The primary and standby devices must be different.');
+      return;
+    }
     const selectedPrefixId = prefixId || form.prefix_id;
     if (prefixId && !prefixScope) {
       setErrorMsg(zh ? '当前网段尚未加载完成，请稍后重试。' : 'The current Prefix has not loaded yet. Retry in a moment.');
@@ -261,8 +463,8 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
     const payload = {
       ...form,
       prefix_id: selectedPrefixId,
-      device_id: form.device_id || null,
-      backup_device_id: form.backup_device_id || null,
+      device_id: form.device_id || '',
+      backup_device_id: form.backup_device_id || '',
       ...(editingVip ? { expected_revision: editingVip.revision } : {}),
     };
 
@@ -423,7 +625,8 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/40 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
                   <th className="pl-6 py-4">{zh ? '虚拟IP (VIP)' : 'Virtual IP'}</th>
-                  <th className="px-4 py-4">{zh ? '地址空间 / 前缀' : 'Address Space / Prefix'}</th>
+                  <th className="px-4 py-4">{zh ? '地址空间' : 'Address Space'}</th>
+                  <th className="px-4 py-4">{zh ? '所属网段' : 'Network Prefix'}</th>
                   <th className="px-4 py-4">{zh ? '高可用模式类型' : 'VIP Protocol Type'}</th>
                   <th className="px-4 py-4">{zh ? '绑定控制设备' : 'Bound Controller'}</th>
                   <th className="px-4 py-4">{zh ? '备用/Standby 设备' : 'Standby Device'}</th>
@@ -448,11 +651,11 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
                             {zh ? '范围待确认' : 'Scope pending'}
                           </span>
                         ) : (
-                          <div className="space-y-0.5 text-[10px]">
-                            <div className="font-semibold text-gray-700">{node.address_space_name || node.address_space_id}</div>
-                            <div className="font-mono text-gray-500">{node.prefix_cidr || node.prefix_id || '-'}</div>
-                          </div>
+                          <div className="text-xs font-semibold text-gray-700">{node.address_space_name || node.address_space_id}</div>
                         )}
+                      </td>
+                      <td className="px-4 py-4 font-mono text-[10px] text-gray-600">
+                        {node.prefix_cidr || node.prefix_id || '-'}
                       </td>
                       <td className="px-4 py-4">
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-50 text-cyan-600 border border-cyan-500/10">
@@ -500,7 +703,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={10} className="py-12 text-center text-xs text-gray-400 font-medium">
+                    <td colSpan={11} className="py-12 text-center text-xs text-gray-400 font-medium">
                       {zh ? '暂无高可用虚拟IP (VIP) 记录' : 'No Virtual IPs configured'}
                     </td>
                   </tr>
@@ -567,21 +770,16 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
                       </div>
                     ) : (
                       <>
-                        <select
+                        <SearchablePicker
                           id="vip-prefix"
-                          aria-label={zh ? '归属前缀' : 'Parent Prefix'}
+                          ariaLabel={zh ? '归属前缀' : 'Parent Prefix'}
                           value={form.prefix_id}
+                          options={prefixPickerOptions}
+                          placeholder={zh ? '搜索前缀名称或 CIDR' : 'Search prefix name or CIDR'}
+                          noResultsLabel={zh ? '没有匹配的前缀' : 'No matching prefixes'}
                           disabled={prefixesLoading || Boolean(prefixLoadError)}
-                          onChange={(event) => setForm((current) => ({ ...current, prefix_id: event.target.value }))}
-                          className="w-full rounded-xl border border-gray-150 bg-gray-50/50 px-4 py-2.5 text-xs font-medium outline-none transition-all focus:border-cyan-400 focus:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          <option value="">{zh ? '请选择明确的归属前缀' : 'Select an explicit Prefix'}</option>
-                          {prefixes.map((prefix) => (
-                            <option key={prefix.id} value={prefix.id}>
-                              {prefix.name ? `${prefix.name} · ` : ''}{prefix.prefix}
-                            </option>
-                          ))}
-                        </select>
+                          onChange={(value) => setForm((current) => ({ ...current, prefix_id: value }))}
+                        />
                         {prefixesLoading && <p role="status" className="ml-1 text-[10px] text-gray-500">{zh ? '正在加载网段…' : 'Loading prefixes…'}</p>}
                         {prefixLoadError && (
                           <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[10px] font-semibold text-rose-700">
@@ -623,53 +821,63 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
                     )}
                   </div>
 
-                  {/* VIP Type Select */}
-                  <div className="space-y-1.5">
-                    <label htmlFor="ipam-vip-type" className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '高可用技术模式 *' : 'VIP Mode *'}</label>
-                    <select
-                      id="ipam-vip-type"
-                      value={form.vip_type}
-                      onChange={(e) => setForm({ ...form, vip_type: e.target.value })}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
-                    >
-                      <option value="F5">F5 LTM</option>
-                      <option value="HSRP">Cisco HSRP</option>
-                      <option value="VRRP">VRRP</option>
-                      <option value="anycast">{zh ? '任播 Anycast' : 'Anycast'}</option>
-                      <option value="Keepalived">Keepalived</option>
-                      <option value="Nginx">Nginx Proxy</option>
-                      <option value="SLB">Cloud SLB</option>
-                    </select>
+                  {/* VIP Mode */}
+                  <div className="col-span-2 space-y-1.5">
+                    <div id="ipam-vip-type-label" className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '高可用技术模式 *' : 'VIP Mode *'}</div>
+                    <div role="radiogroup" aria-labelledby="ipam-vip-type-label" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      {vipModeOptions.map((option) => {
+                        const selected = form.vip_type === option.value;
+                        return (
+                          <label
+                            key={option.value}
+                            className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${selected ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-gray-150 bg-gray-50/50 text-gray-600 hover:border-cyan-200 hover:bg-cyan-50/40'}`}
+                          >
+                            <input
+                              type="radio"
+                              name="ipam-vip-type"
+                              value={option.value}
+                              checked={selected}
+                              onChange={() => setForm((current) => ({ ...current, vip_type: option.value }))}
+                              className="accent-cyan-600"
+                            />
+                            <span>{option.label}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
                   </div>
 
-                  {/* Controller Device Select */}
+                  {/* Controller Device */}
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '绑定控制主设备' : 'Bound Device'}</label>
-                    <select
+                    <label htmlFor="vip-bound-device" className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '绑定控制主设备' : 'Bound Device'}</label>
+                    <SearchablePicker
+                      id="vip-bound-device"
+                      ariaLabel={zh ? '绑定控制主设备' : 'Bound Device'}
                       value={form.device_id}
-                      onChange={(e) => setForm({ ...form, device_id: e.target.value })}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
-                    >
-                      <option value="">{zh ? '请选择控制设备' : 'None'}</option>
-                      {devices.map((d) => (
-                        <option key={d.id} value={d.id}>{d.hostname} ({d.ip_address})</option>
-                      ))}
-                    </select>
+                      options={devicePickerOptions}
+                      placeholder={zh ? '搜索设备名称或 IP' : 'Search device name or IP'}
+                      noResultsLabel={zh ? '没有匹配的设备' : 'No matching devices'}
+                      onChange={(value) => setForm((current) => ({
+                        ...current,
+                        device_id: value,
+                        backup_device_id: value && value === current.backup_device_id ? '' : current.backup_device_id,
+                      }))}
+                    />
                   </div>
 
-                  {/* Backup / Standby Device Select */}
+                  {/* Backup / Standby Device */}
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '备用/Standby 设备' : 'Standby Device'}</label>
-                    <select
+                    <label htmlFor="vip-standby-device" className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '备用/Standby 设备' : 'Standby Device'}</label>
+                    <SearchablePicker
+                      id="vip-standby-device"
+                      ariaLabel={zh ? '备用/Standby 设备' : 'Standby Device'}
                       value={form.backup_device_id}
-                      onChange={(e) => setForm({ ...form, backup_device_id: e.target.value })}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
-                    >
-                      <option value="">{zh ? '请选择备用设备' : 'None'}</option>
-                      {devices.map((d) => (
-                        <option key={d.id} value={d.id}>{d.hostname} ({d.ip_address})</option>
-                      ))}
-                    </select>
+                      options={backupDevicePickerOptions}
+                      placeholder={zh ? '搜索设备名称或 IP' : 'Search device name or IP'}
+                      noResultsLabel={zh ? '没有匹配的设备' : 'No matching devices'}
+                      onChange={(value) => setForm((current) => ({ ...current, backup_device_id: value }))}
+                    />
+                    <p className="ml-1 text-[10px] text-gray-500">{zh ? '主设备与备用设备必须是不同设备。' : 'The primary and standby devices must be different.'}</p>
                   </div>
 
                   {/* Controller Interface */}

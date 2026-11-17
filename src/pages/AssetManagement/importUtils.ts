@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { isValidIpAddress } from './constants';
 
 export type ManagementMethodImportRow = {
   rowNumber: number;
@@ -23,6 +24,7 @@ export const NETWORK_ASSET_SHEET_RE = /^(网络设备|网络设备信息|network
 export const SERVER_ASSET_SHEET_RE = /^(服务器|服务器信息|servers?|server[ _-]?(information|assets?))$/i;
 export const MANAGEMENT_ENTRY_SHEET_RE = /^(管理入口|管理方式|management[ _-]?(entries|entry|methods?)|access[ _-]?entries)$/i;
 export const REMOTE_DESKTOP_PROFILE_SHEET_RE = /^(远程桌面|远程桌面配置|remote[ _-]?desktop([ _-]?(profiles?|configuration))?)$/i;
+export const TELEMETRY_SUBSCRIPTION_SHEET_RE = /^(Telemetry采集|Telemetry订阅|遥测采集|telemetry[ _-]?(subscriptions?|collection))$/i;
 // Backward-compatible export for older callers and imported workbooks.
 export const MANAGEMENT_METHOD_SHEET_RE = MANAGEMENT_ENTRY_SHEET_RE;
 
@@ -42,6 +44,22 @@ export type RemoteDesktopProfileImportRow = {
   rdpSecurityMode: 'any' | 'nla' | 'tls' | 'rdp';
   rdpCertFingerprint: string;
   clipboardEnabled: boolean;
+};
+
+export type TelemetrySubscriptionImportRow = {
+  rowNumber: number;
+  assetTag: string;
+  profileId: string;
+  collectorId: string;
+  tlsProfileId: string;
+  deviceSourceAddress?: string;
+  allowedSourceIps: string[];
+  configEnabled: boolean;
+  subscriptionName: string;
+  templateId: string;
+  templateVersion: number;
+  intervalSeconds: number;
+  pathFilters: string[];
 };
 
 export const assetTypeForSheetName = (name: string): AssetSheetType | null => {
@@ -178,6 +196,170 @@ const normalizeOptionalBoolean = (value: string): boolean => {
   if (!value) return false;
   return !['0', 'false', 'no', 'n', '否', '禁用', '关闭'].includes(value.trim().toLowerCase());
 };
+
+const TELEMETRY_HEADERS = {
+  assetTag: ['资产编号 *', '资产编号', 'Asset Tag *', 'Asset Tag', 'asset_tag'],
+  profileId: ['协议档 ID *', '协议档ID *', '协议档 ID', 'Profile ID', 'profile_id'],
+  collectorId: ['采集器 ID *', '采集器ID *', '采集器 ID', 'Collector ID', 'collector_id'],
+  tlsProfileId: ['TLS 配置 ID *', 'TLS配置ID *', 'TLS 配置 ID', 'TLS Profile ID', 'tls_profile_id'],
+  deviceSourceAddress: ['设备上送源 IP（可选）', '设备上送源IP（可选）', '设备上送源 IP', 'Device Source IP', 'device_source_address'],
+  allowedSourceIps: ['接收端允许来源 IP *', '接收端允许来源IP *', '接收端允许来源 IP（可选）', '接收端允许来源 IP', '允许来源 IP *', '允许来源IP *', '允许来源 IP', 'Receiver Allowed Source IPs', 'Allowed Source IPs', 'allowed_sources'],
+  configEnabled: ['启用设备配置', '设备配置启用', 'Config Enabled'],
+  subscriptionName: ['订阅名称 *', '订阅名称', 'Subscription Name *', 'Subscription Name'],
+  templateId: ['模板 ID *', '模板ID *', '模板 ID', 'Template ID', 'template_id'],
+  templateVersion: ['模板版本 *', '模板版本', 'Template Version', 'template_version'],
+  intervalSeconds: ['周期秒 *', '采样周期秒 *', '采样周期（秒）*', 'Interval Seconds', 'interval_seconds'],
+  pathFilters: ['采集路径（可选）', '采集路径', 'Path Filters', 'path_filters'],
+} satisfies Record<string, string[]>;
+
+const normalizeTelemetryConfigEnabled = (value: string): boolean => {
+  if (!value.trim()) return false;
+  return !['0', 'false', 'no', 'n', 'off', '否', '禁用', '关闭', '停用'].includes(value.trim().toLowerCase());
+};
+
+const telemetryCell = (row: Record<string, unknown>, field: keyof typeof TELEMETRY_HEADERS): string => {
+  const header = TELEMETRY_HEADERS[field].find((candidate) => Object.prototype.hasOwnProperty.call(row, candidate));
+  return header ? String(row[header] ?? '').trim() : '';
+};
+
+export function parseTelemetrySubscriptionSheet(
+  worksheet: XLSX.WorkSheet,
+): { rows: TelemetrySubscriptionImportRow[]; errors: string[] } {
+  const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: '' });
+  const rows: TelemetrySubscriptionImportRow[] = [];
+  const errors: string[] = [];
+  rawRows.forEach((raw, index) => {
+    const rowNumber = index + 2;
+    const values = {
+      assetTag: telemetryCell(raw, 'assetTag'),
+      profileId: telemetryCell(raw, 'profileId'),
+      collectorId: telemetryCell(raw, 'collectorId'),
+      tlsProfileId: telemetryCell(raw, 'tlsProfileId'),
+      deviceSourceAddress: telemetryCell(raw, 'deviceSourceAddress'),
+      subscriptionName: telemetryCell(raw, 'subscriptionName'),
+      templateId: telemetryCell(raw, 'templateId'),
+      templateVersion: telemetryCell(raw, 'templateVersion'),
+      intervalSeconds: telemetryCell(raw, 'intervalSeconds'),
+    };
+    if (Object.values(values).every((value) => !value)) return;
+    const required = ['assetTag', 'profileId', 'collectorId', 'tlsProfileId', 'subscriptionName', 'templateId', 'templateVersion', 'intervalSeconds'] as const;
+    const missing = required.filter((key) => !values[key]);
+    if (missing.length) {
+      errors.push(`Telemetry 采集第 ${rowNumber} 行：缺少必填字段 ${missing.map((key) => ({
+        assetTag: '资产编号', profileId: '协议档 ID', collectorId: '采集器 ID', tlsProfileId: 'TLS 配置 ID',
+        subscriptionName: '订阅名称', templateId: '模板 ID', templateVersion: '模板版本', intervalSeconds: '采样周期',
+      }[key])).join('、')}`);
+      return;
+    }
+    const templateVersion = Number(values.templateVersion);
+    const intervalSeconds = Number(values.intervalSeconds);
+    if (!Number.isInteger(templateVersion) || templateVersion < 1) {
+      errors.push(`Telemetry 采集第 ${rowNumber} 行：模板版本必须为正整数`);
+      return;
+    }
+    if (!Number.isInteger(intervalSeconds) || intervalSeconds < 5 || intervalSeconds > 86400) {
+      errors.push(`Telemetry 采集第 ${rowNumber} 行：周期必须是 5 到 86400 秒的整数`);
+      return;
+    }
+    if (values.deviceSourceAddress && !isValidIpAddress(values.deviceSourceAddress)) {
+      errors.push(`Telemetry 采集第 ${rowNumber} 行：设备上送源 IP 格式不正确`);
+      return;
+    }
+    const allowedSourceIps = parseList(telemetryCell(raw, 'allowedSourceIps'));
+    if (!allowedSourceIps.length) {
+      errors.push(`Telemetry 采集第 ${rowNumber} 行：至少填写一个接收端允许来源 IP 白名单地址`);
+      return;
+    }
+    if (allowedSourceIps.some((ip) => !isValidIpAddress(ip))) {
+      errors.push(`Telemetry 采集第 ${rowNumber} 行：接收端允许来源 IP 白名单中存在无效地址`);
+      return;
+    }
+    rows.push({
+      rowNumber,
+      assetTag: values.assetTag,
+      profileId: values.profileId,
+      collectorId: values.collectorId,
+      tlsProfileId: values.tlsProfileId,
+      deviceSourceAddress: values.deviceSourceAddress,
+      allowedSourceIps,
+      configEnabled: normalizeTelemetryConfigEnabled(telemetryCell(raw, 'configEnabled')),
+      subscriptionName: values.subscriptionName,
+      templateId: values.templateId,
+      templateVersion,
+      intervalSeconds,
+      pathFilters: parseList(telemetryCell(raw, 'pathFilters')),
+    });
+  });
+  return { rows, errors };
+}
+
+function parseList(value: string): string[] {
+  return [...new Set(value.split(/[\n,;]+/).map((item) => item.trim()).filter(Boolean))];
+}
+
+export function mergeTelemetrySubscriptions(
+  assets: Record<string, any>[],
+  subscriptions: TelemetrySubscriptionImportRow[],
+): { assets: Record<string, any>[]; errors: string[] } {
+  const errors: string[] = [];
+  const byAssetTag = new Map<string, Record<string, any>>();
+  assets.forEach((asset) => {
+    const tag = String(asset.asset_tag || '').trim().toLowerCase();
+    if (tag) byAssetTag.set(tag, asset);
+  });
+  const grouped = new Map<Record<string, any>, TelemetrySubscriptionImportRow[]>();
+  subscriptions.forEach((subscription) => {
+    const asset = byAssetTag.get(subscription.assetTag.toLowerCase());
+    if (!asset) {
+      errors.push(`Telemetry 采集第 ${subscription.rowNumber} 行：找不到资产编号 ${subscription.assetTag}`);
+      return;
+    }
+    const vendor = String(asset.vendor || '').toLowerCase();
+    if (asset.asset_type !== 'network_device' || (!vendor.includes('huawei') && !vendor.includes('h3c'))) {
+      errors.push(`${subscription.assetTag}：首发 Telemetry 只允许关联华为或华三网络设备`);
+      return;
+    }
+    const existing = grouped.get(asset) || [];
+    const config = existing[0];
+    if (config && (
+      config.profileId !== subscription.profileId
+      || config.collectorId !== subscription.collectorId
+      || config.tlsProfileId !== subscription.tlsProfileId
+      || config.deviceSourceAddress !== subscription.deviceSourceAddress
+      || config.configEnabled !== subscription.configEnabled
+      || config.allowedSourceIps.join(',') !== subscription.allowedSourceIps.join(',')
+    )) {
+      errors.push(`${subscription.assetTag}：同一设备的 Telemetry 协议档、采集器、TLS、设备上送源 IP、接收端允许来源 IP 和启用状态必须一致`);
+      return;
+    }
+    if (existing.some((item) => item.subscriptionName.toLowerCase() === subscription.subscriptionName.toLowerCase())) {
+      errors.push(`${subscription.assetTag}：存在重复的 Telemetry 订阅名称“${subscription.subscriptionName}”`);
+      return;
+    }
+    existing.push(subscription);
+    grouped.set(asset, existing);
+  });
+  grouped.forEach((items, asset) => {
+    const config = items[0];
+    asset.telemetry_config = {
+      profile_id: config.profileId,
+      collector_id: config.collectorId,
+      tls_profile_id: config.tlsProfileId,
+      device_source_address: config.deviceSourceAddress || null,
+      allowed_sources: config.allowedSourceIps,
+      enabled: config.configEnabled,
+      revision: 1,
+      subscriptions: items.map((item) => ({
+        name: item.subscriptionName,
+        template_id: item.templateId,
+        template_version: item.templateVersion,
+        interval_seconds: item.intervalSeconds,
+        path_filters: item.pathFilters,
+      })),
+    };
+  });
+  return { assets, errors };
+}
 
 export function parseRemoteDesktopProfileSheet(
   worksheet: XLSX.WorkSheet,

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Ban, GitBranch, Pencil, Plus, RefreshCw, X } from 'lucide-react';
+import { Ban, ChevronDown, GitBranch, Pencil, Plus, RefreshCw, Search, X } from 'lucide-react';
 import PageHero from '../../components/PageHero';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 import { apiRequest, ApiError } from '../../api/http';
@@ -72,6 +72,17 @@ const deviceLabel = (device: DeviceOption): string => {
   return address && address !== name ? `${name} · ${address}` : name;
 };
 
+const deviceSearchText = (device: DeviceOption): string => [
+  deviceLabel(device),
+  device.id,
+  device.name,
+  device.device_name,
+  device.hostname,
+  device.management_ip,
+  device.ip,
+  device.ip_address,
+].filter(Boolean).join(' ').toLocaleLowerCase();
+
 const addressSpaceLabel = (space: AddressSpaceOption, zh: boolean): string => (
   space.kind === 'vrf'
     ? `${space.name || space.id} · ${space.vrf_name || space.vrf_id || 'VRF'}`
@@ -116,6 +127,9 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
   const [devices, setDevices] = useState<DeviceOption[]>([]);
   const [addressSpaces, setAddressSpaces] = useState<AddressSpaceOption[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
+  const [deviceSearchQuery, setDeviceSearchQuery] = useState('');
+  const [devicePickerOpen, setDevicePickerOpen] = useState(false);
+  const [activeDeviceOption, setActiveDeviceOption] = useState(-1);
   const [lookupsLoading, setLookupsLoading] = useState(true);
   const [lookupsError, setLookupsError] = useState('');
   const [mappings, setMappings] = useState<RoutingContextMapping[]>([]);
@@ -131,10 +145,52 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
   const [confirmDisable, setConfirmDisable] = useState<RoutingContextMapping | null>(null);
   const mappingRequestId = useRef(0);
 
+  const selectedDevice = useMemo(
+    () => devices.find((device) => device.id === selectedDeviceId) || null,
+    [devices, selectedDeviceId],
+  );
+  const filteredDevices = useMemo(() => {
+    const query = deviceSearchQuery.trim().toLocaleLowerCase();
+    return query ? devices.filter((device) => deviceSearchText(device).includes(query)) : devices;
+  }, [devices, deviceSearchQuery]);
+
   const compatibleAddressSpaces = useMemo(
     () => addressSpaces.filter((space) => space.kind === form.context_type),
     [addressSpaces, form.context_type],
   );
+
+  const selectDevice = (device: DeviceOption) => {
+    setWriteDenied(false);
+    setSelectedDeviceId(device.id);
+    setDeviceSearchQuery('');
+    setDevicePickerOpen(false);
+    setActiveDeviceOption(-1);
+  };
+
+  const handleDeviceSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setDevicePickerOpen(true);
+      setActiveDeviceOption((current) => filteredDevices.length === 0
+        ? -1
+        : current < 0 ? 0 : Math.min(current + 1, filteredDevices.length - 1));
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setDevicePickerOpen(true);
+      setActiveDeviceOption((current) => filteredDevices.length === 0
+        ? -1
+        : current <= 0 ? filteredDevices.length - 1 : current - 1);
+    } else if (event.key === 'Enter' && devicePickerOpen) {
+      event.preventDefault();
+      const device = filteredDevices[activeDeviceOption]
+        || (filteredDevices.length === 1 ? filteredDevices[0] : null);
+      if (device) selectDevice(device);
+    } else if (event.key === 'Escape' && devicePickerOpen) {
+      event.preventDefault();
+      setDevicePickerOpen(false);
+      setActiveDeviceOption(-1);
+    }
+  };
 
   const loadLookups = useCallback(async () => {
     setLookupsLoading(true);
@@ -358,23 +414,82 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
             <label htmlFor="routing-context-device" className="text-xs font-semibold text-slate-600">
               {zh ? '设备' : 'Device'}
             </label>
-            <select
-              id="routing-context-device"
-              aria-label={zh ? '选择设备' : 'Select device'}
-              value={selectedDeviceId}
-              onChange={(event) => {
-                setWriteDenied(false);
-                setSelectedDeviceId(event.target.value);
+            <div
+              className="relative w-full min-w-[min(100%,20rem)] sm:w-80"
+              onBlur={(event) => {
+                const nextTarget = event.relatedTarget;
+                if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+                  setDevicePickerOpen(false);
+                  setActiveDeviceOption(-1);
+                }
               }}
-              disabled={lookupsLoading || Boolean(lookupsError)}
-              className="min-w-[min(100%,20rem)] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-blue-400 disabled:cursor-not-allowed disabled:bg-slate-50"
             >
-              <option value="">{lookupsLoading ? (zh ? '加载设备中…' : 'Loading devices…') : (zh ? '选择设备' : 'Select a device')}</option>
-              {devices.map((device) => <option key={device.id} value={device.id}>{deviceLabel(device)}</option>)}
-            </select>
-            <span className="text-xs text-slate-400">
-              {zh ? '仅显示所选设备的显式映射' : 'Showing explicit mappings for the selected device'}
-            </span>
+              <Search size={15} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                id="routing-context-device"
+                role="combobox"
+                aria-label={zh ? '选择设备' : 'Select device'}
+                aria-autocomplete="list"
+                aria-expanded={devicePickerOpen && !lookupsLoading && !lookupsError}
+                aria-controls={devicePickerOpen ? 'routing-context-device-options' : undefined}
+                aria-activedescendant={devicePickerOpen && activeDeviceOption >= 0 ? `routing-context-device-option-${activeDeviceOption}` : undefined}
+                aria-busy={lookupsLoading}
+                autoComplete="off"
+                value={devicePickerOpen ? deviceSearchQuery : selectedDevice ? deviceLabel(selectedDevice) : deviceSearchQuery}
+                placeholder={lookupsLoading
+                  ? (zh ? '加载设备中…' : 'Loading devices…')
+                  : lookupsError
+                    ? (zh ? '设备列表不可用' : 'Device list unavailable')
+                    : (zh ? '按设备名称或 IP 搜索' : 'Search by device name or IP')}
+                onFocus={(event) => {
+                  setDevicePickerOpen(Boolean(deviceSearchQuery.trim()));
+                  setActiveDeviceOption(-1);
+                  if (selectedDeviceId) {
+                    setDeviceSearchQuery('');
+                    event.currentTarget.select();
+                  }
+                }}
+                onChange={(event) => {
+                  const nextQuery = event.target.value;
+                  setDeviceSearchQuery(nextQuery);
+                  setSelectedDeviceId('');
+                  setWriteDenied(false);
+                  setDevicePickerOpen(Boolean(nextQuery.trim()));
+                  setActiveDeviceOption(-1);
+                }}
+                onKeyDown={handleDeviceSearchKeyDown}
+                disabled={lookupsLoading || Boolean(lookupsError)}
+                className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-9 text-sm text-slate-700 outline-none focus:border-blue-400 disabled:cursor-not-allowed disabled:bg-slate-50"
+              />
+              <ChevronDown size={15} aria-hidden="true" className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition-transform ${devicePickerOpen ? 'rotate-180' : ''}`} />
+              {devicePickerOpen && !lookupsLoading && !lookupsError && (
+                <div
+                  id="routing-context-device-options"
+                  role="listbox"
+                  aria-label={zh ? '设备搜索结果' : 'Device search results'}
+                  className="absolute left-0 top-full z-50 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
+                >
+                  {filteredDevices.length ? filteredDevices.map((device, index) => (
+                    <div
+                      key={device.id}
+                      id={`routing-context-device-option-${index}`}
+                      role="option"
+                      aria-selected={device.id === selectedDeviceId}
+                      className={`cursor-pointer px-3 py-2 text-sm ${index === activeDeviceOption ? 'bg-blue-50 text-blue-700' : 'text-slate-700 hover:bg-slate-50'}`}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onMouseEnter={() => setActiveDeviceOption(index)}
+                      onClick={() => selectDevice(device)}
+                    >
+                      {deviceLabel(device)}
+                    </div>
+                  )) : (
+                    <div role="status" className="px-3 py-2 text-sm text-slate-500">
+                      {zh ? '没有匹配的设备' : 'No matching devices'}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
       />

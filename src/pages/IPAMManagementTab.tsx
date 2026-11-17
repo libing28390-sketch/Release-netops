@@ -43,8 +43,8 @@ const IPAMManagementTab: React.FC<IPAMManagementTabProps> = ({ language, t, ipam
     [location.search],
   );
   const selectedPrefix = prefixes.find((prefix) => prefix.id === prefixId) || null;
-  const isAddressSpace = ['prefixes', 'ips', 'pools', 'vips'].includes(ipamPage);
-  const showsAddressData = ['ips', 'pools', 'vips'].includes(ipamPage);
+  const isAddressSpace = ['prefixes', 'ips', 'pools'].includes(ipamPage);
+  const showsAddressData = ['ips', 'pools'].includes(ipamPage);
 
   useEffect(() => {
     if (!isAddressSpace) return;
@@ -79,9 +79,6 @@ const IPAMManagementTab: React.FC<IPAMManagementTabProps> = ({ language, t, ipam
                 <div className="truncate text-sm font-semibold text-slate-800">
                   {selectedPrefix ? `${selectedPrefix.prefix}${selectedPrefix.name ? ` · ${selectedPrefix.name}` : ''}` : (zh ? '全部网段' : 'All prefixes')}
                 </div>
-                <div className="text-[11px] text-slate-400">
-                  {zh ? '使用下方筛选器切换网段；地址池和 VIP 会沿用当前选择' : 'Change the prefix in the filter below; Pools and VIPs will use the same scope'}
-                </div>
               </div>
             ) : (
               <select
@@ -99,9 +96,6 @@ const IPAMManagementTab: React.FC<IPAMManagementTabProps> = ({ language, t, ipam
               </select>
             )}
           </div>
-          <p className="text-xs text-slate-400">
-            {zh ? 'IP 地址、地址池和 VIP 共用此网段范围' : 'IP addresses, pools, and VIPs share this prefix scope'}
-          </p>
         </div>
       )}
 
@@ -110,7 +104,7 @@ const IPAMManagementTab: React.FC<IPAMManagementTabProps> = ({ language, t, ipam
           {ipamPage === 'prefixes' && <PrefixManagementTab language={language} t={t} />}
           {ipamPage === 'ips' && <IPAddressTab key={prefixId} language={language} t={t} />}
           {ipamPage === 'pools' && <IPPoolTab language={language} t={t} prefixId={prefixId} />}
-          {ipamPage === 'vips' && <VIPManagementTab language={language} t={t} prefixId={prefixId} prefixScope={selectedPrefix} />}
+          {ipamPage === 'vips' && <VIPManagementTab language={language} t={t} />}
           {ipamPage === 'dhcp' && <DHCPLeaseTab language={language} t={t} />}
           {ipamPage === 'utilization' && <IPUtilizationTab language={language} t={t} />}
           {ipamPage === 'reconciliation' && <IPReconciliationTab language={language} t={t} />}

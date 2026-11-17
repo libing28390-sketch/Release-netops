@@ -99,23 +99,23 @@ export function buildDiscoveredEndpointQuery(filters: DiscoveredEndpointFilters)
 
 export function getEndpointClassLabel(value: string | undefined, zh: boolean): string {
   const labels: Record<string, [string, string]> = {
-    infrastructure: ['基础设施地址', 'Infrastructure address'],
-    access_host: ['接入口主机候选', 'Host candidate on access port'],
-    candidate: ['待核主机候选', 'Host candidate pending review'],
-    mac_only: ['仅 MAC 观察', 'MAC-only observation'],
+    infrastructure: ['基础设施 IP', 'Infrastructure IPs'],
+    access_host: ['已定位接入口', 'Access port located'],
+    candidate: ['接入口待定位', 'Access port pending'],
+    mac_only: ['仅有 MAC', 'MAC only'],
   };
-  return labels[value || '']?.[zh ? 0 : 1] || (zh ? '判定待确认' : 'Classification pending');
+  return labels[value || '']?.[zh ? 0 : 1] || (zh ? '类型待确认' : 'Type pending');
 }
 
 export function getEndpointClassReason(value: string | undefined, zh: boolean): string {
   const labels: Record<string, [string, string]> = {
-    current_l3_interface_ip: ['命中当前设备三层接口 IP', 'Matches a current device L3 interface IP'],
-    managed_device_ip: ['命中已管理设备地址', 'Matches a managed device address'],
-    managed_device_site_mismatch: ['同 IP 已登记在另一站点，归属待核', 'Same IP is registered at another site; ownership needs review'],
-    virtual_gateway_mac: ['命中虚拟网关 MAC', 'Matches a virtual gateway MAC'],
-    same_device_vlan_fdb_access: ['同设备、同 VLAN 的当前 FDB 命中显式 Access 端口', 'Current FDB on the same device and VLAN confirms an explicit access port'],
-    access_path_not_confirmed: ['尚无唯一的当前接入口证据', 'No unique current access-port evidence'],
-    fdb_without_ip: ['只有 MAC 观察，没有 IP', 'MAC observation without an IP'],
+    current_l3_interface_ip: ['设备三层接口 IP', 'Matches a current device L3 interface IP'],
+    managed_device_ip: ['已登记设备的管理 IP', 'Matches an IP assigned to a registered device'],
+    managed_device_site_mismatch: ['同一 IP 已登记在另一站点，归属待核实', 'The same IP is registered at another site; ownership needs review'],
+    virtual_gateway_mac: ['虚拟网关 MAC', 'Matches a virtual gateway MAC'],
+    same_device_vlan_fdb_access: ['MAC 地址表已定位到同 VLAN 的 Access 接口', 'A MAC address table entry on the same device and VLAN matches a port explicitly marked Access'],
+    access_path_not_confirmed: ['尚未定位到唯一接入口', 'No unique access port located yet'],
+    fdb_without_ip: ['未获取到对应 IP', 'MAC address table observation without an observed IP'],
   };
   return labels[value || '']?.[zh ? 0 : 1] || '';
 }
@@ -162,8 +162,8 @@ export function getDiscoveryPathLabel(
     topology_aggregation_link: ['拓扑聚合链路', 'Topology aggregation link'],
     trunk_tagged_interface: ['Trunk / 标签接口（非唯一终端口）', 'Trunk / tagged interface (not a unique edge port)'],
     topology_neighbor_link: ['拓扑邻接链路', 'Topology neighbor link'],
-    access_edge: ['显式 Access 接口', 'Explicit access interface'],
-    unknown: ['路径未确认', 'Path unconfirmed'],
+    access_edge: ['Access 接入口', 'Interface explicitly marked Access'],
+    unknown: ['接入路径待核实', 'Path unconfirmed'],
   };
   const label = labels[item.path_classification || '']?.[zh ? 0 : 1] || '';
   const virtualMac = item.virtual_gateway_mac
@@ -182,11 +182,11 @@ export function getDiscoveryTypeLabel(zh: boolean): string {
 
 export function getDiscoveryEvidenceLabel(status: string | undefined, zh: boolean): string {
   const labels: Record<string, [string, string]> = {
-    recent: ['近期观察', 'Recent observation'],
-    stale: ['当前成功代次较早', 'Latest successful generation is old'],
-    scope_pending: ['归属待确认', 'Scope pending'],
+    recent: ['最近采集', 'Recent collection'],
+    stale: ['采集记录较旧', 'Older collection data'],
+    scope_pending: ['所属网络待确认', 'Network scope pending'],
     conflict: ['IP/MAC 冲突', 'IP/MAC conflict'],
-    unknown: ['观察时间未知（不参与当前对账）', 'Observation time unknown (excluded from reconciliation)'],
+    unknown: ['采集时间未知（暂不参与对账）', 'Observation time unknown (excluded from reconciliation)'],
   };
   const label = labels[status || ''];
   return label ? label[zh ? 0 : 1] : (zh ? '未知' : 'Unknown');
@@ -196,7 +196,7 @@ export function getDiscoveryCollectionStatusLabel(status: string | undefined, zh
   const labels: Record<string, [string, string]> = {
     complete: ['采集完成', 'Collection complete'],
     complete_empty: ['采集完成（空结果）', 'Collection complete (empty)'],
-    scope_unknown: ['范围待确认', 'Scope pending'],
+    scope_unknown: ['所属网络待确认', 'Network scope pending'],
     partial: ['部分采集', 'Partial collection'],
     failed: ['采集失败', 'Collection failed'],
     unsupported: ['设备不支持', 'Unsupported by device'],
@@ -209,8 +209,8 @@ export function getDiscoveryRegistrationLabel(status: string | undefined, zh: bo
   const labels: Record<string, [string, string]> = {
     registered: ['已登记', 'Registered'],
     unregistered: ['未登记', 'Unregistered'],
-    scope_pending: ['归属待确认', 'Scope pending'],
-    not_applicable: ['MAC 观察（未创建 IP）', 'MAC observation (no IP created)'],
+    scope_pending: ['所属网络待确认', 'Network scope pending'],
+    not_applicable: ['仅有 MAC，无法登记 IP', 'MAC only; IP registration unavailable'],
   };
   const label = labels[status || ''];
   return label ? label[zh ? 0 : 1] : (zh ? '未知' : 'Unknown');
@@ -222,9 +222,9 @@ export function getDiscoveryObservationSourceLabel(observationSource: unknown, s
   if (!normalizedSource) return zh ? '来源待确认' : 'Source pending';
 
   const labels: Record<string, [string, string]> = {
-    arp: ['ARP', 'ARP'],
-    ndp: ['IPv6 邻居发现（ND）', 'IPv6 Neighbor Discovery (ND)'],
-    fdb: ['FDB / MAC 观察（不登记 IP）', 'FDB / MAC observation (no IP registration)'],
+    arp: ['ARP 表', 'ARP table'],
+    ndp: ['IPv6 邻居表（ND）', 'IPv6 neighbor table (ND)'],
+    fdb: ['MAC 地址表（FDB）', 'MAC address table (FDB)'],
   };
   const label = labels[normalizedSource.toLowerCase()];
   if (label) return label[zh ? 0 : 1];
@@ -235,10 +235,10 @@ export function getDiscoveryObservationSourceLabel(observationSource: unknown, s
 export function getDiscoveryCoverageLabel(status: string | undefined, zh: boolean): string {
   const labels: Record<string, [string, string]> = {
     complete: ['数据可核对', 'Ready to compare'],
-    partial: ['范围或覆盖待确认', 'Scope or coverage needs review'],
-    unavailable: ['暂无可用发现证据', 'No usable discovery evidence'],
+    partial: ['采集或网络归属待核实', 'Scope or coverage needs review'],
+    unavailable: ['暂无可用采集记录', 'No usable discovery evidence'],
     no_inputs: ['暂无数据', 'No data yet'],
-    scope_pending: ['来源归属待确认', 'Source scope needs review'],
+    scope_pending: ['所属网络待确认', 'Network scope pending'],
   };
   return labels[status || '']?.[zh ? 0 : 1] || (zh ? '数据状态未知' : 'Data status unknown');
 }

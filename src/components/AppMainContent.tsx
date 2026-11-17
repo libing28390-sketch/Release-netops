@@ -19,6 +19,7 @@ const NetworkMonitoring = lazy(() => import('./NetworkMonitoring.tsx'));
 const GrafanaDashboardPage = lazy(() => import('../pages/GrafanaDashboardPage'));
 const MonitoringReportsPage = lazy(() => import('../pages/MonitoringReportsPage'));
 const MonitoringManagementPage = lazy(() => import('./MonitoringManagementPage.tsx'));
+const TelemetryManagementPage = lazy(() => import('./TelemetryManagementPage.tsx'));
 const DeviceHealthTab = lazy(() => import('../pages/DeviceHealthTab'));
 const DashboardTab = lazy(() => import('../pages/DashboardTab'));
 const HomePage = lazy(() => import('../pages/HomePage'));
@@ -534,6 +535,7 @@ const AppMainContent: React.FC = () => {
 
   const getDeviceFetchMode = () => {
     if (activeTab === 'inventory') return 'full';
+    if (activeTab === 'telemetry-management') return 'full';
     if (activeTab === 'automation') return 'full';
     if (activeTab === 'config') return 'full';
     if (activeTab === 'topology') return 'full';
@@ -707,6 +709,15 @@ const AppMainContent: React.FC = () => {
       {activeTab === 'monitoring-collectors' && (
         <Suspense fallback={lazyPanelFallback}>
           <MonitoringManagementPage language={language} mode="collectors" showToast={showToast} />
+        </Suspense>
+      )}
+
+      {activeTab === 'telemetry-management' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <TelemetryManagementPage
+            devices={devices}
+            canManage={['operator', 'administrator', 'admin'].includes(String(currentUser?.role || '').toLowerCase())}
+          />
         </Suspense>
       )}
 
