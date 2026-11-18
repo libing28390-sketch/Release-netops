@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, Loader2, Plus, Radio, ShieldCheck, UploadCloud } from 'lucide-react';
 import { ApiError } from '../api/http';
 import {
@@ -31,8 +31,8 @@ interface Props {
 
 type Notice = { kind: 'success' | 'error' | 'info'; message: string };
 
-const fieldClass = 'w-full rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2.5 py-2 text-xs text-[var(--app-text)]';
-const labelClass = 'grid gap-1 text-[10px] font-semibold text-[var(--muted-text)]';
+const fieldClass = 'w-full rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] px-3 py-2.5 text-sm font-normal text-[var(--app-text)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-600 disabled:opacity-60';
+const labelClass = 'grid min-w-0 content-start gap-1.5 text-xs font-semibold text-[var(--app-text)]';
 
 function errorText(reason: unknown, fallback: string): string {
   if (reason instanceof ApiError && reason.code === 'TELEMETRY_CAPACITY_EXCEEDED') return '采集器容量不足，订阅尚未创建。';
@@ -125,6 +125,7 @@ const TelemetryControlSetupPanel: React.FC<Props> = ({ devices, profiles, canMan
   const [templates, setTemplates] = useState<TelemetrySubscriptionTemplate[]>([]);
   const [tlsProfiles, setTlsProfiles] = useState<TelemetryTlsProfile[]>([]);
   const [resourceIssue, setResourceIssue] = useState('');
+  const [resourcesLoading, setResourcesLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [publishingId, setPublishingId] = useState('');
   const [editingTemplateId, setEditingTemplateId] = useState('');
@@ -150,6 +151,15 @@ const TelemetryControlSetupPanel: React.FC<Props> = ({ devices, profiles, canMan
   const [templateInterval, setTemplateInterval] = useState('60');
   const [templateMappings, setTemplateMappings] = useState('[]');
 
+  const templateDetails = useRef<HTMLDetailsElement>(null);
+  const tlsDetails = useRef<HTMLDetailsElement>(null);
+
+  const openSettings = (details: HTMLDetailsElement | null) => {
+    if (!details) return;
+    details.open = true;
+    details.querySelector('summary')?.focus();
+  };
+
   const [tlsName, setTlsName] = useState('');
   const [tlsCaRef, setTlsCaRef] = useState('');
   const [tlsClientCertRef, setTlsClientCertRef] = useState('');
@@ -159,6 +169,7 @@ const TelemetryControlSetupPanel: React.FC<Props> = ({ devices, profiles, canMan
   useEffect(() => {
     const controller = new AbortController();
     setResourceIssue('');
+    setResourcesLoading(true);
     void Promise.allSettled([
       getTelemetryCollectors(controller.signal),
       getTelemetryTemplates(controller.signal),
@@ -174,6 +185,7 @@ const TelemetryControlSetupPanel: React.FC<Props> = ({ devices, profiles, canMan
       if (tlsResult.status === 'fulfilled') setTlsProfiles(tlsResult.value.items || []);
       else issues.push('TLS 凭据引用加载失败');
       setResourceIssue(issues.join('；'));
+      setResourcesLoading(false);
     });
     return () => controller.abort();
   }, [reloadKey]);
@@ -192,7 +204,8 @@ const TelemetryControlSetupPanel: React.FC<Props> = ({ devices, profiles, canMan
   const selectedProfile = profiles.find((profile) => profile.id === profileId);
   const selectedProfileMatch = selectedDevice && selectedProfile ? telemetryProfileMatch(selectedProfile, selectedDevice) : null;
   const publishedTemplates = templates.filter((template) => template.status === 'PUBLISHED');
-  const selectedTemplate = publishedTemplates.find((template) => template.id === templateId);
+  const matchingTemplates = publishedTemplates.filter((template) => !profileId || template.profile_id === profileId);
+  const selectedTemplate = matchingTemplates.find((template) => template.id === templateId);
   const activeTlsProfiles = tlsProfiles.filter((profile) => profile.status === 'ACTIVE');
   const selectedCollector = collectors.find((item) => item.id === collectorId);
   const selectedTemplatePaths = useMemo(() => templatePathList(selectedTemplate), [selectedTemplate]);
@@ -474,104 +487,125 @@ const TelemetryControlSetupPanel: React.FC<Props> = ({ devices, profiles, canMan
   return (
     <section className="space-y-3 rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-4 shadow-sm md:p-5">
       <div>
-        <h2 className="flex items-center gap-2 text-sm font-extrabold text-[var(--app-text)]"><Radio size={16} className="text-cyan-700" />配置设备采集</h2>
-        <p className="mt-1 text-[11px] text-[var(--muted-text)]">只登记采集器、TLS 引用和订阅；不会自动向设备下发配置命令。</p>
+        <h2 className="flex items-center gap-2 text-lg font-semibold text-[var(--app-text)]"><Radio size={16} className="text-cyan-700" />配置设备采集</h2>
+        <p className="mt-1 text-xs text-[var(--muted-text)]">只登记采集器、TLS 引用和订阅；不会自动向设备下发配置命令。</p>
       </div>
-      <div className="flex flex-col gap-3 rounded-xl border border-cyan-200 bg-cyan-50/70 p-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <p className="text-xs font-extrabold text-cyan-900">批量绑定已有资产 · 3 步</p>
-          <p className="mt-1 text-[10px] leading-relaxed text-cyan-900/80">1. 进入资产管理下载导入模板；2. 在网络设备表填写资产编号和管理 IP，再在“Telemetry采集”工作表为每条订阅填一行；3. 上传工作簿完成导入。后端按资产编号和管理 IP 匹配已有设备。每台设备可独立填写 TLS 配置、接收端允许来源 IP 和可选设备上送源 IP；同一设备的多条订阅行需保持这些连接字段一致。接收器地址/端口从已配置的独立接收器信息读取，不重复填写到资产行。</p>
-          <p className="mt-1 text-[10px] font-semibold text-cyan-900">导入只登记平台配置，新订阅默认停用；需人工完成设备侧配置后再启用。</p>
-        </div>
-        <a href="/assets/dashboard" className="inline-flex shrink-0 items-center justify-center rounded-lg border border-cyan-300 bg-white px-3 py-2 text-[11px] font-bold text-cyan-800 hover:bg-cyan-100">前往资产导入与模板</a>
-      </div>
+      <details className="rounded-xl border border-[var(--card-border)] px-4 py-3">
+        <summary className="cursor-pointer text-xs font-semibold text-[var(--app-text)]">批量导入已有资产</summary>
+        <p className="mt-3 text-xs leading-relaxed text-[var(--muted-text)]">下载资产导入模板，在网络设备表填写资产编号和管理 IP，再在 Telemetry 采集工作表为每条订阅填写一行。导入后的订阅默认停用。</p>
+        <a href="/assets/dashboard" className="mt-2 inline-block text-xs font-semibold text-cyan-700 hover:underline dark:text-cyan-300">前往资产导入与模板</a>
+      </details>
       {notice && <div role={notice.kind === 'error' ? 'alert' : 'status'} className={`rounded-lg border px-3 py-2 text-xs ${notice.kind === 'error' ? 'border-rose-200 bg-rose-50 text-rose-700' : notice.kind === 'info' ? 'border-sky-200 bg-sky-50 text-sky-800' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{notice.message}</div>}
-      {resourceIssue && <p role="status" className="text-[11px] text-amber-700">{resourceIssue}</p>}
+      {resourceIssue && <p role="status" className="text-xs text-amber-700">{resourceIssue}</p>}
 
-      <form onSubmit={createSubscription} className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <div className={labelClass}>
-          <span>设备</span>
-          <input type="search" className={fieldClass} value={deviceSearch} onChange={(event) => setDeviceSearch(event.target.value)} placeholder="搜索资产编号、主机名、管理 IP 或型号" disabled={!canManage} aria-label="搜索 Telemetry 设备" />
-          {selectedDevice && !deviceSearch.trim() && <div className="rounded-lg border border-cyan-200 bg-cyan-50/60 px-2.5 py-2 text-[10px] text-cyan-950">
-            <span className="font-bold">已选：</span>{[selectedDevice.asset_tag, selectedDevice.hostname, selectedDevice.ip_address, selectedDevice.model].filter(Boolean).join(' · ')}
-          </div>}
-          {deviceSearch.trim().length < 2
-            ? <p className="rounded-lg border border-dashed border-[var(--card-border)] px-2.5 py-2 text-[10px] text-[var(--muted-text)]">输入至少 2 个字符搜索华为/华三设备；选择结果后可继续搜索更换。</p>
-            : <div role="group" aria-label="搜索结果：可配置的华为和华三设备" className="max-h-40 overflow-y-auto rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)]">
-            {filteredDevices.length ? filteredDevices.map((device) => {
-              const selected = device.id === deviceId;
-              const title = [device.asset_tag || '无资产编号', device.hostname || '无主机名', device.ip_address, device.model || '型号待补'].filter(Boolean).join(' · ');
-              return <button key={device.id} type="button" aria-pressed={selected} disabled={!canManage} onClick={() => selectDevice(device.id)} className={`block w-full border-b border-[var(--card-border)] px-2.5 py-2 text-left text-[10px] last:border-b-0 disabled:cursor-not-allowed ${selected ? 'bg-cyan-50 font-bold text-cyan-900' : 'text-[var(--app-text)] hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'}`}>{title}</button>;
-            }) : <p className="px-2.5 py-3 text-[10px] text-[var(--muted-text)]">没有匹配的华为/华三设备。</p>}
-          </div>}
-          {selectedDevice && <span className="text-[10px] text-[var(--muted-text)]">设备软件版本：{selectedDevice.version || '未录入'}</span>}
-        </div>
-        <label className={labelClass}>协议档
-          <select className={fieldClass} value={profileId} onChange={(event) => selectProfile(event.target.value)} disabled={!canManage || !selectedDevice} required>
-            <option value="">选择协议档</option>
-            {profiles.map((profile) => {
-              const match = selectedDevice ? telemetryProfileMatch(profile, selectedDevice) : { state: 'IDENTIFICATION_PENDING' as const, reason: '请先选择设备' };
-              const mismatch = match.state === 'KNOWN_MISMATCH';
-              return <option key={profile.id} value={profile.id} disabled={mismatch}>{profile.profile_key}{mismatch ? ` · 不匹配：${match.reason}` : match.state === 'IDENTIFICATION_PENDING' ? ` · 待确认：${match.reason}` : ''}</option>;
-            })}
-          </select>
-          {selectedDevice && selectedProfile && selectedProfileMatch?.state === 'KNOWN_MISMATCH' && <span role="alert" className="text-[10px] font-semibold text-rose-700">协议档不匹配：{selectedProfileMatch.reason}</span>}
-          {selectedDevice && selectedProfile && selectedProfileMatch?.state === 'IDENTIFICATION_PENDING' && <span role="status" className="text-[10px] font-semibold text-amber-800">兼容性待确认：{selectedProfileMatch.reason}。可保存停用草稿，启用时由后端再次校验。</span>}
-          {selectedDevice && selectedProfile && selectedProfileMatch?.state === 'MATCHED' && <span className="text-[10px] text-[var(--muted-text)]">协议档范围：{selectedProfile.model_scope || '不限型号'} · {selectedProfile.version_scope || '不限版本'}</span>}
-        </label>
-        <label className={labelClass}>采集器
-          <select className={fieldClass} value={collectorId} onChange={(event) => setCollectorId(event.target.value)} disabled={!canManage} required>
-            <option value="">选择已启用 Telemetry 接收器</option>
-            {collectors.map((item) => {
-              const endpoint = collectorEndpointConfigured(item)
-                ? `${item.target_address.includes(':') ? `[${item.target_address}]` : item.target_address}:${item.grpc_port}`
-                : '接收端点未配置';
-              return <option key={item.id} value={item.id}>{item.name} ({item.id}) · {endpoint}</option>;
-            })}
-          </select>
-          {selectedCollector ? endpointConfigured
-            ? <span className="text-[10px] text-emerald-700">设备可达接收地址：{selectedCollector.target_address.includes(':') ? `[${selectedCollector.target_address}]` : selectedCollector.target_address}:{selectedCollector.grpc_port}</span>
-            : <span role="status" className="text-[10px] font-semibold text-amber-800">此接收器尚未配置设备可达地址或有效 gRPC 端口；仍可保存停用草稿，启用动作会由后端阻止，补齐端点后再启用。</span>
-            : <span className="text-[10px] text-[var(--muted-text)]">地址和端口来自独立 Telemetry 接收器配置，不使用 SNMP 采集器地址。</span>}
-        </label>
-        <label className={labelClass}>TLS 客户端身份
-          <select className={fieldClass} value={tlsProfileId} onChange={(event) => setTlsProfileId(event.target.value)} disabled={!canManage} required>
-            <option value="">选择活动 TLS 配置</option>
-            {activeTlsProfiles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-          </select>
-        </label>
-        <label className={labelClass}>设备上送源 IP（可选）
-          <input className={fieldClass} value={deviceSourceAddress} onChange={(event) => setDeviceSourceAddress(event.target.value)} placeholder="留空时使用设备到接收器路由的默认源地址" disabled={!canManage} />
-          <span className="text-[10px] text-[var(--muted-text)]">选择设备用于发起 gRPC 连接的本地源地址。</span>
-        </label>
-        <label className={`${labelClass} md:col-span-2`}>允许来源 IP（接收端白名单，必填）
-          <textarea className={fieldClass} rows={2} value={allowedSources} onChange={(event) => setAllowedSources(event.target.value)} placeholder="填写接收端需放行的设备来源 IP，例如 10.20.1.15" disabled={!canManage} required />
-          <span className="text-[10px] text-[var(--muted-text)]">这是接收端实际观察到的来源地址；NAT 场景下可与设备上送源 IP 不同，二者分别配置。</span>
-        </label>
-        <label className={labelClass}>已发布订阅模板
-          <select className={fieldClass} value={templateId} onChange={(event) => setTemplateId(event.target.value)} disabled={!canManage} required>
-            <option value="">选择模板</option>
-            {publishedTemplates.filter((item) => !profileId || item.profile_id === profileId).map((item) => <option key={item.id} value={item.id}>{item.template_key} v{item.version}</option>)}
-          </select>
-        </label>
-        <label className={labelClass}>订阅名称
-          <input className={fieldClass} value={subscriptionName} onChange={(event) => setSubscriptionName(event.target.value)} disabled={!canManage} required maxLength={160} />
-        </label>
-        <label className={labelClass}>采样周期（秒）
-          <input className={fieldClass} type="number" min={Math.max(5, selectedProfile?.min_interval_seconds || 0)} value={intervalSeconds} onChange={(event) => setIntervalSeconds(event.target.value)} disabled={!canManage} required />
-        </label>
-        <label className={`${labelClass} md:col-span-2`}>传感器路径筛选（只允许已发布模板中的 source_path；可留空表示使用模板全部路径）
-          <textarea className={fieldClass} rows={2} value={pathFilters} onChange={(event) => setPathFilters(event.target.value)} placeholder="每行或逗号分隔" disabled={!canManage} />
-        </label>
-        <div className="flex items-end">
-          <button type="submit" disabled={!canManage || saving || !supportedDevices.length || !collectors.length || !publishedTemplates.length || !selectedProfileMatch || selectedProfileMatch.state === 'KNOWN_MISMATCH' || invalidPathFilters.length > 0} className="inline-flex items-center gap-2 rounded-lg bg-cyan-700 px-3 py-2 text-xs font-bold text-white hover:bg-cyan-800 disabled:cursor-not-allowed disabled:opacity-50">
+      <form onSubmit={createSubscription} className="space-y-5">
+        <fieldset className="min-w-0 rounded-2xl border border-[var(--card-border)] px-4 pb-4 pt-2 md:px-5">
+          <legend className="px-2 text-sm font-semibold text-[var(--app-text)]">设备与协议</legend>
+          <div className="grid items-start gap-x-6 gap-y-4 md:grid-cols-2">
+            <div className={labelClass}>
+              <span>设备</span>
+              <input type="search" className={fieldClass} value={deviceSearch} onChange={(event) => setDeviceSearch(event.target.value)} placeholder="搜索资产编号、主机名、管理 IP 或型号" disabled={!canManage} aria-label="搜索 Telemetry 设备" />
+              {selectedDevice && !deviceSearch.trim() && <div className="rounded-lg border border-cyan-200 bg-cyan-50/60 px-2.5 py-2 text-xs text-cyan-950">
+                <span className="font-bold">已选：</span>{[selectedDevice.asset_tag, selectedDevice.hostname, selectedDevice.ip_address, selectedDevice.model].filter(Boolean).join(' · ')}
+              </div>}
+              {deviceSearch.trim().length < 2
+                ? <p className="rounded-lg border border-dashed border-[var(--card-border)] px-2.5 py-2 text-xs text-[var(--muted-text)]">输入至少 2 个字符搜索华为/华三设备；选择结果后可继续搜索更换。</p>
+                : <div role="group" aria-label="搜索结果：可配置的华为和华三设备" className="max-h-40 overflow-y-auto rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)]">
+                {filteredDevices.length ? filteredDevices.map((device) => {
+                  const selected = device.id === deviceId;
+                  const title = [device.asset_tag || '无资产编号', device.hostname || '无主机名', device.ip_address, device.model || '型号待补'].filter(Boolean).join(' · ');
+                  return <button key={device.id} type="button" aria-pressed={selected} disabled={!canManage} onClick={() => selectDevice(device.id)} className={`block w-full border-b border-[var(--card-border)] px-2.5 py-2 text-left text-xs last:border-b-0 disabled:cursor-not-allowed ${selected ? 'bg-cyan-50 font-bold text-cyan-900' : 'text-[var(--app-text)] hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'}`}>{title}</button>;
+                }) : <p className="px-2.5 py-3 text-xs text-[var(--muted-text)]">没有匹配的华为/华三设备。</p>}
+              </div>}
+              {selectedDevice && <span className="text-xs text-[var(--muted-text)]">设备软件版本：{selectedDevice.version || '未录入'}</span>}
+            </div>
+            <label className={labelClass}>协议档
+              <select className={fieldClass} value={profileId} onChange={(event) => selectProfile(event.target.value)} disabled={!canManage || !selectedDevice} required>
+                <option value="">选择协议档</option>
+                {profiles.map((profile) => {
+                  const match = selectedDevice ? telemetryProfileMatch(profile, selectedDevice) : { state: 'IDENTIFICATION_PENDING' as const, reason: '请先选择设备' };
+                  const mismatch = match.state === 'KNOWN_MISMATCH';
+                  return <option key={profile.id} value={profile.id} disabled={mismatch}>{profile.profile_key}{mismatch ? ` · 不匹配：${match.reason}` : match.state === 'IDENTIFICATION_PENDING' ? ` · 待确认：${match.reason}` : ''}</option>;
+                })}
+              </select>
+              {selectedDevice && selectedProfile && selectedProfileMatch?.state === 'KNOWN_MISMATCH' && <span role="alert" className="text-xs font-semibold text-rose-700">协议档不匹配：{selectedProfileMatch.reason}</span>}
+              {selectedDevice && selectedProfile && selectedProfileMatch?.state === 'IDENTIFICATION_PENDING' && <span role="status" className="text-xs font-semibold text-amber-800">兼容性待确认：{selectedProfileMatch.reason}。可保存停用草稿，启用时由后端再次校验。</span>}
+              {selectedDevice && selectedProfile && selectedProfileMatch?.state === 'MATCHED' && <span className="text-xs text-[var(--muted-text)]">协议档范围：{selectedProfile.model_scope || '不限型号'} · {selectedProfile.version_scope || '不限版本'}</span>}
+            </label>
+          </div>
+        </fieldset>
+        <fieldset className="min-w-0 rounded-2xl border border-[var(--card-border)] px-4 pb-4 pt-2 md:px-5">
+          <legend className="px-2 text-sm font-semibold text-[var(--app-text)]">接收器与连接</legend>
+          <div className="grid items-start gap-x-6 gap-y-4 md:grid-cols-2">
+            <label className={labelClass}>采集器
+              <select className={fieldClass} value={collectorId} onChange={(event) => setCollectorId(event.target.value)} disabled={!canManage} required>
+                <option value="">选择已启用 Telemetry 接收器</option>
+                {collectors.map((item) => {
+                  const endpoint = collectorEndpointConfigured(item)
+                    ? `${item.target_address.includes(':') ? `[${item.target_address}]` : item.target_address}:${item.grpc_port}`
+                    : '接收端点未配置';
+                  return <option key={item.id} value={item.id}>{item.name} ({item.id}) · {endpoint}</option>;
+                })}
+              </select>
+              {selectedCollector ? endpointConfigured
+                ? <span className="text-xs text-emerald-700">设备可达接收地址：{selectedCollector.target_address.includes(':') ? `[${selectedCollector.target_address}]` : selectedCollector.target_address}:{selectedCollector.grpc_port}</span>
+                : <span role="status" className="text-xs font-semibold text-amber-800">此接收器尚未配置设备可达地址或有效 gRPC 端口；仍可保存停用草稿，启用动作会由后端阻止，补齐端点后再启用。</span>
+                : <span className="text-xs text-[var(--muted-text)]">地址和端口来自独立 Telemetry 接收器配置，不使用 SNMP 采集器地址。</span>}
+            </label>
+            <label className={labelClass}>TLS 客户端身份
+              <select className={fieldClass} value={tlsProfileId} onChange={(event) => setTlsProfileId(event.target.value)} disabled={!canManage} required>
+                <option value="">选择活动 TLS 配置</option>
+                {activeTlsProfiles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            </label>
+            <label className={labelClass}>设备上送源 IP（可选）
+              <input className={fieldClass} value={deviceSourceAddress} onChange={(event) => setDeviceSourceAddress(event.target.value)} placeholder="留空时使用设备到接收器路由的默认源地址" disabled={!canManage} />
+              <span className="text-xs text-[var(--muted-text)]">选择设备用于发起 gRPC 连接的本地源地址。</span>
+            </label>
+            <label className={`${labelClass} md:col-span-2`}>允许来源 IP（接收端白名单，必填）
+              <textarea className={fieldClass} rows={2} value={allowedSources} onChange={(event) => setAllowedSources(event.target.value)} placeholder="填写接收端需放行的设备来源 IP，例如 10.20.1.15" disabled={!canManage} required />
+              <span className="text-xs text-[var(--muted-text)]">这是接收端实际观察到的来源地址；NAT 场景下可与设备上送源 IP 不同，二者分别配置。</span>
+            </label>
+          </div>
+        </fieldset>
+        <fieldset className="min-w-0 rounded-2xl border border-[var(--card-border)] px-4 pb-4 pt-2 md:px-5">
+          <legend className="px-2 text-sm font-semibold text-[var(--app-text)]">采集内容</legend>
+          <div className="grid items-start gap-x-6 gap-y-4 md:grid-cols-2">
+            <label className={labelClass}>已发布订阅模板
+              <select className={fieldClass} value={templateId} onChange={(event) => setTemplateId(event.target.value)} disabled={!canManage} required>
+                <option value="">选择模板</option>
+                {matchingTemplates.map((item) => <option key={item.id} value={item.id}>{item.template_key} v{item.version}</option>)}
+              </select>
+            </label>
+            <label className={labelClass}>订阅名称
+              <input className={fieldClass} value={subscriptionName} onChange={(event) => setSubscriptionName(event.target.value)} disabled={!canManage} required maxLength={160} />
+            </label>
+            <label className={labelClass}>采样周期（秒）
+              <input className={fieldClass} type="number" min={Math.max(5, selectedProfile?.min_interval_seconds || 0)} value={intervalSeconds} onChange={(event) => setIntervalSeconds(event.target.value)} disabled={!canManage} required />
+            </label>
+            <label className={`${labelClass} md:col-span-2`}>传感器路径筛选（只允许已发布模板中的 source_path；可留空表示使用模板全部路径）
+              <textarea className={fieldClass} rows={2} value={pathFilters} onChange={(event) => setPathFilters(event.target.value)} placeholder="每行或逗号分隔" disabled={!canManage} />
+            </label>
+          </div>
+        </fieldset>
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-[var(--card-border)] bg-cyan-500/[0.04] p-4">
+          <div role="status" className="space-y-1 text-xs text-[var(--muted-text)]">
+            {resourcesLoading ? <p>正在加载采集配置…</p> : resourceIssue ? <p>采集配置加载不完整，请刷新后重试。</p> : (
+              <>
+                {matchingTemplates.length === 0 && <p>{profileId ? '当前协议档没有已发布模板。' : '暂无已发布模板。'} <button type="button" onClick={() => openSettings(templateDetails.current)} className="font-semibold text-cyan-700 underline dark:text-cyan-300">查看订阅模板</button></p>}
+                {activeTlsProfiles.length === 0 && <p>暂无活动 TLS 配置。 <button type="button" onClick={() => openSettings(tlsDetails.current)} className="font-semibold text-cyan-700 underline dark:text-cyan-300">打开 TLS 配置</button></p>}
+                {collectors.length === 0 && <p>暂无可用的本地 Telemetry 接收器。</p>}
+              </>
+            )}
+          </div>
+          <button type="submit" disabled={!canManage || saving || resourcesLoading || !selectedCollector || !tlsProfileId || !selectedTemplate || !selectedProfileMatch || selectedProfileMatch.state === 'KNOWN_MISMATCH' || invalidPathFilters.length > 0} className="inline-flex items-center gap-2 rounded-lg bg-cyan-700 px-4 py-2.5 text-xs font-semibold text-white hover:bg-cyan-800 disabled:cursor-not-allowed disabled:opacity-50">
             {saving ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}登记设备和停用订阅
           </button>
         </div>
       </form>
-      {selectedDevice && <p className="text-[10px] text-[var(--muted-text)]">状态：{canEnableDeviceConfig ? '平台设备配置已启用' : '平台设备配置保持停用'}，订阅保持停用。协议、采集器、周期与模板仅登记在控制面；需在设备上完成配置后，再从订阅列表手动启用。</p>}
+      {selectedDevice && <p className="text-xs text-[var(--muted-text)]">状态：{canEnableDeviceConfig ? '平台设备配置已启用' : '平台设备配置保持停用'}，订阅保持停用。协议、采集器、周期与模板仅登记在控制面；需在设备上完成配置后，再从订阅列表手动启用。</p>}
       {h3cProfileVersion && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] text-amber-900">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900">
           <p className="font-bold">华三 {h3cProfileVersion.toUpperCase()} gRPC Dial-out JSON</p>
           {h3cProfileVersion === 'v3'
             ? <p className="mt-1">设备通过 gRPC Dial-out 上送，默认编码为 JSON；如型号/版本支持三层数据模型，需确认并配置 <code className="rounded bg-amber-100 px-1">grpc data-model 3-layer</code>。采样周期仅对周期型 sensor path 生效。</p>
@@ -580,7 +614,7 @@ const TelemetryControlSetupPanel: React.FC<Props> = ({ devices, profiles, canMan
         </div>
       )}
       {isHuaweiJsonGrpc && (
-        <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-[11px] text-sky-900">
+        <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-xs text-sky-900">
           <p className="font-bold">华为 gRPC Dial-out JSON 协议档</p>
           <p className="mt-1">协议档范围和模板周期表示平台支持边界；此处只登记控制面订阅。设备侧仍需按所选型号/版本人工配置 JSON/gRPC 周期采样，本页不会动态下发；TLS/SSL 身份也需设备侧单独核验。</p>
         </div>
@@ -588,19 +622,19 @@ const TelemetryControlSetupPanel: React.FC<Props> = ({ devices, profiles, canMan
       {h3cProfileVersion && (
         <div className="rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div><p className="text-xs font-bold text-[var(--app-text)]">华三周期采样 CLI 预览</p><p className="mt-1 text-[10px] text-[var(--muted-text)]">接收端允许来源 IP 是服务端白名单，不会写入设备命令。</p></div>
-            <button type="button" onClick={() => void copyCliPreview()} disabled={!cliPreview} className="rounded-lg border border-[var(--card-border)] px-3 py-1.5 text-[10px] font-bold text-[var(--app-text)] disabled:cursor-not-allowed disabled:opacity-50">复制预览</button>
+            <div><p className="text-xs font-bold text-[var(--app-text)]">华三周期采样 CLI 预览</p><p className="mt-1 text-xs text-[var(--muted-text)]">接收端允许来源 IP 是服务端白名单，不会写入设备命令。</p></div>
+            <button type="button" onClick={() => void copyCliPreview()} disabled={!cliPreview} className="rounded-lg border border-[var(--card-border)] px-3 py-1.5 text-xs font-bold text-[var(--app-text)] disabled:cursor-not-allowed disabled:opacity-50">复制预览</button>
           </div>
-          {invalidPathFilters.length > 0 && <p role="alert" className="mt-2 text-[10px] font-semibold text-rose-700">路径筛选只能使用已发布模板路径：{invalidPathFilters.join('、')}</p>}
-          {!endpointConfigured && <p className="mt-2 text-[10px] text-amber-800">接收端点未配置；预览中使用地址/端口占位符。补齐可达地址后再登记订阅。</p>}
-          {!selectedTemplatePaths.length && <p className="mt-2 text-[10px] text-amber-800">当前模板没有有效的已发布 source_path，暂不生成 CLI。</p>}
-          <pre className="mt-3 max-h-80 overflow-auto rounded-lg bg-slate-950 p-3 text-[10px] leading-relaxed text-slate-100">{cliPreview || '选择已有发布模板后生成预览。'}</pre>
-          <p className="mt-2 text-[10px] text-[var(--muted-text)]">复制后仍需按具体设备版本审阅并在经授权的设备变更流程中应用；此预览不表示设备已配置。</p>
+          {invalidPathFilters.length > 0 && <p role="alert" className="mt-2 text-xs font-semibold text-rose-700">路径筛选只能使用已发布模板路径：{invalidPathFilters.join('、')}</p>}
+          {!endpointConfigured && <p className="mt-2 text-xs text-amber-800">接收端点未配置；预览中使用地址/端口占位符。补齐可达地址后再登记订阅。</p>}
+          {!selectedTemplatePaths.length && <p className="mt-2 text-xs text-amber-800">当前模板没有有效的已发布 source_path，暂不生成 CLI。</p>}
+          <pre className="mt-3 max-h-80 overflow-auto rounded-lg bg-slate-950 p-3 text-xs leading-relaxed text-slate-100">{cliPreview || '选择已有发布模板后生成预览。'}</pre>
+          <p className="mt-2 text-xs text-[var(--muted-text)]">复制后仍需按具体设备版本审阅并在经授权的设备变更流程中应用；此预览不表示设备已配置。</p>
         </div>
       )}
 
       <div className="grid gap-3 xl:grid-cols-2">
-        <details className="rounded-xl border border-[var(--card-border)] p-3">
+        <details ref={templateDetails} className="rounded-xl border border-[var(--card-border)] p-3">
           <summary className="cursor-pointer text-xs font-bold text-[var(--app-text)]"><UploadCloud size={13} className="mr-1 inline" />订阅模板草稿</summary>
           <form onSubmit={saveTemplate} className="mt-3 grid gap-2 sm:grid-cols-2">
             <label className={labelClass}>协议档<select className={fieldClass} value={templateProfileId} onChange={(event) => setTemplateProfileId(event.target.value)} disabled={Boolean(editingTemplateId)} required><option value="">选择协议档</option>{profiles.map((item) => <option key={item.id} value={item.id}>{item.profile_key}</option>)}</select></label>
@@ -609,13 +643,13 @@ const TelemetryControlSetupPanel: React.FC<Props> = ({ devices, profiles, canMan
             <label className={labelClass}>估算序列数<input className={fieldClass} type="number" min="1" value={templateSeries} onChange={(event) => setTemplateSeries(event.target.value)} required /></label>
             <label className={labelClass}>默认周期（秒）<input className={fieldClass} type="number" min="5" value={templateInterval} onChange={(event) => setTemplateInterval(event.target.value)} required /></label>
             <label className={`${labelClass} sm:col-span-2`}>指标映射 JSON<textarea className={`${fieldClass} font-mono`} rows={8} value={templateMappings} onChange={(event) => setTemplateMappings(event.target.value)} spellCheck={false} required /></label>
-            <p className="sm:col-span-2 text-[10px] text-[var(--muted-text)]">每条映射需要填写 metric_key、source_path、source_field、value_type、support_status 和 evidence。路径证据来自厂商资料或逐设备验证；未验证路径不能发布。</p>
+            <p className="sm:col-span-2 text-xs text-[var(--muted-text)]">每条映射需要填写 metric_key、source_path、source_field、value_type、support_status 和 evidence。路径证据来自厂商资料或逐设备验证；未验证路径不能发布。</p>
             <div className="sm:col-span-2 flex flex-wrap gap-2"><button type="submit" disabled={!canManage || saving} className="rounded-lg border border-[var(--card-border)] px-3 py-2 text-xs font-bold disabled:opacity-50">{editingTemplateId ? '保存草稿修改' : '保存草稿'}</button>{editingTemplateId && <button type="button" onClick={cancelTemplateEdit} disabled={saving} className="rounded-lg border border-[var(--card-border)] px-3 py-2 text-xs font-semibold disabled:opacity-50">取消编辑</button>}</div>
           </form>
-          <div className="mt-3 space-y-1.5">{templates.map((item) => <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-black/[0.025] px-2.5 py-2 text-[10px] dark:bg-white/[0.04]"><span className="font-semibold text-[var(--app-text)]">{item.template_key} v{item.version} · {item.status} · {item.estimated_series} 序列<code className="mt-0.5 block break-all font-normal text-[9px] text-[var(--muted-text)]">ID: {item.id}</code></span>{item.status === 'DRAFT' && <div className="flex gap-1.5"><button type="button" disabled={!canManage || saving} onClick={() => editTemplateDraft(item)} className="inline-flex items-center gap-1 rounded border border-[var(--card-border)] px-2 py-1 font-bold disabled:opacity-50">编辑</button><button type="button" disabled={!canManage || publishingId === item.id} onClick={() => void publishTemplate(item.id)} className="inline-flex items-center gap-1 rounded border border-[var(--card-border)] px-2 py-1 font-bold disabled:opacity-50">{publishingId === item.id ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={11} />}发布</button></div>}</div>)}</div>
+          <div className="mt-3 space-y-1.5">{templates.map((item) => <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-black/[0.025] px-2.5 py-2 text-xs dark:bg-white/[0.04]"><span className="font-semibold text-[var(--app-text)]">{item.template_key} v{item.version} · {item.status} · {item.estimated_series} 序列<code className="mt-0.5 block break-all font-normal text-[9px] text-[var(--muted-text)]">ID: {item.id}</code></span>{item.status === 'DRAFT' && <div className="flex gap-1.5"><button type="button" disabled={!canManage || saving} onClick={() => editTemplateDraft(item)} className="inline-flex items-center gap-1 rounded border border-[var(--card-border)] px-2 py-1 font-bold disabled:opacity-50">编辑</button><button type="button" disabled={!canManage || publishingId === item.id} onClick={() => void publishTemplate(item.id)} className="inline-flex items-center gap-1 rounded border border-[var(--card-border)] px-2 py-1 font-bold disabled:opacity-50">{publishingId === item.id ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={11} />}发布</button></div>}</div>)}</div>
         </details>
 
-        <details className="rounded-xl border border-[var(--card-border)] p-3">
+        <details ref={tlsDetails} className="rounded-xl border border-[var(--card-border)] p-3">
           <summary className="cursor-pointer text-xs font-bold text-[var(--app-text)]"><ShieldCheck size={13} className="mr-1 inline" />TLS 凭据引用</summary>
           <form onSubmit={saveTlsProfile} className="mt-3 grid gap-2 sm:grid-cols-2">
             <label className={labelClass}>名称<input className={fieldClass} value={tlsName} onChange={(event) => setTlsName(event.target.value)} required maxLength={160} /></label>
@@ -623,10 +657,10 @@ const TelemetryControlSetupPanel: React.FC<Props> = ({ devices, profiles, canMan
             <label className={labelClass}>CA 证书密钥库引用<input className={fieldClass} value={tlsCaRef} onChange={(event) => setTlsCaRef(event.target.value)} required /></label>
             <label className={labelClass}>客户端证书密钥库引用<input className={fieldClass} value={tlsClientCertRef} onChange={(event) => setTlsClientCertRef(event.target.value)} required /></label>
             <label className={`${labelClass} sm:col-span-2`}>私钥密钥库引用<input className={fieldClass} value={tlsPrivateKeyRef} onChange={(event) => setTlsPrivateKeyRef(event.target.value)} required /></label>
-            <p className="sm:col-span-2 text-[10px] text-[var(--muted-text)]">仅登记密钥库引用，不填写 PEM、私钥或其他密钥内容。容器证书卷还需由部署方按相同身份配置。</p>
+            <p className="sm:col-span-2 text-xs text-[var(--muted-text)]">仅登记密钥库引用，不填写 PEM、私钥或其他密钥内容。容器证书卷还需由部署方按相同身份配置。</p>
             <div className="sm:col-span-2"><button type="submit" disabled={!canManage || saving} className="rounded-lg border border-[var(--card-border)] px-3 py-2 text-xs font-bold disabled:opacity-50">登记 TLS 引用</button></div>
           </form>
-          <div className="mt-3 space-y-1.5">{tlsProfiles.map((item) => <div key={item.id} className="rounded-lg bg-black/[0.025] px-2.5 py-2 text-[10px] dark:bg-white/[0.04]"><span className="font-semibold text-[var(--app-text)]">{item.name} · {item.status}</span><code className="mt-0.5 block break-all text-[9px] text-[var(--muted-text)]">ID: {item.id} · SHA-256: {item.fingerprint}</code></div>)}</div>
+          <div className="mt-3 space-y-1.5">{tlsProfiles.map((item) => <div key={item.id} className="rounded-lg bg-black/[0.025] px-2.5 py-2 text-xs dark:bg-white/[0.04]"><span className="font-semibold text-[var(--app-text)]">{item.name} · {item.status}</span><code className="mt-0.5 block break-all text-[9px] text-[var(--muted-text)]">ID: {item.id} · SHA-256: {item.fingerprint}</code></div>)}</div>
         </details>
       </div>
     </section>
