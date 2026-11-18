@@ -107,7 +107,7 @@ def validate_device_config(device_id: str, payload: Any, user: dict[str, Any]) -
     try:
         device = _load_device(conn, device_id, user, "update")
         profile = _profile(conn, payload.profile_id)
-        profile_match_state = _validate_profile_known_scope(profile, device)
+        profile_match_state = _validate_profile_known_scope(profile, device, draft=not bool(payload.enabled))
         _require_telemetry_collector(conn, payload.collector_id)
         if bool(payload.enabled):
             _validate_profile_device(profile, device)
@@ -143,6 +143,8 @@ def validate_device_config(device_id: str, payload: Any, user: dict[str, Any]) -
             "profile_match_message": (
                 "设备型号或软件版本待识别；当前配置保持停用，启用前请人工核对。"
                 if profile_match_state == "IDENTIFICATION_PENDING"
+                else "设备型号或软件版本超出协议档范围；当前仅可登记停用配置。"
+                if profile_match_state == "MISMATCH"
                 else "设备型号和软件版本符合协议档案范围。"
             ),
             "device_source_address": device_source_address,
@@ -365,9 +367,24 @@ def _known_device_value(value: Any) -> bool:
     return text not in {"", "unknown", "unrecognized", "未识别", "n/a", "na", "none", "null", "-"}
 
 
+def _h3c_release_pending(profile: dict[str, Any], version: str) -> bool:
+    scope = str(profile.get("version_scope") or "")
+    return (
+        str(profile.get("vendor") or "").casefold() == "h3c"
+        and any(re.match(r"R[\dx]{4}", item.strip(), re.IGNORECASE) for item in re.split(r"[,/;]", scope))
+        and bool(re.fullmatch(r"(?:Comware\s+)?V?\d+(?:\.\d+)+", version, re.IGNORECASE))
+    )
+
+
 def _version_scope_matches(scope: str, version: str) -> bool:
     """Match documented x wildcards, including H3C versions like R6717Pxx-6W101."""
-    escaped_scope = re.escape(scope.strip().casefold())
+    scope = scope.strip().casefold()
+    if re.match(r"r[\dx]{4}", scope):
+        version = re.sub(r"\brelease\s+(?=\d)", "r", version, flags=re.IGNORECASE)
+        if scope == "r6717pxx-6w101":
+            # The suffix is the manual revision. Match the device's Release field.
+            return bool(re.search(r"\br6717(?:p\d{2})?\b", version, re.IGNORECASE))
+    escaped_scope = re.escape(scope)
     pattern = re.sub(
         r"x+",
         lambda match: f"[0-9a-z]{{{len(match.group(0))}}}",
@@ -376,9 +393,23 @@ def _version_scope_matches(scope: str, version: str) -> bool:
     return bool(re.search(pattern, version, flags=re.IGNORECASE))
 
 
-def _validate_profile_known_scope(profile: dict[str, Any], device: dict[str, Any]) -> str:
+def _has_profile_version(profile: dict[str, Any], device: dict[str, Any]) -> bool:
+    version = str(device.get("version") or "").strip()
+    if not _known_device_value(version) or _h3c_release_pending(profile, version):
+        return False
+    # A VRP core version such as 8.180 does not identify the product release.
+    return not (
+        str(profile.get("vendor") or "").casefold() == "huawei"
+        and re.search(r"\bV\d{3}R", str(profile.get("version_scope") or ""), re.IGNORECASE)
+        and re.fullmatch(r"(?:VRP\s+)?V?\d+(?:\.\d+)+", version, re.IGNORECASE)
+    )
+
+
+def _validate_profile_known_scope(profile: dict[str, Any], device: dict[str, Any], *, draft: bool = False) -> str:
     """Reject known model/version mismatches and report missing identity fields."""
     _validate_profile_vendor(profile, device)
+    if str(profile.get("support_status") or "UNKNOWN").upper() == "UNSUPPORTED":
+        raise TelemetryServiceError("TELEMETRY_PROFILE_UNSUPPORTED", "Telemetry profile is marked unsupported")
     pending: list[str] = []
     model_scope = str(profile.get("model_scope") or "").casefold()
     model = str(device.get("model") or "").casefold()
@@ -396,19 +427,21 @@ def _validate_profile_known_scope(profile: dict[str, Any], device: dict[str, Any
             model_key = normalized_model(model)
             tokens = [normalized_model(token) for token in re.split(r"[,/;]", model_scope)]
             if not any(token and token in model_key for token in tokens):
+                if draft:
+                    return "MISMATCH"
                 raise TelemetryServiceError("TELEMETRY_PROFILE_UNSUPPORTED", "Device model is outside the documented profile scope")
     version_scope = str(profile.get("version_scope") or "").strip()
     version = str(device.get("version") or "").strip()
     if version_scope:
-        if not _known_device_value(version):
+        if not _has_profile_version(profile, device):
             pending.append("version")
         else:
             version_text = version.casefold()
             tokens = [token.strip().casefold() for token in re.split(r"[,/;]", version_scope) if token.strip()]
             if not any(_version_scope_matches(token, version_text) for token in tokens):
+                if draft:
+                    return "MISMATCH"
                 raise TelemetryServiceError("TELEMETRY_VERSION_UNVERIFIED", "Device software version is outside the documented profile scope")
-    if str(profile.get("support_status") or "UNKNOWN").upper() == "UNSUPPORTED":
-        raise TelemetryServiceError("TELEMETRY_PROFILE_UNSUPPORTED", "Telemetry profile is marked unsupported")
     return "IDENTIFICATION_PENDING" if pending else "MATCHED"
 
 
@@ -416,7 +449,7 @@ def _profile_identification_fields(profile: dict[str, Any], device: dict[str, An
     missing: list[str] = []
     if profile.get("model_scope") and not _known_device_value(device.get("model")):
         missing.append("model")
-    if profile.get("version_scope") and not _known_device_value(device.get("version")):
+    if profile.get("version_scope") and not _has_profile_version(profile, device):
         missing.append("version")
     return missing
 
@@ -793,7 +826,7 @@ def upsert_device_config(device_id: str, payload: Any, user: dict[str, Any]) -> 
         # configs or race the capacity reservation rows.
         conn.execute("SELECT id FROM devices WHERE id = ? FOR UPDATE", (device_id,)).fetchone()
         profile = _profile(conn, payload.profile_id)
-        profile_match_state = _validate_profile_known_scope(profile, device)
+        profile_match_state = _validate_profile_known_scope(profile, device, draft=not bool(payload.enabled))
         if str(profile.get("support_status") or "").upper() in {"UNKNOWN", "UNSUPPORTED"}:
             raise TelemetryServiceError("TELEMETRY_PROFILE_UNSUPPORTED", "Protocol profile is not documented for this device family")
         _require_telemetry_collector(conn, payload.collector_id)

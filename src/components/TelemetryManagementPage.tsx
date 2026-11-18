@@ -391,18 +391,18 @@ const TelemetryManagementPage: React.FC<TelemetryManagementPageProps> = ({ canMa
   const failedCount = currentPageSubscriptions.filter((item) => item.runtime?.publish_state === 'FAILED' || item.runtime?.connection_state === 'ERROR' || item.runtime?.data_state === 'INVALID').length;
 
   return (
-    <section className="mx-auto w-full max-w-screen-2xl space-y-6">
-      <header className="flex flex-wrap items-center justify-between gap-6 rounded-3xl bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950 px-6 py-7 text-white md:px-8 md:py-9">
-        <div className="flex items-center gap-4">
-          <span className="grid size-12 shrink-0 place-items-center rounded-2xl bg-cyan-400/15 text-cyan-200">
-            <Activity size={24} aria-hidden="true" />
+    <section className="w-full space-y-5">
+      <header className="flex flex-wrap items-center justify-between gap-4 py-3">
+        <div className="flex items-center gap-3">
+          <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-cyan-500/10 text-cyan-700 dark:text-cyan-300">
+            <Activity size={22} aria-hidden="true" />
           </span>
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">Telemetry 采集</h1>
-            <p className="mt-1 text-sm text-slate-300">管理设备订阅，查看采集状态和接收器容量。</p>
+            <h1 className="text-2xl font-semibold tracking-tight text-[var(--app-text)]">Telemetry 采集</h1>
+            <p className="mt-1 text-sm text-[var(--muted-text)]">管理设备订阅，查看采集状态和接收器容量。</p>
           </div>
         </div>
-        <button type="button" onClick={refresh} disabled={isLoading} className="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/5 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-white/10 disabled:opacity-50">
+        <button type="button" onClick={refresh} disabled={isLoading} className="inline-flex items-center gap-2 rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] px-4 py-2 text-sm font-medium text-[var(--app-text)] hover:border-cyan-500 disabled:opacity-50">
           {isLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
           刷新数据
         </button>
@@ -573,6 +573,7 @@ const TelemetryManagementPage: React.FC<TelemetryManagementPageProps> = ({ canMa
           devices={devices}
           profiles={profiles}
           canManage={canManage && !mutationDenied}
+          reloadKey={reloadKey}
           onChanged={refresh}
         />
         <details className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-4 shadow-sm md:p-5">
