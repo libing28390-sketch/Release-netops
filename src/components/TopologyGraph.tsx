@@ -1164,7 +1164,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
   const persistedPositionsRef = useRef<Record<string, { x: number; y: number }>>({});
   const manualPositionsRef = useRef<TopologyLayoutSnapshot['manualPositions']>({});
   const deviceLabelBoundsRef = useRef<TopologyLabelRect[]>([]);
-  const siteHeaderBoundsRef = useRef<TopologyLabelRect[]>([]);
+  const siteFrameBoundsRef = useRef<TopologyLabelRect[]>([]);
   const zoomBehaviorRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const svgSelectionRef = useRef<d3.Selection<SVGSVGElement, unknown, null, undefined> | null>(null);
   const zoomTransformRef = useRef<d3.ZoomTransform | null>(null);
@@ -1542,10 +1542,10 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
       const pos = persistedPositionsRef.current[d.id] || { x: viewport.width / 2, y: viewport.height / 2 };
       return pos;
     });
-    const fitAll = denseTopology || Math.min(devicesPerRow, devices.length) > COMPACT_DEVICES_PER_ROW || Object.keys(manualPositionsRef.current).length > 0;
+    const fitAll = siteFrameBoundsRef.current.length > 0 || denseTopology || Math.min(devicesPerRow, devices.length) > COMPACT_DEVICES_PER_ROW || Object.keys(manualPositionsRef.current).length > 0;
     const nextTransform = createDefaultTransform(viewport.width, viewport.height, nodePositions, fitAll, [
       ...deviceLabelBoundsRef.current,
-      ...siteHeaderBoundsRef.current,
+      ...siteFrameBoundsRef.current,
     ]);
     applyTransform(nextTransform);
     setZoomPercent(Math.round(nextTransform.k * 100));
@@ -2156,11 +2156,13 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
       });
     };
 
-    const siteHeaderBounds: TopologyLabelRect[] = [];
-    siteHeaderBoundsRef.current = siteHeaderBounds;
+    const siteFrameBounds: TopologyLabelRect[] = [];
+    siteFrameBoundsRef.current = siteFrameBounds;
 
     if (structuredPositions) {
       const roleBandTopInset = 70;
+      const roleHeadingColumnWidth = 156;
+      const roleHeadingFontSize = 18;
       const controlBandTopInset = 72;
       const siteHeaderHeight = 60;
       const summaryHeight = 26;
@@ -2191,6 +2193,13 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
           left = Math.max(8, left);
           right = Math.min(graphWidth - 8, right);
         }
+        const wiredNodes = site.nodes.filter((node) => !isTopologyWirelessController(node));
+        if (wiredNodes.length) {
+          // Extend the frame into world space, leaving both the devices and
+          // their saved coordinates in place.
+          const leftmostWiredX = Math.min(...wiredNodes.map((node) => node.x));
+          left = Math.min(left, leftmostWiredX - roleHeadingColumnWidth - TOPOLOGY_SITE_SIDE_PADDING);
+        }
 
         // A dragged node and its original role band can have different heights.
         const bodyTop = Math.min(...site.nodes.map((node) => isTopologyWirelessController(node)
@@ -2201,7 +2210,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
         // height. The zoom transform fits this virtual canvas back into view;
         // clamping the frame here would make the lower row appear outside or
         // overlap the site boundary.
-        const bottom = maxY + 108;
+        const bottom = maxY + 118;
+        siteFrameBounds.push({ x: (left + right) / 2, y: (top + bottom) / 2, width: right - left, height: bottom - top });
 
         siteGuide.append('rect')
           .attr('x', left)
@@ -2232,7 +2242,6 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
           Math.min(right - labelWidth / 2 - 8, (left + right) / 2),
         );
         const labelY = top + siteHeaderHeight / 2;
-        siteHeaderBounds.push({ x: labelCenter, y: labelY, width: labelWidth, height: siteHeaderHeight });
         const labelGroup = siteGuide.append('g')
           .attr('class', 'topology-site-summary')
           .attr('transform', `translate(${labelCenter},${labelY})`);
@@ -2293,6 +2302,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
         });
         const bandRight = Math.min(right - 12, controlLeft - (controllers.length > 0 ? 12 : 0));
         const bandWidth = Math.max(1, bandRight - left - 12);
+        const headingWidth = Math.min(roleHeadingColumnWidth - 16, bandWidth - 28);
         roleBands.forEach(({ label, tone, rows, count }) => {
           const bandTop = rows[0] - roleBandTopInset;
           const bandBottom = rows[rows.length - 1] + 82;
@@ -2314,6 +2324,13 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
             .attr('height', 26)
             .attr('rx', 2)
             .attr('fill', tone.color);
+          band.append('line')
+            .attr('x1', left + 12 + roleHeadingColumnWidth)
+            .attr('x2', left + 12 + roleHeadingColumnWidth)
+            .attr('y1', bandTop + 12)
+            .attr('y2', bandBottom - 12)
+            .attr('stroke', tone.color)
+            .attr('stroke-opacity', 0.16);
           band.append('text')
             .attr('class', 'topology-role-band-heading')
             .attr('x', left + 28)
@@ -2321,9 +2338,9 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
             .attr('dominant-baseline', 'middle')
             .attr('fill', tone.color)
             .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
-            .attr('font-size', 21)
+            .attr('font-size', roleHeadingFontSize)
             .attr('font-weight', 800)
-            .text(fitTopologyLabelText(title, bandWidth - 24))
+            .text(fitTopologyLabelText(title, headingWidth * 11 / roleHeadingFontSize))
             .append('title').text(title);
         });
 
@@ -2348,7 +2365,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
             .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
             .attr('font-size', 13)
             .attr('font-weight', 650)
-            .text(fitTopologyLabelText(`${uplink} · ${row.length} 台 AP`, bandWidth - 24));
+            .text(fitTopologyLabelText(`${uplink} · ${row.length} 台 AP`, headingWidth * 11 / 13));
         });
         drawLinkColorLegend(left + 24, bottom - 24, siteLinks);
       });
@@ -3383,8 +3400,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
 
     renderGraph();
 
-    const fitAll = denseTopology || Math.min(devicesPerRow, devices.length) > COMPACT_DEVICES_PER_ROW || nodes.some((node) => node.positionedManually);
-    const labelBounds = [...deviceLabelBoundsRef.current, ...siteHeaderBounds];
+    const fitAll = Boolean(structuredPositions) || denseTopology || Math.min(devicesPerRow, devices.length) > COMPACT_DEVICES_PER_ROW || nodes.some((node) => node.positionedManually);
+    const labelBounds = [...deviceLabelBoundsRef.current, ...siteFrameBounds];
     const fitTransform = createDefaultTransform(width, height, nodes, fitAll, labelBounds);
     zoom.scaleExtent([Math.min(0.35, fitTransform.k), 3.2]);
     const initialTransform = refitOnRenderRef.current ? fitTransform : zoomTransformRef.current || fitTransform;
