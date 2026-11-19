@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  resolveTopologyDeviceLabelPlacements,
   resolveTopologyPortLabelPlacements,
   type TopologyLabelRect,
+  type TopologyDeviceLabelCandidate,
   type TopologyPortLabelCandidate,
 } from './topologyLabelLayout';
 
@@ -9,6 +11,58 @@ const rectFor = (point: { x: number; y: number }, width: number, height: number)
   ...point,
   width,
   height,
+});
+
+const boxesOverlapWithGap = (
+  left: TopologyLabelRect,
+  right: TopologyLabelRect,
+  gap: number,
+) => (
+  Math.abs(left.x - right.x) * 2 < left.width + right.width + gap * 2
+  && Math.abs(left.y - right.y) * 2 < left.height + right.height + gap * 2
+);
+
+describe('topology device label collision layout', () => {
+  it('keeps default positions when labels do not collide', () => {
+    const candidates: TopologyDeviceLabelCandidate[] = [
+      { id: 'switch-2', x: 260, y: 140, width: 92, height: 20 },
+      { id: 'switch-1', x: 120, y: 140, width: 88, height: 20 },
+    ];
+
+    expect(resolveTopologyDeviceLabelPlacements(candidates, [])).toEqual({
+      'switch-1': { x: 120, y: 140 },
+      'switch-2': { x: 260, y: 140 },
+    });
+  });
+
+  it('moves stacked names below glyphs and separates manual overlaps deterministically', () => {
+    const candidates: TopologyDeviceLabelCandidate[] = [
+      { id: 'device-3', x: 100, y: 100, width: 70, height: 22 },
+      { id: 'device-2', x: 100, y: 100, width: 84, height: 26 },
+      { id: 'device-1', x: 100, y: 100, width: 76, height: 18 },
+    ];
+    const glyphs = [100, 170, 240].map((y) => rectFor({ x: 100, y }, 76, 50));
+    const placements = resolveTopologyDeviceLabelPlacements(candidates, glyphs, 4);
+    const reversedPlacements = resolveTopologyDeviceLabelPlacements([...candidates].reverse(), glyphs, 4);
+
+    expect(placements).toEqual(reversedPlacements);
+    expect(placements['device-1'].y).toBeGreaterThan(265);
+    expect(placements['device-2'].y).toBeGreaterThan(placements['device-1'].y);
+    expect(placements['device-3'].y).toBeGreaterThan(placements['device-2'].y);
+    expect(Object.values(placements).every((point) => point.x === 100)).toBe(true);
+
+    const labels = candidates.map((candidate) => ({
+      ...placements[candidate.id],
+      width: candidate.width,
+      height: candidate.height,
+    }));
+    labels.forEach((label) => {
+      expect(glyphs.some((glyph) => boxesOverlapWithGap(label, glyph, 4))).toBe(false);
+    });
+    labels.forEach((label, index) => {
+      expect(labels.slice(index + 1).some((other) => boxesOverlapWithGap(label, other, 4))).toBe(false);
+    });
+  });
 });
 
 describe('topology port label collision layout', () => {

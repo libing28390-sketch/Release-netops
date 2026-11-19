@@ -56,6 +56,8 @@ export function getRouteContext(pathname: string): RouteContext {
       activeTab = 'monitoring-modules';
     } else if (second === 'collectors') {
       activeTab = 'monitoring-collectors';
+    } else if (second === 'telemetry-management') {
+      activeTab = 'telemetry-management';
     } else if (second === 'collection-health') {
       activeTab = 'monitoring-health';
     } else if (second === 'topology') {

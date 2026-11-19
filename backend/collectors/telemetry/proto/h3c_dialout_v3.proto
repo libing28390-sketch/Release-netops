@@ -1,0 +1,13 @@
+syntax = "proto3";
+package grpc_dialout_v3;
+
+message DialoutV3Args {
+  int64 ReqId = 1;
+  bytes data = 2;
+  string errors = 3;
+  int32 totalSize = 4;
+}
+
+service gRPCDialoutV3 {
+  rpc DialoutV3(stream DialoutV3Args) returns (stream DialoutV3Args);
+}

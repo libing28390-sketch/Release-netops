@@ -6219,6 +6219,13 @@ def _validate_vip_conflicts(
     _validate_pool_address_policy(conn, prefix, address)
 
 
+def _validate_vip_controller_devices(device_id: str | None, backup_device_id: str | None) -> None:
+    primary = str(device_id or '').strip()
+    standby = str(backup_device_id or '').strip()
+    if primary and standby and primary.casefold() == standby.casefold():
+        raise ValueError('VIP primary and backup devices must be different')
+
+
 def create_vip(
     *,
     address: str,
@@ -6234,6 +6241,7 @@ def create_vip(
     idempotency_key: str | None = None,
     audit_context: dict | None = None,
 ) -> dict:
+    _validate_vip_controller_devices(device_id, backup_device_id)
     address = _normalize_host_address(address)
     conn = get_db_connection()
     try:
@@ -6329,6 +6337,10 @@ def update_vip(vip_id: str, *, audit_context: dict | None = None, **fields) -> b
         initial = dict(initial)
         fields = dict(fields)
         fields.pop('tenant_id', None)
+        _validate_vip_controller_devices(
+            fields.get('device_id') if fields.get('device_id') is not None else initial.get('device_id'),
+            fields.get('backup_device_id') if fields.get('backup_device_id') is not None else initial.get('backup_device_id'),
+        )
         old_prefix_id = str(initial.get('prefix_id') or '').strip()
         target_prefix_id = str(fields.get('prefix_id') or old_prefix_id).strip()
         fhrp_group_scopes = _fhrp_vip_group_scopes(conn, vip_id)
@@ -6387,6 +6399,9 @@ def update_vip(vip_id: str, *, audit_context: dict | None = None, **fields) -> b
                   'vip_type', 'device_id', 'backup_device_id', 'interface_name',
                   'description', 'real_servers', 'status', 'tenant_id'):
             val = fields.get(f)
+            if f in {'device_id', 'backup_device_id'} and isinstance(val, str) and not val.strip():
+                updates.append(f'{f} = NULL')
+                continue
             if val is not None:
                 updates.append(f'{f} = {_PH}')
                 params.append(val)

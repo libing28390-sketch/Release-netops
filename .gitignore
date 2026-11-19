@@ -84,6 +84,7 @@ _regen_*.py
 
 # Keys and deployment certificates are never committed.
 *.pem
+/secrets/telemetry/
 
 # Deployment certificates and private keys are supplied out-of-band.
 nginx/ssl/*

@@ -1,0 +1,113 @@
+{
+  "scope": "offline synthetic UTF-8 payload measurement and capacity arithmetic only",
+  "interface_model": {
+    "interfaces_per_device": 48,
+    "metrics_per_interface": 10,
+    "device_metrics": 20,
+    "labels_per_interface_sample": 9,
+    "per_device_bytes": 136820,
+    "devices_at_32mib": 245,
+    "devices_at_64mib": 490
+  },
+  "scenarios": [
+    {
+      "devices": 10,
+      "series": 5000,
+      "samples_per_second_5s": 1000.0,
+      "samples_per_day_5s": 86400000,
+      "fleet_snapshot_bytes": 1368200,
+      "fleet_snapshot_mib": 1.305,
+      "exceeds_64mib": false
+    },
+    {
+      "devices": 50,
+      "series": 25000,
+      "samples_per_second_5s": 5000.0,
+      "samples_per_day_5s": 432000000,
+      "fleet_snapshot_bytes": 6841000,
+      "fleet_snapshot_mib": 6.524,
+      "exceeds_64mib": false
+    },
+    {
+      "devices": 100,
+      "series": 50000,
+      "samples_per_second_5s": 10000.0,
+      "samples_per_day_5s": 864000000,
+      "fleet_snapshot_bytes": 13682000,
+      "fleet_snapshot_mib": 13.048,
+      "exceeds_64mib": false
+    },
+    {
+      "devices": 300,
+      "series": 150000,
+      "samples_per_second_5s": 30000.0,
+      "samples_per_day_5s": 2592000000,
+      "fleet_snapshot_bytes": 41046000,
+      "fleet_snapshot_mib": 39.145,
+      "exceeds_64mib": false
+    },
+    {
+      "devices": 500,
+      "series": 250000,
+      "samples_per_second_5s": 50000.0,
+      "samples_per_day_5s": 4320000000,
+      "fleet_snapshot_bytes": 68410000,
+      "fleet_snapshot_mib": 65.241,
+      "exceeds_64mib": true
+    },
+    {
+      "devices": 1000,
+      "series": 500000,
+      "samples_per_second_5s": 100000.0,
+      "samples_per_day_5s": 8640000000,
+      "fleet_snapshot_bytes": 136820000,
+      "fleet_snapshot_mib": 130.482,
+      "exceeds_64mib": true
+    }
+  ],
+  "existing_hardware_renderer": {
+    "synthetic_sensors_per_device": 300,
+    "samples_per_device": 1200,
+    "body_bytes_one_device": 838456,
+    "data_bytes_one_device": 837900,
+    "headers_bytes": 556,
+    "devices_at_32mib_data_only": 40,
+    "devices_at_64mib_data_only": 80,
+    "fleet_100_devices_mib_data_only": 79.908,
+    "fleet_300_devices_mib_data_only": 239.725,
+    "note": "Synthetic rich wireless fixture, no capability series; not production inventory."
+  },
+  "storage_5s_30d_gib_at_2_to_10_bytes_per_sample": {
+    "10": [
+      4.83,
+      24.14
+    ],
+    "50": [
+      24.14,
+      120.7
+    ],
+    "100": [
+      48.28,
+      241.4
+    ],
+    "300": [
+      144.84,
+      724.2
+    ],
+    "500": [
+      241.4,
+      1206.99
+    ],
+    "1000": [
+      482.8,
+      2413.99
+    ]
+  },
+  "queue_example": {
+    "sample_rate": 5000,
+    "assumed_queue_bytes_per_sample": 100,
+    "configured_1GB_nominal_seconds": 2000.0,
+    "one_GiB_seconds": 2147.48,
+    "one_hour_GiB": 1.676
+  }
+}

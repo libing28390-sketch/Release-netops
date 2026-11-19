@@ -1,0 +1,20 @@
+syntax = "proto2";
+package grpc_dialout;
+
+message DeviceInfo {
+  required string producerName = 1;
+  required string deviceName = 2;
+  required string deviceModel = 3;
+}
+
+message DialoutMsg {
+  required DeviceInfo deviceMsg = 1;
+  required string sensorPath = 2;
+  required string jsonData = 3;
+}
+
+message DialoutResponse { required string response = 1; }
+
+service GRPCDialout {
+  rpc Dialout(stream DialoutMsg) returns (DialoutResponse);
+}

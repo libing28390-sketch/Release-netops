@@ -1,0 +1,17 @@
+syntax = "proto3";
+package huawei_dialout;
+
+service gRPCDataservice {
+  rpc dataPublish(stream serviceArgs) returns (stream serviceArgs);
+}
+
+message serviceArgs {
+  int64 ReqId = 1;
+  oneof MessageData {
+    bytes data = 2;
+    string errors = 3;
+    string data_json = 4;
+    bytes packed_data = 5;
+    string packed_data_json = 6;
+  }
+}

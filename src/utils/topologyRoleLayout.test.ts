@@ -101,6 +101,75 @@ describe('topology role-tier layout', () => {
     expect(ultrawideFirewallGap).toBeLessThanOrEqual(430);
   });
 
+  it('packs adjacent parent groups into wider rows without changing the default layout', () => {
+    const parentIds = ['dist-a', 'dist-b', 'dist-c'];
+    const devices: TopologyRoleLayoutDevice[] = [
+      ...parentIds.map((id) => ({ id, hostname: id.toUpperCase(), role: 'distribution' })),
+      ...parentIds.flatMap((parentId) => Array.from({ length: 4 }, (_, index) => ({
+        id: `access-${parentId}-${index + 1}`,
+        hostname: `ACCESS-${parentId}-${index + 1}`,
+        role: 'access',
+      }))),
+    ];
+    const links: TopologyRoleLayoutLink[] = parentIds.flatMap((parentId) => (
+      devices.filter((device) => device.id.startsWith(`access-${parentId}-`)).map((device) => ({
+        source_device_id: parentId,
+        target_device_id: device.id,
+        relation_type: 'PHYSICAL',
+        discovery_source: 'lldp',
+      }))
+    ));
+
+    const defaultPositions = buildTopologyRoleLayeredPositions(devices, 1800, 600, links);
+    const widePositions = buildTopologyRoleLayeredPositions(devices, 1800, 600, links, 8);
+    const accessDevices = devices.filter((device) => device.role === 'access');
+    const defaultAccessRows = new Set(accessDevices.map((device) => defaultPositions?.[device.id].y));
+    const wideAccessRows = new Set(accessDevices.map((device) => widePositions?.[device.id].y));
+    const wideRowSizes = Array.from(wideAccessRows, (rowY) => (
+      accessDevices.filter((device) => widePositions?.[device.id].y === rowY).length
+    ));
+
+    expect(defaultAccessRows.size).toBe(3);
+    expect(wideAccessRows.size).toBe(2);
+    expect(wideRowSizes.every((size) => size <= 8)).toBe(true);
+    parentIds.forEach((parentId) => {
+      const parentRows = new Set(accessDevices
+        .filter((device) => device.id.startsWith(`access-${parentId}-`))
+        .map((device) => widePositions?.[device.id].y));
+      expect(parentRows.size).toBe(1);
+    });
+  });
+
+  it('keeps wireless AP groups on separate parent rows when the row capacity increases', () => {
+    const devices: TopologyRoleLayoutDevice[] = [
+      { id: 'dist-a', hostname: 'DIST-A', role: 'distribution' },
+      { id: 'dist-b', hostname: 'DIST-B', role: 'distribution' },
+      { id: 'ap-a-1', hostname: 'AP-A-1', role: 'wireless_ap' },
+      { id: 'ap-a-2', hostname: 'AP-A-2', role: 'wireless_ap' },
+      { id: 'ap-b-1', hostname: 'AP-B-1', role: 'wireless_ap' },
+      { id: 'ap-b-2', hostname: 'AP-B-2', role: 'wireless_ap' },
+    ];
+    const links: TopologyRoleLayoutLink[] = [
+      ...['ap-a-1', 'ap-a-2'].map((id) => ({
+        source_device_id: 'dist-a',
+        target_device_id: id,
+        relation_type: 'PHYSICAL',
+        discovery_source: 'lldp',
+      })),
+      ...['ap-b-1', 'ap-b-2'].map((id) => ({
+        source_device_id: 'dist-b',
+        target_device_id: id,
+        relation_type: 'PHYSICAL',
+        discovery_source: 'lldp',
+      })),
+    ];
+
+    const positions = buildTopologyRoleLayeredPositions(devices, 1800, 600, links, 12);
+    const apRows = new Set(devices.slice(2).map((device) => positions?.[device.id].y));
+
+    expect(apRows.size).toBe(2);
+  });
+
   it('repairs collapsed saved x coordinates while keeping the role rows', () => {
     const structured = buildTopologyRoleLayeredPositions(whDc02Devices, 1000, 480);
     expect(structured).not.toBeNull();

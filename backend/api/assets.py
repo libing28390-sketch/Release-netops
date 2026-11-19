@@ -2094,8 +2094,37 @@ class AssetImportRemoteDesktopProfile(BaseModel):
     clipboard_enabled: bool = False
 
 
+class AssetImportTelemetrySubscription(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    template_id: str = Field(min_length=1, max_length=160)
+    template_version: int = Field(gt=0)
+    interval_seconds: int = Field(ge=5, le=86400)
+    path_filters: list[str] = Field(default_factory=list, max_length=128)
+
+
+class AssetImportTelemetryConfig(BaseModel):
+    profile_id: str = Field(min_length=1, max_length=160)
+    collector_id: str = Field(min_length=1, max_length=160)
+    device_source_address: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="设备 Telemetry 上送时使用的源 IP；NAT 场景下可与接收端看到的 allowed_sources 不同。",
+    )
+    credential_id: Optional[str] = Field(default=None, max_length=160)
+    tls_profile_id: Optional[str] = Field(default=None, max_length=160)
+    allowed_sources: list[str] = Field(
+        min_length=1,
+        max_length=32,
+        description="Telemetry 接收端实际观察到的来源 IP allowlist，可因 NAT 与 device_source_address 不同。",
+    )
+    enabled: bool = False
+    revision: int = Field(default=1, gt=0)
+    subscriptions: list[AssetImportTelemetrySubscription] = Field(default_factory=list, max_length=32)
+
+
 class AssetImportCreate(AssetCreate):
     remote_desktop_profiles: list[AssetImportRemoteDesktopProfile] = Field(default_factory=list)
+    telemetry_config: Optional[AssetImportTelemetryConfig] = None
 
 
 class AssetUpdate(BaseModel):
@@ -2842,6 +2871,58 @@ def _build_asset_import_template(snmp_credential_names: list[str]) -> bytes:
         network_sheet.add_data_validation(validation)
         validation.add(f'{column_letter}2:{column_letter}2000')
 
+    from openpyxl.comments import Comment
+
+    telemetry_sheet_name = 'Telemetry采集'
+    if telemetry_sheet_name in workbook.sheetnames:
+        del workbook[telemetry_sheet_name]
+    telemetry_sheet = workbook.create_sheet(telemetry_sheet_name)
+    telemetry_headers = (
+        '资产编号 *', '协议档 ID *', '采集器 ID *', 'TLS 配置 ID *',
+        '设备上送源 IP（可选）', '接收端允许来源 IP *', '订阅名称 *', '模板 ID *', '模板版本 *',
+        '周期秒 *', '采集路径（可选）', '启用设备配置',
+    )
+    telemetry_header_notes = (
+        '按资产编号关联“网络设备”工作表。',
+        '来自 Telemetry 管理页的官方协议档 ID。',
+        '来自 Telemetry 管理页的专用接收器 ID；不能填写SNMP采集器ID。',
+        '来自 Telemetry 管理页的活动 TLS 配置 ID；证书和私钥内容不得填写在工作簿。',
+        '设备侧配置的 Telemetry 上送源 IP；可留空。',
+        '接收端实际观察到的来源 IP allowlist（必填）；NAT 时可能不同于设备上送源 IP，多个地址以逗号分隔。',
+        '此资产下的订阅名称；同一设备内必须唯一。',
+        '已发布订阅模板的 ID。',
+        '订阅模板的已发布版本号。',
+        '采样周期秒数，至少 5 秒，并且不能小于协议档要求。',
+        '可选；多个路径以逗号分隔。留空时使用模板全部路径。',
+        '留空默认为停用设备配置；订阅仍保持停用，设备侧需要人工配置。',
+    )
+    for column, header in enumerate(telemetry_headers, start=1):
+        cell = telemetry_sheet.cell(row=1, column=column, value=header)
+        cell._style = copy(network_sheet.cell(row=1, column=1)._style)
+        cell.font = copy(network_sheet.cell(row=1, column=1).font)
+        cell.fill = copy(network_sheet.cell(row=1, column=1).fill)
+        cell.alignment = copy(network_sheet.cell(row=1, column=1).alignment)
+        cell.comment = Comment(telemetry_header_notes[column - 1], 'NetOps')
+    for column, width in enumerate((22, 42, 32, 42, 32, 32, 24, 42, 18, 16, 50, 22), start=1):
+        telemetry_sheet.column_dimensions[openpyxl.utils.get_column_letter(column)].width = width
+    telemetry_sheet.freeze_panes = 'A2'
+    telemetry_sheet.auto_filter.ref = f'A1:{openpyxl.utils.get_column_letter(len(telemetry_headers))}2000'
+
+    instruction_row = instructions.max_row + 1
+    instructions.cell(row=instruction_row, column=1, value='Telemetry采集')
+    instructions.cell(row=instruction_row, column=2, value='选填')
+    instructions.cell(
+        row=instruction_row,
+        column=3,
+        value=(
+            '一行配置一个订阅，通过资产编号关联网络设备；同一设备的协议档、采集器、TLS配置和来源IP必须一致。'
+            '只填写已发布模板、已启用Telemetry接收器和活动TLS配置的ID。Telemetry接收器ID与SNMP采集器ID不同。导入仅登记控制面配置，订阅保持停用，不会向设备下发命令；'
+            '完成华为/华三设备侧 gRPC Dial-out 配置后，再到 Telemetry 采集页手动启用。不得填写证书或私钥内容。'
+        ),
+    )
+    instructions.row_dimensions[instruction_row].height = 66
+    instructions.cell(row=instruction_row, column=3).alignment = copy(instructions['C15'].alignment)
+
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()
@@ -3236,10 +3317,30 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True, _
             raise HTTPException(status_code=404, detail='Asset not found')
         _enforce_asset_row_scope(_user, row, 'update')
 
+        production_asset = str(row['lifecycle_status'] or '').strip().lower() == 'production'
+        requested_management_ip = getattr(body, 'management_ip', None)
+        if production_asset and requested_management_ip is not None:
+            if not str(requested_management_ip).strip():
+                raise HTTPException(status_code=422, detail='已投产设备的管理 IP 不能为空。')
+            if _asset_identity_key(requested_management_ip) != _asset_identity_key(row['management_ip']):
+                duplicate_ips = _find_asset_identity_duplicates(
+                    conn,
+                    {'management_ip': requested_management_ip},
+                    exclude_asset_id=asset_id,
+                    fields=('management_ip',),
+                )
+                if duplicate_ips:
+                    raise HTTPException(status_code=409, detail=_identity_duplicate_detail(duplicate_ips))
+
         immutable_changes = []
         for field in _ASSET_IMMUTABLE_AFTER_CREATE_FIELDS:
             requested = getattr(body, field, None)
             if requested is None:
+                continue
+            # Production inventory corrections are allowed for the discovered
+            # hardware model and management address. The management address is
+            # checked for uniqueness above and is synced to the linked device.
+            if production_asset and field in {'model', 'management_ip'}:
                 continue
             stored = row[field]
             unchanged = (
@@ -4294,6 +4395,11 @@ def import_assets(
     background_tasks: BackgroundTasks = None,
     _user=require_role("Operator"),
 ):
+    if atomic and any(item.telemetry_config is not None for item in items):
+        raise HTTPException(status_code=422, detail={
+            'code': 'ASSET_TELEMETRY_ATOMIC_UNSUPPORTED',
+            'message': 'Telemetry 配置在资产提交后由独立PG服务登记，当前批量模式不支持与资产行组成一个原子事务；请使用默认的逐行导入模式。',
+        })
     conn = get_db_connection()
     batch_id = f"asset-import-{uuid.uuid4().hex[:12]}"
     try:
@@ -4306,6 +4412,7 @@ def import_assets(
         pending_hostname_sync: list[dict] = []
         pending_librenms_enrollment: list[dict] = []
         pending_snmp_identification: list[dict] = []
+        pending_telemetry_imports: list[dict] = []
 
         def _eligible_snmp_identification_items(imported_device_ids: set[str]) -> list[dict]:
             unique_items: dict[str, dict] = {}
@@ -4361,6 +4468,13 @@ def import_assets(
             return {'code': 'ASSET_IMPORT_ROW_FAILED', 'message': '资产导入行处理失败，请检查数据后重试。'}
 
         def _import_one(body: AssetImportCreate, row_number: int) -> dict:
+            if body.telemetry_config and body.asset_type != 'network_device':
+                raise HTTPException(status_code=422, detail={
+                    'code': 'ASSET_TELEMETRY_NETWORK_ONLY',
+                    'message': '首发 Telemetry 配置只适用于华为或华三网络设备。',
+                    'row': row_number,
+                    'field': 'telemetry_config',
+                })
             imported_hostname = str(body.hostname or '').strip()
             if not imported_hostname:
                 try:
@@ -4435,6 +4549,7 @@ def import_assets(
                 duplicate_device_id = ''
                 duplicate_enrollment_status: dict[str, str] | None = None
                 duplicate_snmp_status: dict[str, object] | None = None
+                duplicate_telemetry_status: dict[str, str] | None = None
                 if body.asset_type == 'network_device':
                     existing_asset_ids = {str(item['existing_id']) for item in duplicates}
                     if len(existing_asset_ids) == 1:
@@ -4484,11 +4599,29 @@ def import_assets(
                                 existing_ip = ipaddress.ip_address(str(existing_network_device['ip'] or '').strip()).compressed.casefold()
                             except ValueError:
                                 existing_ip = ''
+                            same_management_ip = bool(requested_ip) and requested_ip == existing_ip
                             same_management_target = (
-                                bool(requested_ip)
-                                and requested_ip == existing_ip
+                                same_management_ip
                                 and int(body.snmp_port or 161) == int(existing_network_device['snmp_port'] or 161)
                             )
+                            if body.telemetry_config:
+                                requested_asset_tag = str(body.asset_tag or '').strip().casefold()
+                                existing_asset_tag = str(existing_network_device['asset_tag'] or '').strip().casefold()
+                                same_asset_tag = bool(requested_asset_tag) and requested_asset_tag == existing_asset_tag
+                                if same_asset_tag and same_management_ip:
+                                    pending_telemetry_imports.append({
+                                        'device_id': duplicate_device_id,
+                                        'row': row_number,
+                                        'asset_tag': existing_network_device['asset_tag'] or body.asset_tag or '',
+                                        'hostname': existing_network_device['hostname'] or body.hostname or '',
+                                        'config': body.telemetry_config.model_dump(mode='json'),
+                                    })
+                                else:
+                                    duplicate_telemetry_status = {
+                                        'status': 'failed',
+                                        'code': 'ASSET_TELEMETRY_TARGET_MISMATCH',
+                                        'message': 'Telemetry配置未应用：需要匹配已有资产编号和管理IP；资产导入规则不会改写已有资产身份。',
+                                    }
                             same_enrollment_target = same_management_target and same_profile
                             existing_snmp_configured = bool(
                                 existing_credential_id
@@ -4571,6 +4704,8 @@ def import_assets(
                     skipped_item['snmp_identification'] = duplicate_snmp_status
                 if duplicate_enrollment_status:
                     skipped_item['librenms_enrollment'] = duplicate_enrollment_status
+                if duplicate_telemetry_status:
+                    skipped_item['telemetry_setup'] = duplicate_telemetry_status
                 skipped_items.append(skipped_item)
                 return {'status': 'skipped', **skipped_item}
 
@@ -4628,6 +4763,14 @@ def import_assets(
             if body.asset_type in ('network_device', 'server'):
                 device_id = _create_linked_device(conn, asset_id, body, _user)
                 _sync_asset_tags(conn, asset_id, requested_tag_ids)
+                if device_id and body.telemetry_config:
+                    pending_telemetry_imports.append({
+                        'device_id': device_id,
+                        'row': row_number,
+                        'asset_tag': body.asset_tag or '',
+                        'hostname': body.hostname or '',
+                        'config': body.telemetry_config.model_dump(mode='json'),
+                    })
                 if body.asset_type == 'network_device' and device_id:
                     enrichment_item = {
                         'device_id': device_id,
@@ -4799,6 +4942,130 @@ def import_assets(
             if str(item.get('device_id') or '') in active_device_ids
         ]
         pending_snmp_identification = _eligible_snmp_identification_items(imported_device_ids)
+        pending_telemetry_imports = [
+            item for item in pending_telemetry_imports
+            if str(item.get('device_id') or '') in active_device_ids
+        ]
+        telemetry_setup_results: list[dict] = []
+        if pending_telemetry_imports:
+            from schemas.telemetry import TelemetryDeviceConfigUpsert, TelemetrySubscriptionCreate
+            from services import telemetry_config_service
+
+            for pending in pending_telemetry_imports:
+                device_id = str(pending.get('device_id') or '')
+                payload = pending.get('config') or {}
+                status = 'registered'
+                message = '设备配置与停用订阅已登记；启用前会按设备型号复核协议档，设备侧协议仍需人工配置。'
+                code = ''
+                config_saved = False
+                registered_subscriptions = 0
+                publish_job_id = ''
+                try:
+                    current_config = telemetry_config_service.get_device_config(device_id, _user)
+                    saved_config = telemetry_config_service.upsert_device_config(
+                        device_id,
+                        TelemetryDeviceConfigUpsert(
+                            profile_id=payload.get('profile_id', ''),
+                            collector_id=payload.get('collector_id', ''),
+                            credential_id=payload.get('credential_id'),
+                            tls_profile_id=payload.get('tls_profile_id'),
+                            device_source_address=payload.get('device_source_address'),
+                            allowed_sources=payload.get('allowed_sources') or [],
+                            enabled=bool(payload.get('enabled', False)),
+                            revision=int((current_config or {}).get('revision') or payload.get('revision') or 1),
+                        ),
+                        _user,
+                    )
+                    config_saved = True
+                    publish_job_id = str((saved_config.get('publish_job') or {}).get('job_id') or '')
+                    for subscription in payload.get('subscriptions') or []:
+                        telemetry_config_service.create_subscription(
+                            device_id,
+                            TelemetrySubscriptionCreate(
+                                name=subscription.get('name', ''),
+                                template_id=subscription.get('template_id', ''),
+                                template_version=int(subscription.get('template_version') or 0),
+                                interval_seconds=int(subscription.get('interval_seconds') or 0),
+                                path_filters=subscription.get('path_filters') or [],
+                            ),
+                            _user,
+                            reuse_identical=True,
+                        )
+                        registered_subscriptions += 1
+                except Exception as exc:
+                    status = 'partial' if config_saved else 'failed'
+                    code = str(getattr(exc, 'code', '') or 'TELEMETRY_IMPORT_FAILED')
+                    message = str(getattr(exc, 'message', '') or (
+                        '设备Telemetry配置已保存，但部分订阅未登记；资产本身已保存。'
+                        if config_saved else 'Telemetry 配置登记失败；资产本身已保存。'
+                    ))
+                    logger.warning(
+                        'Telemetry import configuration failed for device %s (%s)',
+                        device_id,
+                        type(exc).__name__,
+                    )
+                if publish_job_id:
+                    try:
+                        telemetry_config_service.process_publish_job(publish_job_id)
+                    except Exception as exc:
+                        status = 'partial' if config_saved else 'failed'
+                        code = str(getattr(exc, 'code', '') or 'TELEMETRY_PUBLISH_FAILED')
+                        message = str(getattr(exc, 'message', '') or 'Telemetry配置已保存，但发布接收器配置失败。')
+                        logger.warning(
+                            'Telemetry import publish failed for device %s (%s)',
+                            device_id,
+                            type(exc).__name__,
+                        )
+                result = {
+                    'device_id': device_id,
+                    'row': pending.get('row'),
+                    'asset_tag': pending.get('asset_tag') or '',
+                    'status': status,
+                    'code': code,
+                    'message': message,
+                    'subscriptions': registered_subscriptions,
+                }
+                telemetry_setup_results.append(result)
+                for row_result in row_results:
+                    if str(row_result.get('device_id') or '') == device_id:
+                        row_result['telemetry_setup'] = {
+                            'status': status,
+                            'code': code,
+                            'message': message,
+                            'subscriptions': result['subscriptions'],
+                        }
+            known_telemetry_rows = {int(item.get('row') or 0) for item in telemetry_setup_results}
+            for row_result in row_results:
+                row_number = int(row_result.get('row') or 0)
+                setup = row_result.get('telemetry_setup')
+                if row_number and row_number not in known_telemetry_rows and isinstance(setup, dict):
+                    telemetry_setup_results.append({
+                        'device_id': str(row_result.get('device_id') or ''),
+                        'row': row_number,
+                        'asset_tag': str(row_result.get('asset_tag') or ''),
+                        'status': str(setup.get('status') or 'failed'),
+                        'code': str(setup.get('code') or ''),
+                        'message': str(setup.get('message') or ''),
+                        'subscriptions': int(setup.get('subscriptions') or 0),
+                    })
+            pending_telemetry_imports = []
+
+        # Surface row-level Telemetry binding rejections even when no import
+        # was queued (for example, a duplicate asset with a mismatched IP).
+        known_telemetry_rows = {int(item.get('row') or 0) for item in telemetry_setup_results}
+        for row_result in row_results:
+            row_number = int(row_result.get('row') or 0)
+            setup = row_result.get('telemetry_setup')
+            if row_number and row_number not in known_telemetry_rows and isinstance(setup, dict):
+                telemetry_setup_results.append({
+                    'device_id': str(row_result.get('device_id') or ''),
+                    'row': row_number,
+                    'asset_tag': str(row_result.get('asset_tag') or ''),
+                    'status': str(setup.get('status') or 'failed'),
+                    'code': str(setup.get('code') or ''),
+                    'message': str(setup.get('message') or ''),
+                    'subscriptions': int(setup.get('subscriptions') or 0),
+                })
 
         queued_snmp_device_ids = sorted({
             str(item.get('device_id') or '')
@@ -5231,6 +5498,12 @@ def import_assets(
                     'unresolved': len(snmp_identification_results) - identified_count,
                     'items': snmp_identification_results,
                 },
+                'telemetry_setup': {
+                    'total': len(telemetry_setup_results),
+                    'registered': sum(1 for item in telemetry_setup_results if item['status'] == 'registered'),
+                    'failed': sum(1 for item in telemetry_setup_results if item['status'] in {'failed', 'partial'}),
+                    'items': telemetry_setup_results,
+                },
             }
             return response
         has_pending_network_work = bool(
@@ -5287,6 +5560,12 @@ def import_assets(
                 "hostname_sync": {"total": pending_hostname_count, "succeeded": 0, "failed": 0, "pending": pending_hostname_count, "failed_items": []},
                 "librenms_enrollment": {"total": len(pending_enrollment_items), "succeeded": 0, "local_snmp": 0, "failed": 0, "pending": len(pending_enrollment_items), "failed_items": [], "items": [{"device_id": item.get("device_id"), "row": item.get("row"), "hostname": item.get("hostname") or "", "ip": item.get("ip") or "", "status": "pending"} for item in pending_enrollment_items]},
                 "snmp_identification": {"total": len(pending_snmp_items), "identified": 0, "unresolved": 0, "pending": len(pending_snmp_items), "items": [{"device_id": item.get("device_id"), "row": item.get("row"), "asset_tag": item.get("asset_tag") or "", "hostname": item.get("hostname") or "", "ip": item.get("ip") or "", "status": "pending", "message": "SNMP 识别将在后台继续"} for item in pending_snmp_items]},
+                "telemetry_setup": {
+                    "total": len(telemetry_setup_results),
+                    "registered": sum(1 for item in telemetry_setup_results if item['status'] == 'registered'),
+                    "failed": sum(1 for item in telemetry_setup_results if item['status'] in {'failed', 'partial'}),
+                    "items": telemetry_setup_results,
+                },
             }
         else:
             response = _finish_import_post_commit()

@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 30s
+  scrape_timeout: 10s
+
+scrape_configs:
+  - job_name: telemetry_vmagent
+    static_configs:
+      - targets: ["127.0.0.1:8429"]
+
+  - job_name: telemetry_collector
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["telemetry-collector:10052"]

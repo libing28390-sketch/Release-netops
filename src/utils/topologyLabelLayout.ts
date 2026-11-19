@@ -60,6 +60,54 @@ const overlaps = (left: TopologyLabelRect, right: TopologyLabelRect): boolean =>
   && Math.abs(left.y - right.y) * 2 < left.height + right.height
 );
 
+export type TopologyDeviceLabelCandidate = TopologyLabelRect & { id: string };
+
+/**
+ * Keep device names below their preferred anchor when they would cover a node
+ * glyph or another name. Stable top-to-bottom placement keeps the default
+ * layout unchanged wherever its labels already fit.
+ */
+export const resolveTopologyDeviceLabelPlacements = (
+  candidates: TopologyDeviceLabelCandidate[],
+  glyphObstacles: TopologyLabelRect[],
+  gap = DEFAULT_GAP,
+): Record<string, TopologyLabelPoint> => {
+  const labelGap = Math.max(0, finite(gap, DEFAULT_GAP));
+  const ordered = candidates
+    .filter((candidate) => candidate.id && Number.isFinite(candidate.x) && Number.isFinite(candidate.y))
+    .map((candidate) => ({
+      ...candidate,
+      width: Math.max(1, finite(candidate.width, 1)),
+      height: Math.max(1, finite(candidate.height, 1)),
+    }))
+    .sort((left, right) => (
+      left.y - right.y
+      || left.id.localeCompare(right.id, undefined, { numeric: true, sensitivity: 'base' })
+    ));
+  const placed: TopologyLabelRect[] = [];
+  const result: Record<string, TopologyLabelPoint> = {};
+
+  ordered.forEach((candidate) => {
+    let y = candidate.y;
+    const blockers = [...glyphObstacles, ...placed];
+    for (let attempt = 0; attempt <= blockers.length; attempt += 1) {
+      const label = rectFor({ x: candidate.x, y }, candidate.width, candidate.height, labelGap);
+      const collisions = blockers.filter((obstacle) => overlaps(label, obstacle));
+      if (collisions.length === 0) break;
+      y = Math.max(...collisions.map((obstacle) => (
+        obstacle.y + Math.max(1, finite(obstacle.height, 1)) / 2
+        + labelGap + candidate.height / 2
+      )));
+    }
+
+    const placement = { x: candidate.x, y };
+    result[candidate.id] = placement;
+    placed.push({ ...placement, width: candidate.width, height: candidate.height });
+  });
+
+  return result;
+};
+
 const clampPoint = (point: TopologyLabelPoint, bounds: TopologyLabelLayoutBounds | undefined, width: number, height: number) => {
   if (!bounds) return point;
   const halfWidth = Math.max(0, width / 2);
