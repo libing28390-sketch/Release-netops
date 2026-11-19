@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NetOps 拓扑布局演示</title>
+  </head>
+  <body>
+    <main class="flex min-h-0 flex-col bg-slate-50" style="height: 100dvh">
+      <header class="flex flex-wrap items-baseline gap-x-4 gap-y-1 px-4 py-3 text-slate-900">
+        <h1 class="text-base font-bold">拓扑布局演示</h1>
+        <p class="text-xs text-slate-600">模拟数据 · 60 台接入交换机 · 2 台无线控制器 · 12 台 AP</p>
+      </header>
+      <div id="root" class="min-h-0 flex-1"></div>
+    </main>
+    <script type="module">
+      import React from 'react';
+      import { createRoot } from 'react-dom/client';
+      import '../src/index.css';
+      import TopologyGraph from '../src/components/TopologyGraph.tsx';
+
+      const buildDevices = (count, prefix, role) => Array.from({ length: count }, (_, index) => {
+        const number = String(index + 1).padStart(2, '0');
+        return {
+          id: `${prefix.toLowerCase()}-${number}`,
+          hostname: `DEMO-${prefix}-${number}`,
+          role,
+          ip_address: '',
+          status: 'online',
+          site: '演示站点',
+        };
+      });
+      const core = buildDevices(2, 'CORE', 'core');
+      const distribution = buildDevices(4, 'DIST', 'distribution');
+      const access = buildDevices(60, 'ACCESS-SWITCH', 'access');
+      const controllers = buildDevices(2, 'WLC', 'wireless_controller');
+      const accessPoints = buildDevices(12, 'WIRELESS-AP', 'wireless_ap');
+      const devices = [...core, ...distribution, ...access, ...controllers, ...accessPoints];
+
+      const connect = (source, target, port) => ({
+        source_device_id: source.id,
+        target_device_id: target.id,
+        relation_type: 'PHYSICAL',
+        discovery_source: 'lldp',
+        link_kind: 'physical',
+        operational_state: 'up',
+        reverse_confirmed: true,
+        source_port: `GE1/0/${port}`,
+        target_port: 'GE1/0/1',
+      });
+      const links = [
+        ...distribution.map((device, index) => connect(core[index % core.length], device, index + 1)),
+        ...access.map((device, index) => connect(distribution[Math.floor(index / 15)], device, index % 15 + 2)),
+        ...controllers.map((device, index) => connect(core[index], device, 10)),
+        ...accessPoints.map((device, index) => connect(access[Math.floor(index / 4) * 20], device, index % 4 + 20)),
+      ];
+
+      createRoot(document.getElementById('root')).render(React.createElement(TopologyGraph, { devices, links, language: 'zh' }));
+    </script>
+  </body>
+</html>
