@@ -140,6 +140,119 @@ describe('topology role-tier layout', () => {
     });
   });
 
+  it('wraps 37 access devices to the available name space when the row ceiling is 60', () => {
+    const distribution = ['dist-a', 'dist-b', 'dist-c'].map((id) => ({
+      id,
+      hostname: id.toUpperCase(),
+      role: 'distribution',
+    }));
+    const access = Array.from({ length: 37 }, (_, index) => ({
+      id: `access-${String(index + 1).padStart(2, '0')}`,
+      hostname: `ACCESS-SW-${String(index + 1).padStart(2, '0')}`,
+      role: 'access',
+    }));
+    const controller: TopologyRoleLayoutDevice = {
+      id: 'wireless-controller', hostname: 'AC-01', role: 'wireless_controller',
+    };
+    const links: TopologyRoleLayoutLink[] = [
+      ...access.map((device, index) => ({
+        source_device_id: index < 13 ? 'dist-a' : index < 25 ? 'dist-b' : 'dist-c',
+        target_device_id: device.id,
+        relation_type: 'PHYSICAL',
+        discovery_source: 'lldp',
+      })),
+      {
+        source_device_id: 'dist-a', target_device_id: controller.id,
+        relation_type: 'PHYSICAL', discovery_source: 'lldp',
+      },
+    ];
+
+    const mainDevices = [...distribution, ...access];
+    const positions = buildTopologyRoleLayeredPositions([...mainDevices, controller], 1920, 700, links, 60);
+    const accessRows = new Set(access.map((device) => positions?.[device.id].y));
+    const orderedAccessRows = Array.from(accessRows).sort((left, right) => (left ?? 0) - (right ?? 0));
+
+    expect(accessRows.size).toBe(3);
+    expect(accessRows.size).toBeLessThan(60);
+    expect(access.every((device) => Number.isFinite(positions?.[device.id].x))).toBe(true);
+    expect(orderedAccessRows[1] - orderedAccessRows[0]).toBe(125);
+    expect(orderedAccessRows[2] - orderedAccessRows[1]).toBe(125);
+    expect(positions?.[controller.id].x).toBeGreaterThan(Math.max(...mainDevices.map((device) => positions?.[device.id].x ?? 0)));
+  });
+
+  it('packs access uplink groups on narrow viewports even when the configured ceiling is 60', () => {
+    const distribution = ['dist-a', 'dist-b', 'dist-c', 'dist-d'].map((id) => ({
+      id,
+      hostname: id.toUpperCase(),
+      role: 'distribution',
+    }));
+    const access = Array.from({ length: 8 }, (_, index) => ({
+      id: `access-${String(index + 1).padStart(2, '0')}`,
+      hostname: `ACCESS-SW-${String(index + 1).padStart(2, '0')}`,
+      role: 'access',
+    }));
+    const links: TopologyRoleLayoutLink[] = access.map((device, index) => ({
+      source_device_id: `dist-${String.fromCharCode(97 + Math.floor(index / 2))}`,
+      target_device_id: device.id,
+      relation_type: 'PHYSICAL',
+      discovery_source: 'lldp',
+    }));
+
+    const positions = buildTopologyRoleLayeredPositions([...distribution, ...access], 600, 600, links, 60);
+    const accessRows = new Set(access.map((device) => positions?.[device.id].y));
+
+    expect(accessRows.size).toBe(2);
+  });
+
+  it('keeps 50 devices grouped by every physical higher-tier uplink and isolates unlinked access devices', () => {
+    const upstream: TopologyRoleLayoutDevice[] = [
+      { id: 'core-a', hostname: 'CORE-A', role: 'core' },
+      { id: 'core-b', hostname: 'CORE-B', role: 'core' },
+      { id: 'dist-a', hostname: 'DIST-A', role: 'distribution' },
+    ];
+    const access = Array.from({ length: 47 }, (_, index) => ({
+      id: `access-${String(index + 1).padStart(2, '0')}`,
+      hostname: `ACCESS-SW-${String(index + 1).padStart(2, '0')}`,
+      role: 'access',
+    }));
+    const uplinkCombinationById = new Map<string, string>();
+    const links: TopologyRoleLayoutLink[] = access.flatMap((device, index) => {
+      if (index >= 45) {
+        uplinkCombinationById.set(device.id, 'unlinked');
+        return [];
+      }
+      const coreId = index < 22 ? 'core-a' : 'core-b';
+      const combination = `${coreId}+dist-a`;
+      uplinkCombinationById.set(device.id, combination);
+      const parents = [coreId, 'dist-a'];
+      return parents.map((parentId) => ({
+        source_device_id: parentId,
+        target_device_id: device.id,
+        relation_type: 'PHYSICAL',
+        discovery_source: 'lldp',
+      }));
+    });
+    const devices = [...upstream, ...access];
+    const positions = buildTopologyRoleLayeredPositions(devices, 1920, 700, links, 60);
+    const reversedLinkPositions = buildTopologyRoleLayeredPositions(devices, 1920, 700, [...links].reverse(), 60);
+    const accessRows = Array.from(new Set(access.map((device) => positions?.[device.id].y)))
+      .sort((left, right) => (left ?? 0) - (right ?? 0))
+      .map((rowY) => {
+        const rowDevices = access.filter((device) => positions?.[device.id].y === rowY);
+        const combinations = new Set(rowDevices.map((device) => uplinkCombinationById.get(device.id)));
+        expect(combinations.size).toBe(1);
+        return Array.from(combinations)[0];
+      });
+
+    const linkedRows = accessRows.slice(0, -1);
+    expect(accessRows[accessRows.length - 1]).toBe('unlinked');
+    expect(new Set(linkedRows)).toEqual(new Set(['core-a+dist-a', 'core-b+dist-a']));
+    expect(linkedRows[0]).toBe(linkedRows[1]);
+    expect(linkedRows[2]).toBe(linkedRows[3]);
+    expect(linkedRows[1]).not.toBe(linkedRows[2]);
+    expect(reversedLinkPositions).toEqual(positions);
+  });
+
   it('keeps wireless AP groups on separate parent rows when the row capacity increases', () => {
     const devices: TopologyRoleLayoutDevice[] = [
       { id: 'dist-a', hostname: 'DIST-A', role: 'distribution' },

@@ -5,12 +5,13 @@ import type { Device, TagDefinition } from '../types';
 import { ActionButton } from '../components/ui/ActionIconButton';
 import TagConditionPicker, { countTagFilterConditions, EMPTY_TAG_FILTER, hasTagFilterConditions, type TagFilterConfig } from '../components/TagConditionPicker';
 import TopologyGraph from '../components/TopologyGraph';
+import TopologyUplinkGroups from '../components/TopologyUplinkGroups';
 import PageHero from '../components/PageHero';
 import { useTopologyGenerationStatus } from '../hooks/useTopologyGenerationStatus';
 import { matchesTopologyTagConditions } from '../hooks/useTopologyVisibleDevices';
 import { topologyRoleLabel } from '../domain/topologyRoles';
 import { buildTopologySiteOverview } from '../utils/topologySiteOverview';
-import { excludeServerTopologyDevices, projectManagedTopologyCanvas } from '../utils/topologyDevices';
+import { excludeServerTopologyDevices, projectManagedTopologyCanvas, type TopologyDeviceScope } from '../utils/topologyDevices';
 
 type TopologyStatusFilter = 'all' | 'online' | 'offline' | 'pending';
 type TopologyLinkStatusFilter = 'all' | 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
@@ -343,7 +344,7 @@ interface TopologyPageProps {
   onTopologyStatusFilterChange: (value: TopologyStatusFilter) => void;
   onTopologyLinkStatusFilterChange: (value: TopologyLinkStatusFilter) => void;
   onTopologyProtocolFilterChange: (value: TopologyProtocolFilter) => void;
-  onSelectTopologyDevice: (deviceId: string) => void;
+  onSelectTopologyDevice: (deviceId: string | null) => void;
   onSelectTopologyLink: (linkKey: string | null) => void;
   onConfirmTopologyRelation: (edgeId: string, relationType: string) => Promise<void>;
   loadTopologyHistory: (edgeId: string) => Promise<Array<{
@@ -435,6 +436,15 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   getTopologyOperationalTone,
 }) => {
   const [canvasView, setCanvasView] = React.useState<'overview' | 'site'>('overview');
+  const [sitePresentation, setSitePresentation] = React.useState<'full' | 'grouped'>('full');
+  const [deviceScope, setDeviceScope] = React.useState<TopologyDeviceScope>('all');
+  const [deviceOrder, setDeviceOrder] = React.useState<string[]>([]);
+  const handleDeviceOrderChange = React.useCallback((ids: string[]) => {
+    setDeviceOrder((current) => current.length === ids.length && current.every((id, index) => id === ids[index])
+      ? current
+      : ids);
+  }, []);
+  const showUplinkGroups = canvasView === 'site' && sitePresentation === 'grouped';
   const [tagPickerOpen, setTagPickerOpen] = React.useState(false);
   const [draftTopologyTagFilter, setDraftTopologyTagFilter] = React.useState<TagFilterConfig>(topologyTagFilter);
   const topologyNetworkScope = React.useMemo(
@@ -448,11 +458,23 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
     [topologyNetworkScope.excludedIds, topologyVisibleLinks],
   );
   const topologyCanvas = React.useMemo(
-    () => projectManagedTopologyCanvas(topologyNetworkScope.devices, topologyEligibleLinks),
-    [topologyEligibleLinks, topologyNetworkScope.devices],
+    () => projectManagedTopologyCanvas(topologyNetworkScope.devices, topologyEligibleLinks, deviceScope),
+    [deviceScope, topologyEligibleLinks, topologyNetworkScope.devices],
   );
   const topologyCanvasDevices = topologyCanvas.devices;
   const topologyMapLinks = topologyCanvas.links;
+  const handleTopologyNodeClick = React.useCallback((device: Device) => {
+    onSelectTopologyDevice(device.id);
+    onSelectTopologyLink(null);
+  }, [onSelectTopologyDevice, onSelectTopologyLink]);
+  const handleClearTopologySelection = React.useCallback(() => {
+    onSelectTopologyDevice(null);
+    onSelectTopologyLink(null);
+  }, [onSelectTopologyDevice, onSelectTopologyLink]);
+  const handleTopologyLinkClick = React.useCallback((link: TopologyDecoratedLinkLike) => {
+    onSelectTopologyDevice(link.source_device_id);
+    onSelectTopologyLink(link.link_key || link.id || null);
+  }, [onSelectTopologyDevice, onSelectTopologyLink]);
   const topologyDiagnostics = React.useMemo(() => {
     const collectionFailures = topologyNetworkScope.devices
       .map((device) => ({
@@ -490,6 +512,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
     down: topologyMapLinks.filter((link) => link.operational_state === 'down').length,
     stale: topologyMapLinks.filter((link) => link.operational_state === 'stale').length,
   }), [topologyMapLinks]);
+  const displayedLinkStats = deviceScope === 'all' ? topologyLinkStats : topologyCanvasLinkStats;
   const handleSiteFilterChange = (value: string) => {
     onTopologySiteFilterChange(value);
     setCanvasView(value === 'all' ? 'overview' : 'site');
@@ -608,7 +631,9 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
               variant="accent"
               onClick={onExportMap}
             >
-              {language === 'zh' ? '导出拓扑图' : 'Export Map'}
+              {showUplinkGroups
+                ? (language === 'zh' ? '导出完整拓扑图' : 'Export Full Map')
+                : (language === 'zh' ? '导出拓扑图' : 'Export Map')}
             </ActionButton>
           </div>
         }
@@ -675,10 +700,10 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
         </div>
         <div className="flex flex-wrap items-center gap-3 text-xs">
           {[
-            { label: language === 'zh' ? '正常' : 'Up', value: topologyLinkStats.up, dot: 'bg-emerald-500' },
-            { label: language === 'zh' ? '退化' : 'Degraded', value: topologyLinkStats.degraded, dot: 'bg-amber-500' },
-            { label: language === 'zh' ? '中断' : 'Down', value: topologyLinkStats.down, dot: 'bg-rose-500' },
-            { label: language === 'zh' ? '陈旧' : 'Stale', value: topologyLinkStats.stale, dot: 'bg-gray-300 dark:bg-zinc-600' },
+            { label: language === 'zh' ? '正常' : 'Up', value: displayedLinkStats.up, dot: 'bg-emerald-500' },
+            { label: language === 'zh' ? '退化' : 'Degraded', value: displayedLinkStats.degraded, dot: 'bg-amber-500' },
+            { label: language === 'zh' ? '中断' : 'Down', value: displayedLinkStats.down, dot: 'bg-rose-500' },
+            { label: language === 'zh' ? '陈旧' : 'Stale', value: displayedLinkStats.stale, dot: 'bg-gray-300 dark:bg-zinc-600' },
           ].map((item) => (
             <div key={item.label} className="flex items-center gap-1.5 bg-gray-50 dark:bg-zinc-800 px-2 py-1 rounded-lg">
               <span className={`h-1.5 w-1.5 rounded-full ${item.dot}`} />
@@ -757,6 +782,19 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
               </div>
             )}
           </div>
+          <select
+            value={deviceScope}
+            onChange={(event) => {
+              setDeviceScope(event.target.value as TopologyDeviceScope);
+              handleClearTopologySelection();
+            }}
+            aria-label={language === 'zh' ? '有线与无线设备' : 'Wired and wireless devices'}
+            className="rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 px-2.5 py-1.5 text-xs outline-none text-gray-700 dark:text-zinc-200 cursor-pointer"
+          >
+            <option value="all">{language === 'zh' ? '有线 + 无线' : 'Wired + Wireless'}</option>
+            <option value="wired">{language === 'zh' ? '仅有线' : 'Wired only'}</option>
+            <option value="wireless">{language === 'zh' ? '仅无线' : 'Wireless only'}</option>
+          </select>
           <select
             value={topologyRoleFilter}
             onChange={(event) => onTopologyRoleFilterChange(event.target.value)}
@@ -881,21 +919,35 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
       {/* Full-width Canvas */}
       <div className="flex min-h-0 flex-1 flex-col">
         <div
-          className={`bg-white dark:bg-zinc-900/90 border border-gray-200/70 dark:border-zinc-800/80 relative flex ${topologyCanvasSize} flex-col overflow-hidden rounded-2xl shadow-2xs`}
+          className={`group bg-white dark:bg-zinc-900/90 border border-gray-200/70 dark:border-zinc-800/80 relative flex ${topologyCanvasSize} flex-col overflow-hidden rounded-2xl shadow-2xs [&:fullscreen]:h-full [&:fullscreen]:w-full [&:fullscreen]:min-h-0 [&:fullscreen]:rounded-none`}
           style={canvasView === 'overview' ? { height: 'clamp(360px, calc(100vh - 620px), 500px)' } : undefined}
           ref={topologyCanvasRef}
         >
-          <div className="relative flex items-center justify-between border-b border-gray-100 dark:border-zinc-800 px-4 py-3">
-            <div>
-              <h3 className="text-sm font-bold text-gray-900 dark:text-white">
-                {language === 'zh' ? '拓扑画布' : 'Topology Canvas'}
-              </h3>
-              <p className="text-xs text-gray-400">
-                {language === 'zh'
-                  ? '每台纳管设备只显示一个图标；双向确认用实线，单向确认用虚线。'
-                  : 'One icon per managed device; solid links have two-sided evidence, dashed links have one-sided evidence.'}
-              </p>
-            </div>
+          <div className="relative flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 dark:border-zinc-800 px-4 py-3">
+            <h3 className="text-sm font-bold text-gray-900 dark:text-white">
+              {language === 'zh' ? '拓扑画布' : 'Topology Canvas'}
+            </h3>
+            {canvasView === 'site' && topologyCanvasDevices.length > 0 && (
+              <div className="flex items-center gap-2">
+                <div role="group" aria-label={language === 'zh' ? '拓扑展示方式' : 'Topology presentation'} className="inline-flex gap-0.5 rounded-lg bg-slate-100 p-0.5 dark:bg-zinc-800">
+                  {[
+                    { mode: 'full' as const, label: language === 'zh' ? '完整拓扑' : 'Full topology', Icon: Network },
+                    { mode: 'grouped' as const, label: language === 'zh' ? '上联分组' : 'Uplink groups', Icon: LayoutGrid },
+                  ].map(({ mode, label, Icon }) => (
+                    <button key={mode} type="button" aria-pressed={sitePresentation === mode}
+                      onClick={() => setSitePresentation(mode)}
+                      className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold ${sitePresentation === mode ? 'bg-white text-blue-700 shadow-sm dark:bg-zinc-700 dark:text-blue-300' : 'text-slate-600 hover:text-slate-900 dark:text-zinc-300 dark:hover:text-white'}`}>
+                      <Icon size={14} aria-hidden="true" />{label}
+                    </button>
+                  ))}
+                </div>
+                {showUplinkGroups && (
+                  <button type="button" onClick={() => void document.exitFullscreen()} className="hidden rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold group-[:fullscreen]:inline-flex dark:border-zinc-700">
+                    {language === 'zh' ? '退出全屏' : 'Exit full screen'}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="relative flex-1 min-h-0">
@@ -917,28 +969,39 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
                     {language === 'zh' ? '当前筛选条件下没有可展示的设备' : 'No devices match the current topology filter'}
                   </p>
                   <p className="mt-1 text-xs text-gray-400">
-                    {language === 'zh' ? '清空搜索或放宽站点、角色、状态筛选后重试。' : 'Clear the search or relax the site, role, or status filters.'}
+                    {language === 'zh' ? '清空搜索或放宽筛选条件后重试。' : 'Clear the search or broaden the filters.'}
                   </p>
                 </div>
               </div>
             ) : (
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="relative h-full w-full">
-                <TopologyGraph
-                  devices={topologyCanvasDevices}
-                  links={topologyMapLinks}
-                  language={language}
-                  selectedNodeId={selectedTopologyDeviceId}
-                  selectedLinkKey={selectedTopologyLinkKey}
-                  onNodeClick={(device) => {
-                    onSelectTopologyDevice(device.id);
-                  }}
-                  onOpenWorkspace={onOpenWorkspace}
-                  onLinkClick={(link) => {
-                    onSelectTopologyDevice(link.source_device_id);
-                    onSelectTopologyLink(link.link_key || link.id || null);
-                  }}
-                />
-              </motion.div>
+              <>
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: showUplinkGroups ? 0 : 1 }}
+                  className={`absolute inset-0 ${showUplinkGroups ? 'pointer-events-none' : ''}`} inert={showUplinkGroups}>
+                  <TopologyGraph
+                    key={deviceScope}
+                    layoutScope={deviceScope}
+                    onDeviceOrderChange={handleDeviceOrderChange}
+                    devices={topologyCanvasDevices}
+                    links={topologyMapLinks}
+                    language={language}
+                    fullscreenTargetRef={topologyCanvasRef}
+                    selectedNodeId={selectedTopologyDeviceId}
+                    selectedLinkKey={selectedTopologyLinkKey}
+                    onNodeClick={handleTopologyNodeClick}
+                    onClearSelection={handleClearTopologySelection}
+                    onOpenWorkspace={onOpenWorkspace}
+                    onLinkClick={handleTopologyLinkClick}
+                  />
+                </motion.div>
+                {showUplinkGroups && (
+                  <div className="absolute inset-0 overflow-auto">
+                    <TopologyUplinkGroups devices={topologyCanvasDevices} links={topologyMapLinks} language={language}
+                      deviceOrder={deviceOrder}
+                      deviceScopeFiltered={deviceScope !== 'all'}
+                      selectedNodeId={selectedTopologyDeviceId} onNodeClick={handleTopologyNodeClick} />
+                  </div>
+                )}
+              </>
             )}
           </div>
 
@@ -946,15 +1009,19 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
             <span>{language === 'zh' ? `当前展示 ${topologyCanvasStats.nodeCount} 节点 · ${topologyCanvasStats.linkCount} 链路` : `Showing ${topologyCanvasStats.nodeCount} nodes / ${topologyCanvasStats.linkCount} links`}</span>
             <span className="h-3 w-px bg-gray-200 dark:bg-zinc-700" />
             <span>{language === 'zh' ? `${topologyCanvasLinkStats.up} 正常 · ${topologyCanvasLinkStats.degraded} 退化 · ${topologyCanvasLinkStats.down} 中断 · ${topologyCanvasLinkStats.stale} 陈旧` : `${topologyCanvasLinkStats.up} up · ${topologyCanvasLinkStats.degraded} degraded · ${topologyCanvasLinkStats.down} down · ${topologyCanvasLinkStats.stale} stale`}</span>
-            <span className="h-3 w-px bg-gray-200 dark:bg-zinc-700" />
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block w-5 border-t border-solid border-slate-500" />
-              {language === 'zh' ? '双向确认' : 'Bidirectional'}
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block w-5 border-t border-dashed border-slate-500" />
-              {language === 'zh' ? '单向确认' : 'One-sided'}
-            </span>
+            {!showUplinkGroups && (
+              <>
+                <span className="h-3 w-px bg-gray-200 dark:bg-zinc-700" />
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-5 border-t border-solid border-slate-500" />
+                  {language === 'zh' ? '双向确认' : 'Bidirectional'}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-5 border-t border-dashed border-slate-500" />
+                  {language === 'zh' ? '单向确认' : 'One-sided'}
+                </span>
+              </>
+            )}
           </div>
         </div>
       </div>

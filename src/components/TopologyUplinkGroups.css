@@ -1,0 +1,360 @@
+.topology-uplink-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(268px, 22vw, 320px);
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.topology-uplink-canvas,
+.topology-uplink-detail {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #dce3e9;
+  border-radius: 13px;
+  background: #fff;
+  box-shadow: 0 2px 8px #20395b08;
+}
+.topology-uplink-canvas {
+  background-image: radial-gradient(circle, #66799125 .65px, transparent .7px);
+  background-size: 18px 18px;
+  scrollbar-width: thin;
+}
+.topology-uplink-detail {
+  display: flex;
+  flex-direction: column;
+}
+.topology-uplink-diagram {
+  position: relative;
+  min-height: 360px;
+  margin-inline: auto;
+  padding: 14px 0 24px;
+}
+.topology-uplink-band {
+  position: absolute;
+  right: 12px;
+  left: 10px;
+  border: 1px solid color-mix(in srgb, var(--uplink-ink) 18%, #fff);
+  border-radius: 10px;
+  background: var(--uplink-fill);
+  pointer-events: none;
+}
+.topology-uplink-band-heading {
+  position: absolute;
+  top: 11px;
+  left: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--uplink-ink);
+  font-size: 13px;
+  font-weight: 760;
+  line-height: 1.25;
+}
+.topology-uplink-band-heading small {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 500;
+}
+.topology-uplink-layer-edge { --uplink-ink: #b42323; --uplink-fill: #f8e8e8; }
+.topology-uplink-layer-core { --uplink-ink: #2158c8; --uplink-fill: #edf4ff; }
+.topology-uplink-layer-distribution { --uplink-ink: #15766d; --uplink-fill: #eef8f6; }
+.topology-uplink-layer-access { --uplink-ink: #176da5; --uplink-fill: #eff6fb; }
+.topology-uplink-layer-wireless { --uplink-ink: #7544a5; --uplink-fill: #f7f2fb; }
+.topology-uplink-layer-other { --uplink-ink: #475569; --uplink-fill: #f4f6f8; }
+.topology-uplink-wires {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.topology-uplink-wire-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  vector-effect: non-scaling-stroke;
+  pointer-events: stroke;
+}
+.topology-uplink-wire {
+  fill: none;
+  stroke: #8494a7;
+  stroke-width: 1.8;
+  stroke-opacity: .82;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+.topology-uplink-wire[data-focused="true"] {
+  stroke: #215bd6;
+  stroke-width: 2.8;
+  stroke-opacity: 1;
+}
+.topology-uplink-device-wrap {
+  position: absolute;
+  z-index: 3;
+  transform: translate(-50%, -50%);
+}
+.topology-uplink-device {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 140px;
+  min-width: 0;
+  min-height: 43px;
+  padding: 5px 7px;
+  overflow: hidden;
+  border: 1px solid #cddbeb;
+  border-radius: 8px;
+  background: #fff;
+  color: #243b57;
+  box-shadow: 0 2px 5px #1b3b6810;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color .14s, border-color .14s, box-shadow .14s;
+}
+.topology-uplink-device:hover { border-color: #93b4e1; background: #f4f8ff; }
+.topology-uplink-device[data-selected="true"] {
+  border-color: #3172d5;
+  background: #e5efff;
+  box-shadow: 0 0 0 2px #bfdbfe, 0 3px 10px #285aac18;
+  color: #174ea6;
+}
+.topology-uplink-device[data-uplink-parent="true"] {
+  border-color: #43a5b5;
+  box-shadow: 0 0 0 1px #c3edf1;
+}
+.topology-uplink-device-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  place-items: center;
+  border-radius: 5px;
+  background: #f1f5f9;
+  color: #53677d;
+}
+.topology-uplink-device-icon img { width: 25px; height: 25px; object-fit: contain; }
+.topology-uplink-device-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topology-uplink-device-meta {
+  display: block;
+  overflow: hidden;
+  margin-top: 2px;
+  color: #62748a;
+  font-size: 9px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topology-uplink-group-card,
+.topology-uplink-ap-card {
+  position: absolute;
+  z-index: 4;
+  width: calc(100% - 12px);
+  overflow: hidden;
+  border: 1px solid #d5e1ee;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 2px 5px #2037580d;
+}
+.topology-uplink-group-card[data-selected="true"] {
+  border-color: #6a96db;
+  box-shadow: 0 3px 10px #285aac18;
+}
+.topology-uplink-group-toggle {
+  display: flex;
+  width: 100%;
+  min-height: 66px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  padding: 8px;
+  color: #203f63;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.topology-uplink-group-toggle:hover,
+.topology-uplink-group-toggle[aria-expanded="true"] { background: #f4f6f8; }
+.topology-uplink-single-access {
+  display: grid;
+  align-content: center;
+  min-height: 66px;
+  padding: 5px;
+}
+.topology-uplink-single-access .topology-uplink-device {
+  width: 100%;
+}
+.topology-uplink-group-status {
+  display: block;
+  margin: 2px 4px 0;
+  color: #52667e;
+  font-size: 10px;
+  font-weight: 600;
+}
+.topology-uplink-group-members {
+  display: grid;
+  max-height: 122px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+  overflow: auto;
+  padding: 6px;
+  border-top: 1px solid #e5edf7;
+  scrollbar-width: thin;
+}
+.topology-uplink-group-members .topology-uplink-device,
+.topology-uplink-ap-members .topology-uplink-device { width: 100%; min-height: 36px; }
+.topology-uplink-group-members .topology-uplink-device-icon,
+.topology-uplink-ap-members .topology-uplink-device-icon { width: 24px; height: 24px; }
+.topology-uplink-group-members .topology-uplink-device-icon img,
+.topology-uplink-ap-members .topology-uplink-device-icon img { width: 21px; height: 21px; }
+.topology-uplink-group-members .topology-uplink-device-name,
+.topology-uplink-ap-members .topology-uplink-device-name { font-size: 10px; }
+.topology-uplink-group-members .topology-uplink-device-name,
+.topology-uplink-ap-members .topology-uplink-device-name {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+  line-height: 1.2;
+}
+.topology-uplink-ap-card {
+  border-color: #e4dcec;
+  background: #fdfbfe;
+}
+.topology-uplink-ap-card[data-selected="true"] { border-color: #7c9bd6; }
+.topology-uplink-ap-toggle {
+  display: flex;
+  width: 100%;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  padding: 8px 9px;
+  color: #713f8c;
+  text-align: left;
+  cursor: pointer;
+}
+.topology-uplink-ap-members {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  max-height: 184px;
+  overflow: auto;
+  padding: 5px;
+  border-top: 1px solid #e9e1ee;
+}
+.topology-uplink-controller-panel {
+  position: absolute;
+  z-index: 3;
+  right: 12px;
+  width: 176px;
+  padding: 8px;
+  border: 1px solid #e4dcec;
+  border-radius: 9px;
+  background: #fdfbfe;
+}
+.topology-uplink-controller-panel > strong {
+  display: block;
+  margin: 0 0 6px 3px;
+  color: #713f8c;
+  font-size: 11px;
+}
+.topology-uplink-controller-list { display: grid; gap: 5px; }
+.topology-uplink-selected-path {
+  margin: 0 12px 9px;
+  padding: 9px 10px;
+  border: 1px solid #dce8f8;
+  border-radius: 8px;
+  background: #f7faff;
+}
+.topology-uplink-selected-path h4 {
+  margin-bottom: 5px;
+  color: #285793;
+  font-size: 11px;
+  font-weight: 750;
+}
+.topology-uplink-selected-path ol { margin: 0 0 0 4px; padding: 0; list-style: none; }
+.topology-uplink-selected-path li {
+  position: relative;
+  padding: 0 0 4px 12px;
+  border-left: 1px solid #a6bde3;
+}
+.topology-uplink-selected-path li:last-child { border-color: transparent; padding-bottom: 0; }
+.topology-uplink-selected-path li::before {
+  position: absolute;
+  top: 5px;
+  left: -3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #326aca;
+  content: '';
+}
+.topology-uplink-selected-path li strong { display: block; color: #203956; font-size: 11px; }
+.topology-uplink-selected-path li span { display: block; color: #4d6584; font-size: 10px; }
+.topology-uplink-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 16px 14px 13px;
+  border-bottom: 1px solid #e5ecf5;
+}
+.topology-uplink-detail-header p { color: #566476; font-size: 11px; }
+.topology-uplink-detail-header h2 {
+  margin: 1px 0 2px;
+  color: #192738;
+  font-size: 19px;
+  font-weight: 760;
+}
+.topology-uplink-detail-header code { color: #4f6580; font-size: 11px; }
+.topology-uplink-detail-section {
+  margin: 12px 12px 8px;
+  color: #192738;
+  font-size: 12px;
+  font-weight: 740;
+}
+.topology-uplink-detail-content {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+.topology-uplink-detail-note {
+  margin: 0 12px 10px;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.topology-uplink-locate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: calc(100% - 24px);
+  min-height: 36px;
+  margin: 10px 12px 12px;
+  border: 1px solid #bdd2f2;
+  border-radius: 7px;
+  background: #eef5ff;
+  color: #2358ab;
+  font-weight: 700;
+  cursor: pointer;
+}
+.topology-uplink-locate:hover { background: #e4eeff; }
+@media (max-width: 900px) {
+  .topology-uplink-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(400px, 68vh) minmax(250px, 34vh);
+    overflow: auto;
+  }
+  .topology-uplink-detail { overflow: auto; }
+}

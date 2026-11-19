@@ -5,19 +5,19 @@ import { buildTopologyGraphLinks, getTopologyLinkEvidenceDash } from '../utils/t
 import { buildFoldedChainPositions, buildRingGroupPositions, repairTopologyLayout } from '../utils/topologyLayout';
 import {
   buildTopologyRoleLayeredPositions,
-  repairTopologyRoleLayeredPositions,
   isTopologyWirelessController,
   topologyDeviceRole,
+  TOPOLOGY_SITE_SIDE_PADDING,
+  TOPOLOGY_WIRELESS_CONTROL_HALF_WIDTH,
 } from '../utils/topologyRoleLayout';
 import { resolveTopologyDeviceLabelPlacements, resolveTopologyPortLabelPlacements, type TopologyLabelRect } from '../utils/topologyLabelLayout';
 import { canonicalTopologyRole, topologyRoleLabel } from '../domain/topologyRoles';
 
-const topologyIconAssets = import.meta.glob('../assets/topology/devices/**/*.svg', {
-  eager: true,
-  import: 'default',
-  query: '?url',
-}) as Record<string, string>;
-
+import { getBuiltInTopologyIconUrl, getTopologyDeviceIconType, getTopologyIconDimensions } from '../domain/topologyDeviceIcons';
+import { useTopologyIcons } from '../hooks/useTopologyIcons';
+import TopologyIconLibrary from './TopologyIconLibrary';
+import type { TopologyDeviceScope } from '../utils/topologyDevices';
+import { formatTopologyLinkUtilization, getTopologyLinkLoadTier, getTopologyLinkUtilization, TOPOLOGY_LINK_LOAD_TIERS } from '../utils/topologyLinkLoad';
 interface Device {
   id: string;
   hostname: string;
@@ -76,6 +76,8 @@ interface Link {
   discovery_source?: string;
   discovery_sources?: string[];
   operational_state?: 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
+  source_interface_snapshot?: unknown;
+  target_interface_snapshot?: unknown;
   bandwidth_mbps?: number | null;
   link_kind?: 'physical' | 'aggregation' | string;
   source_aggregation_name?: string;
@@ -194,10 +196,16 @@ const formatTopologyUptime = (value?: string): string => {
 };
 
 interface TopologyGraphProps {
+  layoutScope?: TopologyDeviceScope;
+  onDeviceOrderChange?: (ids: string[]) => void;
   devices: Device[];
   links: Link[];
   language?: string;
+  initialDevicesPerRow?: number;
+  fullscreenTargetRef?: React.RefObject<HTMLDivElement | null>;
+  topologyIcons?: ReturnType<typeof useTopologyIcons>;
   onNodeClick?: (device: Device) => void;
+  onClearSelection?: () => void;
   onOpenWorkspace?: (device: Device) => void;
   selectedNodeId?: string | null;
   selectedLinkKey?: string | null;
@@ -265,6 +273,8 @@ const getLinkDisplayBandwidthMbps = (item: any): number =>
     ? getAggregationMemberBandwidthMbps(item)
     : Number(item?.bandwidth_mbps || 0);
 
+type LinkColorMode = 'bandwidth' | 'load';
+
 type TopologyLinkStyle = {
   relationType: string;
   color: string;
@@ -279,12 +289,15 @@ const normalizeTopologyRelationType = (item: any): string => {
   return 'PHYSICAL';
 };
 
-const getTopologyLinkStyle = (item: any): TopologyLinkStyle => {
+const getTopologyLinkStyle = (item: any, colorMode: LinkColorMode = 'bandwidth'): TopologyLinkStyle => {
   const relationType = normalizeTopologyRelationType(item);
   if (item?.is_unmanaged) {
     return { relationType: 'UNMANAGED', color: '#94a3b8', width: 2.2 };
   }
   if (relationType === 'PHYSICAL') {
+    if (colorMode === 'load') {
+      return { relationType, color: getTopologyLinkLoadTier(getTopologyLinkUtilization(item)).color, width: 3 };
+    }
     const bandwidth = getBandwidthTier(getLinkDisplayBandwidthMbps(item));
     return { relationType, color: bandwidth.color, width: 3 };
   }
@@ -414,7 +427,7 @@ const normalizeGraphInterface = (value?: string) => {
   return raw;
 };
 
-type DeviceGlyphKind = 'switch' | 'firewall' | 'router' | 'load_balancer' | 'waf' | 'vpn_gateway' | 'server' | 'wireless' | 'generic';
+
 type TopologyLayoutMode = 'hierarchy' | 'horizontal' | 'force' | 'radial';
 
 const hierarchyRoleTones: Record<string, { color: string; soft: string }> = {
@@ -450,7 +463,7 @@ const getLayerTone = (device: Device) => {
               : { color: '#475569', soft: 'rgba(71,85,105,0.12)' });
     return { ...roleTone, label: roleLabel };
   }
-  const kind = getDeviceGlyphKind(device);
+  const kind = getTopologyDeviceIconType(device);
   if (kind === 'firewall') return { color: '#b91c1c', soft: 'rgba(185,28,28,0.14)', label: '防火墙' };
   if (kind === 'router') return { color: '#c2410c', soft: 'rgba(194,65,12,0.14)', label: '路由器' };
   if (kind === 'load_balancer') return { color: '#7c3aed', soft: 'rgba(124,58,237,0.14)', label: '负载均衡' };
@@ -489,87 +502,17 @@ const buildLayerSummary = (devices: Device[]): LayerSummary[] => {
 const formatLayerSummary = (devices: Device[]) =>
   buildLayerSummary(devices).map((item) => `${item.label} ${item.count}`).join(' / ');
 
-const getDeviceGlyphKind = (device: Device): DeviceGlyphKind => {
-  if (device.is_unmanaged) {
-    const compactHostname = String(device.hostname || '')
-      .toLowerCase()
-      .split('.')[0]
-      .replace(/[^a-z0-9]/g, '');
-    if (/^(?:sw|switch)\d+$/.test(compactHostname)) return 'switch';
-  }
-  const fingerprint = [device.role, device.hostname, device.platform, device.model]
-    .map((value) => String(value || '').toLowerCase())
-    .join(' ');
-  if (/(waf|web application firewall|web防火墙)/.test(fingerprint)) return 'waf';
-  if (/(load[-_ ]?balanc|\blb\b|f5|big[-_ ]?ip|adc\b|netscaler|citrix adc|haproxy|nginx plus)/.test(fingerprint)) return 'load_balancer';
-  if (/(vpn|ipsec gateway|ssl vpn|远程接入网关)/.test(fingerprint)) return 'vpn_gateway';
-  if (/(firewall| fortigate|forti|palo|pan-|checkpoint|srx|asa|ftd|fw\b)/.test(fingerprint)) return 'firewall';
-  if (/(router|gateway|wan|edge router|isr|asr|mx\b)/.test(fingerprint)) return 'router';
-  if (/(switch|core|distribution|access|leaf|spine|nexus|catalyst)/.test(fingerprint)) return 'switch';
-  if (/(server|compute|hypervisor|vmware|esxi|linux|windows server|unix)/.test(fingerprint)) return 'server';
-  if (/(wireless|wi-fi|wifi|access point|\bap\b|wlc|aironet|aruba|unifi)/.test(fingerprint)) return 'wireless';
-  return 'generic';
-};
-
-const iconCategoryByKind: Record<Exclude<DeviceGlyphKind, 'generic'>, string> = {
-  switch: 'switches',
-  router: 'routers',
-  firewall: 'firewalls',
-  load_balancer: 'firewalls',
-  waf: 'firewalls',
-  vpn_gateway: 'firewalls',
-  server: 'servers',
-  wireless: 'wireless',
-};
-
-const preferredIconNames: Record<Exclude<DeviceGlyphKind, 'generic'>, string[]> = {
-  switch: ['switch.svg', 'cisco-switch-l3-480x480.svg', 'cisco-switch-l3-240x240.svg', 'cisco-switch-l3-144x144.svg'],
-  router: ['router.svg'],
-  firewall: ['firewall.svg'],
-  load_balancer: ['load-balancer.svg', 'f5.svg', 'adc.svg', 'firewall.svg'],
-  waf: ['waf.svg', 'web-application-firewall.svg', 'firewall.svg'],
-  vpn_gateway: ['vpn-gateway.svg', 'vpn.svg', 'firewall.svg'],
-  server: ['server.svg', 'server-linux.svg', 'server-windows.svg'],
-  wireless: ['wireless.svg', 'access-point.svg', 'wifi-ap.svg'],
-};
-
-const getDeviceIconUrl = (kind: DeviceGlyphKind) => {
-  if (kind === 'generic') return undefined;
-  const category = iconCategoryByKind[kind];
-  const candidates = Object.entries(topologyIconAssets)
-    .filter(([path]) => path.includes(`/devices/${category}/`));
-  for (const preferredName of preferredIconNames[kind]) {
-    const match = candidates.find(([path]) => path.endsWith(`/${preferredName}`));
-    if (match) return match[1];
-  }
-  return candidates[0]?.[1];
-};
-
-const hasDeviceIconAsset = (device: Device) => Boolean(getDeviceIconUrl(getDeviceGlyphKind(device)));
-
-const deviceIconSize: Record<Exclude<DeviceGlyphKind, 'generic'>, { width: number; height: number }> = {
-  switch: { width: 58, height: 58 },
-  router: { width: 58, height: 58 },
-  firewall: { width: 50, height: 60 },
-  load_balancer: { width: 52, height: 60 },
-  waf: { width: 50, height: 60 },
-  vpn_gateway: { width: 50, height: 60 },
-  server: { width: 58, height: 58 },
-  wireless: { width: 58, height: 58 },
-};
-
-const appendDeviceGlyph = (selection: d3.Selection<SVGGElement, any, any, any>, device: Device) => {
-  const glyphKind = getDeviceGlyphKind(device);
+const appendDeviceGlyph = (
+  selection: d3.Selection<SVGGElement, any, any, any>,
+  device: Device & { iconUrl?: string },
+) => {
+  if (!device.iconUrl) return;
+  const size = getTopologyIconDimensions(getTopologyDeviceIconType(device));
   selection
     .attr('shape-rendering', 'geometricPrecision')
-    .attr('pointer-events', 'none');
-  if (glyphKind === 'generic') return;
-
-  const iconUrl = getDeviceIconUrl(glyphKind);
-  if (!iconUrl) return;
-  const size = deviceIconSize[glyphKind];
-  selection.append('image')
-    .attr('href', iconUrl)
+    .attr('pointer-events', 'none')
+    .append('image')
+    .attr('href', device.iconUrl)
     .attr('x', -size.width / 2)
     .attr('y', -size.height / 2)
     .attr('width', size.width)
@@ -577,11 +520,12 @@ const appendDeviceGlyph = (selection: d3.Selection<SVGGElement, any, any, any>, 
     .attr('preserveAspectRatio', 'xMidYMid meet')
     .style('filter', device.is_unmanaged ? 'grayscale(1)' : null)
     .style('opacity', device.is_unmanaged ? 0.72 : 1)
+    .on('error', function () {
+      const fallback = getBuiltInTopologyIconUrl(getTopologyDeviceIconType(device));
+      if (fallback && fallback !== this.getAttribute('href')) this.setAttribute('href', fallback);
+    })
     .attr('pointer-events', 'none');
 };
-
-const shouldRenderDeviceGlyph = (device: Device) => hasDeviceIconAsset(device);
-
 const getSiteKey = (site?: string) => {
   const normalizedSite = String(site || '').trim();
   return normalizedSite || '未分配站点';
@@ -601,6 +545,29 @@ const getNodeTone = (device: Device) => {
     return { fill: '#f59e0b', stroke: '#b45309', halo: 'rgba(245,158,11,0.18)' };
   }
   return { fill: '#10b981', stroke: '#047857', halo: 'rgba(16,185,129,0.16)' };
+};
+
+const paintDeviceIcon = (node: d3.Selection<SVGGElement, any, any, any>, device: Device & { iconUrl?: string }) => {
+  node.select('.topology-device-icon-hit').attr('r', device.iconUrl ? 20 : 0);
+  node.select('.topology-device-icon-fallback')
+    .attr('r', device.is_unmanaged || !device.iconUrl ? 20 : 0)
+    .attr('fill', device.is_unmanaged ? 'rgba(241,245,249,0.96)' : getNodeTone(device).fill);
+
+  const glyph = node.select<SVGGElement>('.topology-device-glyph');
+  glyph.selectAll('*').remove();
+  if (device.iconUrl) {
+    appendDeviceGlyph(glyph, device);
+  } else if (device.is_unmanaged) {
+    glyph.append('text')
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'central')
+      .attr('fill', '#64748b')
+      .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
+      .attr('font-size', '18px')
+      .attr('font-weight', '700')
+      .attr('pointer-events', 'none')
+      .text('?');
+  }
 };
 
 const getDeviceStatusColor = (device: Device): string => {
@@ -846,19 +813,13 @@ const wrapTopologyLabelLines = (label: string, maxWidth: number): string[] => {
   return lines;
 };
 
-const DEFAULT_DEVICES_PER_ROW = 6;
+const DEFAULT_DEVICES_PER_ROW = 60;
+const COMPACT_DEVICES_PER_ROW = 6;
 const DENSE_TOPOLOGY_DEVICE_COUNT = 32;
 const BACKBONE_ROLES = new Set(['core', 'distribution', 'router', 'firewall', 'wireless_controller']);
 
 const readDevicesPerRow = (value: number | undefined, fallback: number) =>
   value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : fallback;
-
-const getRoleLayoutWidth = (devices: Device[], viewportWidth: number, devicesPerRow: number) => {
-  const effectiveCapacity = Math.min(devicesPerRow, devices.length);
-  if (effectiveCapacity <= DEFAULT_DEVICES_PER_ROW) return viewportWidth;
-  const wirelessInset = devices.some(isTopologyWirelessController) ? 320 : 0;
-  return Math.max(viewportWidth, effectiveCapacity * 160 + wirelessInset);
-};
 
 const buildLinearPositions = (devices: Device[], links: Link[], width: number, height: number) => {
   const order = getLinearChainOrder(devices, links);
@@ -897,8 +858,7 @@ const calculateAutoLayoutPositions = (
     return buildHorizontalRowPositions(order, width, height);
   }
   if (layoutMode === 'hierarchy') {
-    const layoutWidth = getRoleLayoutWidth(devices, width, devicesPerRow);
-    const layeredPositions = buildTopologyRoleLayeredPositions(devices, layoutWidth, height, links, devicesPerRow);
+    const layeredPositions = buildTopologyRoleLayeredPositions(devices, width, height, links, devicesPerRow);
     if (layeredPositions) return layeredPositions;
 
     // A physical chain has enough relationship evidence to be laid out
@@ -955,6 +915,7 @@ const TOPOLOGY_LAYOUT_SCHEMA = 'topology-role-hierarchy-v8';
 
 type PersistedTopologyLayout = {
   schema?: string;
+  rowLayout?: 'adaptive';
   positions?: Record<string, { x: number; y: number }>;
   manualPositions?: Record<string, { x: number; y: number }>;
   transform?: { x: number; y: number; k: number };
@@ -980,10 +941,10 @@ type MinimapSnapshot = {
   panel: { width: number; height: number };
 };
 
-const readPersistedLayout = (): PersistedTopologyLayout => {
+const readPersistedLayout = (storageKey: string): PersistedTopologyLayout => {
   if (typeof window === 'undefined') return {};
   try {
-    const raw = window.localStorage.getItem(TOPOLOGY_LAYOUT_STORAGE_KEY);
+    const raw = window.localStorage.getItem(storageKey);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as PersistedTopologyLayout;
     return parsed && typeof parsed === 'object' ? parsed : {};
@@ -992,12 +953,13 @@ const readPersistedLayout = (): PersistedTopologyLayout => {
   }
 };
 
-const writePersistedLayout = (layout: PersistedTopologyLayout) => {
-  if (typeof window === 'undefined') return;
+const writePersistedLayout = (storageKey: string, layout: PersistedTopologyLayout) => {
+  if (typeof window === 'undefined') return false;
   try {
-    window.localStorage.setItem(TOPOLOGY_LAYOUT_STORAGE_KEY, JSON.stringify(layout));
+    window.localStorage.setItem(storageKey, JSON.stringify(layout));
+    return true;
   } catch {
-    // Ignore storage failures to keep the interaction path stable.
+    return false;
   }
 };
 
@@ -1134,6 +1096,7 @@ const buildMinimapSnapshot = (
   viewportWidth: number,
   viewportHeight: number,
   selectedNodeId?: string | null,
+  colorMode: LinkColorMode = 'bandwidth',
 ): MinimapSnapshot | null => {
   if (!nodes.length || viewportWidth === 0 || viewportHeight === 0) return null;
 
@@ -1173,7 +1136,7 @@ const buildMinimapSnapshot = (
       sourceY: toMiniY(link.source.y || 0),
       targetX: toMiniX(link.target.x || 0),
       targetY: toMiniY(link.target.y || 0),
-      color: getTopologyLinkStyle(link).color,
+      color: getTopologyLinkStyle(link, colorMode).color,
       width: 2.5,
     })),
     viewport: {
@@ -1187,7 +1150,11 @@ const buildMinimapSnapshot = (
   };
 };
 
-const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language, onNodeClick, onOpenWorkspace, selectedNodeId, selectedLinkKey, onLinkClick }) => {
+const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language, initialDevicesPerRow, fullscreenTargetRef, topologyIcons, onNodeClick, onClearSelection, onOpenWorkspace, selectedNodeId, selectedLinkKey, onLinkClick, onDeviceOrderChange, layoutScope = 'all' }) => {
+  const syncFullLayout = layoutScope === 'all';
+  const layoutStorageKey = syncFullLayout
+    ? TOPOLOGY_LAYOUT_STORAGE_KEY
+    : `${TOPOLOGY_LAYOUT_STORAGE_KEY}.${layoutScope}`;
   const graphLanguage = language || (typeof document !== 'undefined' ? document.documentElement.lang : 'zh');
   const graphZh = !String(graphLanguage || '').toLowerCase().startsWith('en');
   const GRID_SIZE = 16;
@@ -1197,6 +1164,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
   const persistedPositionsRef = useRef<Record<string, { x: number; y: number }>>({});
   const manualPositionsRef = useRef<TopologyLayoutSnapshot['manualPositions']>({});
   const deviceLabelBoundsRef = useRef<TopologyLabelRect[]>([]);
+  const siteFrameBoundsRef = useRef<TopologyLabelRect[]>([]);
   const zoomBehaviorRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const svgSelectionRef = useRef<d3.Selection<SVGSVGElement, unknown, null, undefined> | null>(null);
   const zoomTransformRef = useRef<d3.ZoomTransform | null>(null);
@@ -1228,16 +1196,20 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
   const [boxSelectMode, setBoxSelectMode] = useState(false);
   const [layoutMode, setLayoutMode] = useState<TopologyLayoutMode>('hierarchy');
   const denseTopology = devices.length > DENSE_TOPOLOGY_DEVICE_COUNT;
-  const defaultDevicesPerRow = denseTopology ? 16 : DEFAULT_DEVICES_PER_ROW;
+  const defaultDevicesPerRow = readDevicesPerRow(initialDevicesPerRow, DEFAULT_DEVICES_PER_ROW);
   const [devicesPerRow, setDevicesPerRow] = useState(defaultDevicesPerRow);
   const [showAllLinksOverride, setShowAllLinksOverride] = useState<boolean | null>(null);
+  const [linkColorMode, setLinkColorMode] = useState<LinkColorMode>('bandwidth');
   const showAllLinks = showAllLinksOverride ?? !denseTopology;
   const [layoutHydrating, setLayoutHydrating] = useState(true);
+  const [layoutSaveStatus, setLayoutSaveStatus] = useState<'saving' | 'saved' | 'browser' | 'sync-failed' | 'failed' | null>(null);
   const [routingMode, setRoutingMode] = useState<'straight' | 'orthogonal'>('straight');
   const [portLabelMode, setPortLabelMode] = useState<PortLabelMode>('auto');
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   const [hoveredDeviceId, setHoveredDeviceId] = useState<string | null>(null);
+  const [iconLibraryTarget, setIconLibraryTarget] = useState<'catalog' | Device | null>(null);
   const [hoveredLinkId, setHoveredLinkId] = useState<string | null>(null);
+  const [linkLoadTooltip, setLinkLoadTooltip] = useState<{ x: number; y: number; load: number | null; detail?: string } | null>(null);
   const [hoverCardPosition, setHoverCardPosition] = useState({ x: 12, y: 12 });
   const hoverHideTimerRef = useRef<number | null>(null);
   const hoverFocusIdRef = useRef<string | null>(null);
@@ -1245,6 +1217,21 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
   const selectedNodeIdsKey = selectedNodeIds.join('|');
   const graphDevices = devices;
   const graphLinks = links;
+  const localTopologyIcons = useTopologyIcons(devices, !topologyIcons);
+  const { catalog: iconCatalog, reload: reloadIcons, iconUrl } = topologyIcons ?? localTopologyIcons;
+  const iconUrlRef = useRef(iconUrl);
+  useLayoutEffect(() => {
+    iconUrlRef.current = iconUrl;
+    if (!svgRef.current) return;
+    d3.select(svgRef.current)
+      .selectAll<SVGGElement, Device & { iconUrl?: string }>('.topology-node')
+      .each(function (device) {
+        const url = iconUrl(device);
+        if (url === device.iconUrl) return;
+        device.iconUrl = url;
+        paintDeviceIcon(d3.select(this), device);
+      });
+  }, [iconUrl]);
   const hoveredDevice = useMemo(
     () => graphDevices.find((device) => device.id === hoveredDeviceId) || null,
     [graphDevices, hoveredDeviceId],
@@ -1263,6 +1250,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
       applyHoverFocusRef.current(null);
       setHoveredDeviceId(null);
       setHoveredLinkId(null);
+      setLinkLoadTooltip(null);
       hoverHideTimerRef.current = null;
     }, 180);
   };
@@ -1275,9 +1263,12 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
   const updateDeviceHoverFocus = (device: Device) => {
     if (dragStateRef.current.id) return;
     clearHoverHideTimer();
-    hoverFocusIdRef.current = device.id;
-    applyHoverFocusRef.current(device.id);
+    if (hoverFocusIdRef.current !== device.id) {
+      hoverFocusIdRef.current = device.id;
+      applyHoverFocusRef.current(device.id);
+    }
     setHoveredLinkId(null);
+    setLinkLoadTooltip(null);
   };
 
   const updateHoverCard = (event: any, device: Device) => {
@@ -1304,15 +1295,42 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
     applyHoverFocusRef.current(device.id);
     setHoveredDeviceId(device.id);
     setHoveredLinkId(null); // hide link hover card
+    setLinkLoadTooltip(null);
   };
 
-  const updateLinkHoverFocus = (_event: any, link: Link) => {
+  const updateLinkHoverFocus = (event: PointerEvent, link: Link) => {
     if (dragStateRef.current.id) return;
     clearHoverHideTimer();
     clearDeviceHoverFocus();
     setHoveredLinkId(link.link_key || link.id || '');
     setHoveredDeviceId(null); // hide device hover card
+    const viewport = graphViewportRef.current;
+    if (linkColorMode !== 'load' || normalizeTopologyRelationType(link) !== 'PHYSICAL' || !viewport) {
+      setLinkLoadTooltip(null);
+      return;
+    }
+    const bounds = viewport.getBoundingClientRect();
+    const pointerX = event.clientX - bounds.left;
+    const pointerY = event.clientY - bounds.top;
+    const x = Math.max(8, Math.min(pointerX + 12, bounds.width - 188));
+    const y = Math.max(8, pointerY >= 52 ? pointerY - 44 : pointerY + 14);
+    const load = getTopologyLinkUtilization(link);
+    let detail: string | undefined;
+    if (load === null) {
+      if (link.operational_state === 'down' || link.operational_state === 'stale') {
+        detail = graphZh ? '链路中断或陈旧' : 'Link down or stale';
+      } else if (!link.source_interface_snapshot && !link.target_interface_snapshot) {
+        detail = graphZh ? '两端均无端口遥测' : 'No port telemetry at either end';
+      } else {
+        detail = graphZh ? '端口无有效利用率' : 'No valid port utilization';
+      }
+    }
+    setLinkLoadTooltip({ x, y, load, detail });
   };
+
+  useEffect(() => {
+    setLinkLoadTooltip(null);
+  }, [graphLinks, linkColorMode]);
 
   const clonePositions = (positions: Record<string, { x: number; y: number }>) => Object.fromEntries(
     Object.entries(positions).map(([id, position]) => [id, { x: position.x, y: position.y }]),
@@ -1382,12 +1400,12 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
   }, [boxSelectMode]);
 
   useEffect(() => {
-    const isTextEditingTarget = (target: EventTarget | null) => {
+    const isInteractiveTarget = (target: EventTarget | null) => {
       const element = target as HTMLElement | null;
-      return Boolean(element?.closest?.('input, textarea, select, [contenteditable="true"]'));
+      return Boolean(element?.closest?.('input, textarea, select, button, a[href], [contenteditable="true"]'));
     };
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (isTextEditingTarget(event.target)) return;
+      if (containerRef.current?.closest('[inert]') || isInteractiveTarget(event.target)) return;
       if (event.code === 'ShiftLeft' || event.code === 'ShiftRight') {
         shiftPressedRef.current = true;
         return;
@@ -1433,31 +1451,35 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
     };
   }, []);
 
-  const syncLayoutToBackend = (layout: PersistedTopologyLayout) => {
-    if (typeof window === 'undefined') return;
-    const token = window.localStorage.getItem('netops_token');
-    if (!token) return;
-    void fetch('/api/topology/layout', {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ layout }),
-    }).catch(() => {
-      // Keep local persistence even if remote sync is temporarily unavailable.
-    });
+  const syncLayoutToBackend = async (layout: PersistedTopologyLayout): Promise<boolean | null> => {
+    try {
+      const token = window.localStorage.getItem('netops_token');
+      if (!token) return null;
+      const response = await fetch('/api/topology/layout', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ layout }),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
   };
 
   const persistCurrentLayout = (
     displayMode: TopologyLayoutMode = layoutMode,
     nextRoutingMode: 'straight' | 'orthogonal' = routingMode,
     nextDevicesPerRow = devicesPerRow,
+    immediate = false,
   ) => {
     if (!hydrationCompleteRef.current) return;
     const transform = zoomTransformRef.current;
     const layout = {
       schema: TOPOLOGY_LAYOUT_SCHEMA,
+      rowLayout: 'adaptive' as const,
       positions: persistedPositionsRef.current,
       manualPositions: manualPositionsRef.current,
       transform: transform ? { x: transform.x, y: transform.y, k: transform.k } : undefined,
@@ -1466,26 +1488,44 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
       routingMode: nextRoutingMode,
       devicesPerRow: nextDevicesPerRow,
     };
-    writePersistedLayout(layout);
+    const localSaved = writePersistedLayout(layoutStorageKey, layout);
+    if (!syncFullLayout) return { localSaved };
     if (persistTimerRef.current) {
       window.clearTimeout(persistTimerRef.current);
     }
+    if (immediate) return { localSaved, remoteSave: syncLayoutToBackend(layout) };
     persistTimerRef.current = window.setTimeout(() => {
-      syncLayoutToBackend(layout);
+      void syncLayoutToBackend(layout);
     }, 240);
   };
+
+  const handleSaveLayout = async () => {
+    if (layoutSaveStatus === 'saving' || !hydrationCompleteRef.current) return;
+    setLayoutSaveStatus('saving');
+    const result = persistCurrentLayout(layoutMode, routingMode, devicesPerRow, true);
+    const remoteSaved = await result?.remoteSave;
+    if (remoteSaved) setLayoutSaveStatus('saved');
+    else if (!result?.localSaved) setLayoutSaveStatus('failed');
+    else setLayoutSaveStatus(remoteSaved === false ? 'sync-failed' : 'browser');
+  };
+
+  useEffect(() => {
+    if (!layoutSaveStatus || layoutSaveStatus === 'saving') return;
+    const timeout = window.setTimeout(() => setLayoutSaveStatus(null), 3500);
+    return () => window.clearTimeout(timeout);
+  }, [layoutSaveStatus]);
 
   const applyTransform = (transform: d3.ZoomTransform) => {
     if (!svgSelectionRef.current || !zoomBehaviorRef.current) return;
     svgSelectionRef.current.call(zoomBehaviorRef.current.transform as any, transform);
   };
 
-  const zoomAroundViewportCenter = (factor: number) => {
+  const zoomAroundViewportCenter = (targetScale: number) => {
     if (viewport.width === 0 || viewport.height === 0) return;
     const nodePositions = graphDevices.map((d) => persistedPositionsRef.current[d.id] || { x: viewport.width / 2, y: viewport.height / 2 });
     const baseTransform = zoomTransformRef.current || createDefaultTransform(viewport.width, viewport.height, nodePositions);
     const [minScale, maxScale] = zoomBehaviorRef.current?.scaleExtent() ?? [0.35, 3.2];
-    const nextScale = clampPosition(baseTransform.k * factor, minScale, maxScale);
+    const nextScale = clampPosition(targetScale, minScale, maxScale);
     const centerX = viewport.width / 2;
     const centerY = viewport.height / 2;
     const worldX = (centerX - baseTransform.x) / baseTransform.k;
@@ -1502,8 +1542,11 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
       const pos = persistedPositionsRef.current[d.id] || { x: viewport.width / 2, y: viewport.height / 2 };
       return pos;
     });
-    const fitAll = denseTopology || devicesPerRow > DEFAULT_DEVICES_PER_ROW || Object.keys(manualPositionsRef.current).length > 0;
-    const nextTransform = createDefaultTransform(viewport.width, viewport.height, nodePositions, fitAll, deviceLabelBoundsRef.current);
+    const fitAll = siteFrameBoundsRef.current.length > 0 || denseTopology || Math.min(devicesPerRow, devices.length) > COMPACT_DEVICES_PER_ROW || Object.keys(manualPositionsRef.current).length > 0;
+    const nextTransform = createDefaultTransform(viewport.width, viewport.height, nodePositions, fitAll, [
+      ...deviceLabelBoundsRef.current,
+      ...siteFrameBoundsRef.current,
+    ]);
     applyTransform(nextTransform);
     setZoomPercent(Math.round(nextTransform.k * 100));
   };
@@ -1516,8 +1559,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
     zoomTransformRef.current = null;
     setDevicesPerRow(defaultDevicesPerRow);
     if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current);
-    writePersistedLayout({});
-    syncLayoutToBackend({});
+    writePersistedLayout(layoutStorageKey, {});
+    if (syncFullLayout) void syncLayoutToBackend({});
     setLayoutVersion((value) => value + 1);
   };
 
@@ -1531,10 +1574,12 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
         position.y = Math.round(position.y / GRID_SIZE) * GRID_SIZE;
       });
     }
-    const fitTransform = createDefaultTransform(viewport.width, viewport.height, Object.values(next), denseTopology || nextDevicesPerRow > DEFAULT_DEVICES_PER_ROW);
-    recordLayoutHistory(before, next, { nextDevicesPerRow, nextTransform: fitTransform, nextManualPositions: {} });
+    const nextManualPositions = nextDevicesPerRow !== devicesPerRow ? manualPositionsRef.current : {};
+    Object.assign(next, nextManualPositions);
+    const fitTransform = createDefaultTransform(viewport.width, viewport.height, Object.values(next), denseTopology || Math.min(nextDevicesPerRow, devices.length) > COMPACT_DEVICES_PER_ROW);
+    recordLayoutHistory(before, next, { nextDevicesPerRow, nextTransform: fitTransform, nextManualPositions });
     persistedPositionsRef.current = next;
-    manualPositionsRef.current = {};
+    manualPositionsRef.current = nextManualPositions;
     zoomTransformRef.current = fitTransform;
     refitOnRenderRef.current = true;
     setDevicesPerRow(nextDevicesPerRow);
@@ -1656,7 +1701,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
   }, []);
 
   useEffect(() => {
-    const persistedLayout = readPersistedLayout();
+    const persistedLayout = readPersistedLayout(layoutStorageKey);
     hydrationCompleteRef.current = false;
     setLayoutHydrating(true);
     // The canvas uses a role-tier hierarchy with LLDP-aware horizontal
@@ -1678,7 +1723,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
     setDevicesPerRow(localDevicesPerRow);
     persistedPositionsRef.current = compatibleLocalLayout ? (persistedLayout.positions || {}) : {};
     manualPositionsRef.current = compatibleLocalLayout ? (persistedLayout.manualPositions || {}) : {};
-    writePersistedLayout({
+    writePersistedLayout(layoutStorageKey, {
       ...persistedLayout,
       schema: TOPOLOGY_LAYOUT_SCHEMA,
       layoutMode: 'free',
@@ -1689,8 +1734,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
       manualPositions: manualPositionsRef.current,
     });
     const localK = Number(persistedLayout.transform?.k || 1);
-    const isLocalPathologicalZoom = localDevicesPerRow <= DEFAULT_DEVICES_PER_ROW && localK <= 0.5 && devices.length <= 25;
-    if (compatibleLocalLayout && persistedLayout.transform && !isLocalPathologicalZoom) {
+    const isLocalPathologicalZoom = Math.min(localDevicesPerRow, devices.length) <= COMPACT_DEVICES_PER_ROW && localK <= 0.5 && devices.length <= 25;
+    if (compatibleLocalLayout && persistedLayout.rowLayout === 'adaptive' && persistedLayout.transform && !isLocalPathologicalZoom) {
       zoomTransformRef.current = d3.zoomIdentity
         .translate(persistedLayout.transform.x, persistedLayout.transform.y)
         .scale(localK);
@@ -1701,7 +1746,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
     }
 
     const token = typeof window === 'undefined' ? '' : (window.localStorage.getItem('netops_token') || '');
-    if (!token) {
+    if (!syncFullLayout || !token) {
       hydrationCompleteRef.current = true;
       setLayoutHydrating(false);
       return;
@@ -1728,8 +1773,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
         persistedPositionsRef.current = compatibleRemoteLayout ? (layout.positions || {}) : {};
         manualPositionsRef.current = compatibleRemoteLayout ? (layout.manualPositions || {}) : {};
         const remoteK = Number(layout.transform?.k || 1);
-        const isRemotePathologicalZoom = remoteDevicesPerRow <= DEFAULT_DEVICES_PER_ROW && remoteK <= 0.5 && devices.length <= 25;
-        if (compatibleRemoteLayout && layout.transform && !isRemotePathologicalZoom) {
+        const isRemotePathologicalZoom = Math.min(remoteDevicesPerRow, devices.length) <= COMPACT_DEVICES_PER_ROW && remoteK <= 0.5 && devices.length <= 25;
+        if (compatibleRemoteLayout && layout.rowLayout === 'adaptive' && layout.transform && !isRemotePathologicalZoom) {
           zoomTransformRef.current = d3.zoomIdentity
             .translate(Number(layout.transform.x || 0), Number(layout.transform.y || 0))
             .scale(remoteK);
@@ -1738,7 +1783,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
           zoomTransformRef.current = null;
           setZoomPercent(90);
         }
-        writePersistedLayout({
+        writePersistedLayout(layoutStorageKey, {
           ...layout,
           schema: TOPOLOGY_LAYOUT_SCHEMA,
           layoutMode: 'free',
@@ -1759,7 +1804,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
         setLayoutHydrating(false);
       });
     return () => { active = false; };
-  }, [devices.length]);
+  }, [devices.length, layoutStorageKey, syncFullLayout]);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1776,7 +1821,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
   }, []);
 
   const toggleFullscreen = () => {
-    const el = containerRef.current;
+    const el = fullscreenTargetRef?.current ?? containerRef.current;
     if (!el) return;
     if (!document.fullscreenElement) {
       el.requestFullscreen().then(() => setIsFullscreen(true)).catch(err => console.error(err));
@@ -1846,8 +1891,6 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
 
     const width = viewport.width;
     const height = viewport.height;
-    const layoutWidth = layoutMode === 'hierarchy' ? getRoleLayoutWidth(graphDevices, width, devicesPerRow) : width;
-
     const svg = d3.select(svgRef.current);
     svgSelectionRef.current = svg;
     svg.selectAll('*').remove();
@@ -1894,7 +1937,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
       .attr('class', 'topology-grid-background')
       .attr('x', -width)
       .attr('y', -height)
-      .attr('width', layoutWidth + width * 2)
+      .attr('width', width * 3)
       .attr('height', height * 3)
       .attr('fill', 'url(#topology-grid)')
       .attr('pointer-events', 'none')
@@ -1948,26 +1991,12 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
 
     const { positions: seededPositions, siteAnchors } = buildSeedPositions(graphDevices, width, height);
     const layeredPositions = layoutMode === 'hierarchy'
-      ? buildTopologyRoleLayeredPositions(graphDevices, layoutWidth, height, graphLinks, devicesPerRow)
+      ? buildTopologyRoleLayeredPositions(graphDevices, width, height, graphLinks, devicesPerRow)
       : null;
-    const graphWidth = layeredPositions ? layoutWidth : width;
+    const graphWidth = width;
     const linearPositions = layoutMode === 'horizontal' ? buildLinearPositions(graphDevices, graphLinks, width, height) : null;
     const radialPositions = layoutMode === 'radial' ? buildRadialPositions(graphDevices, width, height) : null;
-    const baseStructuredPositions = layeredPositions || linearPositions || radialPositions;
-    const preferredPositions = layeredPositions ? {
-      ...persistedPositionsRef.current,
-      ...Object.fromEntries(Object.keys(manualPositionsRef.current).map((id) => [id, layeredPositions[id]])),
-    } : persistedPositionsRef.current;
-    const structuredPositions = layeredPositions
-      ? repairTopologyRoleLayeredPositions(
-        graphDevices,
-        layeredPositions,
-        preferredPositions,
-        layoutWidth,
-        height,
-        graphLinks,
-      )
-      : baseStructuredPositions;
+    const structuredPositions = layeredPositions || linearPositions || radialPositions;
     const hasCompletePersistedPositions = graphDevices.length > 0 && graphDevices.every((device) => {
       const position = persistedPositionsRef.current[device.id];
       return Number.isFinite(position?.x) && Number.isFinite(position?.y);
@@ -1985,11 +2014,11 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
         autoPositions || structuredPositions || seededPositions,
       )
       : {};
-    const hierarchyRowXOverrides = new Map<string, number>();
     const nodes = graphDevices.map((device) => {
       const manual = manualPositionsRef.current[device.id];
-      if (Number.isFinite(manual?.x) && Number.isFinite(manual?.y)) return { ...device, x: manual.x, y: manual.y, positionedManually: true };
-      let x = ringPositions[device.id]?.x ?? hierarchyRowXOverrides.get(device.id) ?? autoPositions?.[device.id]?.x ?? persistedPositionsRef.current[device.id]?.x ?? structuredPositions?.[device.id]?.x ?? seededPositions[device.id]?.x ?? width / 2;
+      const resolvedIconUrl = iconUrlRef.current(device);
+      if (Number.isFinite(manual?.x) && Number.isFinite(manual?.y)) return { ...device, iconUrl: resolvedIconUrl, x: manual.x, y: manual.y, positionedManually: true };
+      let x = ringPositions[device.id]?.x ?? autoPositions?.[device.id]?.x ?? persistedPositionsRef.current[device.id]?.x ?? structuredPositions?.[device.id]?.x ?? seededPositions[device.id]?.x ?? width / 2;
       let y = ringPositions[device.id]?.y ?? autoPositions?.[device.id]?.y ?? persistedPositionsRef.current[device.id]?.y ?? structuredPositions?.[device.id]?.y ?? seededPositions[device.id]?.y ?? height / 2;
 
       // In structured layout modes, enforce layout constraints (e.g., strict rows in hierarchy)
@@ -2009,6 +2038,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
 
       return {
         ...device,
+        iconUrl: resolvedIconUrl,
         x,
         y,
         positionedManually: false,
@@ -2036,6 +2066,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
       }
       persistedPositionsRef.current[node.id] = { x: node.x, y: node.y };
     });
+    onDeviceOrderChange?.([...nodes].sort((left, right) => left.x - right.x || left.y - right.y).map(({ id }) => id));
 
     const neighborMap = new Map<string, Set<string>>();
     d3Links.forEach((link: any) => {
@@ -2047,18 +2078,22 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
       neighborMap.get(targetId)?.add(sourceId);
     });
 
-    const selectedNodeIdSet = new Set(selectedNodeIds);
-    const selectedNeighbors = selectedNodeId ? (neighborMap.get(selectedNodeId) || new Set<string>()) : new Set<string>();
-    const hasFocus = Boolean(selectedNodeId);
+    const selectedNodeIdSet = new Set(selectedNodeIds.filter((id) => activeDeviceIds.has(id)));
+    const selectedNeighbors = new Set([...selectedNodeIdSet].flatMap((id) => [...(neighborMap.get(id) ?? [])]));
+    const hasFocus = selectedNodeIdSet.size > 0;
     const isNodeSelected = (deviceId: string) => selectedNodeIdSet.has(deviceId);
     const getHoverEndpointId = (endpoint: any) => String(endpoint?.id || endpoint || '');
+    const isSelectedLink = (item: any) => Boolean(selectedLinkKey && (item.link_key === selectedLinkKey || item.id === selectedLinkKey));
+    const isLinkFocused = (item: any) => isSelectedLink(item)
+      || isNodeSelected(getHoverEndpointId(item.source)) || isNodeSelected(getHoverEndpointId(item.target));
+    const focusActive = d3Links.some(isLinkFocused);
     const isLinkVisible = (item: any, deviceId: string | null) => {
       const sourceId = getHoverEndpointId(item.source);
       const targetId = getHoverEndpointId(item.target);
       const touchesHovered = deviceId === sourceId || deviceId === targetId;
-      if (showAllLinks) return !deviceId || touchesHovered;
-      return touchesHovered || selectedNodeIdSet.has(sourceId) || selectedNodeIdSet.has(targetId)
-        || Boolean(selectedLinkKey && (item.link_key === selectedLinkKey || item.id === selectedLinkKey))
+      if (isLinkFocused(item)) return true;
+      if (showAllLinks) return focusActive || !deviceId || touchesHovered;
+      return touchesHovered
         || (BACKBONE_ROLES.has(topologyDeviceRole(item.source)) && BACKBONE_ROLES.has(topologyDeviceRole(item.target)));
     };
     const layerSummary = buildLayerSummary(graphDevices);
@@ -2077,8 +2112,62 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
     devicesBySite.forEach((siteDevices, key) => layerSummaryBySite.set(key, formatLayerSummary(siteDevices)));
 
     const siteGuide = g.append('g').attr('pointer-events', 'none');
+    const drawLinkColorLegend = (x: number, y: number, siteLinks: Link[]) => {
+      // Keep the legend in the SVG so it travels with the exported image.
+      const legendGroup = siteGuide.append('g')
+        .attr('class', 'topology-link-color-legend')
+        .attr('transform', `translate(${x}, ${y})`);
+
+      legendGroup.append('text')
+        .attr('x', 0)
+        .attr('y', 0)
+        .attr('dominant-baseline', 'middle')
+        .attr('fill', '#64748b')
+        .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
+        .attr('font-size', '10px')
+        .attr('font-weight', 600)
+        .text(linkColorMode === 'load' ? (graphZh ? '负载' : 'Load') : (graphZh ? '带宽' : 'Bandwidth'));
+
+      let legendCursorX = 72;
+      const tiersToDraw = linkColorMode === 'load'
+        ? TOPOLOGY_LINK_LOAD_TIERS.map((tier) => ({ ...tier, label: graphZh ? tier.labelZh : tier.label }))
+        : BANDWIDTH_TIERS.filter((tier) => tier.key !== 'unknown' && siteLinks.some((link: any) => getBandwidthTier(getLinkDisplayBandwidthMbps(link)).key === tier.key));
+
+      tiersToDraw.forEach((tier) => {
+        legendGroup.append('line')
+          .attr('x1', legendCursorX)
+          .attr('y1', 0)
+          .attr('x2', legendCursorX + 24)
+          .attr('y2', 0)
+          .attr('stroke', tier.color)
+          .attr('stroke-width', 2.5);
+
+        legendGroup.append('text')
+          .attr('x', legendCursorX + 30)
+          .attr('y', 0)
+          .attr('dominant-baseline', 'middle')
+          .attr('fill', '#475569')
+          .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
+          .attr('font-size', '9px')
+          .attr('font-weight', 700)
+          .text(tier.label);
+
+        legendCursorX += 30 + tier.label.length * 5.8 + 18;
+      });
+    };
+
+    const siteFrameBounds: TopologyLabelRect[] = [];
+    siteFrameBoundsRef.current = siteFrameBounds;
 
     if (structuredPositions) {
+      const roleBandTopInset = 70;
+      const roleHeadingColumnWidth = 156;
+      const roleHeadingFontSize = 18;
+      const controlBandTopInset = 72;
+      const siteHeaderHeight = 60;
+      const summaryHeight = 26;
+      const summaryFontSize = 13;
+      const summaryTextScale = summaryFontSize / 11;
       const groupedSites = new Map<string, { label: string; nodes: any[] }>();
       nodes.forEach((node: any) => {
         const key = getSiteKey(node.site_id || node.site);
@@ -2089,11 +2178,10 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
       Array.from(groupedSites.values()).forEach((site, index) => {
         const minX = Math.min(...site.nodes.map((node) => node.x));
         const maxX = Math.max(...site.nodes.map((node) => node.x));
-        const minY = Math.min(...site.nodes.map((node) => node.y));
         const maxY = Math.max(...site.nodes.map((node) => node.y));
         
-        let left = minX - 88;
-        let right = maxX + 88;
+        let left = minX - TOPOLOGY_SITE_SIDE_PADDING;
+        let right = maxX + TOPOLOGY_SITE_SIDE_PADDING;
         const currentWidth = right - left;
         if (currentWidth < 680) {
           const delta = (680 - currentWidth) / 2;
@@ -2105,13 +2193,25 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
           left = Math.max(8, left);
           right = Math.min(graphWidth - 8, right);
         }
+        const wiredNodes = site.nodes.filter((node) => !isTopologyWirelessController(node));
+        if (wiredNodes.length) {
+          // Extend the frame into world space, leaving both the devices and
+          // their saved coordinates in place.
+          const leftmostWiredX = Math.min(...wiredNodes.map((node) => node.x));
+          left = Math.min(left, leftmostWiredX - roleHeadingColumnWidth - TOPOLOGY_SITE_SIDE_PADDING);
+        }
 
-        const top = hasManualPositions ? minY - 108 : Math.max(28, minY - 108);
+        // A dragged node and its original role band can have different heights.
+        const bodyTop = Math.min(...site.nodes.map((node) => isTopologyWirelessController(node)
+          ? node.y - controlBandTopInset
+          : Math.min(node.y, structuredPositions[node.id]?.y ?? node.y) - roleBandTopInset));
+        const top = bodyTop - siteHeaderHeight;
         // Structured rows may intentionally extend beyond the raw viewport
         // height. The zoom transform fits this virtual canvas back into view;
         // clamping the frame here would make the lower row appear outside or
         // overlap the site boundary.
-        const bottom = maxY + 108;
+        const bottom = maxY + 118;
+        siteFrameBounds.push({ x: (left + right) / 2, y: (top + bottom) / 2, width: right - left, height: bottom - top });
 
         siteGuide.append('rect')
           .attr('x', left)
@@ -2124,9 +2224,6 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
           .attr('stroke-width', 1.5)
           .attr('filter', 'url(#shadow)');
 
-        // Keep the summary inside the frame with a stable top inset instead
-        // of letting it sit on the border.
-        const labelGroup = siteGuide.append('g').attr('transform', `translate(${(left + right) / 2},${top + 32})`);
         const siteNodeIds = new Set(site.nodes.map((node) => node.id));
         const siteLinks = d3Links.filter((link: any) => siteNodeIds.has(link.source_device_id) && siteNodeIds.has(link.target_device_id));
         const sitePhysicalLinkCount = siteLinks.length;
@@ -2138,18 +2235,21 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
           ? `▣ ${siteName} · ${siteNodeCount} 台设备 · ${siteLogicalLinkCount} 条逻辑链路 · ${sitePhysicalLinkCount} 条设备链路`
           : `▣ ${siteName} · ${siteNodeCount} 台设备 · ${sitePhysicalLinkCount} 条链路`;
         const availableLabelWidth = Math.max(72, right - left - 20);
-        const labelWidth = Math.min(Math.max(120, estimateTopologyTextWidth(label) + 28), availableLabelWidth);
-        const displayLabel = fitTopologyLabelText(label, labelWidth - 28);
+        const labelWidth = Math.min(Math.max(120, estimateTopologyTextWidth(label) * summaryTextScale + 28), availableLabelWidth);
+        const displayLabel = fitTopologyLabelText(label, (labelWidth - 28) / summaryTextScale);
         const labelCenter = Math.max(
           left + labelWidth / 2 + 8,
           Math.min(right - labelWidth / 2 - 8, (left + right) / 2),
         );
-        labelGroup.attr('transform', `translate(${labelCenter},${top + 32})`);
+        const labelY = top + siteHeaderHeight / 2;
+        const labelGroup = siteGuide.append('g')
+          .attr('class', 'topology-site-summary')
+          .attr('transform', `translate(${labelCenter},${labelY})`);
         labelGroup.append('rect')
           .attr('x', -labelWidth / 2)
-          .attr('y', -11)
+          .attr('y', -summaryHeight / 2)
           .attr('width', labelWidth)
-          .attr('height', 22)
+          .attr('height', summaryHeight)
           .attr('rx', 8)
           .attr('fill', '#eef6fa')
           .attr('stroke', '#cbd5e1')
@@ -2159,16 +2259,16 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
           .attr('dominant-baseline', 'middle')
           .attr('fill', '#334155')
           .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
-          .attr('font-size', '11px')
+          .attr('font-size', summaryFontSize)
           .attr('font-weight', 600)
           .text(displayLabel);
 
         const controllers = site.nodes.filter((node: Device) => isTopologyWirelessController(node));
         const controlLeft = controllers.length > 0
-          ? Math.max(left + 24, Math.min(...controllers.map((node: any) => Number(node.x))) - 118)
+          ? Math.max(left + 24, Math.min(...controllers.map((node: any) => Number(node.x))) - TOPOLOGY_WIRELESS_CONTROL_HALF_WIDTH)
           : right;
         if (controllers.length > 0) {
-          const controlTop = Math.min(...controllers.map((node: any) => Number(node.y))) - 72;
+          const controlTop = Math.min(...controllers.map((node: any) => Number(node.y))) - controlBandTopInset;
           const controlBottom = Math.max(...controllers.map((node: any) => Number(node.y))) + 90;
           siteGuide.append('rect')
             .attr('x', controlLeft).attr('y', controlTop)
@@ -2202,8 +2302,9 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
         });
         const bandRight = Math.min(right - 12, controlLeft - (controllers.length > 0 ? 12 : 0));
         const bandWidth = Math.max(1, bandRight - left - 12);
+        const headingWidth = Math.min(roleHeadingColumnWidth - 16, bandWidth - 28);
         roleBands.forEach(({ label, tone, rows, count }) => {
-          const bandTop = rows[0] - 70;
+          const bandTop = rows[0] - roleBandTopInset;
           const bandBottom = rows[rows.length - 1] + 82;
           const title = `${label} · ${count} 台`;
           const band = siteGuide.append('g').attr('class', 'topology-role-band');
@@ -2223,6 +2324,13 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
             .attr('height', 26)
             .attr('rx', 2)
             .attr('fill', tone.color);
+          band.append('line')
+            .attr('x1', left + 12 + roleHeadingColumnWidth)
+            .attr('x2', left + 12 + roleHeadingColumnWidth)
+            .attr('y1', bandTop + 12)
+            .attr('y2', bandBottom - 12)
+            .attr('stroke', tone.color)
+            .attr('stroke-opacity', 0.16);
           band.append('text')
             .attr('class', 'topology-role-band-heading')
             .attr('x', left + 28)
@@ -2230,9 +2338,9 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
             .attr('dominant-baseline', 'middle')
             .attr('fill', tone.color)
             .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
-            .attr('font-size', 21)
+            .attr('font-size', roleHeadingFontSize)
             .attr('font-weight', 800)
-            .text(fitTopologyLabelText(title, bandWidth - 24))
+            .text(fitTopologyLabelText(title, headingWidth * 11 / roleHeadingFontSize))
             .append('title').text(title);
         });
 
@@ -2257,48 +2365,18 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
             .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
             .attr('font-size', 13)
             .attr('font-weight', 650)
-            .text(fitTopologyLabelText(`${uplink} · ${row.length} 台 AP`, bandWidth - 24));
+            .text(fitTopologyLabelText(`${uplink} · ${row.length} 台 AP`, headingWidth * 11 / 13));
         });
-        // Render bandwidth legend at the bottom left of the site container in SVG
-        const legendY = bottom - 24;
-        const legendGroup = siteGuide.append('g')
-          .attr('transform', `translate(${left + 24}, ${legendY})`);
-
-        legendGroup.append('text')
-          .attr('x', 0)
-          .attr('y', 0)
-          .attr('dominant-baseline', 'middle')
-          .attr('fill', '#64748b')
-          .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
-          .attr('font-size', '10px')
-          .attr('font-weight', 600)
-          .text('带宽');
-
-        let legendCursorX = 72;
-        const tiersToDraw = BANDWIDTH_TIERS.filter((tier) => tier.key !== 'unknown' && siteLinks.some((link: any) => getBandwidthTier(getLinkDisplayBandwidthMbps(link)).key === tier.key));
-        
-        tiersToDraw.forEach((tier) => {
-          legendGroup.append('line')
-            .attr('x1', legendCursorX)
-            .attr('y1', 0)
-            .attr('x2', legendCursorX + 24)
-            .attr('y2', 0)
-            .attr('stroke', tier.color)
-            .attr('stroke-width', 2.5);
-
-          legendGroup.append('text')
-            .attr('x', legendCursorX + 30)
-            .attr('y', 0)
-            .attr('dominant-baseline', 'middle')
-            .attr('fill', '#475569')
-            .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
-            .attr('font-size', '9px')
-            .attr('font-weight', 700)
-            .text(tier.label);
-
-          legendCursorX += 30 + tier.label.length * 5.8 + 18;
-        });
+        drawLinkColorLegend(left + 24, bottom - 24, siteLinks);
       });
+    }
+
+    if (!structuredPositions && linkColorMode === 'load') {
+      drawLinkColorLegend(
+        Math.min(...nodes.map((node) => node.x)) - 30,
+        Math.max(...nodes.map((node) => node.y)) + 76,
+        d3Links,
+      );
     }
 
     if (showLayerLegend) {
@@ -2428,14 +2506,20 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
       const target = getLinkEndpointLabel(item, 'target') || '-';
       const bandwidth = getBandwidthTier(getLinkDisplayBandwidthMbps(item)).label;
       const evidence = getTopologyEvidenceLabel(item, graphLanguage);
-      if (!isRealAggregationLink(item)) return `${source} ↔ ${target} · ${bandwidth} · ${evidence}`;
+      const utilization = getTopologyLinkUtilization(item);
+      const load = linkColorMode === 'load' && normalizeTopologyRelationType(item) === 'PHYSICAL'
+        ? (utilization === null
+          ? (graphZh ? ' · 负载无数据' : ' · No load data')
+          : ` · ${graphZh ? '负载' : 'Load'} ${formatTopologyLinkUtilization(utilization)}`)
+        : '';
+      if (!isRealAggregationLink(item)) return `${source} ↔ ${target} · ${bandwidth} · ${evidence}${load}`;
 
       const protocol = String(item.aggregation_protocol || 'LAG').trim() || 'LAG';
       const activeMembers = Number(item.active_member_count || 0);
       const memberCount = Number(item.member_count || (Array.isArray(item.members) ? item.members.length : 0));
       const memberLines = getAggregationMemberLines(item);
       return [
-        `${source} ↔ ${target} · ${protocol} · ${bandwidth} · ${activeMembers}/${memberCount} ${graphZh ? '个成员' : 'members'} · ${evidence}`,
+        `${source} ↔ ${target} · ${protocol} · ${bandwidth} · ${activeMembers}/${memberCount} ${graphZh ? '个成员' : 'members'} · ${evidence}${load}`,
         ...memberLines,
       ].join('\n');
     };
@@ -2447,6 +2531,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
       .attr('class', 'link-hit')
       .attr('fill', 'none')
       .attr('stroke', 'transparent')
+      .attr('pointer-events', 'stroke')
       .attr('stroke-width', 18)
       // Logical and inferred relations are still actionable: they can be
       // inspected and manually confirmed without being mistaken for LLDP.
@@ -2462,6 +2547,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
         updateLinkHoverFocus(event, item as Link);
       })
       .on('pointerleave', () => {
+        setLinkLoadTooltip(null);
         scheduleHoverCardHide();
       });
 
@@ -2473,19 +2559,19 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
       .data(d3Links)
       .join('path')
       .attr('class', 'link-visible')
+      .attr('pointer-events', 'none')
+      .classed('topology-link-focused', isLinkFocused)
       .attr('fill', 'none')
       // A given bandwidth always has one color. Discovery state is shown by
       // the dash pattern below, so inferred/unmanaged links do not look like
       // a different, faded bandwidth class.
-      .attr('stroke', (item: any) => getTopologyLinkStyle(item).color)
-      .attr('stroke-width', (item: any) => getTopologyLinkStyle(item).width)
+      .attr('stroke', (item: any) => getTopologyLinkStyle(item, linkColorMode).color)
+      .attr('stroke-width', (item: any) => getTopologyLinkStyle(item, linkColorMode).width * (isLinkFocused(item) ? 1.45 : 1))
       .attr('stroke-dasharray', (item: any) => {
         return getTopologyLinkEvidenceDash(item);
       })
       .attr('stroke-linejoin', 'round')
-      // Keep every visible link equally clear. Selection is shown by the
-      // surrounding UI, not by changing a link's apparent thickness/opacity.
-      .attr('opacity', 0.92);
+      .attr('opacity', (item: any) => !focusActive || isLinkFocused(item) ? 0.96 : 0.4);
 
     link.append('title')
       .text((item: any) => getAggregationLinkTitle(item));
@@ -2620,11 +2706,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
     const showPortLabels = portLabelMode === 'visible';
     const shouldDisplayPortLabels = (item: any) => {
       if (portLabelMode === 'hidden') return false;
-      const itemKey = item.link_key || item.id;
-      const memberKeys = [item].map((member: any) => member.link_key || member.id);
-      const isSelected = Boolean(selectedLinkKey && (memberKeys.includes(selectedLinkKey) || itemKey === selectedLinkKey || item.id === selectedLinkKey));
-      const isHovered = Boolean(hoveredLinkId && (memberKeys.includes(hoveredLinkId) || itemKey === hoveredLinkId));
-      return showPortLabels || isSelected || isHovered;
+      const isHovered = Boolean(hoveredLinkId && (item.link_key === hoveredLinkId || item.id === hoveredLinkId));
+      return showPortLabels || isLinkFocused(item) || isHovered;
     };
     const portLabelGroup = g.append('g')
       .selectAll('g')
@@ -2716,7 +2799,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
     let dragFrame: number | null = null;
 
     const node = g.append('g')
-      .selectAll('g')
+      .selectAll<SVGGElement, (typeof nodes)[number]>('g')
       .data(nodes)
       .join("g")
       .attr('class', 'topology-node')
@@ -2752,10 +2835,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
       linkHitArea.style('display', (item: any) => (
         isLinkVisible(item, deviceId) ? null : 'none'
       ));
-      link.style('display', (item: any) => (
-        isLinkVisible(item, deviceId) ? null : 'none'
-      ));
-      crossingGuide.style('display', deviceId ? 'none' : null);
+      link.style('display', (item: any) => isLinkVisible(item, deviceId) ? null : 'none');
+      crossingGuide.style('display', deviceId || focusActive ? 'none' : null);
       linkLabelGroup.style('display', 'none');
       portLabelGroup.style('display', (item: any) => (
         isLinkVisible(item, deviceId) && shouldDisplayPortLabels(item) ? null : 'none'
@@ -2765,13 +2846,20 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
     applyHoverFocus(hoverFocusIdRef.current);
 
     node.append('circle')
+      .attr('r', (d) => isNodeSelected(d.id) ? 34 : selectedNeighbors.has(d.id) ? 32 : 0)
+      .attr('fill', 'none')
+      .attr('stroke', (d) => isNodeSelected(d.id) ? '#0369a1' : '#7dd3fc')
+      .attr('stroke-width', (d) => isNodeSelected(d.id) ? 2.5 : 1.5)
+      .attr('pointer-events', 'none');
+
+    node.append('circle')
       // The device glyph already has its own boundary. An additional outer
       // halo made the topology look like a status dashboard rather than a
       // clean network diagram, so keep this structural layer invisible.
       .attr('r', 0)
       .attr('fill', (d: any) => {
         if (d.is_unmanaged) return 'rgba(148,163,184,0.08)';
-        if (shouldRenderDeviceGlyph(d as Device)) return 'transparent';
+        if (d.iconUrl) return 'transparent';
         return 'none';
       })
       .attr('stroke', (d: any) => {
@@ -2789,21 +2877,13 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
       });
 
     node.append('circle')
-      .attr('r', (d: any) => (shouldRenderDeviceGlyph(d as Device) ? 20 : 0))
+      .attr('class', 'topology-device-icon-hit')
       .attr('fill', 'transparent')
       .attr('stroke', 'none')
       .style('cursor', 'pointer');
 
-    node.append("circle")
-      .attr("r", (d: any) => {
-        if (d.is_unmanaged) return 20;
-        return shouldRenderDeviceGlyph(d as Device) ? 0 : 20;
-      })
-      .attr('fill', (d: any) => {
-        if (d.is_unmanaged) return 'rgba(241,245,249,0.96)';
-        if (shouldRenderDeviceGlyph(d as Device)) return 'rgba(255,255,255,0.96)';
-        return getNodeTone(d).fill;
-      })
+    node.append('circle')
+      .attr('class', 'topology-device-icon-fallback')
       .attr('stroke', (d: any) => {
         if (d.is_unmanaged) return '#94a3b8';
         const tone = getNodeTone(d);
@@ -2845,25 +2925,9 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
     // Keep device glyphs fully legible even when another node is selected.
     // Focus mode still dims labels, links, and halos, but must not make a
     // healthy device icon look offline or disabled.
-    const nodeGlyph = node.append('g').attr('opacity', 1);
-
-    nodeGlyph.each(function (d: any) {
-      if (d.is_unmanaged && getDeviceGlyphKind(d as Device) !== 'generic') {
-        appendDeviceGlyph(d3.select(this), d as Device);
-      } else if (d.is_unmanaged) {
-        // Keep an unknown marker only when the neighbor name reveals no device kind.
-        d3.select(this).append('text')
-          .attr('text-anchor', 'middle')
-          .attr('dominant-baseline', 'central')
-          .attr('fill', '#64748b')
-          .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
-          .attr('font-size', '18px')
-          .attr('font-weight', '700')
-          .attr('pointer-events', 'none')
-          .text('?');
-      } else {
-        appendDeviceGlyph(d3.select(this), d as Device);
-      }
+    node.append('g').attr('class', 'topology-device-glyph').attr('opacity', 1);
+    node.each(function (device) {
+      paintDeviceIcon(d3.select(this), device);
     });
 
     const collectionAnomalyBadge = node.append('g')
@@ -3171,7 +3235,12 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
         visiblePortLabelCandidates,
         topologyLabelObstacles,
         {
-          bounds: { minX: 8, maxX: Math.max(8, width - 8), minY: 18, maxY: Math.max(18, height - 18) },
+          bounds: {
+            minX: Math.min(8, ...nodes.map((item) => item.x - 96)),
+            maxX: Math.max(width - 8, ...nodes.map((item) => item.x + 96)),
+            minY: Math.min(18, ...nodes.map((item) => item.y - 64)),
+            maxY: Math.max(height - 18, ...nodes.map((item) => item.y + 64)),
+          },
           gap: 5,
           hideOnCollision: true,
         },
@@ -3194,7 +3263,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
         });
 
       crossingGuide.selectAll('*').remove();
-      if (routingMode === 'straight' && showAllLinks && !dragStateRef.current.moved) {
+      if (routingMode === 'straight' && showAllLinks && !focusActive && !dragStateRef.current.moved) {
         const findIntersection = (a: any, b: any, c: any, d: any) => {
           const abX = b.x - a.x;
           const abY = b.y - a.y;
@@ -3326,13 +3395,13 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
     };
 
     syncMinimap = (transform = zoomTransformRef.current || createDefaultTransform(width, height)) => {
-      setMinimapSnapshot(buildMinimapSnapshot(nodes, d3Links, transform, width, height, selectedNodeId));
+      setMinimapSnapshot(buildMinimapSnapshot(nodes, d3Links, transform, width, height, selectedNodeId, linkColorMode));
     };
 
     renderGraph();
 
-    const fitAll = denseTopology || devicesPerRow > DEFAULT_DEVICES_PER_ROW || nodes.some((node) => node.positionedManually);
-    const labelBounds = deviceLabelBoundsRef.current;
+    const fitAll = Boolean(structuredPositions) || denseTopology || Math.min(devicesPerRow, devices.length) > COMPACT_DEVICES_PER_ROW || nodes.some((node) => node.positionedManually);
+    const labelBounds = [...deviceLabelBoundsRef.current, ...siteFrameBounds];
     const fitTransform = createDefaultTransform(width, height, nodes, fitAll, labelBounds);
     zoom.scaleExtent([Math.min(0.35, fitTransform.k), 3.2]);
     const initialTransform = refitOnRenderRef.current ? fitTransform : zoomTransformRef.current || fitTransform;
@@ -3443,19 +3512,32 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
       window.removeEventListener('mousemove', handleSelectionPointerMove as EventListener, true);
       window.removeEventListener('mouseup', handleSelectionPointerUp as EventListener, true);
     };
-  }, [graphDevices, graphLinks, gridSnapEnabled, hoveredLinkId, layoutMode, devicesPerRow, portLabelMode, routingMode, showAllLinks, onLinkClick, onNodeClick, selectedLinkKey, selectedNodeId, selectedNodeIdsKey, viewport.height, viewport.width, layoutVersion]);
+  }, [graphDevices, graphLinks, gridSnapEnabled, hoveredLinkId, layoutMode, devicesPerRow, portLabelMode, routingMode, showAllLinks, linkColorMode, onDeviceOrderChange, onLinkClick, onNodeClick, selectedLinkKey, selectedNodeId, selectedNodeIdsKey, viewport.height, viewport.width, layoutVersion]);
   /* eslint-enable react-hooks/exhaustive-deps */
+
+  const saveStatusLabels = language === 'en'
+    ? { saving: 'Saving layout…', saved: 'Layout saved', browser: 'Layout saved in this browser', 'sync-failed': 'Saved in this browser. Server sync failed.', failed: 'Failed to save layout' }
+    : { saving: '正在保存布局…', saved: '布局保存成功', browser: '布局已保存到当前浏览器', 'sync-failed': '布局已保存在当前浏览器，服务器同步失败', failed: '布局保存失败' };
 
   return (
     <div ref={containerRef} className={`relative flex h-full w-full flex-col overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-inner ${spacePanActive ? 'topology-space-pan' : ''}`}>
+      <div role="status" className="pointer-events-none absolute right-4 top-14 z-30">
+        {layoutSaveStatus && (
+          <span className={`inline-block rounded-lg border px-3 py-2 text-xs font-semibold shadow-sm ${layoutSaveStatus === 'failed' || layoutSaveStatus === 'sync-failed'
+            ? 'border-amber-200 bg-amber-50 text-amber-900'
+            : 'border-emerald-200 bg-emerald-50 text-emerald-900'}`}>
+            {saveStatusLabels[layoutSaveStatus]}
+          </span>
+        )}
+      </div>
       <div className="z-10 w-full shrink-0 overflow-x-auto border-b border-slate-200 bg-white/95 shadow-sm">
       <div className="flex w-max min-w-full flex-nowrap items-center gap-1.5 px-3 py-2">
-        <span
-          className="inline-flex h-8 items-center rounded-xl border border-cyan-200 bg-cyan-50 px-2.5 text-[10px] font-extrabold text-cyan-700"
-          title="拓扑位置优先使用有向关系；物理链路按导入角色分层"
-        >
-          角色分层 · 关系优先
-        </span>
+        {iconCatalog?.can_manage && (
+          <button type="button" onClick={() => setIconLibraryTarget('catalog')}
+            className="rounded-xl border border-slate-200 px-2.5 py-2 text-[10px] font-bold text-slate-600 hover:bg-slate-50">
+            {language === 'en' ? 'Icon library' : '图标库'}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setPortLabelMode((mode) => mode === 'auto' ? 'hidden' : mode === 'hidden' ? 'visible' : 'auto')}
@@ -3480,7 +3562,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
             type="number"
             min={1}
             step={1}
-            title="输入每行最多显示的设备数，按回车应用"
+            title="输入每行最多显示的设备数，画布较窄时会提前换行。按回车应用。"
             className="w-14 rounded border border-slate-200 bg-white px-1 py-0.5 text-right text-[11px] font-semibold text-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-600 disabled:opacity-50"
             defaultValue={devicesPerRow}
             disabled={layoutHydrating || !devices.length || !viewport.width || !viewport.height}
@@ -3509,6 +3591,15 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
         >
           {showAllLinks ? '链路 · 全部' : '链路 · 主干'}
         </button>
+        <label className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-2.5 py-1.5 text-[10px] font-bold text-slate-600">
+          {graphZh ? '链路着色' : 'Link color'}
+          <select className="rounded-md px-1 py-0.5 text-[11px] text-slate-800"
+            value={linkColorMode}
+            onChange={(event) => setLinkColorMode(event.target.value === 'load' ? 'load' : 'bandwidth')}>
+            <option value="bandwidth">{graphZh ? '带宽' : 'Bandwidth'}</option>
+            <option value="load">{graphZh ? '负载' : 'Load'}</option>
+          </select>
+        </label>
         <button
           type="button"
           onClick={toggleGridSnap}
@@ -3529,9 +3620,11 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
         </button>
         <button
           type="button"
-          onClick={() => persistCurrentLayout()}
-          className="rounded-xl border border-slate-200 px-2.5 py-2 text-[10px] font-bold text-slate-600 transition-all hover:border-cyan-300 hover:bg-slate-50"
+          onClick={() => void handleSaveLayout()}
+          disabled={layoutHydrating || layoutSaveStatus === 'saving'}
+          className="rounded-xl border border-slate-200 px-2.5 py-2 text-[10px] font-bold text-slate-600 transition-all hover:border-cyan-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           aria-label="保存布局"
+          title={syncFullLayout ? undefined : (language === 'zh' ? '将当前视图的布局保存到此浏览器' : 'Save this view’s layout in this browser')}
         >
           保存
         </button>
@@ -3561,6 +3654,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
           onClick={() => {
             setSelectedNodeIds([]);
             setHoveredDeviceId(null);
+            onClearSelection?.();
           }}
           disabled={selectedNodeIds.length === 0}
           className="rounded-xl border border-slate-200 px-2.5 py-2 text-[10px] font-bold text-slate-600 transition-all hover:border-cyan-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30"
@@ -3568,32 +3662,40 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
         >
           清除
         </button>
-        <button
-          type="button"
-          onClick={() => zoomAroundViewportCenter(0.88)}
-          className="h-8 w-8 rounded-xl border border-slate-200 text-sm font-bold text-slate-600 transition-all hover:border-cyan-300 hover:bg-slate-50"
-          aria-label="缩小"
-        >
-          -
-        </button>
-        <span className="min-w-[52px] text-center text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">
-          {zoomPercent}%
-        </span>
-        <button
-          type="button"
-          onClick={() => zoomAroundViewportCenter(1.14)}
-          className="h-8 w-8 rounded-xl border border-slate-200 text-sm font-bold text-slate-600 transition-all hover:border-cyan-300 hover:bg-slate-50"
-          aria-label="放大"
-        >
-          +
-        </button>
+        <div role="group" aria-label="缩放" className="inline-flex h-8 items-stretch overflow-hidden rounded-xl border border-slate-200 text-slate-600">
+          <button
+            type="button"
+            onClick={() => zoomAroundViewportCenter((zoomTransformRef.current?.k ?? 1) / 1.14)}
+            className="w-8 text-sm font-bold hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-cyan-500"
+            aria-label="缩小"
+          >
+            −
+          </button>
+          <button
+            type="button"
+            onClick={() => zoomAroundViewportCenter(1)}
+            className="min-w-[52px] border-x border-slate-200 px-1.5 text-[11px] font-bold tabular-nums hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-cyan-500"
+            aria-label={`当前缩放 ${zoomPercent}%，恢复到 100%`}
+            title="恢复到 100%"
+          >
+            {zoomPercent}%
+          </button>
+          <button
+            type="button"
+            onClick={() => zoomAroundViewportCenter((zoomTransformRef.current?.k ?? 1) * 1.14)}
+            className="w-8 text-sm font-bold hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-cyan-500"
+            aria-label="放大"
+          >
+            +
+          </button>
+        </div>
         <button
           type="button"
           onClick={fitViewport}
           className="rounded-xl border border-slate-200 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600 transition-all hover:border-cyan-300 hover:bg-slate-50"
-          aria-label="适应画布"
+          aria-label="适应全图"
         >
-          适应
+          适应全图
         </button>
         <button
           type="button"
@@ -3712,13 +3814,17 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
           style={{ left: hoverCardPosition.x, top: hoverCardPosition.y }}
         >
           <div className="border-b border-slate-100 pb-2.5">
-            <div className="truncate text-sm font-extrabold text-slate-900" title={hoveredDevice.hostname}>{hoveredDevice.hostname}</div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="truncate text-sm font-extrabold text-slate-900" title={hoveredDevice.hostname}>{hoveredDevice.hostname}</div>
+              <button type="button" aria-label="关闭设备浮层" onClick={() => setHoveredDeviceId(null)}
+                className="shrink-0 rounded-md px-1.5 text-base leading-none text-slate-500 hover:bg-slate-100 hover:text-slate-900">×</button>
+            </div>
             <div className="mt-1 flex items-center gap-1.5 text-[10px] font-bold tracking-[0.08em] text-sky-700">
               <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: getLayerTone(hoveredDevice).color }} />
               {getLayerTone(hoveredDevice).label}
             </div>
             <div className="mt-2 rounded-lg border border-cyan-100 bg-cyan-50 px-2 py-1.5 text-[10px] font-semibold leading-4 text-cyan-700">
-              关联链路聚焦：仅显示直接邻居与关联链路
+              已突出显示直接邻居与关联链路
             </div>
             {hasTopologyCollectionAnomaly(hoveredDevice) && (
               <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2 py-2 text-[10px] leading-4 text-amber-900">
@@ -3784,6 +3890,12 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
               </div>
             )}
           </dl>
+          {iconCatalog?.can_manage && !hoveredDevice.is_unmanaged && (
+            <button type="button" onClick={() => setIconLibraryTarget(hoveredDevice)}
+              className="mt-3 w-full rounded-lg border border-slate-200 px-3 py-2 text-[11px] font-semibold text-slate-700 hover:bg-slate-50">
+              {language === 'en' ? 'Change icon' : '更换图标'}
+            </button>
+          )}
           <button
             type="button"
             disabled={!onOpenWorkspace}
@@ -3800,8 +3912,35 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
           </button>
         </div>
       )}
-      <svg ref={svgRef} className="topology-graph-svg h-full w-full" />
+      {linkColorMode === 'load' && linkLoadTooltip && (
+        <div role="tooltip"
+          className="pointer-events-none absolute z-30 flex max-w-[calc(100%-16px)] items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white shadow-lg"
+          style={{ left: linkLoadTooltip.x, top: linkLoadTooltip.y }}>
+          <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: getTopologyLinkLoadTier(linkLoadTooltip.load).color }} />
+          <span>
+            {linkLoadTooltip.load === null
+              ? (graphZh ? '负载无数据' : 'No load data')
+              : `${graphZh ? '链路负载' : 'Link load'} ${formatTopologyLinkUtilization(linkLoadTooltip.load)}`}
+            {linkLoadTooltip.detail && <span className="block text-[10px] font-normal text-slate-300">{linkLoadTooltip.detail}</span>}
+          </span>
+        </div>
+      )}
+      <svg ref={svgRef} className="topology-graph-svg h-full w-full" data-link-color-mode={linkColorMode} />
       </div>
+      {iconLibraryTarget && iconCatalog?.can_manage && (
+        <TopologyIconLibrary
+          catalog={iconCatalog}
+          device={iconLibraryTarget === 'catalog' ? undefined : {
+            id: iconLibraryTarget.id,
+            hostname: iconLibraryTarget.hostname,
+            deviceType: getTopologyDeviceIconType(iconLibraryTarget),
+          }}
+          language={language}
+          builtinIconUrl={getBuiltInTopologyIconUrl}
+          onChanged={reloadIcons}
+          onClose={() => setIconLibraryTarget(null)}
+        />
+      )}
     </div>
   );
 };
