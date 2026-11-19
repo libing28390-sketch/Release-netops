@@ -8,6 +8,7 @@ import {
   type TopologyOperationalState,
 } from '../utils/topologyCore';
 import { buildTopologyExportFilename, getTopologyExportPixelRatio } from '../utils/topologyExport';
+import { TOPOLOGY_LINK_LOAD_TIERS } from '../utils/topologyLinkLoad';
 import { useTopologyVisibleDevices } from './useTopologyVisibleDevices';
 import { useTopologySelectionSync } from './useTopologySelectionSync';
 
@@ -948,46 +949,47 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
         // Fall back to the full canvas when getBBox is unavailable.
       }
 
-      // The bandwidth legend is an HTML overlay, while export intentionally
-      // renders the SVG only. The graph already renders the authoritative
-      // site badge using deduplicated drawable links, so do not add a second
-      // summary badge here.
-      const svgNs = 'http://www.w3.org/2000/svg';
-      const makeSvg = (tag: string, attrs: Record<string, string>, text?: string) => {
-        const element = document.createElementNS(svgNs, tag);
-        Object.entries(attrs).forEach(([key, value]) => element.setAttribute(key, value));
-        if (text != null) element.textContent = text;
-        return element;
-      };
-      exportOverlay = makeSvg('g', { class: 'topology-export-overlay', 'pointer-events': 'none' }) as SVGGElement;
-      const legendWidth = Math.max(390, 76 + EXPORT_BANDWIDTH_TIERS.length * 61);
-      const legendHeight = 34;
-      const legendGroup = makeSvg('g', { transform: `translate(${exportX + 16}, ${exportY + Math.max(16, height - legendHeight - 16)})` });
-      legendGroup.appendChild(makeSvg('rect', {
-        x: '0', y: '0', width: String(Math.min(legendWidth, width - 32)), height: String(legendHeight), rx: '10',
-        fill: '#ffffff', 'fill-opacity': '0.94', stroke: '#cbd5e1', 'stroke-opacity': '0.9',
-      }));
-      legendGroup.appendChild(makeSvg('text', {
-        x: '12', y: '21', fill: '#475569', 'font-family': 'Segoe UI, Microsoft YaHei, sans-serif',
-        'font-size': '10', 'font-weight': '700',
-      }, 'Bandwidth'));
-      const legendStartX = 76;
-      const legendStep = 61;
-      EXPORT_BANDWIDTH_TIERS.forEach((tier, index) => {
-        const x = legendStartX + index * legendStep;
-        if (x > width - 50) return;
-        legendGroup.appendChild(makeSvg('line', {
-          x1: String(x), y1: '17', x2: String(x + 18), y2: '17',
-          stroke: tier.color, 'stroke-width': tier.label === 'Unknown' ? '2' : '3',
-          'stroke-linecap': 'round',
+      // Graphs with a site frame already draw the corresponding SVG legend.
+      if (!topologySvg.querySelector('.topology-link-color-legend')) {
+        const loadMode = topologySvg.dataset.linkColorMode === 'load';
+        const exportTiers = loadMode ? TOPOLOGY_LINK_LOAD_TIERS : EXPORT_BANDWIDTH_TIERS;
+        const svgNs = 'http://www.w3.org/2000/svg';
+        const makeSvg = (tag: string, attrs: Record<string, string>, text?: string) => {
+          const element = document.createElementNS(svgNs, tag);
+          Object.entries(attrs).forEach(([key, value]) => element.setAttribute(key, value));
+          if (text != null) element.textContent = text;
+          return element;
+        };
+        exportOverlay = makeSvg('g', { class: 'topology-export-overlay', 'pointer-events': 'none' }) as SVGGElement;
+        const legendWidth = Math.max(390, 76 + exportTiers.length * 61);
+        const legendHeight = 34;
+        const legendGroup = makeSvg('g', { transform: `translate(${exportX + 16}, ${exportY + Math.max(16, height - legendHeight - 16)})` });
+        legendGroup.appendChild(makeSvg('rect', {
+          x: '0', y: '0', width: String(Math.min(legendWidth, width - 32)), height: String(legendHeight), rx: '10',
+          fill: '#ffffff', 'fill-opacity': '0.94', stroke: '#cbd5e1', 'stroke-opacity': '0.9',
         }));
         legendGroup.appendChild(makeSvg('text', {
-          x: String(x + 23), y: '21', fill: '#475569', 'font-family': 'Segoe UI, Microsoft YaHei, sans-serif',
-          'font-size': '9', 'font-weight': '600',
-        }, tier.label));
-      });
-      exportOverlay.appendChild(legendGroup);
-      topologySvg.appendChild(exportOverlay);
+          x: '12', y: '21', fill: '#475569', 'font-family': 'Segoe UI, Microsoft YaHei, sans-serif',
+          'font-size': '10', 'font-weight': '700',
+        }, loadMode ? 'Load' : 'Bandwidth'));
+        const legendStartX = 76;
+        const legendStep = 61;
+        exportTiers.forEach((tier, index) => {
+          const x = legendStartX + index * legendStep;
+          if (x > width - 50) return;
+          legendGroup.appendChild(makeSvg('line', {
+            x1: String(x), y1: '17', x2: String(x + 18), y2: '17',
+            stroke: tier.color, 'stroke-width': tier.label === 'Unknown' ? '2' : '3',
+            'stroke-linecap': 'round',
+          }));
+          legendGroup.appendChild(makeSvg('text', {
+            x: String(x + 23), y: '21', fill: '#475569', 'font-family': 'Segoe UI, Microsoft YaHei, sans-serif',
+            'font-size': '9', 'font-weight': '600',
+          }, tier.label));
+        });
+        exportOverlay.appendChild(legendGroup);
+        topologySvg.appendChild(exportOverlay);
+      }
 
       const exportPixelRatio = getTopologyExportPixelRatio(width, height);
       const { toPng } = await import('html-to-image');

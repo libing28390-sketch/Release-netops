@@ -6,6 +6,7 @@ import { topologyRoleLabel, topologyRoleVisualTier } from '../domain/topologyRol
 import { useTopologyIcons } from '../hooks/useTopologyIcons';
 import type { TopologyDecoratedLink } from '../hooks/useTopology';
 import { topologyDeviceRole } from '../utils/topologyRoleLayout';
+import { formatTopologyLinkUtilization, getTopologyLinkLoadTier, getTopologyLinkUtilization, TOPOLOGY_LINK_LOAD_TIERS } from '../utils/topologyLinkLoad';
 import './TopologyUplinkGroups.css';
 
 type TopologyUplinkLink = Pick<TopologyDecoratedLink, 'source_device_id' | 'target_device_id'>
@@ -22,7 +23,11 @@ type TopologyUplinkLink = Pick<TopologyDecoratedLink, 'source_device_id' | 'targ
     | 'is_inferred'
     | 'is_unmanaged'
     | 'link_kind'
-  >>;
+    | 'operational_state'
+  >> & {
+  source_interface_snapshot?: unknown;
+  target_interface_snapshot?: unknown;
+};
 
 type TopologyUplinkParent = {
   device: Device;
@@ -60,6 +65,11 @@ type DiagramEdge = {
   links: TopologyUplinkLink[];
   focused: boolean;
 };
+
+const UPLINK_PATH_COLORS = ['#215bd6', '#8b3bd1', '#00847e', '#b45309', '#be185d', '#526819'];
+const uplinkPathColor = (index: number) => UPLINK_PATH_COLORS[index]
+  ?? `hsl(${Math.round(index * 137.508) % 360} 72% 36%)`;
+const uplinkPathLabel = (index: number) => index < 26 ? String.fromCharCode(65 + index) : String(index + 1);
 
 type AccessPointColumn = {
   id: string;
@@ -196,7 +206,9 @@ export const buildTopologyUplinkGrouping = (devices: Device[], links: TopologyUp
 interface TopologyUplinkGroupsProps {
   devices: Device[];
   links: TopologyUplinkLink[];
+  deviceOrder?: readonly string[];
   language: string;
+  deviceScopeFiltered?: boolean;
   selectedNodeId?: string | null;
   onNodeClick: (device: Device) => void;
 }
@@ -285,18 +297,35 @@ const getCurvePath = (from: DiagramPoint, to: DiagramPoint): string => {
 const TopologyUplinkGroups: React.FC<TopologyUplinkGroupsProps> = ({
   devices,
   links,
+  deviceOrder,
   language,
+  deviceScopeFiltered = false,
   selectedNodeId,
   onNodeClick,
 }) => {
   const zh = language === 'zh';
   const topologyIcons = useTopologyIcons(devices);
-  const grouping = useMemo(() => buildTopologyUplinkGrouping(devices, links), [devices, links]);
+  const deviceRank = useMemo(() => new Map(deviceOrder?.map((id, index) => [id, index])), [deviceOrder]);
+  const rankOf = (id: string) => deviceRank.get(id) ?? Number.MAX_SAFE_INTEGER;
+  const grouping = useMemo(() => {
+    const result = buildTopologyUplinkGrouping(devices, links);
+    if (!deviceRank.size) return result;
+    const rank = (device: Device) => deviceRank.get(device.id) ?? Number.MAX_SAFE_INTEGER;
+    const accessGroups = result.accessGroups
+      .map((group) => ({
+        ...group,
+        devices: [...group.devices].sort((left, right) => rank(left) - rank(right)),
+      }))
+      .sort((left, right) => rank(left.devices[0]) - rank(right.devices[0]));
+    return { ...result, accessGroups };
+  }, [deviceRank, devices, links]);
   const physicalLinks = useMemo(() => links.filter(isPhysicalLink), [links]);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
   const [expandedWirelessColumns, setExpandedWirelessColumns] = useState<Set<string>>(() => new Set());
   const canvasRef = useRef<HTMLElement | null>(null);
   const [canvasHeight, setCanvasHeight] = useState(0);
+  const [showLinkLoad, setShowLinkLoad] = useState(false);
+  const [linkTooltip, setLinkTooltip] = useState<{ edgeId: string; x: number; y: number } | null>(null);
   const pageSelectedDevice = devices.find((device) => device.id === selectedNodeId) || null;
   const edgeDevices = devices.filter((device) => topologyRoleVisualTier(roleOf(device)) === 0).sort(compareDevices);
   const coreDevices = devices.filter((device) => roleOf(device) === 'core').sort(compareDevices);
@@ -344,6 +373,15 @@ const TopologyUplinkGroups: React.FC<TopologyUplinkGroupsProps> = ({
     [selectedDevice, grouping.upstreams],
   );
   const tracedLinks = useMemo(() => new Set(selectedPaths.flatMap((path) => path.links)), [selectedPaths]);
+  const pathIndexesByLink = useMemo(() => {
+    const indexesByLink = new Map<TopologyUplinkLink, number[]>();
+    selectedPaths.forEach((path, index) => path.links.forEach((link) => {
+      const indexes = indexesByLink.get(link) ?? [];
+      indexes.push(index);
+      indexesByLink.set(link, indexes);
+    }));
+    return indexesByLink;
+  }, [selectedPaths]);
   const tracedDevices = useMemo(
     () => new Set(selectedPaths.flatMap((path) => path.devices.map((device) => device.id))),
     [selectedPaths],
@@ -367,14 +405,17 @@ const TopologyUplinkGroups: React.FC<TopologyUplinkGroupsProps> = ({
       ? deviceById.get(accessPointParentIds.get(selectedDevice.id)?.[0] || '') || null
       : selectedPaths.flatMap((path) => path.devices).find(isAccessDevice) || null;
   const selectedAccessGroup = selectedAccessDevice ? accessGroupByDevice.get(selectedAccessDevice.id) || null : null;
+  const selectedExpandableGroupId = selectedAccessGroup && selectedAccessGroup.devices.length > 1
+    ? selectedAccessGroup.id
+    : null;
   const validGroupIds = new Set([...grouping.accessGroups, ...grouping.wirelessGroups].map((group) => group.id));
 
   useEffect(() => {
-    if (!selectedAccessGroup) return;
-    setExpandedGroups((current) => current.has(selectedAccessGroup.id)
+    if (!selectedExpandableGroupId) return;
+    setExpandedGroups((current) => current.has(selectedExpandableGroupId)
       ? current
-      : new Set([...current, selectedAccessGroup.id]));
-  }, [selectedAccessGroup?.id]);
+      : new Set([...current, selectedExpandableGroupId]));
+  }, [selectedExpandableGroupId]);
 
   useEffect(() => {
     setExpandedGroups((current) => new Set(Array.from(current).filter((id) => validGroupIds.has(id))));
@@ -430,7 +471,8 @@ const TopologyUplinkGroups: React.FC<TopologyUplinkGroupsProps> = ({
 
   const layoutRoleRow = (items: Device[], top: number, desiredX: Map<string, number> = new Map()) => {
     const ordered = [...items].sort((left, right) => (
-      (desiredX.get(left.id) ?? Number.MAX_SAFE_INTEGER)
+      rankOf(left.id) - rankOf(right.id)
+      || (desiredX.get(left.id) ?? Number.MAX_SAFE_INTEGER)
         - (desiredX.get(right.id) ?? Number.MAX_SAFE_INTEGER)
       || compareDevices(left, right)
     ));
@@ -474,7 +516,6 @@ const TopologyUplinkGroups: React.FC<TopologyUplinkGroupsProps> = ({
   const distributionLayout = layoutRoleRow(distributionDevices, cursorY, distributionDesiredX);
   if (distributionLayout.height) cursorY += distributionLayout.height + layerGap;
 
-  const groupCenterById = new Map<string, DiagramPoint>();
   const accessTop = grouping.accessGroups.length ? cursorY : -1;
   const accessRowTops: number[] = [];
   if (grouping.accessGroups.length) {
@@ -482,25 +523,11 @@ const TopologyUplinkGroups: React.FC<TopologyUplinkGroupsProps> = ({
     for (let row = 0; row < groupRows; row += 1) {
       accessRowTops.push(cursorY);
       const rowGroups = grouping.accessGroups.slice(row * groupColumns, (row + 1) * groupColumns);
-      cursorY += (rowGroups.some((group) => expandedGroups.has(group.id)) ? 190 : 70) + 8;
+      cursorY += (rowGroups.some((group) => group.devices.length > 1 && expandedGroups.has(group.id)) ? 190 : 70) + 8;
     }
     cursorY += 1;
   }
   const accessHeight = grouping.accessGroups.length ? cursorY - accessTop : 0;
-  grouping.accessGroups.forEach((group, index) => {
-    const row = Math.floor(index / groupColumns);
-    const column = index % groupColumns;
-    groupCenterById.set(group.id, {
-      x: leftGutter + ((column + 0.5) * laneWidth) / groupColumns,
-      y: accessRowTops[row] + 32,
-    });
-  });
-  const accessCenterByDevice = new Map<string, DiagramPoint>();
-  grouping.accessGroups.forEach((group) => {
-    const center = groupCenterById.get(group.id);
-    if (center) group.devices.forEach((device) => accessCenterByDevice.set(device.id, center));
-  });
-
   const wirelessTop = accessPointDevices.length || controllers.length ? cursorY : -1;
   const wirelessColumns = accessPointColumns.length;
   const wirelessColumnCount = Math.min(maxGroupsPerRow, Math.max(1, wirelessColumns));
@@ -521,17 +548,26 @@ const TopologyUplinkGroups: React.FC<TopologyUplinkGroupsProps> = ({
   const otherLayout = layoutRoleRow(otherDevices, cursorY);
   if (otherLayout.height) cursorY += otherLayout.height + layerGap;
   const contentDiagramHeight = Math.max(360, cursorY + 16);
-  const noticeHeight = grouping.physicalLinkCount === 0 ? 56 : 0;
+  const noticeHeight = 42 + (grouping.physicalLinkCount === 0 ? 56 : 0);
   const diagramHeight = Math.max(contentDiagramHeight, canvasHeight - noticeHeight);
   const verticalScale = diagramHeight / contentDiagramHeight;
   const scaleY = (value: number) => value * verticalScale;
+  // Card positions scale with their rows, but their header heights stay fixed.
+  const accessCenterByDevice = new Map<string, DiagramPoint>();
+  grouping.accessGroups.forEach((group, index) => {
+    const center = {
+      x: leftGutter + ((index % groupColumns + 0.5) * laneWidth) / groupColumns,
+      y: accessRowTops[Math.floor(index / groupColumns)] + 32 / verticalScale,
+    };
+    group.devices.forEach((device) => accessCenterByDevice.set(device.id, center));
+  });
   const apCenterByColumnId = new Map<string, DiagramPoint>();
   accessPointColumns.forEach((column, index) => {
     const row = Math.floor(index / wirelessColumnCount);
     const columnIndex = index % wirelessColumnCount;
     apCenterByColumnId.set(column.id, {
       x: leftGutter + ((columnIndex + 0.5) * laneWidth) / wirelessColumnCount,
-      y: wirelessRowTops[row] + 25,
+      y: wirelessRowTops[row] + 25 / verticalScale,
     });
   });
   const accessPointCenterByDevice = new Map<string, DiagramPoint>();
@@ -588,6 +624,16 @@ const TopologyUplinkGroups: React.FC<TopologyUplinkGroupsProps> = ({
     });
   });
   const diagramEdges = Array.from(diagramEdgeMap.values());
+  const getEdgeLoad = (edge: DiagramEdge) => edge.links.reduce<number | null>((highest, link) => {
+    const load = getTopologyLinkUtilization(link);
+    if (load === null) return highest;
+    return highest === null ? load : Math.max(highest, load);
+  }, null);
+  const hoveredEdge = linkTooltip ? diagramEdgeMap.get(linkTooltip.edgeId) : undefined;
+  const hoveredLoad = hoveredEdge ? getEdgeLoad(hoveredEdge) : null;
+  const getEdgePathIndexes = (edge: DiagramEdge) => [...new Set(
+    edge.links.flatMap((link) => pathIndexesByLink.get(link) ?? []),
+  )].sort((left, right) => left - right);
 
   const nodeButton = (device: Device, diagramNode = false) => {
     const selected = device.id === selectedDevice?.id;
@@ -651,11 +697,14 @@ const TopologyUplinkGroups: React.FC<TopologyUplinkGroupsProps> = ({
   );
 
   const renderGroupCard = (group: TopologyUplinkGroup, index: number) => {
+    const singleDevice = group.devices.length === 1 ? group.devices[0] : null;
     const expanded = expandedGroups.has(group.id);
-    const hasMultipleParents = group.parents.length > 1;
-    const label = group.parents.length
-      ? group.parents.map((parent) => parent.hostname || parent.ip_address || parent.id).join(' + ')
-      : (zh ? '上联待确认' : 'Uplink pending');
+    const memberCount = group.devices.length + (zh ? ' 台接入设备' : ' access devices');
+    const uplinkStatus = group.parents.length === 0
+      ? (zh ? '上联待确认' : 'Uplink pending')
+      : group.parents.length > 1
+        ? group.parents.length + (zh ? ' 路上联' : ' uplinks')
+        : '';
     const row = Math.floor(index / groupColumns);
     const column = index % groupColumns;
     const left = leftGutter + column * laneWidth / groupColumns + 6;
@@ -668,27 +717,26 @@ const TopologyUplinkGroups: React.FC<TopologyUplinkGroupsProps> = ({
         data-uplink-group={group.id}
         data-selected={selectedAccessGroup?.id === group.id ? 'true' : 'false'}
       >
-        <button
-          type="button"
-          className="topology-uplink-group-toggle"
-          aria-expanded={expanded}
-          aria-label={label + ' · ' + group.devices.length + ' ' + (zh ? '台设备' : 'devices')}
-          onClick={() => toggleGroup(group.id)}
-        >
-          <span className="topology-uplink-group-parent">
-            {hasMultipleParents ? <GitFork size={13} className="shrink-0 text-blue-600" aria-hidden="true" /> : null}
-            <span className="topology-uplink-group-parent-label">{label}</span>
-          </span>
-          <span className="topology-uplink-group-footer">
-            <strong>{group.devices.length} {zh ? '台设备' : 'devices'}</strong>
-            <span className="flex items-center gap-1.5">
-              {hasMultipleParents ? <span className="rounded bg-slate-100 px-1.5 py-0.5 font-bold text-slate-700">{zh ? '双上联' : 'Dual'}</span> : null}
-              {!group.parents.length ? <span className="rounded bg-amber-100 px-1.5 py-0.5 font-bold text-amber-800">{zh ? '待确认' : 'Pending'}</span> : null}
-              <ChevronDown size={13} className={expanded ? 'rotate-180 transition-transform' : 'transition-transform'} aria-hidden="true" />
+        {singleDevice ? (
+          <div className="topology-uplink-single-access">
+            {nodeButton(singleDevice, true)}
+            {uplinkStatus && <span className="topology-uplink-group-status">{uplinkStatus}</span>}
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="topology-uplink-group-toggle"
+            aria-expanded={expanded}
+            onClick={() => toggleGroup(group.id)}
+          >
+            <span>
+              <strong>{memberCount}</strong>
+              {uplinkStatus && <span className="topology-uplink-group-status">{uplinkStatus}</span>}
             </span>
-          </span>
-        </button>
-        {expanded ? (
+            <ChevronDown size={13} className={expanded ? 'rotate-180 transition-transform' : 'transition-transform'} aria-hidden="true" />
+          </button>
+        )}
+        {!singleDevice && expanded ? (
           <div className="topology-uplink-group-members" aria-label={zh ? '组内接入设备' : 'Access group members'}>
             {group.devices.map((device) => nodeButton(device, true))}
           </div>
@@ -738,7 +786,10 @@ const TopologyUplinkGroups: React.FC<TopologyUplinkGroupsProps> = ({
 
   const renderPath = (path: TopologyUplinkPath, index: number) => (
     <section className="topology-uplink-selected-path" key={path.links.map(getLinkKey).join('|') || String(index)}>
-      <h4 className="flex items-center gap-1.5"><GitFork size={13} aria-hidden="true" />{zh ? '路径 ' + (index + 1) : 'Path ' + (index + 1)}</h4>
+      <h4 className="flex items-center gap-1.5" style={{ color: uplinkPathColor(index) }}>
+        <GitFork size={13} aria-hidden="true" />
+        {zh ? '路径 ' : 'Path '}{uplinkPathLabel(index)}
+      </h4>
       <ol>
         {path.devices.map((device, deviceIndex) => {
           const link = path.links[deviceIndex];
@@ -768,9 +819,32 @@ const TopologyUplinkGroups: React.FC<TopologyUplinkGroupsProps> = ({
   return (
     <div className="topology-uplink-workspace" data-topology-view="uplink-groups">
       <section ref={canvasRef} className="topology-uplink-canvas" aria-label={zh ? '上联分组拓扑画布' : 'Uplink grouped topology canvas'}>
+        <div className="sticky left-0 z-20 flex h-[42px] items-center gap-3 border-b border-slate-200 bg-white px-3 text-xs text-slate-600">
+          <label className="flex shrink-0 items-center gap-2 font-semibold">
+            {zh ? '链路着色' : 'Link color'}
+            <select className="rounded-md border border-slate-200 bg-white px-2 py-1"
+              value={showLinkLoad ? 'load' : 'path'}
+              onChange={(event) => setShowLinkLoad(event.target.value === 'load')}>
+              <option value="path">{zh ? '路径' : 'Path'}</option>
+              <option value="load">{zh ? '负载' : 'Load'}</option>
+            </select>
+          </label>
+          {showLinkLoad && (
+            <span className="flex min-w-0 items-center gap-2 overflow-x-auto whitespace-nowrap text-[10px]">
+              {TOPOLOGY_LINK_LOAD_TIERS.map((tier) => (
+                <span key={tier.label} className="inline-flex shrink-0 items-center gap-1">
+                  <span className="h-0.5 w-3 rounded" style={{ backgroundColor: tier.color }} />
+                  {zh ? tier.labelZh : tier.label}
+                </span>
+              ))}
+            </span>
+          )}
+        </div>
         {grouping.physicalLinkCount === 0 ? (
           <div className="mx-3 mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">
-            {zh ? '尚无可确认的物理链路。分组只显示设备，不会用推断关系补出连线。' : 'No confirmed physical links are available. Inferred relations do not create diagram connections.'}
+            {deviceScopeFiltered
+              ? (zh ? '当前视图内没有物理链路。选择「有线 + 无线」可查看跨类型连接。' : 'No physical links in this view. Choose Wired + Wireless to see connections between device types.')
+              : (zh ? '尚无可确认的物理链路。分组只显示设备，不会用推断关系补出连线。' : 'No confirmed physical links are available. Inferred relations do not create diagram connections.')}
           </div>
         ) : null}
         <div className="topology-uplink-diagram" style={{ width: diagramWidth, height: diagramHeight }}>
@@ -787,17 +861,62 @@ const TopologyUplinkGroups: React.FC<TopologyUplinkGroupsProps> = ({
           </div>
 
           <svg className="topology-uplink-wires" viewBox={'0 0 ' + diagramWidth + ' ' + diagramHeight} preserveAspectRatio="none" aria-hidden="true">
-            {diagramEdges.map((edge) => (
-              <path
-                key={edge.id}
-                d={getCurvePath(
-                  { x: edge.from.x, y: scaleY(edge.from.y) },
-                  { x: edge.to.x, y: scaleY(edge.to.y) },
-                )}
-                data-focused={edge.focused ? 'true' : 'false'}
-              />
-            ))}
+            {diagramEdges.map((edge) => {
+              const path = getCurvePath(
+                { x: edge.from.x, y: scaleY(edge.from.y) },
+                { x: edge.to.x, y: scaleY(edge.to.y) },
+              );
+              const pathIndexes = showLinkLoad ? [] : getEdgePathIndexes(edge);
+              const dx = edge.to.x - edge.from.x;
+              const dy = scaleY(edge.to.y - edge.from.y);
+              const length = Math.hypot(dx, dy) || 1;
+              return (
+                <g key={edge.id}>
+                  <path className="topology-uplink-wire-hit" d={path}
+                    onPointerEnter={(event) => {
+                      const bounds = event.currentTarget.ownerSVGElement?.getBoundingClientRect();
+                      if (!bounds) return;
+                      setLinkTooltip({
+                        edgeId: edge.id,
+                        x: Math.max(8, Math.min(event.clientX - bounds.left + 12, bounds.width - 210)),
+                        y: Math.max(8, event.clientY - bounds.top - 52),
+                      });
+                    }}
+                    onPointerLeave={() => setLinkTooltip(null)}
+                  />
+                  {pathIndexes.length > 0
+                    ? pathIndexes.map((index, lane) => {
+                      const offset = (lane - (pathIndexes.length - 1) / 2) * Math.min(4, 12 / Math.max(1, pathIndexes.length - 1));
+                      return <path key={index} className="topology-uplink-wire" d={path}
+                        data-focused="true" data-uplink-path={uplinkPathLabel(index)}
+                        transform={`translate(${-dy / length * offset},${dx / length * offset})`}
+                        style={{ stroke: uplinkPathColor(index) }} />;
+                    })
+                    : <path className="topology-uplink-wire" d={path}
+                      data-focused={(showLinkLoad || selectedPaths.length === 0) && edge.focused || undefined}
+                      style={showLinkLoad ? { stroke: getTopologyLinkLoadTier(getEdgeLoad(edge)).color } : undefined} />}
+                </g>
+              );
+            })}
           </svg>
+          {linkTooltip && hoveredEdge && (
+            <div role="tooltip" className="pointer-events-none absolute z-20 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white shadow-lg"
+              style={{ left: linkTooltip.x, top: linkTooltip.y }}>
+              {hoveredLoad === null
+                ? (zh ? '负载无数据' : 'No load data')
+                : `${hoveredEdge.links.length > 1 ? (zh ? '最高负载' : 'Peak load') : (zh ? '链路负载' : 'Link load')} ${formatTopologyLinkUtilization(hoveredLoad)}`}
+              {!showLinkLoad && getEdgePathIndexes(hoveredEdge).length > 0 && (
+                <div className="mt-0.5 max-w-48 text-[10px] font-normal text-slate-300">
+                  {zh ? '路径 ' : 'Paths '}{getEdgePathIndexes(hoveredEdge).map(uplinkPathLabel).join(' · ')}
+                </div>
+              )}
+              {hoveredEdge.links.length > 1 && (
+                <div className="mt-0.5 text-[10px] font-normal text-slate-300">
+                  {hoveredEdge.links.length} {zh ? '条物理链路' : 'physical links'}
+                </div>
+              )}
+            </div>
+          )}
 
           {[...edgeDevices, ...coreDevices, ...distributionDevices, ...otherDevices].map((device) => (
             positionNode(device, devicePoints.get(device.id)!)
@@ -841,7 +960,9 @@ const TopologyUplinkGroups: React.FC<TopologyUplinkGroupsProps> = ({
             <div className="topology-uplink-detail-content">
               {selectedPaths.length ? selectedPaths.map(renderPath) : (
                 <p className="topology-uplink-detail-note">
-                  {grouping.inferredLinkCount
+                  {deviceScopeFiltered
+                    ? (zh ? '当前视图内没有可展示的上联路径。' : 'No uplink paths are visible in this view.')
+                    : grouping.inferredLinkCount
                     ? (zh ? '尚无可确认的物理上联。推断关系不会作为物理链路展示。' : 'No confirmed physical uplink is available. Inferred links are not shown as physical paths.')
                     : (zh ? '没有发现更上一级的物理链路。' : 'No higher-level physical uplink was found.')}
                 </p>

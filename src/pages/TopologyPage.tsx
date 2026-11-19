@@ -11,7 +11,7 @@ import { useTopologyGenerationStatus } from '../hooks/useTopologyGenerationStatu
 import { matchesTopologyTagConditions } from '../hooks/useTopologyVisibleDevices';
 import { topologyRoleLabel } from '../domain/topologyRoles';
 import { buildTopologySiteOverview } from '../utils/topologySiteOverview';
-import { excludeServerTopologyDevices, projectManagedTopologyCanvas } from '../utils/topologyDevices';
+import { excludeServerTopologyDevices, projectManagedTopologyCanvas, type TopologyDeviceScope } from '../utils/topologyDevices';
 
 type TopologyStatusFilter = 'all' | 'online' | 'offline' | 'pending';
 type TopologyLinkStatusFilter = 'all' | 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
@@ -437,6 +437,13 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
 }) => {
   const [canvasView, setCanvasView] = React.useState<'overview' | 'site'>('overview');
   const [sitePresentation, setSitePresentation] = React.useState<'full' | 'grouped'>('full');
+  const [deviceScope, setDeviceScope] = React.useState<TopologyDeviceScope>('all');
+  const [deviceOrder, setDeviceOrder] = React.useState<string[]>([]);
+  const handleDeviceOrderChange = React.useCallback((ids: string[]) => {
+    setDeviceOrder((current) => current.length === ids.length && current.every((id, index) => id === ids[index])
+      ? current
+      : ids);
+  }, []);
   const showUplinkGroups = canvasView === 'site' && sitePresentation === 'grouped';
   const [tagPickerOpen, setTagPickerOpen] = React.useState(false);
   const [draftTopologyTagFilter, setDraftTopologyTagFilter] = React.useState<TagFilterConfig>(topologyTagFilter);
@@ -451,8 +458,8 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
     [topologyNetworkScope.excludedIds, topologyVisibleLinks],
   );
   const topologyCanvas = React.useMemo(
-    () => projectManagedTopologyCanvas(topologyNetworkScope.devices, topologyEligibleLinks),
-    [topologyEligibleLinks, topologyNetworkScope.devices],
+    () => projectManagedTopologyCanvas(topologyNetworkScope.devices, topologyEligibleLinks, deviceScope),
+    [deviceScope, topologyEligibleLinks, topologyNetworkScope.devices],
   );
   const topologyCanvasDevices = topologyCanvas.devices;
   const topologyMapLinks = topologyCanvas.links;
@@ -505,6 +512,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
     down: topologyMapLinks.filter((link) => link.operational_state === 'down').length,
     stale: topologyMapLinks.filter((link) => link.operational_state === 'stale').length,
   }), [topologyMapLinks]);
+  const displayedLinkStats = deviceScope === 'all' ? topologyLinkStats : topologyCanvasLinkStats;
   const handleSiteFilterChange = (value: string) => {
     onTopologySiteFilterChange(value);
     setCanvasView(value === 'all' ? 'overview' : 'site');
@@ -692,10 +700,10 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
         </div>
         <div className="flex flex-wrap items-center gap-3 text-xs">
           {[
-            { label: language === 'zh' ? '正常' : 'Up', value: topologyLinkStats.up, dot: 'bg-emerald-500' },
-            { label: language === 'zh' ? '退化' : 'Degraded', value: topologyLinkStats.degraded, dot: 'bg-amber-500' },
-            { label: language === 'zh' ? '中断' : 'Down', value: topologyLinkStats.down, dot: 'bg-rose-500' },
-            { label: language === 'zh' ? '陈旧' : 'Stale', value: topologyLinkStats.stale, dot: 'bg-gray-300 dark:bg-zinc-600' },
+            { label: language === 'zh' ? '正常' : 'Up', value: displayedLinkStats.up, dot: 'bg-emerald-500' },
+            { label: language === 'zh' ? '退化' : 'Degraded', value: displayedLinkStats.degraded, dot: 'bg-amber-500' },
+            { label: language === 'zh' ? '中断' : 'Down', value: displayedLinkStats.down, dot: 'bg-rose-500' },
+            { label: language === 'zh' ? '陈旧' : 'Stale', value: displayedLinkStats.stale, dot: 'bg-gray-300 dark:bg-zinc-600' },
           ].map((item) => (
             <div key={item.label} className="flex items-center gap-1.5 bg-gray-50 dark:bg-zinc-800 px-2 py-1 rounded-lg">
               <span className={`h-1.5 w-1.5 rounded-full ${item.dot}`} />
@@ -774,6 +782,19 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
               </div>
             )}
           </div>
+          <select
+            value={deviceScope}
+            onChange={(event) => {
+              setDeviceScope(event.target.value as TopologyDeviceScope);
+              handleClearTopologySelection();
+            }}
+            aria-label={language === 'zh' ? '有线与无线设备' : 'Wired and wireless devices'}
+            className="rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 px-2.5 py-1.5 text-xs outline-none text-gray-700 dark:text-zinc-200 cursor-pointer"
+          >
+            <option value="all">{language === 'zh' ? '有线 + 无线' : 'Wired + Wireless'}</option>
+            <option value="wired">{language === 'zh' ? '仅有线' : 'Wired only'}</option>
+            <option value="wireless">{language === 'zh' ? '仅无线' : 'Wireless only'}</option>
+          </select>
           <select
             value={topologyRoleFilter}
             onChange={(event) => onTopologyRoleFilterChange(event.target.value)}
@@ -948,7 +969,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
                     {language === 'zh' ? '当前筛选条件下没有可展示的设备' : 'No devices match the current topology filter'}
                   </p>
                   <p className="mt-1 text-xs text-gray-400">
-                    {language === 'zh' ? '清空搜索或放宽站点、角色、状态筛选后重试。' : 'Clear the search or relax the site, role, or status filters.'}
+                    {language === 'zh' ? '清空搜索或放宽筛选条件后重试。' : 'Clear the search or broaden the filters.'}
                   </p>
                 </div>
               </div>
@@ -957,6 +978,9 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: showUplinkGroups ? 0 : 1 }}
                   className={`absolute inset-0 ${showUplinkGroups ? 'pointer-events-none' : ''}`} inert={showUplinkGroups}>
                   <TopologyGraph
+                    key={deviceScope}
+                    layoutScope={deviceScope}
+                    onDeviceOrderChange={handleDeviceOrderChange}
                     devices={topologyCanvasDevices}
                     links={topologyMapLinks}
                     language={language}
@@ -972,6 +996,8 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
                 {showUplinkGroups && (
                   <div className="absolute inset-0 overflow-auto">
                     <TopologyUplinkGroups devices={topologyCanvasDevices} links={topologyMapLinks} language={language}
+                      deviceOrder={deviceOrder}
+                      deviceScopeFiltered={deviceScope !== 'all'}
                       selectedNodeId={selectedTopologyDeviceId} onNodeClick={handleTopologyNodeClick} />
                   </div>
                 )}

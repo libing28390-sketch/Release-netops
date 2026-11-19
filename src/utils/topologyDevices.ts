@@ -1,4 +1,7 @@
 import type { Device } from '../types';
+import { topologyDeviceRole, type TopologyRoleLayoutDevice } from './topologyRoleLayout';
+
+export type TopologyDeviceScope = 'all' | 'wired' | 'wireless';
 
 const SERVER_PLATFORMS = new Set([
   'linux', 'ubuntu', 'centos', 'debian', 'redhat', 'windows', 'windows_server',
@@ -30,10 +33,16 @@ export const excludeServerTopologyDevices = <T extends Pick<Device, 'id' | 'asse
 
 /** Keep LLDP-only, unmatched peers in diagnostics, but never draw them as extra assets. */
 export const projectManagedTopologyCanvas = <
-  D extends { id: string; is_unmanaged?: boolean },
+  D extends TopologyRoleLayoutDevice & { is_unmanaged?: boolean },
   L extends { source_device_id?: string; target_device_id?: string; is_unmanaged?: boolean },
->(devices: D[], links: L[]) => {
-  const managedDevices = devices.filter((device) => !device.is_unmanaged);
+>(devices: D[], links: L[], scope: TopologyDeviceScope = 'all') => {
+  const managedDevices = devices.filter((device) => {
+    if (device.is_unmanaged) return false;
+    if (scope === 'all') return true;
+    const role = topologyDeviceRole(device);
+    const wireless = role === 'wireless_ap' || role === 'wireless_controller' || role === 'wireless';
+    return scope === 'wireless' ? wireless : !wireless;
+  });
   const managedDeviceIds = new Set(managedDevices.map((device) => device.id));
   const managedLinks = links.filter((link) => (
     !link.is_unmanaged
