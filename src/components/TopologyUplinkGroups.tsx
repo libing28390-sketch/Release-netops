@@ -1,11 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowUpRight, Cable, ChevronDown, GitFork, Network, RadioTower, Router, Wifi } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUpRight, ChevronDown, GitFork, Network, RadioTower, Wifi } from 'lucide-react';
 import type { Device } from '../types';
 import { getBuiltInTopologyIconUrl, getTopologyDeviceIconType } from '../domain/topologyDeviceIcons';
 import { topologyRoleLabel, topologyRoleVisualTier } from '../domain/topologyRoles';
 import { useTopologyIcons } from '../hooks/useTopologyIcons';
 import type { TopologyDecoratedLink } from '../hooks/useTopology';
 import { topologyDeviceRole } from '../utils/topologyRoleLayout';
+import './TopologyUplinkGroups.css';
 
 type TopologyUplinkLink = Pick<TopologyDecoratedLink, 'source_device_id' | 'target_device_id'>
   & Partial<Pick<TopologyDecoratedLink,
@@ -40,6 +41,30 @@ type TopologyUplinkGrouping = {
   upstreams: Map<string, TopologyUplinkParent[]>;
   physicalLinkCount: number;
   inferredLinkCount: number;
+};
+
+type TopologyUplinkPath = {
+  devices: Device[];
+  links: TopologyUplinkLink[];
+};
+
+type DiagramPoint = {
+  x: number;
+  y: number;
+};
+
+type DiagramEdge = {
+  id: string;
+  from: DiagramPoint;
+  to: DiagramPoint;
+  links: TopologyUplinkLink[];
+  focused: boolean;
+};
+
+type AccessPointColumn = {
+  id: string;
+  accessGroupId: string | null;
+  devices: Device[];
 };
 
 const isTruthy = (value: unknown): boolean => (
@@ -197,6 +222,66 @@ const getLinkPorts = (link: TopologyUplinkLink, childId: string): { child: strin
     : { child: targetPort, parent: sourcePort };
 };
 
+const traceUplinkPaths = (
+  selected: Device | null,
+  upstreams: Map<string, TopologyUplinkParent[]>,
+): TopologyUplinkPath[] => {
+  if (!selected) return [];
+  const paths: TopologyUplinkPath[] = [];
+  const visit = (
+    current: Device,
+    downstreamDevices: Device[],
+    downstreamLinks: TopologyUplinkLink[],
+    visited: Set<string>,
+  ) => {
+    const parents = (upstreams.get(current.id) || []).filter((parent) => !visited.has(parent.device.id));
+    if (!parents.length) {
+      if (downstreamLinks.length) {
+        paths.push({ devices: [...downstreamDevices].reverse(), links: [...downstreamLinks].reverse() });
+      }
+      return;
+    }
+    parents.forEach((parent) => parent.links.forEach((link) => {
+      visit(
+        parent.device,
+        [...downstreamDevices, parent.device],
+        [...downstreamLinks, link],
+        new Set([...visited, parent.device.id]),
+      );
+    }));
+  };
+  visit(selected, [selected], [], new Set([selected.id]));
+  return paths.sort((left, right) => compareText(
+    left.devices.map((device) => device.hostname).join(' > '),
+    right.devices.map((device) => device.hostname).join(' > '),
+  ));
+};
+
+const getLinkKey = (link: TopologyUplinkLink): string => (
+  link.link_key || link.id || [
+    link.source_device_id,
+    link.source_port_normalized || link.source_port || '',
+    link.target_device_id,
+    link.target_port_normalized || link.target_port || '',
+  ].join('::')
+);
+
+const getCurvePath = (from: DiagramPoint, to: DiagramPoint): string => {
+  const deltaY = to.y - from.y;
+  if (Math.abs(deltaY) < 4) {
+    const bend = Math.max(22, Math.abs(to.x - from.x) * 0.09);
+    return 'M ' + from.x + ' ' + from.y
+      + ' C ' + from.x + ' ' + (from.y - bend)
+      + ' ' + to.x + ' ' + (to.y - bend)
+      + ' ' + to.x + ' ' + to.y;
+  }
+  const bendY = from.y + deltaY * 0.48;
+  return 'M ' + from.x + ' ' + from.y
+    + ' C ' + from.x + ' ' + bendY
+    + ' ' + to.x + ' ' + bendY
+    + ' ' + to.x + ' ' + to.y;
+};
+
 const TopologyUplinkGroups: React.FC<TopologyUplinkGroupsProps> = ({
   devices,
   links,
@@ -207,39 +292,114 @@ const TopologyUplinkGroups: React.FC<TopologyUplinkGroupsProps> = ({
   const zh = language === 'zh';
   const topologyIcons = useTopologyIcons(devices);
   const grouping = useMemo(() => buildTopologyUplinkGrouping(devices, links), [devices, links]);
+  const physicalLinks = useMemo(() => links.filter(isPhysicalLink), [links]);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
-  const selectedDevice = devices.find((device) => device.id === selectedNodeId) || null;
-  const selectedParents = selectedDevice ? grouping.upstreams.get(selectedDevice.id) || [] : [];
-  const selectedParentIds = new Set(selectedParents.map((item) => item.device.id));
+  const [expandedWirelessColumns, setExpandedWirelessColumns] = useState<Set<string>>(() => new Set());
+  const canvasRef = useRef<HTMLElement | null>(null);
+  const [canvasHeight, setCanvasHeight] = useState(0);
+  const pageSelectedDevice = devices.find((device) => device.id === selectedNodeId) || null;
+  const edgeDevices = devices.filter((device) => topologyRoleVisualTier(roleOf(device)) === 0).sort(compareDevices);
   const coreDevices = devices.filter((device) => roleOf(device) === 'core').sort(compareDevices);
   const distributionDevices = devices.filter((device) => roleOf(device) === 'distribution').sort(compareDevices);
+  const accessPointDevices = devices.filter((device) => roleOf(device) === 'wireless_ap').sort(compareDevices);
   const accessIds = new Set(grouping.accessGroups.flatMap((group) => group.devices.map((device) => device.id)));
   const apIds = new Set(grouping.wirelessGroups.flatMap((group) => group.devices.map((device) => device.id)));
   const controllers = devices.filter((device) => roleOf(device) === 'wireless_controller').sort(compareDevices);
+  const accessGroupByDevice = new Map<string, TopologyUplinkGroup>();
+  grouping.accessGroups.forEach((group) => group.devices.forEach((device) => accessGroupByDevice.set(device.id, group)));
+  const pointsByAccessGroup = new Map<string, Device[]>();
+  const accessPointParentIds = new Map<string, string[]>();
+  accessPointDevices.forEach((accessPoint) => {
+    const parents = (grouping.upstreams.get(accessPoint.id) || [])
+      .map((item) => item.device)
+      .filter(isAccessDevice)
+      .sort(compareDevices);
+    accessPointParentIds.set(accessPoint.id, parents.map((parent) => parent.id));
+    const accessGroup = parents.map((parent) => accessGroupByDevice.get(parent.id)).find(Boolean);
+    const groupId = accessGroup?.id || 'wireless:unconfirmed';
+    pointsByAccessGroup.set(groupId, [...(pointsByAccessGroup.get(groupId) || []), accessPoint]);
+  });
+  const accessPointColumns: AccessPointColumn[] = grouping.accessGroups
+    .map((group) => ({
+      id: 'wireless:' + group.id,
+      accessGroupId: group.id,
+      devices: (pointsByAccessGroup.get(group.id) || []).sort(compareDevices),
+    }))
+    .filter((column) => column.devices.length > 0);
+  const unassignedAccessPoints = (pointsByAccessGroup.get('wireless:unconfirmed') || []).sort(compareDevices);
+  if (unassignedAccessPoints.length) {
+    accessPointColumns.push({ id: 'wireless:unconfirmed', accessGroupId: null, devices: unassignedAccessPoints });
+  }
+  const validWirelessColumnKey = accessPointColumns.map((column) => column.id).join('\u0000');
+  const defaultDiagramDevice = accessPointDevices[0]
+    || grouping.accessGroups[0]?.devices[0]
+    || coreDevices[0]
+    || distributionDevices[0]
+    || edgeDevices[0]
+    || controllers[0]
+    || null;
+  const selectedDevice = pageSelectedDevice || defaultDiagramDevice;
+  const selectedPaths = useMemo(
+    () => traceUplinkPaths(selectedDevice, grouping.upstreams),
+    [selectedDevice, grouping.upstreams],
+  );
+  const tracedLinks = useMemo(() => new Set(selectedPaths.flatMap((path) => path.links)), [selectedPaths]);
+  const tracedDevices = useMemo(
+    () => new Set(selectedPaths.flatMap((path) => path.devices.map((device) => device.id))),
+    [selectedPaths],
+  );
+  const selectedParents = selectedDevice ? grouping.upstreams.get(selectedDevice.id) || [] : [];
+  const selectedParentIds = new Set(selectedParents.map((item) => item.device.id));
+  const deviceById = new Map(devices.map((device) => [device.id, device]));
   const otherDevices = devices.filter((device) => (
     !accessIds.has(device.id)
     && !apIds.has(device.id)
+    && !edgeDevices.some((candidate) => candidate.id === device.id)
     && roleOf(device) !== 'core'
     && roleOf(device) !== 'distribution'
     && roleOf(device) !== 'wireless_controller'
   )).sort((left, right) => (
     getRoleLabel(left, language).localeCompare(getRoleLabel(right, language)) || compareDevices(left, right)
   ));
+  const selectedAccessDevice = selectedDevice && isAccessDevice(selectedDevice)
+    ? selectedDevice
+    : selectedDevice && roleOf(selectedDevice) === 'wireless_ap'
+      ? deviceById.get(accessPointParentIds.get(selectedDevice.id)?.[0] || '') || null
+      : selectedPaths.flatMap((path) => path.devices).find(isAccessDevice) || null;
+  const selectedAccessGroup = selectedAccessDevice ? accessGroupByDevice.get(selectedAccessDevice.id) || null : null;
   const validGroupIds = new Set([...grouping.accessGroups, ...grouping.wirelessGroups].map((group) => group.id));
 
   useEffect(() => {
-    if (!selectedDevice) return;
-    const selectedIds = new Set([selectedDevice.id, ...selectedParentIds]);
-    const selectedGroups = [...grouping.accessGroups, ...grouping.wirelessGroups]
-      .filter((group) => group.devices.some((device) => selectedIds.has(device.id)))
-      .map((group) => group.id);
-    if (!selectedGroups.length) return;
-    setExpandedGroups((current) => new Set([...current, ...selectedGroups]));
-  }, [selectedDevice, selectedNodeId, grouping.accessGroups, grouping.wirelessGroups]);
+    if (!selectedAccessGroup) return;
+    setExpandedGroups((current) => current.has(selectedAccessGroup.id)
+      ? current
+      : new Set([...current, selectedAccessGroup.id]));
+  }, [selectedAccessGroup?.id]);
 
   useEffect(() => {
     setExpandedGroups((current) => new Set(Array.from(current).filter((id) => validGroupIds.has(id))));
   }, [grouping.accessGroups, grouping.wirelessGroups]);
+
+  useEffect(() => {
+    const validIds = new Set(validWirelessColumnKey ? validWirelessColumnKey.split('\u0000') : []);
+    setExpandedWirelessColumns((current) => {
+      const next = new Set(Array.from(current).filter((id) => validIds.has(id)));
+      accessPointColumns.forEach((column) => next.add(column.id));
+      return next;
+    });
+  }, [validWirelessColumnKey]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(([entry]) => {
+      setCanvasHeight((current) => Math.abs(current - entry.contentRect.height) > 1
+        ? entry.contentRect.height
+        : current);
+    });
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, []);
 
   const toggleGroup = (id: string) => setExpandedGroups((current) => {
     const next = new Set(current);
@@ -248,8 +408,189 @@ const TopologyUplinkGroups: React.FC<TopologyUplinkGroupsProps> = ({
     return next;
   });
 
-  const nodeButton = (device: Device) => {
-    const selected = device.id === selectedNodeId;
+  const maxGroupsPerRow = 6;
+  const sizingCount = Math.max(
+    grouping.accessGroups.length,
+    accessPointColumns.length,
+    coreDevices.length,
+    distributionDevices.length,
+    edgeDevices.length,
+    1,
+  );
+  const diagramColumns = Math.min(maxGroupsPerRow, sizingCount);
+  const leftGutter = 96;
+  const controllerColumnWidth = controllers.length ? 198 : 22;
+  const laneWidth = Math.max(840, diagramColumns * 168);
+  const diagramWidth = leftGutter + laneWidth + controllerColumnWidth;
+  const rowCapacity = Math.max(1, Math.floor(laneWidth / 150));
+  const groupColumns = Math.min(maxGroupsPerRow, Math.max(1, grouping.accessGroups.length));
+  const groupRows = Math.ceil(grouping.accessGroups.length / groupColumns);
+  const layerGap = 10;
+  let cursorY = 14;
+
+  const layoutRoleRow = (items: Device[], top: number, desiredX: Map<string, number> = new Map()) => {
+    const ordered = [...items].sort((left, right) => (
+      (desiredX.get(left.id) ?? Number.MAX_SAFE_INTEGER)
+        - (desiredX.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+      || compareDevices(left, right)
+    ));
+    const columns = Math.max(1, Math.min(rowCapacity, ordered.length || 1));
+    const rowCount = Math.ceil(ordered.length / columns);
+    const positions = new Map<string, DiagramPoint>();
+    ordered.forEach((device, index) => {
+      positions.set(device.id, {
+        x: leftGutter + ((index % columns) + 0.5) * laneWidth / columns,
+        y: top + 42 + Math.floor(index / columns) * 51,
+      });
+    });
+    return {
+      positions,
+      rowCount,
+      height: ordered.length ? 34 + rowCount * 51 : 0,
+    };
+  };
+
+  const edgeTop = edgeDevices.length ? cursorY : -1;
+  const edgeLayout = layoutRoleRow(edgeDevices, cursorY);
+  if (edgeLayout.height) cursorY += edgeLayout.height + layerGap;
+  const coreTop = coreDevices.length ? cursorY : -1;
+  const coreLayout = layoutRoleRow(coreDevices, cursorY);
+  if (coreLayout.height) cursorY += coreLayout.height + layerGap;
+
+  const distributionDesiredX = new Map<string, number>();
+  distributionDevices.forEach((device) => {
+    const groupIndexes = grouping.accessGroups
+      .map((group, index) => group.parents.some((parent) => parent.id === device.id) ? index : -1)
+      .filter((index) => index >= 0);
+    if (groupIndexes.length) {
+      const childCenters = groupIndexes.map((index) => {
+        const column = index % groupColumns;
+        return leftGutter + ((column + 0.5) * laneWidth) / groupColumns;
+      });
+      distributionDesiredX.set(device.id, childCenters.reduce((total, value) => total + value, 0) / childCenters.length);
+    }
+  });
+  const distributionTop = distributionDevices.length ? cursorY : -1;
+  const distributionLayout = layoutRoleRow(distributionDevices, cursorY, distributionDesiredX);
+  if (distributionLayout.height) cursorY += distributionLayout.height + layerGap;
+
+  const groupCenterById = new Map<string, DiagramPoint>();
+  const accessTop = grouping.accessGroups.length ? cursorY : -1;
+  const accessRowTops: number[] = [];
+  if (grouping.accessGroups.length) {
+    cursorY += 32;
+    for (let row = 0; row < groupRows; row += 1) {
+      accessRowTops.push(cursorY);
+      const rowGroups = grouping.accessGroups.slice(row * groupColumns, (row + 1) * groupColumns);
+      cursorY += (rowGroups.some((group) => expandedGroups.has(group.id)) ? 190 : 70) + 8;
+    }
+    cursorY += 1;
+  }
+  const accessHeight = grouping.accessGroups.length ? cursorY - accessTop : 0;
+  grouping.accessGroups.forEach((group, index) => {
+    const row = Math.floor(index / groupColumns);
+    const column = index % groupColumns;
+    groupCenterById.set(group.id, {
+      x: leftGutter + ((column + 0.5) * laneWidth) / groupColumns,
+      y: accessRowTops[row] + 32,
+    });
+  });
+  const accessCenterByDevice = new Map<string, DiagramPoint>();
+  grouping.accessGroups.forEach((group) => {
+    const center = groupCenterById.get(group.id);
+    if (center) group.devices.forEach((device) => accessCenterByDevice.set(device.id, center));
+  });
+
+  const wirelessTop = accessPointDevices.length || controllers.length ? cursorY : -1;
+  const wirelessColumns = accessPointColumns.length;
+  const wirelessColumnCount = Math.min(maxGroupsPerRow, Math.max(1, wirelessColumns));
+  const wirelessRows = Math.ceil(wirelessColumns / wirelessColumnCount);
+  const wirelessRowTops: number[] = [];
+  if (wirelessTop >= 0) {
+    cursorY += 32;
+    for (let row = 0; row < wirelessRows; row += 1) {
+      wirelessRowTops.push(cursorY);
+      const rowGroups = accessPointColumns.slice(row * wirelessColumnCount, (row + 1) * wirelessColumnCount);
+      cursorY += (rowGroups.some((column) => expandedWirelessColumns.has(column.id)) ? 244 : 54) + 8;
+    }
+    cursorY = Math.max(cursorY, wirelessTop + 86) + 2;
+  }
+  const wirelessHeight = wirelessTop >= 0 ? cursorY - wirelessTop : 0;
+
+  const otherTop = otherDevices.length ? cursorY : -1;
+  const otherLayout = layoutRoleRow(otherDevices, cursorY);
+  if (otherLayout.height) cursorY += otherLayout.height + layerGap;
+  const contentDiagramHeight = Math.max(360, cursorY + 16);
+  const noticeHeight = grouping.physicalLinkCount === 0 ? 56 : 0;
+  const diagramHeight = Math.max(contentDiagramHeight, canvasHeight - noticeHeight);
+  const verticalScale = diagramHeight / contentDiagramHeight;
+  const scaleY = (value: number) => value * verticalScale;
+  const apCenterByColumnId = new Map<string, DiagramPoint>();
+  accessPointColumns.forEach((column, index) => {
+    const row = Math.floor(index / wirelessColumnCount);
+    const columnIndex = index % wirelessColumnCount;
+    apCenterByColumnId.set(column.id, {
+      x: leftGutter + ((columnIndex + 0.5) * laneWidth) / wirelessColumnCount,
+      y: wirelessRowTops[row] + 25,
+    });
+  });
+  const accessPointCenterByDevice = new Map<string, DiagramPoint>();
+  accessPointColumns.forEach((column) => {
+    const center = apCenterByColumnId.get(column.id);
+    if (center) column.devices.forEach((device) => accessPointCenterByDevice.set(device.id, center));
+  });
+
+  const devicePoints = new Map<string, DiagramPoint>();
+  const initialTierRows = [edgeLayout, coreLayout, distributionLayout, otherLayout];
+  initialTierRows.forEach((layout) => layout.positions.forEach((point, id) => devicePoints.set(id, point)));
+  controllers.forEach((controller, index) => {
+    devicePoints.set(controller.id, {
+      x: leftGutter + laneWidth + controllerColumnWidth / 2,
+      y: wirelessTop + 50 + index * 48,
+    });
+  });
+
+  const focusedDeviceIds = new Set([...(selectedDevice ? [selectedDevice.id] : []), ...tracedDevices]);
+  const diagramEdgeMap = new Map<string, DiagramEdge>();
+  const resolveDiagramAnchor = (deviceId: string): { key: string; point: DiagramPoint } | undefined => {
+    const devicePoint = devicePoints.get(deviceId);
+    if (devicePoint) return { key: 'device:' + deviceId, point: devicePoint };
+    const accessPoint = accessCenterByDevice.get(deviceId);
+    if (accessPoint) return { key: 'access:' + (accessGroupByDevice.get(deviceId)?.id || deviceId), point: accessPoint };
+    const wirelessPoint = accessPointCenterByDevice.get(deviceId);
+    if (wirelessPoint) {
+      const wirelessColumn = accessPointColumns.find((column) => column.devices.some((device) => device.id === deviceId));
+      return { key: 'wireless:' + (wirelessColumn?.id || deviceId), point: wirelessPoint };
+    }
+    return undefined;
+  };
+  physicalLinks.forEach((link) => {
+    const source = resolveDiagramAnchor(link.source_device_id);
+    const target = resolveDiagramAnchor(link.target_device_id);
+    if (!source || !target || source.key === target.key) return;
+    const [first, second] = [source.key, target.key].sort(compareText);
+    const edgeId = first + '::' + second;
+    const focused = tracedLinks.has(link)
+      || focusedDeviceIds.has(link.source_device_id)
+      || focusedDeviceIds.has(link.target_device_id);
+    const existing = diagramEdgeMap.get(edgeId);
+    if (existing) {
+      existing.links.push(link);
+      existing.focused = existing.focused || focused;
+      return;
+    }
+    diagramEdgeMap.set(edgeId, {
+      id: edgeId,
+      from: source.point,
+      to: target.point,
+      links: [link],
+      focused,
+    });
+  });
+  const diagramEdges = Array.from(diagramEdgeMap.values());
+
+  const nodeButton = (device: Device, diagramNode = false) => {
+    const selected = device.id === selectedDevice?.id;
     const isSelectedParent = !selected && selectedParentIds.has(device.id);
     const customIcon = topologyIcons.customIconUrl(device);
     const iconUrl = customIcon || getBuiltInTopologyIconUrl(getTopologyDeviceIconType(device));
@@ -268,108 +609,149 @@ const TopologyUplinkGroups: React.FC<TopologyUplinkGroupsProps> = ({
       <button
         key={device.id}
         type="button"
+        id={'topology-uplink-device-' + device.id}
         onClick={() => onNodeClick(device)}
         aria-pressed={selected}
         data-selected={selected || undefined}
         data-uplink-parent={isSelectedParent || undefined}
-        className={`flex w-full min-w-0 items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${classes}`}
+        className={diagramNode
+          ? 'topology-uplink-device'
+          : `flex w-full min-w-0 items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${classes}`}
         title={`${device.hostname} · ${device.ip_address}`}
       >
-        <span className="grid size-8 shrink-0 place-items-center rounded-md bg-slate-100 text-slate-600 dark:bg-zinc-800 dark:text-zinc-300">
-          {iconUrl ? <img src={iconUrl} alt="" aria-hidden="true" className="size-6 object-contain" /> : iconFallback}
+        <span className={diagramNode ? 'topology-uplink-device-icon' : 'grid size-8 shrink-0 place-items-center rounded-md bg-slate-100 text-slate-600 dark:bg-zinc-800 dark:text-zinc-300'}>
+          {iconUrl ? <img src={iconUrl} alt="" aria-hidden="true" className={diagramNode ? '' : 'size-6 object-contain'} /> : iconFallback}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-xs font-semibold">{device.hostname || device.ip_address || device.id}</span>
-          <span className="block truncate text-[10px] text-slate-500 dark:text-zinc-400">{device.ip_address || device.id}</span>
+          <span className={diagramNode ? 'topology-uplink-device-name' : 'block truncate text-xs font-semibold'}>{device.hostname || device.ip_address || device.id}</span>
+          {diagramNode ? null : <span className="block truncate text-[10px] text-slate-500 dark:text-zinc-400">{device.ip_address || device.id}</span>}
         </span>
-        <span className="shrink-0 text-[9px] font-medium text-slate-500 dark:text-zinc-400">{stateLabel}</span>
+        {diagramNode ? null : <span className="shrink-0 text-[9px] font-medium text-slate-500 dark:text-zinc-400">{stateLabel}</span>}
       </button>
     );
   };
 
-  const roleSection = (title: string, devicesForRole: Device[], tone: string, deviceGridClass = 'grid grid-cols-1 gap-2 sm:grid-cols-2 2xl:grid-cols-3') => (
-    devicesForRole.length ? (
-    <section className={`rounded-xl border p-3 ${tone}`} aria-label={title}>
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <h3 className="text-xs font-bold">{title}</h3>
-        <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-zinc-900/70 dark:text-zinc-300">{devicesForRole.length}</span>
+  const renderBand = (key: string, title: string, count: number, top: number, height: number) => (
+    <div
+      key={key}
+      className={'topology-uplink-band topology-uplink-layer-' + key}
+      data-topology-layer={key}
+      style={{ top: scaleY(top), height: scaleY(height) }}
+    >
+      <div className="topology-uplink-band-heading">
+        <span>{title} · {count} {zh ? '台' : 'devices'}</span>
       </div>
-      <div className={deviceGridClass}>
-        {devicesForRole.map((device) => <React.Fragment key={device.id}>{nodeButton(device)}</React.Fragment>)}
-      </div>
-    </section>
-    ) : null
+    </div>
   );
 
-  const accessGroupSection = (
-    groups: TopologyUplinkGroup[],
-    pendingLabel: string,
-    emptyMessage: string,
-  ) => (
-    <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/70" aria-label={zh ? '接入上联分组' : 'Access uplink groups'}>
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <span className="grid size-7 place-items-center rounded-lg bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"><Cable size={15} aria-hidden="true" /></span>
-          <h3 className="text-xs font-bold text-slate-800 dark:text-zinc-100">{zh ? '接入上联分组' : 'Access uplink groups'}</h3>
-        </div>
-        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-zinc-800 dark:text-zinc-300">
-          {groups.reduce((total, group) => total + group.devices.length, 0)}
-        </span>
-      </div>
-      {groups.length ? (
-        <div className="grid grid-cols-1 gap-2 xl:grid-cols-2 2xl:grid-cols-3">
-          {groups.map((group) => {
-            const expanded = expandedGroups.has(group.id);
-            const selectedInGroup = group.devices.some((device) => device.id === selectedNodeId);
-            const hasMultiParent = group.parents.length > 1;
-            const groupLabel = group.parents.length
-              ? group.parents.map((parent) => parent.hostname || parent.ip_address || parent.id).join(' + ')
-              : pendingLabel;
-            return (
-              <article
-                key={group.id}
-                className={`min-w-0 overflow-hidden rounded-lg border transition-colors ${selectedInGroup ? 'border-blue-400 bg-blue-50/50 ring-1 ring-blue-200 dark:border-blue-600 dark:bg-blue-950/20 dark:ring-blue-900' : 'border-slate-200 bg-slate-50/50 dark:border-zinc-700 dark:bg-zinc-950/20'}`}
-                data-uplink-group={group.id}
-              >
-                <button
-                  type="button"
-                  aria-expanded={expanded}
-                  aria-label={`${groupLabel} · ${group.devices.length} ${zh ? '台设备' : 'devices'}`}
-                  onClick={() => toggleGroup(group.id)}
-                  className="flex min-h-[64px] w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-slate-100/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-zinc-800/70"
-                >
-                  <span className="min-w-0">
-                    <span className="flex items-center gap-1.5 truncate text-xs font-semibold text-slate-800 dark:text-zinc-100">
-                      {hasMultiParent ? <GitFork size={14} className="shrink-0 text-blue-600 dark:text-blue-300" aria-hidden="true" /> : null}
-                      {!group.parents.length ? <span className="size-1.5 shrink-0 rounded-full bg-amber-500" /> : null}
-                      <span className="truncate">{groupLabel}</span>
-                    </span>
-                    <span className="mt-1 block truncate text-[10px] text-slate-500 dark:text-zinc-400">
-                      {group.parents.length
-                        ? group.parents.map((parent) => getRoleLabel(parent, language)).join(' · ')
-                        : (zh ? '尚无可确认的直接物理上联' : 'No confirmed direct physical uplink')}
-                    </span>
-                  </span>
-                  <span className="flex shrink-0 items-center gap-2">
-                    <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${!group.parents.length ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-200' : hasMultiParent ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-200' : 'bg-slate-200 text-slate-700 dark:bg-zinc-800 dark:text-zinc-300'}`}>
-                      {!group.parents.length ? pendingLabel : hasMultiParent ? (zh ? `${group.parents.length} 路上联` : `${group.parents.length} uplinks`) : (zh ? '单上联' : 'Single uplink')}
-                    </span>
-                    <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-zinc-900 dark:text-zinc-300">{group.devices.length}</span>
-                    <ChevronDown size={15} className={`shrink-0 text-slate-500 transition-transform ${expanded ? 'rotate-180' : ''}`} aria-hidden="true" />
-                  </span>
-                </button>
-                {expanded ? (
-                  <div className="grid max-h-72 grid-cols-1 gap-1.5 overflow-auto border-t border-slate-200 p-2 sm:grid-cols-2 dark:border-zinc-800" aria-label={zh ? '组内设备' : 'Group devices'}>
-                    {group.devices.map((device) => <React.Fragment key={device.id}>{nodeButton(device)}</React.Fragment>)}
-                  </div>
-                ) : null}
-              </article>
-            );
+  const positionNode = (device: Device, point: DiagramPoint) => (
+    <div className="topology-uplink-device-wrap" style={{ left: point.x, top: scaleY(point.y) }} key={'position:' + device.id}>
+      {nodeButton(device, true)}
+    </div>
+  );
+
+  const renderGroupCard = (group: TopologyUplinkGroup, index: number) => {
+    const expanded = expandedGroups.has(group.id);
+    const hasMultipleParents = group.parents.length > 1;
+    const label = group.parents.length
+      ? group.parents.map((parent) => parent.hostname || parent.ip_address || parent.id).join(' + ')
+      : (zh ? '上联待确认' : 'Uplink pending');
+    const row = Math.floor(index / groupColumns);
+    const column = index % groupColumns;
+    const left = leftGutter + column * laneWidth / groupColumns + 6;
+    const width = laneWidth / groupColumns - 12;
+    return (
+      <article
+        key={group.id}
+        className="topology-uplink-group-card"
+        style={{ left: left, top: scaleY(accessRowTops[row]), width: width }}
+        data-uplink-group={group.id}
+        data-selected={selectedAccessGroup?.id === group.id ? 'true' : 'false'}
+      >
+        <button
+          type="button"
+          className="topology-uplink-group-toggle"
+          aria-expanded={expanded}
+          aria-label={label + ' · ' + group.devices.length + ' ' + (zh ? '台设备' : 'devices')}
+          onClick={() => toggleGroup(group.id)}
+        >
+          <span className="topology-uplink-group-parent">
+            {hasMultipleParents ? <GitFork size={13} className="shrink-0 text-blue-600" aria-hidden="true" /> : null}
+            <span className="topology-uplink-group-parent-label">{label}</span>
+          </span>
+          <span className="topology-uplink-group-footer">
+            <strong>{group.devices.length} {zh ? '台设备' : 'devices'}</strong>
+            <span className="flex items-center gap-1.5">
+              {hasMultipleParents ? <span className="rounded bg-slate-100 px-1.5 py-0.5 font-bold text-slate-700">{zh ? '双上联' : 'Dual'}</span> : null}
+              {!group.parents.length ? <span className="rounded bg-amber-100 px-1.5 py-0.5 font-bold text-amber-800">{zh ? '待确认' : 'Pending'}</span> : null}
+              <ChevronDown size={13} className={expanded ? 'rotate-180 transition-transform' : 'transition-transform'} aria-hidden="true" />
+            </span>
+          </span>
+        </button>
+        {expanded ? (
+          <div className="topology-uplink-group-members" aria-label={zh ? '组内接入设备' : 'Access group members'}>
+            {group.devices.map((device) => nodeButton(device, true))}
+          </div>
+        ) : null}
+      </article>
+    );
+  };
+
+  const renderApCard = (column: AccessPointColumn, index: number) => {
+    if (!column.devices.length) return null;
+    const expanded = expandedWirelessColumns.has(column.id);
+    const selectedInColumn = column.devices.some((device) => device.id === selectedDevice?.id);
+    const row = Math.floor(index / wirelessColumnCount);
+    const columnIndex = index % wirelessColumnCount;
+    const left = leftGutter + columnIndex * laneWidth / wirelessColumnCount + 6;
+    const width = laneWidth / wirelessColumnCount - 12;
+    return (
+      <article
+        key={column.id}
+        className="topology-uplink-ap-card"
+        style={{ left: left, top: scaleY(wirelessRowTops[row]), width: width }}
+        data-selected={selectedInColumn ? 'true' : 'false'}
+      >
+        <button
+          type="button"
+          className="topology-uplink-ap-toggle"
+          aria-expanded={expanded}
+          aria-label={(zh ? '接入组无线 AP' : 'Access group wireless APs') + ' · ' + column.devices.length + ' AP'}
+          onClick={() => setExpandedWirelessColumns((current) => {
+            const next = new Set(current);
+            if (next.has(column.id)) next.delete(column.id);
+            else next.add(column.id);
+            return next;
           })}
-        </div>
-      ) : (
-        <p className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-xs text-slate-500 dark:border-zinc-700 dark:text-zinc-400">{emptyMessage}</p>
-      )}
+        >
+          <span className="flex min-w-0 items-center gap-1.5"><Wifi size={14} aria-hidden="true" /><strong>{column.devices.length} {zh ? '台 AP' : 'APs'}</strong></span>
+          {column.accessGroupId ? <ChevronDown size={13} className={expanded ? 'rotate-180 transition-transform' : 'transition-transform'} aria-hidden="true" /> : null}
+        </button>
+        {expanded ? (
+          <div className="topology-uplink-ap-members">
+            {column.devices.map((device) => nodeButton(device, true))}
+          </div>
+        ) : null}
+      </article>
+    );
+  };
+
+  const renderPath = (path: TopologyUplinkPath, index: number) => (
+    <section className="topology-uplink-selected-path" key={path.links.map(getLinkKey).join('|') || String(index)}>
+      <h4 className="flex items-center gap-1.5"><GitFork size={13} aria-hidden="true" />{zh ? '路径 ' + (index + 1) : 'Path ' + (index + 1)}</h4>
+      <ol>
+        {path.devices.map((device, deviceIndex) => {
+          const link = path.links[deviceIndex];
+          const nextDevice = path.devices[deviceIndex + 1];
+          const ports = link && nextDevice ? getLinkPorts(link, nextDevice.id) : null;
+          return (
+            <li key={device.id}>
+              <strong>{device.hostname || device.ip_address || device.id}</strong>
+              {ports ? <span>{ports.parent || (zh ? '端口未提供' : 'Port unavailable')} ↔ {ports.child || (zh ? '端口未提供' : 'Port unavailable')}</span> : null}
+            </li>
+          );
+        })}
+      </ol>
     </section>
   );
 
@@ -384,116 +766,104 @@ const TopologyUplinkGroups: React.FC<TopologyUplinkGroupsProps> = ({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2 overflow-auto rounded-xl bg-slate-50 p-2.5 dark:bg-zinc-950/40 sm:p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/80" aria-label={zh ? '上联分组说明' : 'Uplink grouping details'}>
-        <p className="min-w-0 text-[11px] text-slate-600 dark:text-zinc-300">
-          {zh ? '接入分组依据已确认的物理链路；推断关系不会作为上联归属。' : 'Access groups use evidenced physical links; inferred relations are excluded.'}
-        </p>
-        <div className="flex shrink-0 flex-wrap items-center gap-1.5 text-[10px]">
-          <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700 dark:bg-zinc-800 dark:text-zinc-200">{zh ? `${devices.length} 台设备` : `${devices.length} devices`}</span>
-          <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200">{zh ? `${grouping.physicalLinkCount} 条物理链路` : `${grouping.physicalLinkCount} physical links`}</span>
-          {grouping.inferredLinkCount > 0 ? <span className="rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-800 dark:bg-amber-950/50 dark:text-amber-200">{zh ? `${grouping.inferredLinkCount} 条推断关系待确认` : `${grouping.inferredLinkCount} inferred relations need confirmation`}</span> : null}
-        </div>
-      </div>
-
-      {grouping.physicalLinkCount === 0 ? (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="status">
-          <ArrowUpRight size={15} className="mt-0.5 shrink-0" aria-hidden="true" />
-          <span>{zh ? '尚无可确认的物理上联。接入设备会显示为“上联待确认”，不会根据推断关系补出上联。' : 'No confirmed physical uplinks are available. Access devices remain under “Uplink pending”; inferred relations do not create parents.'}</span>
-        </div>
-      ) : null}
-
-      {selectedDevice ? (
-        <section className="flex flex-wrap items-center gap-2 rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-2 dark:border-blue-900 dark:bg-blue-950/20" aria-label={zh ? '选中设备上联详情' : 'Selected device uplinks'}>
-          <div className="flex min-w-0 items-center gap-1.5 text-[11px]">
-            <Router size={14} className="shrink-0 text-blue-700 dark:text-blue-300" aria-hidden="true" />
-            <span className="text-blue-700 dark:text-blue-300">{zh ? '当前设备' : 'Selected'}:</span>
-            <strong className="max-w-48 truncate text-slate-900 dark:text-white">{selectedDevice.hostname}</strong>
-            <span className="shrink-0 text-slate-500 dark:text-zinc-400">· {getRoleLabel(selectedDevice, language)}</span>
+    <div className="topology-uplink-workspace" data-topology-view="uplink-groups">
+      <section ref={canvasRef} className="topology-uplink-canvas" aria-label={zh ? '上联分组拓扑画布' : 'Uplink grouped topology canvas'}>
+        {grouping.physicalLinkCount === 0 ? (
+          <div className="mx-3 mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">
+            {zh ? '尚无可确认的物理链路。分组只显示设备，不会用推断关系补出连线。' : 'No confirmed physical links are available. Inferred relations do not create diagram connections.'}
           </div>
-          <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-blue-800 dark:bg-zinc-900 dark:text-blue-200">{selectedParents.length ? (zh ? `${selectedParents.length} 个直接上联` : `${selectedParents.length} direct uplinks`) : (zh ? '上联待确认' : 'Uplink pending')}</span>
-          {selectedParents.length ? (
-            <ul className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-              {selectedParents.map(({ device: parent, links: parentLinks }) => {
-                const portsLabel = parentLinks.map((link) => {
-                  const ports = getLinkPorts(link, selectedDevice.id);
-                  return `${ports.child || (zh ? '本端端口未提供' : 'Local port unavailable')} ↔ ${ports.parent || (zh ? '对端端口未提供' : 'Peer port unavailable')}`;
-                }).join(' · ');
-                return (
-                  <li key={parent.id} className="min-w-0">
-                    <button
-                      type="button"
-                      onClick={() => onNodeClick(parent)}
-                      aria-pressed={false}
-                      data-uplink-parent="true"
-                      title={`${parent.hostname} · ${portsLabel}`}
-                      className="flex max-w-full min-w-0 items-center gap-1.5 rounded-md border border-cyan-300 bg-white px-2 py-1 text-left text-[10px] text-cyan-900 ring-1 ring-cyan-100 hover:bg-cyan-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-cyan-800 dark:bg-zinc-900 dark:text-cyan-100 dark:ring-cyan-950"
-                    >
-                      <ArrowUpRight size={12} className="shrink-0" aria-hidden="true" />
-                      <span className="max-w-40 truncate font-semibold">{parent.hostname}</span>
-                      <span className="min-w-0 truncate text-slate-500 dark:text-zinc-400">{portsLabel}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <p className="text-[10px] text-amber-900 dark:text-amber-100">
-              {grouping.inferredLinkCount > 0
-                ? (zh ? '未找到可确认的直接物理上联；推断关系不会作为上联展示。' : 'No direct physical uplink evidence; inferred relations are not shown as parents.')
-                : (zh ? '未找到可确认的直接物理上联。' : 'No confirmed direct physical uplink was found.')}
-            </p>
-          )}
-        </section>
-      ) : null}
+        ) : null}
+        <div className="topology-uplink-diagram" style={{ width: diagramWidth, height: diagramHeight }}>
+          {edgeDevices.length ? renderBand('edge', zh ? '边界层' : 'Edge', edgeDevices.length, edgeTop, edgeLayout.height) : null}
+          {coreDevices.length ? renderBand('core', zh ? '核心层' : 'Core layer', coreDevices.length, coreTop, coreLayout.height) : null}
+          {distributionDevices.length ? renderBand('distribution', zh ? '汇聚层' : 'Distribution', distributionDevices.length, distributionTop, distributionLayout.height) : null}
+          {grouping.accessGroups.length ? renderBand('access', zh ? '接入层' : 'Access layer', grouping.accessGroups.reduce((total, group) => total + group.devices.length, 0), accessTop, accessHeight) : null}
+          {accessPointDevices.length || controllers.length ? renderBand('wireless', zh ? '无线' : 'Wireless', accessPointDevices.length + controllers.length, wirelessTop, wirelessHeight) : null}
+          {otherDevices.length ? renderBand('other', zh ? '其他设备' : 'Other devices', otherDevices.length, otherTop, otherLayout.height) : null}
 
-      <div className={`grid grid-cols-1 gap-2 ${coreDevices.length && distributionDevices.length ? 'xl:grid-cols-[minmax(190px,0.5fr)_minmax(0,2fr)]' : ''}`}>
-        {roleSection(zh ? '核心层' : 'Core layer', coreDevices, 'border-violet-200 bg-violet-50/70 text-violet-900 dark:border-violet-900 dark:bg-violet-950/20 dark:text-violet-100', 'grid grid-cols-1 gap-2')}
-        {roleSection(zh ? '汇聚层' : 'Distribution layer', distributionDevices, 'border-teal-200 bg-teal-50/70 text-teal-900 dark:border-teal-900 dark:bg-teal-950/20 dark:text-teal-100', 'grid grid-cols-1 gap-2 sm:grid-cols-2 2xl:grid-cols-5')}
-      </div>
+          <div className="absolute right-5 top-2 z-10 rounded-md border border-slate-200 bg-white/95 px-2 py-1 text-[10px] font-semibold text-slate-600 shadow-sm">
+            {devices.length} {zh ? '台设备' : 'devices'} · {grouping.physicalLinkCount} {zh ? '条物理链路' : 'physical links'}
+            {grouping.inferredLinkCount ? ' · ' + grouping.inferredLinkCount + (zh ? ' 条推断待确认' : ' inferred') : ''}
+          </div>
 
-      {accessGroupSection(
-        grouping.accessGroups,
-        zh ? '上联待确认' : 'Uplink pending',
-        zh ? '当前筛选条件下没有接入设备。' : 'No access devices match the current filters.',
-      )}
+          <svg className="topology-uplink-wires" viewBox={'0 0 ' + diagramWidth + ' ' + diagramHeight} preserveAspectRatio="none" aria-hidden="true">
+            {diagramEdges.map((edge) => (
+              <path
+                key={edge.id}
+                d={getCurvePath(
+                  { x: edge.from.x, y: scaleY(edge.from.y) },
+                  { x: edge.to.x, y: scaleY(edge.to.y) },
+                )}
+                data-focused={edge.focused ? 'true' : 'false'}
+              />
+            ))}
+          </svg>
 
-      {(apIds.size > 0 || controllers.length > 0) ? <section className="rounded-xl border border-purple-200 bg-purple-50/40 p-3 dark:border-purple-900 dark:bg-purple-950/10" aria-label={zh ? '无线设备' : 'Wireless devices'}>
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2"><span className="grid size-7 place-items-center rounded-lg bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300"><Wifi size={15} aria-hidden="true" /></span><h3 className="text-xs font-bold text-purple-900 dark:text-purple-100">{zh ? '无线接入点' : 'Wireless access points'}</h3></div>
-          <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold text-purple-800 dark:bg-zinc-900/70 dark:text-purple-200">{grouping.wirelessGroups.reduce((total, group) => total + group.devices.length, 0)}</span>
-        </div>
-        <div className="grid grid-cols-1 gap-2 2xl:grid-cols-[minmax(0,1fr)_minmax(220px,0.35fr)]">
-          <div>
-            {grouping.wirelessGroups.length ? (
-              <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
-                {grouping.wirelessGroups.map((group) => {
-                  const expanded = expandedGroups.has(group.id);
-                  const selectedInGroup = group.devices.some((device) => device.id === selectedNodeId);
-                  const label = group.parents.length
-                    ? group.parents.map((parent) => parent.hostname || parent.ip_address || parent.id).join(' + ')
-                    : (zh ? '上联待确认' : 'Uplink pending');
-                  return (
-                    <article key={group.id} className={`overflow-hidden rounded-lg border ${selectedInGroup ? 'border-purple-400 bg-white ring-1 ring-purple-200 dark:border-purple-700 dark:bg-zinc-900 dark:ring-purple-900' : 'border-purple-100 bg-white/80 dark:border-purple-900/70 dark:bg-zinc-900/70'}`}>
-                      <button type="button" aria-expanded={expanded} aria-label={`${label} · ${group.devices.length} AP`} onClick={() => toggleGroup(group.id)} className="flex min-h-[58px] w-full items-center justify-between gap-2 px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500">
-                        <span className="min-w-0"><span className="block truncate text-xs font-semibold text-slate-800 dark:text-zinc-100">{label}</span><span className="mt-0.5 block truncate text-[10px] text-slate-500 dark:text-zinc-400">{group.parents.length ? group.parents.map((parent) => getRoleLabel(parent, language)).join(' · ') : (zh ? '尚无可确认的有线父设备' : 'No confirmed wired parent')}</span></span>
-                        <span className="flex shrink-0 items-center gap-2"><span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${group.parents.length ? 'bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-200' : 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-200'}`}>{group.parents.length ? (zh ? '有线父设备' : 'Wired parent') : (zh ? '待确认' : 'Pending')}</span><span className="text-[10px] font-semibold text-slate-600 dark:text-zinc-300">{group.devices.length}</span><ChevronDown size={14} className={`text-slate-500 transition-transform ${expanded ? 'rotate-180' : ''}`} aria-hidden="true" /></span>
-                      </button>
-                      {expanded ? <div className="grid max-h-60 grid-cols-1 gap-1.5 overflow-auto border-t border-purple-100 p-2 sm:grid-cols-2 dark:border-purple-900/70">{group.devices.map((device) => <React.Fragment key={device.id}>{nodeButton(device)}</React.Fragment>)}</div> : null}
-                    </article>
-                  );
-                })}
+          {[...edgeDevices, ...coreDevices, ...distributionDevices, ...otherDevices].map((device) => (
+            positionNode(device, devicePoints.get(device.id)!)
+          ))}
+          {grouping.accessGroups.map(renderGroupCard)}
+          {accessPointColumns.map(renderApCard)}
+          {controllers.length ? (
+            <section
+              className="topology-uplink-controller-panel"
+              style={{ top: scaleY(wirelessTop + 18), height: scaleY(Math.max(62, controllers.length * 48 + 40)) }}
+              aria-label={zh ? '无线控制器' : 'Wireless controllers'}
+            >
+              <strong>{zh ? '无线控制器' : 'Wireless controllers'} · {controllers.length}</strong>
+              <div className="topology-uplink-controller-list">
+                {controllers.map((device) => nodeButton(device, true))}
               </div>
-            ) : <p className="rounded-lg border border-dashed border-purple-200 bg-white/60 px-3 py-4 text-center text-xs text-slate-500 dark:border-purple-900 dark:bg-zinc-900/40 dark:text-zinc-400">{zh ? '当前筛选条件下没有无线接入点。' : 'No wireless access points match the current filters.'}</p>}
-          </div>
-          <section className="rounded-lg border border-purple-100 bg-white/75 p-2.5 dark:border-purple-900/70 dark:bg-zinc-900/70" aria-label={zh ? '无线控制器' : 'Wireless controllers'}>
-            <div className="mb-2 flex items-center justify-between gap-2"><h4 className="text-[11px] font-bold text-purple-900 dark:text-purple-100">{zh ? '无线控制器' : 'Wireless controllers'}</h4><span className="rounded-full bg-purple-100 px-2 py-0.5 text-[9px] font-semibold text-purple-800 dark:bg-purple-950/60 dark:text-purple-200">{controllers.length}</span></div>
-            {controllers.length ? <div className="grid grid-cols-1 gap-1.5">{controllers.map((device) => <React.Fragment key={device.id}>{nodeButton(device)}</React.Fragment>)}</div> : <p className="text-[10px] text-slate-500 dark:text-zinc-400">{zh ? '没有无线控制器设备。' : 'No wireless controllers.'}</p>}
-          </section>
+            </section>
+          ) : null}
         </div>
-      </section> : null}
+      </section>
 
-      {otherDevices.length ? roleSection(zh ? '其他角色设备' : 'Other role devices', otherDevices, 'border-slate-200 bg-white text-slate-800 dark:border-zinc-800 dark:bg-zinc-900/70 dark:text-zinc-100') : null}
+      <aside className="topology-uplink-detail" aria-label={zh ? '设备详情' : 'Device details'}>
+        {selectedDevice ? (
+          <>
+            <div className="topology-uplink-detail-header">
+              <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-blue-100 bg-blue-50 text-blue-700">
+                {roleOf(selectedDevice) === 'wireless_ap' ? <Wifi size={20} aria-hidden="true" />
+                  : roleOf(selectedDevice) === 'wireless_controller' ? <RadioTower size={20} aria-hidden="true" />
+                    : <Network size={20} aria-hidden="true" />}
+              </span>
+              <div className="min-w-0">
+                <p>{getRoleLabel(selectedDevice, language)}</p>
+                <h2 className="truncate" title={selectedDevice.hostname}>{selectedDevice.hostname}</h2>
+                <code>{selectedDevice.ip_address || selectedDevice.id}</code>
+              </div>
+            </div>
+            <div className="topology-uplink-detail-section flex items-center justify-between">
+              <h3>{zh ? '物理上联路径' : 'Physical uplink paths'}</h3>
+              <span className="rounded bg-blue-50 px-2 py-0.5 text-[10px] text-blue-700">{selectedPaths.length}</span>
+            </div>
+            <div className="topology-uplink-detail-content">
+              {selectedPaths.length ? selectedPaths.map(renderPath) : (
+                <p className="topology-uplink-detail-note">
+                  {grouping.inferredLinkCount
+                    ? (zh ? '尚无可确认的物理上联。推断关系不会作为物理链路展示。' : 'No confirmed physical uplink is available. Inferred links are not shown as physical paths.')
+                    : (zh ? '没有发现更上一级的物理链路。' : 'No higher-level physical uplink was found.')}
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              className="topology-uplink-locate"
+              onClick={() => document.getElementById('topology-uplink-device-' + selectedDevice.id)?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' })}
+            >
+              <ArrowUpRight size={15} aria-hidden="true" />
+              {zh ? '定位设备' : 'Locate device'}
+            </button>
+          </>
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center px-5 text-center">
+            <Network size={24} className="mb-3 text-slate-400" aria-hidden="true" />
+            <p className="text-sm font-semibold text-slate-700">{zh ? '选择一台设备查看上联路径' : 'Select a device to see its uplink path'}</p>
+            <p className="mt-1 text-xs text-slate-500">{zh ? '点击图中的设备，查看每条已确认的上联。' : 'Select a device in the diagram to see its confirmed uplinks.'}</p>
+          </div>
+        )}
+      </aside>
     </div>
   );
 };

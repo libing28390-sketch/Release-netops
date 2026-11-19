@@ -2013,7 +2013,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
     const isSelectedLink = (item: any) => Boolean(selectedLinkKey && (item.link_key === selectedLinkKey || item.id === selectedLinkKey));
     const isLinkFocused = (item: any) => isSelectedLink(item)
       || isNodeSelected(getHoverEndpointId(item.source)) || isNodeSelected(getHoverEndpointId(item.target));
-    const focusActive = hasFocus || d3Links.some(isSelectedLink);
+    const focusActive = d3Links.some(isLinkFocused);
     const isLinkVisible = (item: any, deviceId: string | null) => {
       const sourceId = getHoverEndpointId(item.source);
       const targetId = getHoverEndpointId(item.target);
@@ -2458,7 +2458,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, language,
         return getTopologyLinkEvidenceDash(item);
       })
       .attr('stroke-linejoin', 'round')
-      .attr('opacity', (item: any) => !focusActive || isLinkFocused(item) ? 0.96 : 0.16);
+      .attr('opacity', (item: any) => !focusActive || isLinkFocused(item) ? 0.96 : 0.4);
 
     link.append('title')
       .text((item: any) => getAggregationLinkTitle(item));
