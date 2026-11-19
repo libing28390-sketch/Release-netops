@@ -35,6 +35,7 @@ from api.config_templates import router as config_templates_router
 from api.automation import router as automation_router
 from api.users import router as users_router
 from api.topology import router as topology_router
+from api.topology_icons import router as topology_icons_router
 from api.configs import router as configs_router, run_scheduled_backup, _get_schedule_from_db, reschedule_backup
 from api.config_backup_policies import router as config_backup_policies_router
 from api.playbooks import router as playbooks_router
@@ -867,6 +868,7 @@ app.include_router(telemetry_router, prefix="/api")
 app.include_router(monitoring_storage_router, prefix="/api")
 app.include_router(alerts_router,         prefix="/api")
 app.include_router(topology_router,       prefix="/api")
+app.include_router(topology_icons_router, prefix="/api")
 app.include_router(ipam_router,           prefix="/api")
 app.include_router(capacity_router,       prefix="/api")
 app.include_router(interfaces_router,     prefix="/api")

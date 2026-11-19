@@ -80,7 +80,9 @@ const MIN_NODE_CENTER_GAP = 72;
 const NODE_LABEL_GAP = 12;
 const MAX_NODES_PER_TOPOLOGY_ROW = 6;
 const MIN_TOPOLOGY_SUBROW_GAP = 160;
+const MIN_WIRED_ACCESS_SUBROW_GAP = 125;
 const MAX_TOPOLOGY_NODE_LABEL_WIDTH = 220;
+const TOPOLOGY_NODE_LABEL_MARGIN = MAX_TOPOLOGY_NODE_LABEL_WIDTH / 2 + 12;
 
 const normalizeMaxNodesPerRow = (maxNodesPerRow: number): number => (
   Number.isFinite(maxNodesPerRow)
@@ -93,7 +95,39 @@ const estimateTopologyLabelWidth = (value: unknown): number => {
   const width = Array.from(text).reduce((total, character) => (
     total + (/^[\u2e80-\u9fff\uf900-\ufaff\uff00-\uffef]$/u.test(character) ? 12 : 7.2)
   ), 0);
-  return Math.max(56, Math.ceil(width + 16));
+  return Math.max(56, Math.min(MAX_TOPOLOGY_NODE_LABEL_WIDTH, Math.ceil(width + 16)));
+};
+
+const getTopologyRowLabelMargin = (devices: TopologyRoleLayoutDevice[]): number => (
+  devices.length > 0
+    ? devices.reduce((largest, device) => Math.max(largest, estimateTopologyLabelWidth(device.hostname) / 2 + NODE_LABEL_GAP), 48)
+    : TOPOLOGY_NODE_LABEL_MARGIN
+);
+
+const getTopologyRowSideInset = (width: number, labelMargin: number): number => (
+  labelMargin > 48
+    ? Math.min(width * 0.32, Math.max(72, width * 0.06, labelMargin))
+    : Math.min(72, Math.max(48, width * 0.06))
+);
+
+const getTopologyRowCapacity = (
+  devices: TopologyRoleLayoutDevice[],
+  width: number,
+  maxNodesPerRow: number,
+  labelMargin = getTopologyRowLabelMargin(devices),
+  layerGap = MIN_TOPOLOGY_SUBROW_GAP,
+): number => {
+  const rowCeiling = normalizeMaxNodesPerRow(maxNodesPerRow);
+  if (devices.length === 0) return rowCeiling;
+  const sideInset = getTopologyRowSideInset(width, labelMargin);
+  const availableWidth = Math.max(0, width - sideInset * 2);
+  const widestLabel = devices.reduce((largest, device) => Math.max(largest, estimateTopologyLabelWidth(device.hostname)), 56);
+  const requiredCenterGap = Math.max(MIN_NODE_CENTER_GAP, widestLabel + NODE_LABEL_GAP);
+  const maxCenterGap = Math.max(250, Math.min(width * 0.42, layerGap * 3.2));
+  const widthCapacity = requiredCenterGap > maxCenterGap
+    ? 1
+    : Math.max(1, Math.floor(availableWidth / requiredCenterGap) + 1);
+  return Math.min(rowCeiling, widthCapacity);
 };
 
 const isFinitePoint = (point: TopologyRoleLayoutPoint | undefined): point is TopologyRoleLayoutPoint => (
@@ -114,6 +148,11 @@ const compareDevices = (left: TopologyRoleLayoutDevice, right: TopologyRoleLayou
 type TopologyLayoutEdge = {
   sourceId: string;
   targetId: string;
+};
+
+type TopologyLayoutPositionRow = {
+  ids: string[];
+  compactAccessGap: boolean;
 };
 
 const normalizeLinkEndpoint = (value: unknown): string => String(value ?? '').trim();
@@ -255,7 +294,7 @@ const orderLayeredRowsByLinks = (
       const currentIndexes = buildOrderIndexes(order);
       const currentRowLength = Math.max(row.length - 1, 1);
       const scored = row.map((id, currentIndex) => {
-        const neighborPositions = Array.from(neighbors.get(id) || [])
+        const neighborPositions = Array.from(neighbors.get(id) || []).sort()
           .filter((neighborId) => layerById.get(neighborId) !== layer)
           .map((neighborId) => {
             const neighborLayer = layerById.get(neighborId);
@@ -329,9 +368,7 @@ const buildHorizontalRowPositions = (
   layerGap: number,
   labelMargin = 48,
 ): Record<string, TopologyRoleLayoutPoint> => {
-  const sideInset = labelMargin > 48
-    ? Math.min(width * 0.32, Math.max(72, width * 0.06, labelMargin))
-    : Math.min(72, Math.max(48, width * 0.06));
+  const sideInset = getTopologyRowSideInset(width, labelMargin);
   const availableWidth = Math.max(0, width - sideInset * 2);
   // Relate horizontal row spread to the actual tier separation. Using total
   // canvas height makes four-tier topologies look much wider than they are tall.
@@ -359,9 +396,10 @@ const splitDenseRoleRow = (
   xById: Map<string, number>,
   groupEveryParent = false,
   maxNodesPerRow = MAX_NODES_PER_TOPOLOGY_ROW,
+  groupByParentCombination = false,
 ): string[][] => {
   if (ids.length === 0) return [];
-  if (ids.length <= maxNodesPerRow && !groupEveryParent) return [ids];
+  if (ids.length <= maxNodesPerRow && !groupEveryParent && !groupByParentCombination) return [ids];
 
   const originalOrder = new Map(ids.map((id, index) => [id, index]));
   const candidatesByChild = new Map<string, Set<string>>();
@@ -379,6 +417,7 @@ const splitDenseRoleRow = (
   }
 
   const childrenByParent = new Map<string, string[]>();
+  const parentIdsByGroup = new Map<string, string[]>();
   const parentLoads = new Map<string, number>();
   for (const id of ids) {
     const candidates = Array.from(candidatesByChild.get(id) || []);
@@ -386,22 +425,32 @@ const splitDenseRoleRow = (
       Math.max(nearest, layerById.get(parentId) ?? Number.NEGATIVE_INFINITY)
     ), Number.NEGATIVE_INFINITY);
     const nearestParents = candidates.filter((parentId) => layerById.get(parentId) === nearestLayer);
+    const groupingParents = groupByParentCombination ? candidates : nearestParents;
     nearestParents.sort((left, right) => (
       (parentLoads.get(left) || 0) - (parentLoads.get(right) || 0)
       || (xById.get(left) ?? Number.MAX_SAFE_INTEGER) - (xById.get(right) ?? Number.MAX_SAFE_INTEGER)
       || compareDevices(devicesById.get(left) || { id: left }, devicesById.get(right) || { id: right })
     ));
-    const parentId = groupEveryParent
-      ? [...nearestParents].sort().join('|') || '__unlinked__'
+    const parentId = groupEveryParent || groupByParentCombination
+      ? [...groupingParents].sort().join('|') || '__unlinked__'
       : nearestParents[0] || '__unlinked__';
     childrenByParent.set(parentId, [...(childrenByParent.get(parentId) || []), id]);
+    if (parentId !== '__unlinked__') {
+      parentIdsByGroup.set(parentId, groupByParentCombination || groupEveryParent
+        ? [...groupingParents].sort()
+        : [parentId]);
+    }
     if (parentId !== '__unlinked__') parentLoads.set(parentId, (parentLoads.get(parentId) || 0) + 1);
   }
 
   const orderedGroups = Array.from(childrenByParent.entries()).sort(([left], [right]) => {
     if (left === '__unlinked__') return 1;
     if (right === '__unlinked__') return -1;
-    return (xById.get(left) ?? Number.MAX_SAFE_INTEGER) - (xById.get(right) ?? Number.MAX_SAFE_INTEGER)
+    const leftParents = parentIdsByGroup.get(left) || [left];
+    const rightParents = parentIdsByGroup.get(right) || [right];
+    const leftX = leftParents.reduce((total, parentId) => total + (xById.get(parentId) ?? Number.MAX_SAFE_INTEGER), 0) / leftParents.length;
+    const rightX = rightParents.reduce((total, parentId) => total + (xById.get(parentId) ?? Number.MAX_SAFE_INTEGER), 0) / rightParents.length;
+    return leftX - rightX
       || left.localeCompare(right);
   });
 
@@ -414,7 +463,7 @@ const splitDenseRoleRow = (
     return rows;
   };
 
-  if (groupEveryParent || maxNodesPerRow <= MAX_NODES_PER_TOPOLOGY_ROW) {
+  if (groupEveryParent || (maxNodesPerRow <= MAX_NODES_PER_TOPOLOGY_ROW && !groupByParentCombination)) {
     return orderedGroups.flatMap(([, children]) => splitGroup(children));
   }
 
@@ -426,8 +475,13 @@ const splitDenseRoleRow = (
     currentRow = [];
   };
 
-  orderedGroups.forEach(([, children]) => {
+  orderedGroups.forEach(([parentId, children]) => {
     const orderedChildren = children.sort((left, right) => (originalOrder.get(left) || 0) - (originalOrder.get(right) || 0));
+    if (groupByParentCombination && parentId === '__unlinked__') {
+      flushCurrentRow();
+      rows.push(...splitGroup(orderedChildren));
+      return;
+    }
     if (orderedChildren.length <= maxNodesPerRow) {
       if (currentRow.length + orderedChildren.length > maxNodesPerRow) flushCurrentRow();
       currentRow.push(...orderedChildren);
@@ -452,7 +506,8 @@ const splitDenseRoleRow = (
  * physical LLDP links are available, their adjacency orders each row to
  * reduce crossings; the returned null means that this graph has no usable
  * hierarchy signal and should continue through the existing force/chain
- * fallback.
+ * fallback. `maxNodesPerRow` is an upper bound; the viewport and estimated
+ * label widths can reduce the effective capacity.
  */
 export const buildTopologyRoleLayeredPositions = (
   devices: TopologyRoleLayoutDevice[],
@@ -462,21 +517,22 @@ export const buildTopologyRoleLayeredPositions = (
   maxNodesPerRow = MAX_NODES_PER_TOPOLOGY_ROW,
 ): Record<string, TopologyRoleLayoutPoint> | null => {
   if (devices.length === 0) return null;
-  const rowCapacity = normalizeMaxNodesPerRow(maxNodesPerRow);
+  const rowCapacityCeiling = normalizeMaxNodesPerRow(maxNodesPerRow);
   const controllers = devices.filter(isTopologyWirelessController).sort(compareDevices);
   const mainDevices = devices.filter((device) => !isTopologyWirelessController(device));
   if (controllers.length > 0 && mainDevices.length > 0) {
     const mainWidth = wirelessMainWidth(width);
     const fallbackPositions: Record<string, TopologyRoleLayoutPoint> = {};
     const orderedMain = [...mainDevices].sort(compareDevices);
-    for (let offset = 0; offset < orderedMain.length; offset += rowCapacity) {
+    const fallbackCapacity = getTopologyRowCapacity(orderedMain, mainWidth, rowCapacityCeiling);
+    for (let offset = 0; offset < orderedMain.length; offset += fallbackCapacity) {
       Object.assign(fallbackPositions, buildHorizontalRowPositions(
-        orderedMain.slice(offset, offset + rowCapacity).map((device) => device.id),
-        mainWidth, 120 + (offset / rowCapacity) * MIN_TOPOLOGY_SUBROW_GAP,
-        MIN_TOPOLOGY_SUBROW_GAP, MAX_TOPOLOGY_NODE_LABEL_WIDTH / 2 + 12,
+        orderedMain.slice(offset, offset + fallbackCapacity).map((device) => device.id),
+        mainWidth, 120 + (offset / fallbackCapacity) * MIN_TOPOLOGY_SUBROW_GAP,
+        MIN_TOPOLOGY_SUBROW_GAP, getTopologyRowLabelMargin(orderedMain.slice(offset, offset + fallbackCapacity)),
       ));
     }
-    const mainPositions = buildTopologyRoleLayeredPositions(mainDevices, mainWidth, height, links, rowCapacity) || fallbackPositions;
+    const mainPositions = buildTopologyRoleLayeredPositions(mainDevices, mainWidth, height, links, rowCapacityCeiling) || fallbackPositions;
     const edges = collectPhysicalLayoutEdges(links);
     const positions = { ...mainPositions };
     const occupied: number[] = [];
@@ -529,36 +585,56 @@ export const buildTopologyRoleLayeredPositions = (
       xById.set(id, ((index + 0.5) / Math.max(ordered.length, 1)) * width);
     });
   }
-  const rowsByLayer = new Map<number, string[][]>();
+  const rowsByLayer = new Map<number, TopologyLayoutPositionRow[]>();
   for (const layer of layerKeys) {
     const ids = orderedRows.get(layer) || [];
     const apIds = ids.filter((id) => topologyDeviceRole(deviceById.get(id)!) === 'wireless_ap');
     const otherIds = ids.filter((id) => !apIds.includes(id));
+    const otherDevices = otherIds.map((id) => deviceById.get(id)!).filter(Boolean);
+    const apDevices = apIds.map((id) => deviceById.get(id)!).filter(Boolean);
+    const otherRoles = otherDevices.map(topologyDeviceRole);
+    const shouldGroupAccessByUplink = otherRoles.includes('access')
+      && otherRoles.every((role) => role === 'access' || role === 'switch');
+    const otherRows = splitDenseRoleRow(
+      otherIds, layer, deviceById, layerById, edges, xById, false,
+      getTopologyRowCapacity(otherDevices, width, rowCapacityCeiling, getTopologyRowLabelMargin(otherDevices), layerGap),
+      shouldGroupAccessByUplink,
+    );
+    const apRows = splitDenseRoleRow(
+      apIds, layer, deviceById, layerById, edges, xById, true,
+      getTopologyRowCapacity(apDevices, width, rowCapacityCeiling, getTopologyRowLabelMargin(apDevices), layerGap),
+    );
     const rows = [
-      ...splitDenseRoleRow(otherIds, layer, deviceById, layerById, edges, xById, false, rowCapacity),
-      ...splitDenseRoleRow(apIds, layer, deviceById, layerById, edges, xById, true, rowCapacity),
+      ...otherRows.map((ids) => ({ ids, compactAccessGap: shouldGroupAccessByUplink })),
+      ...apRows.map((ids) => ({ ids, compactAccessGap: false })),
     ];
     rowsByLayer.set(layer, rows);
   }
-  const rowCount = Array.from(rowsByLayer.values()).reduce((total, rows) => total + rows.length, 0);
   const rowGap = Math.max(layerGap, MIN_TOPOLOGY_SUBROW_GAP);
-  const totalLayoutHeight = rowGap * Math.max(rowCount - 1, 0);
+  const rowSequence = layerKeys.flatMap((layer) => (
+    (rowsByLayer.get(layer) || []).map((row) => ({ layer, ...row }))
+  ));
+  const rowGaps = rowSequence.slice(1).map((row, index) => {
+    const previous = rowSequence[index];
+    return row.layer === previous.layer && row.compactAccessGap && previous.compactAccessGap
+      ? MIN_WIRED_ACCESS_SUBROW_GAP
+      : rowGap;
+  });
+  const totalLayoutHeight = rowGaps.reduce((total, gap) => total + gap, 0);
   const firstRowY = topInset + Math.max(0, (availableLayerHeight - totalLayoutHeight) / 2);
-  let rowIndex = 0;
-  for (const layer of layerKeys) {
-    for (const rowIds of rowsByLayer.get(layer) || []) {
-      const rowPositions = buildHorizontalRowPositions(
-        rowIds,
-        width,
-        firstRowY + rowGap * rowIndex,
-        layerGap,
-        MAX_TOPOLOGY_NODE_LABEL_WIDTH / 2 + 12,
-      );
-      Object.assign(positions, rowPositions);
-      for (const [id, point] of Object.entries(rowPositions)) xById.set(id, point.x);
-      rowIndex += 1;
-    }
-  }
+  let rowY = firstRowY;
+  rowSequence.forEach((row, index) => {
+    if (index > 0) rowY += rowGaps[index - 1];
+    const rowPositions = buildHorizontalRowPositions(
+      row.ids,
+      width,
+      rowY,
+      layerGap,
+      getTopologyRowLabelMargin(row.ids.map((id) => deviceById.get(id)!).filter(Boolean)),
+    );
+    Object.assign(positions, rowPositions);
+    for (const [id, point] of Object.entries(rowPositions)) xById.set(id, point.x);
+  });
   return positions;
 };
 
