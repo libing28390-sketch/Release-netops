@@ -97,6 +97,8 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   const webProfiles = Array.isArray(form.web_profiles) ? form.web_profiles : [];
   const webProfilesEnabled = webProfiles.some((profile: any) => profile.enabled !== false);
   const ciscoEnablePasswordAvailable = isCiscoNetworkPlatform(form.asset_type, form.platform);
+  const canCorrectProductionIdentity = isEditMode
+    && String(editingAsset?.lifecycle_status || '').trim().toLowerCase() === 'production';
   const onboardingStatus = isEditMode
     ? String(editingAsset?.onboarding_status || 'pending_credentials').trim().toLowerCase()
     : '';
@@ -159,11 +161,11 @@ export const AssetModal: React.FC<AssetModalProps> = ({
     setForm(current => current.enable_password ? { ...current, enable_password: '' } : current);
   }, [ciscoEnablePasswordAvailable, isOpen, setForm, setShowEnableSecret]);
   const mgmtIpError = React.useMemo(() => {
-    if (isEditMode) return null;
+    if (isEditMode && !canCorrectProductionIdentity) return null;
     const ip = String(form.management_ip || '').trim();
     if (!ip) return null;
     return isValidIpAddress(ip) ? null : (zh ? 'IP 格式不正确' : 'Invalid IP format');
-  }, [form.management_ip, isEditMode, zh]);
+  }, [canCorrectProductionIdentity, form.management_ip, isEditMode, zh]);
 
   React.useEffect(() => {
     if (isOpen) setCredMode(form.credential_id ? 'existing' : 'manual');
@@ -526,7 +528,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   </select>
                 )}
               </div>
-              <Field label={zh ? '型号' : 'Model'} value={form.model} onChange={v => setForm(f => ({ ...f, model: v }))} placeholder="e.g. PowerEdge R750" disabled={isEditMode} helper={form.asset_type === 'network_device' ? (zh ? '选填；配置有效的 SNMP 凭据后，可尝试采集整机型号。' : 'Optional; chassis model collection can be attempted with valid SNMP credentials.') : undefined} />
+              <Field label={zh ? '型号' : 'Model'} value={form.model} onChange={v => setForm(f => ({ ...f, model: v }))} placeholder="e.g. PowerEdge R750" disabled={isEditMode && !canCorrectProductionIdentity} helper={canCorrectProductionIdentity ? (zh ? '已投产设备允许手工更正型号；保存后同步到关联设备记录。' : 'Production assets allow manual model corrections; saved changes sync to the linked device.') : form.asset_type === 'network_device' ? (zh ? '选填；配置有效的 SNMP 凭据后，可尝试采集整机型号。' : 'Optional; chassis model collection can be attempted with valid SNMP credentials.') : undefined} />
               {showMoreAssetDetails && <div>
                 <label className="block text-xs text-black/30 mb-0.5">{zh ? '状态' : 'Status'}</label>
                 <select
@@ -598,7 +600,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   />
                 </div>
               )}
-              <Field label={zh ? '管理IP' : 'Mgmt IP'} required value={form.management_ip} onChange={v => setForm(f => ({ ...f, management_ip: v }))} placeholder="e.g. 10.0.1.10" error={mgmtIpError} disabled={isEditMode} />
+              <Field label={zh ? '管理IP' : 'Mgmt IP'} required value={form.management_ip} onChange={v => setForm(f => ({ ...f, management_ip: v }))} placeholder="e.g. 10.0.1.10" error={mgmtIpError} disabled={isEditMode && !canCorrectProductionIdentity} helper={canCorrectProductionIdentity ? (zh ? '已投产设备允许手工更正管理 IP；保存后同步到关联设备，IP 不能与其它资产重复。' : 'Production assets allow manual management IP corrections; saved changes sync to the linked device and must remain unique.') : undefined} />
               <Field label={zh ? '主通道端口' : 'Primary channel port'} value={form.management_port} onChange={v => setForm(f => ({ ...f, management_port: v }))} placeholder={form.connection_method === 'web' || form.connection_method === 'none' ? '-' : '22'} />
 
               <div className="sm:col-span-2">

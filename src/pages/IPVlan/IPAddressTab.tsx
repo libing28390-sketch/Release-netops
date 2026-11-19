@@ -749,7 +749,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   // Get search params
   const params = new URLSearchParams(location.search);
   const prefixIdParam = params.get('prefix_id') || '';
-  const [includeObservations, setIncludeObservations] = useState(params.get('view') === 'sources');
+  const [includeObservations] = useState(params.get('view') === 'sources');
 
   const [addresses, setAddresses] = useState<IPAddress[]>([]);
   const [prefixes, setPrefixes] = useState<Prefix[]>([]);
@@ -1409,14 +1409,8 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       <PageHero
         icon={MapPin}
         title={zh ? 'IP地址分配管理' : 'IP Address Management'}
-        subtitle={zh ? '默认展示正式登记台账；采集来源可单独展开核查，ARP 接入位置与 IP 分配设备分别维护。' : 'The default view is the registered ledger. Include collected sources for review; access location and assigned device are maintained separately.'}
         actions={
           <div className="flex items-center gap-2">
-            {!isMatrixView && <label className="flex items-center gap-2 text-xs text-[var(--ui-fg-muted)]">
-              <input type="checkbox" checked={includeObservations} onChange={event => { setIncludeObservations(event.target.checked); setPage(1); }} />
-              {zh ? '包含采集来源' : 'Include collected sources'}
-            </label>}
-            {!loading && (!isMatrixView || !canUseMatrix) && <TableExportMenu tableRef={addressTableRef} exportData={exportData} filename="ipam-addresses" language={zh ? 'zh' : 'en'} disabled={paginatedAddresses.length === 0} />}
             <button
               onClick={() => openForm(null)}
               disabled={!selectedPrefixId}
@@ -1727,7 +1721,12 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                   <th className="sticky top-0 z-10 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3">{zh ? 'MAC地址' : 'MAC Address'}</th>
                   <th className="sticky top-0 z-10 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3">{zh ? '状态' : 'Status'}</th>
                   <th className="sticky top-0 z-10 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3">{zh ? '备注描述' : 'Description'}</th>
-                  <TableActionHeader className="sticky top-0 z-10 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
+                  <TableActionHeader className="sticky top-0 z-10 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <span>{zh ? '操作' : 'Actions'}</span>
+                      <TableExportMenu tableRef={addressTableRef} exportData={exportData} filename="ipam-addresses" language={zh ? 'zh' : 'en'} disabled={paginatedAddresses.length === 0} />
+                    </div>
+                  </TableActionHeader>
                 </tr>
               </thead>
               <tbody>

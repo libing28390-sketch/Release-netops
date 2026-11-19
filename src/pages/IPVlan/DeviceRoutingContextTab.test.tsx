@@ -54,10 +54,12 @@ const setup = (options: {
   return fetchMock;
 };
 
-const selectDevice = async () => {
-  const select = await screen.findByRole('combobox', { name: '选择设备' });
-  await waitFor(() => expect((select as HTMLSelectElement).disabled).toBe(false));
-  fireEvent.change(select, { target: { value: device.id } });
+const selectDevice = async (query = device.name) => {
+  const input = await screen.findByRole('combobox', { name: '选择设备' });
+  await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
+  fireEvent.focus(input);
+  fireEvent.change(input, { target: { value: query } });
+  fireEvent.click(await screen.findByRole('option', { name: 'SW-01 · 192.0.2.10' }));
 };
 
 describe('DeviceRoutingContextTab', () => {
@@ -72,7 +74,10 @@ describe('DeviceRoutingContextTab', () => {
 
   it('loads device options, requests mappings only after device selection, and shows the empty state', async () => {
     const fetchMock = setup();
-    expect(await screen.findByRole('option', { name: 'SW-01 · 192.0.2.10' })).toBeTruthy();
+    const deviceInput = await screen.findByRole('combobox', { name: '选择设备' });
+    await waitFor(() => expect((deviceInput as HTMLInputElement).disabled).toBe(false));
+    fireEvent.focus(deviceInput);
+    expect(screen.queryByRole('listbox')).toBeNull();
     expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/ipam/routing-contexts?'))).toBe(false);
 
     await selectDevice();

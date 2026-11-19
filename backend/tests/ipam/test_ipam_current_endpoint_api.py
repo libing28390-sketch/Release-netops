@@ -601,6 +601,134 @@ def test_current_endpoint_routes_use_only_current_observations_and_explicit_writ
     )
 
 
+def test_current_endpoint_device_options_ignore_result_filters_and_respect_site_scope(
+    isolated_db, monkeypatch,
+):
+    del isolated_db
+    from api import ipam as api
+
+    site_id = "current-endpoint-site"
+    other_site_id = "current-endpoint-other-site"
+    _seed_current_endpoint_fixture()
+    outside_business_scope_id = "current-endpoint-outside-business-scope"
+    _seed_device(outside_business_scope_id, "SW-CURRENT-OUTSIDE-BUSINESS", site_id)
+    _publish_arp(
+        device_id=outside_business_scope_id,
+        context_type="unknown",
+        local_context_key="outside-business-scope-context",
+        address="203.0.113.91",
+        mac="00:11:22:33:44:91",
+        status="scope_unknown",
+        observed_at=datetime.now(timezone.utc).replace(microsecond=0) - timedelta(seconds=10),
+    )
+    _seed_device("current-endpoint-other-site-device", "SW-CURRENT-OTHER", other_site_id)
+    _publish_arp(
+        device_id="current-endpoint-other-site-device",
+        context_type="unknown",
+        local_context_key="other-site-context",
+        address="203.0.113.90",
+        mac="00:11:22:33:44:90",
+        status="scope_unknown",
+        observed_at=datetime.now(timezone.utc).replace(microsecond=0) - timedelta(seconds=10),
+    )
+
+    user = _administrator()
+
+    def list_endpoints(**overrides):
+        params = {
+            "site_id": "",
+            "vrf_id": "",
+            "device_id": "",
+            "q": "",
+            "kind": "all",
+            "evidence_status": "",
+            "registration_status": "",
+            "network_scope": "all",
+            "endpoint_class": "all",
+            "page": 1,
+            "page_size": 50,
+        }
+        params.update(overrides)
+        return api.api_list_discovered_endpoints(**params, user=user)
+
+    mapped_id = "current-endpoint-mapped"
+    unmapped_id = "current-endpoint-unmapped"
+    other_site_device_id = "current-endpoint-other-site-device"
+
+    selected_a = list_endpoints(
+        device_id=mapped_id,
+        q="SW-CURRENT-MAPPED",
+    )
+    assert selected_a["total"] == 1
+    assert selected_a["items"][0]["source_device_id"] == mapped_id
+    assert {mapped_id, unmapped_id}.issubset(
+        {item["id"] for item in selected_a["devices"]}
+    )
+
+    empty_a = list_endpoints(
+        device_id=mapped_id,
+        q="SW-CURRENT-UNMAPPED",
+    )
+    assert empty_a["total"] == 0
+    assert {mapped_id, unmapped_id}.issubset(
+        {item["id"] for item in empty_a["devices"]}
+    )
+
+    selected_b = list_endpoints(
+        device_id=unmapped_id,
+        q="SW-CURRENT-UNMAPPED",
+    )
+    assert selected_b["total"] == 1
+    assert selected_b["items"][0]["source_device_id"] == unmapped_id
+
+    empty_by_kind = list_endpoints(kind="mac")
+    assert empty_by_kind["total"] == 0
+    assert {mapped_id, unmapped_id}.issubset(
+        {item["id"] for item in empty_by_kind["devices"]}
+    )
+
+    selected_site = list_endpoints(site_id=site_id)
+    current_site_device_ids = {mapped_id, unmapped_id, outside_business_scope_id}
+    assert {item["id"] for item in selected_site["devices"]} == current_site_device_ids
+    assert other_site_device_id not in {item["id"] for item in selected_site["devices"]}
+
+    empty_business_scope = list_endpoints(
+        site_id=site_id,
+        device_id=outside_business_scope_id,
+        q="no-current-endpoint-match",
+        network_scope="business_vlan",
+    )
+    assert empty_business_scope["total"] == 0
+    assert {item["id"] for item in empty_business_scope["devices"]} == current_site_device_ids
+
+    def authorize_only_current_site(
+        _user, _resource_type, _action, *, tenant_id=None, site_id=None, **_scope,
+    ):
+        return tenant_id == "tenant-default" and site_id == "current-endpoint-site"
+
+    monkeypatch.setattr(api, "authorize_resource", authorize_only_current_site)
+    scoped_user = {
+        "id": "current-endpoint-site-viewer",
+        "username": "current-endpoint-site-viewer",
+        "role": "Viewer",
+        "tenant_id": "tenant-default",
+        "request_id": "current-endpoint-site-scope-test",
+    }
+    scoped_list = api.api_list_discovered_endpoints(
+        site_id="", vrf_id="", device_id="", q="", kind="all",
+        evidence_status="", registration_status="", network_scope="all",
+        endpoint_class="all", page=1, page_size=50, user=scoped_user,
+    )
+    assert {item["id"] for item in scoped_list["devices"]} == current_site_device_ids
+    with pytest.raises(HTTPException) as unauthorized_site:
+        api.api_list_discovered_endpoints(
+            site_id=other_site_id, vrf_id="", device_id="", q="", kind="all",
+            evidence_status="", registration_status="", network_scope="all",
+            endpoint_class="all", page=1, page_size=50, user=scoped_user,
+        )
+    assert unauthorized_site.value.status_code == 404
+
+
 def test_current_fdb_path_keeps_lag_member_trunk_and_virtual_mac_distinct(isolated_db):
     del isolated_db
     from core.interface_utils import normalize_interface_name

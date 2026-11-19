@@ -46,6 +46,14 @@ const fillVipAddress = () => {
   fireEvent.change(screen.getByLabelText('虚拟 IP 地址 (VIP) *'), { target: { value: '10.0.0.20' } });
 };
 
+const selectPrefix = async (query = prefix.prefix) => {
+  const input = screen.getByRole('combobox', { name: '归属前缀' });
+  await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
+  fireEvent.focus(input);
+  fireEvent.change(input, { target: { value: query } });
+  fireEvent.click(await screen.findByRole('option', { name: 'Office · 10.0.0.0/24' }));
+};
+
 describe('VIPManagementTab address scope', () => {
   beforeEach(() => {
     localStorage.removeItem('netops_token');
@@ -78,7 +86,7 @@ describe('VIPManagementTab address scope', () => {
     expect(await screen.findAllByText('请选择明确的归属前缀')).not.toHaveLength(0);
     expect(fetchMock.mock.calls.some(([url, init]) => String(url) === '/api/ipam/vips' && init?.method === 'POST')).toBe(false);
 
-    fireEvent.change(screen.getByLabelText('归属前缀'), { target: { value: prefix.id } });
+    await selectPrefix();
     fireEvent.click(screen.getByRole('button', { name: '确认保存' }));
 
     await waitFor(() => expect(fetchMock.mock.calls.some(([url, init]) => String(url) === '/api/ipam/vips' && init?.method === 'POST')).toBe(true));
@@ -94,8 +102,8 @@ describe('VIPManagementTab address scope', () => {
     const fetchMock = setup([]);
     await openCreate();
     fillVipAddress();
-    fireEvent.change(screen.getByLabelText('高可用技术模式 *'), { target: { value: 'anycast' } });
-    fireEvent.change(screen.getByLabelText('归属前缀'), { target: { value: prefix.id } });
+    fireEvent.click(screen.getByRole('radio', { name: '任播 Anycast' }));
+    await selectPrefix();
     fireEvent.click(screen.getByRole('button', { name: '确认保存' }));
 
     await waitFor(() => expect(fetchMock.mock.calls.some(([url, init]) => String(url) === '/api/ipam/vips' && init?.method === 'POST')).toBe(true));
@@ -115,8 +123,8 @@ describe('VIPManagementTab address scope', () => {
     const fetchMock = setup([], response({ detail }, 409, false));
     await openCreate();
     fillVipAddress();
-    fireEvent.change(screen.getByLabelText('高可用技术模式 *'), { target: { value: vipType } });
-    fireEvent.change(screen.getByLabelText('归属前缀'), { target: { value: prefix.id } });
+    fireEvent.click(screen.getByRole('radio', { name: vipType === 'anycast' ? '任播 Anycast' : vipType }));
+    await selectPrefix();
     fireEvent.click(screen.getByRole('button', { name: '确认保存' }));
 
     expect(await screen.findByText(detail)).toBeTruthy();
@@ -139,7 +147,7 @@ describe('VIPManagementTab address scope', () => {
     expect(await screen.findAllByText('范围待确认')).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: '编辑' }));
     expect(await screen.findByText(/此 VIP 尚未确认地址空间/)).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('归属前缀'), { target: { value: 'prefix-1' } });
+    await selectPrefix('prefix-1');
     fireEvent.click(screen.getByRole('button', { name: '确认保存' }));
 
     await waitFor(() => expect(fetchMock.mock.calls.some(([url, init]) => String(url) === '/api/ipam/vips/vip-1' && init?.method === 'PUT')).toBe(true));

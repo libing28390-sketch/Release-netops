@@ -39,25 +39,25 @@ describe('DiscoveredEndpointsTab', () => {
     vi.unstubAllGlobals();
   });
 
-  it('shows split endpoint columns and loads concise endpoint details on demand', async () => {
+  it('groups endpoint table columns and loads concise endpoint details on demand', async () => {
     const { container } = renderPage();
     expect(await screen.findByText('10.10.1.21')).toBeTruthy();
     expect(screen.getByText('PROD')).toBeTruthy();
     expect(screen.getByText('2026-10-28 10:00')).toBeTruthy();
-    expect(screen.getByRole('columnheader', { name: '上一次时间' })).toBeTruthy();
-    expect(screen.getByRole('columnheader', { name: '站点' })).toBeTruthy();
-    expect(screen.getByRole('columnheader', { name: 'VRF' })).toBeTruthy();
-    expect(screen.getByRole('columnheader', { name: '来源' })).toBeTruthy();
-    expect(screen.getByRole('columnheader', { name: '采集设备' })).toBeTruthy();
-    expect(screen.getByRole('columnheader', { name: '观察接口与路径' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: '最近采集时间' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: '网络位置' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: '采集来源' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'IPAM 台账' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: '接入接口 / 路径' })).toBeTruthy();
     const endpointRow = screen.getByRole('row', { name: /10\.10\.1\.21/ });
-    expect(endpointRow.querySelectorAll('td')).toHaveLength(13);
-    expect(within(endpointRow).getByText('ARP', { exact: true })).toBeTruthy();
+    expect(endpointRow.querySelectorAll('td')).toHaveLength(9);
+    expect(within(endpointRow).getByText('ARP 表', { exact: true })).toBeTruthy();
     expect(within(endpointRow).getByText('WH-DC-01')).toBeTruthy();
     expect(within(endpointRow).getByText('PROD')).toBeTruthy();
     expect(within(endpointRow).getByText('SW-01')).toBeTruthy();
-    expect(endpointRow.querySelectorAll('td')[10].textContent).toBe('');
-    expect(endpointRow.querySelectorAll('td')[10].hasAttribute('title')).toBe(false);
+    expect(within(endpointRow).getByText('VLAN 20')).toBeTruthy();
+    expect(endpointRow.querySelectorAll('td')[6].textContent).toBe('');
+    expect(endpointRow.querySelectorAll('td')[6].hasAttribute('title')).toBe(false);
     expect(screen.queryByText(/ARP 来源/)).toBeNull();
     expect(screen.queryByText('—')).toBeNull();
     expect(screen.queryByText('未知')).toBeNull();
@@ -67,11 +67,7 @@ describe('DiscoveredEndpointsTab', () => {
     expect(screen.getByRole('button', { name: '刷新' })).toBeTruthy();
     expect(container.querySelector('svg.lucide-terminal')).not.toBeNull();
     expect(screen.queryByText('类型未知')).toBeNull();
-    expect(screen.getByText('ARP/ND 观察条数')).toBeTruthy();
-    const summary = screen.getByRole('region', { name: '发现摘要' });
-    expect(within(summary).getByText('不同 IP（当前范围）')).toBeTruthy();
-    expect(within(summary).getByText('接入口主机候选')).toBeTruthy();
-    expect(within(summary).getByText('仅 MAC 观察')).toBeTruthy();
+    expect(screen.queryByRole('region', { name: '发现摘要' })).toBeNull();
     expect(screen.queryByText('源采集最近成功')).toBeNull();
     expect(screen.getByText('更多筛选').closest('details')?.open).toBe(false);
     expect(screen.queryByRole('option', { name: '历史观察' })).toBeNull();
@@ -85,7 +81,7 @@ describe('DiscoveredEndpointsTab', () => {
     expect(screen.queryByText(/run-17/)).toBeNull();
     expect(screen.getByRole('columnheader', { name: /^IP$/ })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: /^MAC$/ })).toBeTruthy();
-    expect(within(screen.getByRole('dialog')).getByText('观察接口')).toBeTruthy();
+    expect(within(screen.getByRole('dialog')).getByText('接入接口')).toBeTruthy();
     expect(fetchMock.mock.calls.some(([input]) => String(input) === '/api/ipam/endpoints/obs-1')).toBe(true);
   });
 
@@ -117,8 +113,8 @@ describe('DiscoveredEndpointsTab', () => {
 
     const csv = await blobs[1].text();
     const [header, row] = csv.replace(/^\uFEFF/, '').split('\r\n');
-    expect(header).toBe('"IP","MAC","判定","判定依据","来源","IPAM 主机名","IPAM 登记","站点","VRF","VLAN","采集设备","观察接口与路径","观察时间","证据状态"');
-    expect(row).toContain('"待核主机候选","尚无唯一的当前接入口证据","ARP","","未登记","WH-DC-01","PROD","20","SW-01",""');
+    expect(header).toBe('"IP","MAC","终端类型","说明","来源","IPAM 主机名","IPAM 登记","站点","VRF","VLAN","采集设备","接入接口 / 路径","采集时间","采集情况"');
+    expect(row).toContain('"接入口待定位","尚未定位到唯一接入口","ARP 表","","未登记","WH-DC-01","PROD","20","SW-01",""');
   });
 
   it('shows missing source as pending and leaves other missing values blank', async () => {
@@ -150,10 +146,10 @@ describe('DiscoveredEndpointsTab', () => {
 
     const endpointRow = (await screen.findByRole('row', { name: /未登记/ }));
     const cells = endpointRow.querySelectorAll('td');
-    expect(cells).toHaveLength(13);
-    for (const index of [0, 1, 4, 6, 7, 8, 9, 10, 11]) expect(cells[index].textContent).toBe('');
-    expect(cells[2].textContent).toContain('待核主机候选');
-    expect(cells[3].textContent).toBe('来源待确认');
+    expect(cells).toHaveLength(9);
+    for (const index of [0, 1, 3, 6, 7]) expect(cells[index].textContent).toBe('');
+    expect(cells[2].textContent).toContain('接入口待定位');
+    expect(cells[4].textContent).toBe('来源待确认');
     expect(cells[5].textContent).toContain('未登记');
     expect(endpointRow.textContent).not.toContain('—');
     expect(endpointRow.textContent).not.toContain('未知');
@@ -170,17 +166,17 @@ describe('DiscoveredEndpointsTab', () => {
     expect(detailValues).toEqual([
       { label: 'IP', value: '' },
       { label: 'MAC', value: '' },
-      { label: '主机判定', value: '待核主机候选' },
-      { label: '判定依据', value: '尚无唯一的当前接入口证据' },
+      { label: '终端类型', value: '接入口待定位' },
+      { label: '说明', value: '尚未定位到唯一接入口' },
       { label: 'VLAN', value: '' },
       { label: '站点', value: '' },
       { label: '来源设备', value: '' },
-      { label: '观察设备', value: '' },
-      { label: '观察接口', value: '' },
-      { label: '路径判定', value: '' },
-      { label: '范围状态', value: 'resolved' },
+      { label: '关联交换机', value: '' },
+      { label: '接入接口', value: '' },
+      { label: '接入路径', value: '' },
+      { label: '网络归属', value: '已确认' },
       { label: '来源', value: '来源待确认' },
-      { label: '上一次时间', value: '' },
+      { label: '最近采集时间', value: '' },
     ]);
   });
 
@@ -189,9 +185,9 @@ describe('DiscoveredEndpointsTab', () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => { resolveList = resolve; })));
     renderPage();
 
-    expect(await screen.findByText('正在加载已有发现记录…')).toBeTruthy();
+    expect(await screen.findByText('正在加载采集记录…')).toBeTruthy();
     resolveList?.(response({ items: [], total: 0, summary: {}, sites: [], vrfs: [], devices: [] }));
-    expect(await screen.findByText('当前筛选没有发现记录。清除筛选或更换条件后重试。')).toBeTruthy();
+    expect(await screen.findByText('没有符合条件的记录，请调整筛选或重置。')).toBeTruthy();
   });
 
   it('shows a retryable error when the endpoint API fails', async () => {
@@ -211,7 +207,7 @@ describe('DiscoveredEndpointsTab', () => {
     expect(disclosure?.open).toBe(false);
     fireEvent.click(screen.getByText('更多筛选'));
     expect(disclosure?.open).toBe(true);
-    fireEvent.change(screen.getByRole('combobox', { name: '证据状态筛选' }), { target: { value: 'conflict' } });
+    fireEvent.change(screen.getByRole('combobox', { name: '采集情况筛选' }), { target: { value: 'conflict' } });
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('evidence_status=conflict'))).toBe(true));
   });
 
@@ -232,9 +228,9 @@ describe('DiscoveredEndpointsTab', () => {
       : response({})));
     renderPage();
     expect(await screen.findByText('10.10.1.21')).toBeTruthy();
-    const vrfCell = screen.getByRole('row', { name: /10\.10\.1\.21/ }).querySelectorAll('td')[7];
-    expect(vrfCell.textContent).toBe('');
-    expect(vrfCell.hasAttribute('title')).toBe(false);
+    const networkCell = screen.getByRole('row', { name: /10\.10\.1\.21/ }).querySelectorAll('td')[3];
+    expect(networkCell.textContent).toContain('WH-DC-01');
+    expect(networkCell.textContent).not.toContain('全局/默认');
 
     fireEvent.click(screen.getByRole('button', { name: '导出表格' }));
     await screen.findByText('已准备 1 条记录，请选择格式下载。');
@@ -247,9 +243,9 @@ describe('DiscoveredEndpointsTab', () => {
   it('loads MAC-only observations from the current FDB scope', async () => {
     renderPage();
     await screen.findByText('10.10.1.21');
-    const macOnlyOption = screen.getByRole('option', { name: '仅 MAC 观察（不登记 IP）' }) as HTMLOptionElement;
+    const macOnlyOption = screen.getByRole('option', { name: '仅有 MAC' }) as HTMLOptionElement;
     expect(macOnlyOption.disabled).toBe(false);
-    fireEvent.change(screen.getByRole('combobox', { name: '记录类型筛选' }), { target: { value: 'mac' } });
+    fireEvent.change(screen.getByRole('combobox', { name: '查看内容筛选' }), { target: { value: 'mac' } });
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('/api/ipam/endpoints?kind=mac&network_scope=all'))).toBe(true));
   });
 
@@ -285,7 +281,7 @@ describe('DiscoveredEndpointsTab', () => {
         return response({
           items: [pendingScopeItem], total: 1, page: 1, page_size: 20, has_more: false,
           summary: { discovered_ip_count: 1, mac_only_count: 0, registered_count: 0, unregistered_count: 0, scope_pending_count: 1 },
-          sites: [{ site_id: 'site-1', site_name: 'WH-DC-01' }], vrfs: [{ id: '__unknown__', name: '范围待确认' }],
+          sites: [{ site_id: 'site-1', site_name: 'WH-DC-01' }], vrfs: [{ id: '__unknown__', name: '所属网络待确认' }],
           devices: [{ device_id: 'switch-1', device_name: 'SW-01' }],
         });
       }
@@ -301,17 +297,12 @@ describe('DiscoveredEndpointsTab', () => {
 
     renderPage();
     expect(await screen.findByText('172.16.5.10')).toBeTruthy();
-    const defaultPendingSummaryLabel = within(screen.getByRole('region', { name: '发现摘要' })).getByText('范围待确认');
-    expect(defaultPendingSummaryLabel.parentElement?.textContent).toBe('范围待确认1');
     const pendingRow = screen.getByRole('row', { name: /172\.16\.5\.10/ });
-    expect(within(pendingRow).getByText('范围待确认')).toBeTruthy();
-    expect(pendingRow.querySelectorAll('td')[7].textContent).toBe('');
-    const pendingSummaryLabel = within(screen.getByRole('region', { name: '发现摘要' })).getByText('范围待确认');
-    expect(pendingSummaryLabel.parentElement?.textContent).toBe('范围待确认1');
-    fireEvent.change(screen.getByRole('combobox', { name: '观察范围筛选' }), { target: { value: 'business_vlan' } });
+    expect(within(pendingRow).getByText('网络待确认')).toBeTruthy();
+    fireEvent.change(screen.getByRole('combobox', { name: '网段范围筛选' }), { target: { value: 'business_vlan' } });
     expect(await screen.findByText('10.10.1.21')).toBeTruthy();
-    expect(screen.getByText(/未知或待确认范围的当前记录/)).toBeTruthy();
-    fireEvent.change(screen.getByRole('combobox', { name: '观察范围筛选' }), { target: { value: 'all' } });
+    expect(screen.getByText(/所属网络尚未确认的记录/)).toBeTruthy();
+    fireEvent.change(screen.getByRole('combobox', { name: '网段范围筛选' }), { target: { value: 'all' } });
     expect(await screen.findByText('172.16.5.10')).toBeTruthy();
     const fetchMock = vi.mocked(fetch);
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/ipam/endpoints?kind=ip&network_scope=all'))).toBe(true);
@@ -327,7 +318,7 @@ describe('DiscoveredEndpointsTab', () => {
     })).toBe(true);
     const exportedCsv = await blobs[1].text();
     expect(exportedCsv).toContain('172.16.5.10');
-    expect(exportedCsv).toContain('范围待确认');
+    expect(exportedCsv).toContain('所属网络待确认');
 
     fireEvent.click(within(screen.getByRole('row', { name: /172\.16\.5\.10/ })).getByRole('button', { name: '查看详情' }));
     const detail = await screen.findByRole('dialog', { name: '终端详情' });
@@ -335,10 +326,10 @@ describe('DiscoveredEndpointsTab', () => {
       label: field.querySelector('dt')?.textContent,
       value: field.querySelector('dd')?.textContent,
     }));
-    expect(detailValues).toContainEqual({ label: '当前成功代次', value: '21' });
-    expect(detailValues).toContainEqual({ label: '最近成功代次', value: '21' });
-    expect(detailValues).toContainEqual({ label: '最新尝试代次', value: '21' });
-    expect(detailValues).toContainEqual({ label: '最新采集状态', value: '范围待确认' });
+    expect(detailValues).toContainEqual({ label: '当前数据批次', value: '21' });
+    expect(detailValues).toContainEqual({ label: '上次成功批次', value: '21' });
+    expect(detailValues).toContainEqual({ label: '最近采集批次', value: '21' });
+    expect(detailValues).toContainEqual({ label: '最新采集状态', value: '所属网络待确认' });
     expect(detailValues).toContainEqual({ label: '最近成功时间', value: '2026-11-11 02:33:19' });
   });
 
@@ -396,14 +387,14 @@ describe('DiscoveredEndpointsTab', () => {
     }));
     renderPage();
     await screen.findByText('10.10.1.21');
-    fireEvent.change(screen.getByRole('combobox', { name: '记录类型筛选' }), { target: { value: 'mac' } });
+    fireEvent.change(screen.getByRole('combobox', { name: '查看内容筛选' }), { target: { value: 'mac' } });
 
     expect(await screen.findByText('00:11:22:33:44:99')).toBeTruthy();
     expect(screen.queryByText('10.10.1.21')).toBeNull();
     const fdbRow = screen.getByRole('row', { name: /00:11:22:33:44:99/ });
-    expect(within(fdbRow).getByText('MAC 观察（未创建 IP）')).toBeTruthy();
-    expect(within(fdbRow).getByText('FDB / MAC 观察（不登记 IP）')).toBeTruthy();
-    expect(within(fdbRow).getByText('范围待确认')).toBeTruthy();
+    expect(within(fdbRow).getByText('仅有 MAC，无法登记 IP')).toBeTruthy();
+    expect(within(fdbRow).getByText('MAC 地址表（FDB）')).toBeTruthy();
+    expect(within(fdbRow).getByText('网络待确认')).toBeTruthy();
     expect(within(fdbRow).getByText('路径歧义')).toBeTruthy();
     expect(within(fdbRow).getByText(/聚合成员 · Port-channel1 · 虚拟网关 MAC/)).toBeTruthy();
 
@@ -411,15 +402,15 @@ describe('DiscoveredEndpointsTab', () => {
     await screen.findByText('已准备 1 条记录，请选择格式下载。');
     const csv = await blobs[1].text();
     const [header, row] = csv.replace(/^\uFEFF/, '').split('\r\n');
-    expect(header).toBe('"IP","MAC","判定","判定依据","来源","IPAM 主机名","IPAM 登记","站点","VRF","VLAN","采集设备","观察接口与路径","观察时间","证据状态"');
-    expect(row.startsWith('"","00:11:22:33:44:99","仅 MAC 观察","只有 MAC 观察，没有 IP","FDB / MAC 观察（不登记 IP）"')).toBe(true);
-    expect(row).toContain('"MAC 观察（未创建 IP） 范围待确认"');
+    expect(header).toBe('"IP","MAC","终端类型","说明","来源","IPAM 主机名","IPAM 登记","站点","VRF","VLAN","采集设备","接入接口 / 路径","采集时间","采集情况"');
+    expect(row.startsWith('"","00:11:22:33:44:99","仅有 MAC","未获取到对应 IP","MAC 地址表（FDB）"')).toBe(true);
+    expect(row).toContain('"仅有 MAC，无法登记 IP 所属网络待确认"');
     expect(row).not.toMatch(/"\d{1,3}(?:\.\d{1,3}){3}"/);
 
     fireEvent.click(within(fdbRow).getByRole('button', { name: '查看详情' }));
     const dialog = await screen.findByRole('dialog', { name: '终端详情' });
-    expect(within(dialog).getByText('FDB / MAC 观察（不登记 IP）')).toBeTruthy();
-    expect(within(dialog).getByText('待确认')).toBeTruthy();
+    expect(within(dialog).getByText('MAC 地址表（FDB）')).toBeTruthy();
+    expect(within(dialog).getByText('所属网络待确认')).toBeTruthy();
     expect(within(dialog).getByText(/聚合成员 · Port-channel1 · 虚拟网关 MAC/)).toBeTruthy();
   });
 
@@ -435,10 +426,10 @@ describe('DiscoveredEndpointsTab', () => {
 
     const endpointRow = await screen.findByRole('row', { name: /10\.10\.1\.21/ });
     expect(screen.getByRole('columnheader', { name: 'Source' })).toBeTruthy();
-    expect(within(endpointRow).getByText('IPv6 Neighbor Discovery (ND)')).toBeTruthy();
+    expect(within(endpointRow).getByText('IPv6 neighbor table (ND)')).toBeTruthy();
     fireEvent.click(within(endpointRow).getByRole('button', { name: 'View details' }));
     const dialog = await screen.findByRole('dialog', { name: 'Endpoint details' });
-    expect(within(dialog).getByText('IPv6 Neighbor Discovery (ND)')).toBeTruthy();
+    expect(within(dialog).getByText('IPv6 neighbor table (ND)')).toBeTruthy();
   });
 
   it('builds the source device filter from authorized response metadata', async () => {
@@ -460,10 +451,90 @@ describe('DiscoveredEndpointsTab', () => {
       return Promise.resolve(response({}));
     }));
     renderPage();
-    fireEvent.change(await screen.findByRole('combobox', { name: '记录类型筛选' }), { target: { value: 'all' } });
+    fireEvent.change(await screen.findByRole('combobox', { name: '查看内容筛选' }), { target: { value: 'all' } });
     expect(await screen.findByText('10.10.1.22')).toBeTruthy();
     resolveOld?.(response({ items: [item], total: 1, summary: {}, sites: [], vrfs: [], devices: [] }));
     await waitFor(() => expect(screen.queryByText('10.10.1.21')).toBeNull());
+  });
+
+  it('keeps uncommon filters folded and counts every non-default condition through reset', async () => {
+    renderPage();
+    await screen.findByText('10.10.1.21');
+    const disclosure = screen.getByText('更多筛选').closest('details')!;
+    expect(disclosure.open).toBe(false);
+    expect(screen.getByRole('combobox', { name: '来源设备筛选' }).closest('details')).toBeNull();
+    expect(screen.getByRole('combobox', { name: '查看内容筛选' }).closest('details')).toBe(disclosure);
+    expect(screen.getByRole('combobox', { name: '网段范围筛选' }).closest('details')).toBe(disclosure);
+    fireEvent.click(screen.getByText('更多筛选'));
+    fireEvent.change(screen.getByRole('combobox', { name: '终端类型筛选' }), { target: { value: 'all' } });
+    fireEvent.change(screen.getByRole('combobox', { name: '查看内容筛选' }), { target: { value: 'all' } });
+    fireEvent.change(screen.getByRole('combobox', { name: '网段范围筛选' }), { target: { value: 'business_vlan' } });
+    expect(disclosure.querySelector('summary')?.textContent).toBe('更多筛选3');
+    fireEvent.click(screen.getByRole('button', { name: '重置' }));
+    expect(disclosure.querySelector('summary')?.textContent).toBe('更多筛选');
+    expect((screen.getByRole('combobox', { name: '终端类型筛选' }) as HTMLSelectElement).value).toBe('terminal');
+    expect((screen.getByRole('combobox', { name: '查看内容筛选' }) as HTMLSelectElement).value).toBe('ip');
+    expect((screen.getByRole('combobox', { name: '网段范围筛选' }) as HTMLSelectElement).value).toBe('all');
+  });
+
+  it('switches directly between source devices even after an empty result', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const query = new URL(String(input), 'http://localhost').searchParams;
+      const device = query.get('device_id');
+      return response({
+        items: device === 'switch-1' ? [] : [{ ...item, source_device_id: 'switch-2', source_device_name: 'SW-02' }],
+        total: device === 'switch-1' ? 0 : 1,
+        sites: [{ id: 'site-1', name: 'WH-DC-01' }], vrfs: [], summary: {},
+        devices: [{ id: 'switch-1', name: 'SW-01' }, { id: 'switch-2', name: 'SW-02' }],
+      });
+    }));
+    renderPage();
+    await screen.findByText('10.10.1.21');
+    fireEvent.change(screen.getByRole('combobox', { name: '来源设备筛选' }), { target: { value: 'switch-1' } });
+    await screen.findByText('没有符合条件的记录，请调整筛选或重置。');
+    const deviceSelect = screen.getByRole('combobox', { name: '来源设备筛选' });
+    expect(within(deviceSelect).getByRole('option', { name: 'SW-02' })).toBeTruthy();
+    fireEvent.change(deviceSelect, { target: { value: 'switch-2' } });
+    const row = await screen.findByRole('row', { name: /10\.10\.1\.21/ });
+    expect(within(row).getByText('SW-02')).toBeTruthy();
+    expect((deviceSelect as HTMLSelectElement).value).toBe('switch-2');
+    const requestedDevices = vi.mocked(fetch).mock.calls.map(([input]) => new URL(String(input), 'http://localhost').searchParams.get('device_id'));
+    expect(requestedDevices).toEqual([null, 'switch-1', 'switch-2']);
+  });
+
+  it('filters infrastructure IPs without disturbing site selection', async () => {
+    const records = [
+      item,
+      { ...item, id: 'host-2', ip: '10.10.1.22' },
+      { ...item, id: 'device-1', ip: '10.10.1.1', endpoint_class: 'infrastructure' },
+      { ...item, id: 'device-2', ip: '10.10.1.2', endpoint_class: 'infrastructure' },
+    ];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const query = new URL(String(input), 'http://localhost').searchParams;
+      const rows = query.get('endpoint_class') === 'terminal'
+        ? records.filter(row => row.endpoint_class !== 'infrastructure') : records;
+      return response({
+        items: rows, total: rows.length,
+        summary: { discovered_ip_count: 4, infrastructure_ip_count: 2, candidate_ip_count: 2, scope_pending_count: 0 },
+        sites: [{ id: 'site-1', name: 'WH-DC-01' }], devices: [{ id: 'switch-1', name: 'SW-01' }], vrfs: [],
+      });
+    }));
+    renderPage();
+    await screen.findByText('10.10.1.21');
+    expect(screen.queryByRole('region', { name: '发现摘要' })).toBeNull();
+    expect(screen.queryByRole('row', { name: /10\.10\.1\.1\b/ })).toBeNull();
+    fireEvent.change(screen.getByRole('combobox', { name: '站点筛选' }), { target: { value: 'site-1' } });
+    await screen.findByText('10.10.1.21');
+    expect(screen.queryByRole('button', { name: '查看全部 IP 记录' })).toBeNull();
+    expect((screen.getByRole('combobox', { name: '站点筛选' }) as HTMLSelectElement).value).toBe('site-1');
+    fireEvent.click(screen.getByText('更多筛选'));
+    fireEvent.change(screen.getByRole('combobox', { name: '终端类型筛选' }), { target: { value: 'all' } });
+    await screen.findByRole('row', { name: /10\.10\.1\.1\b/ });
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => {
+      const query = new URL(String(input), 'http://localhost').searchParams;
+      return query.get('site_id') === 'site-1' && query.get('endpoint_class') === 'all';
+    })).toBe(true);
+    expect(screen.queryByText('“所属网络待确认”在哪里处理？')).toBeNull();
   });
 
   it('shows a clear permission error instead of an empty success state', async () => {
@@ -472,6 +543,6 @@ describe('DiscoveredEndpointsTab', () => {
       : response({ items: [] })));
     renderPage();
     expect((await screen.findByRole('alert')).textContent).toContain('当前账号没有权限查看发现终端');
-    expect(screen.queryByText('当前筛选没有发现记录。清除筛选或更换条件后重试。')).toBeNull();
+    expect(screen.queryByText('没有符合条件的记录，请调整筛选或重置。')).toBeNull();
   });
 });

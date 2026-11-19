@@ -57,16 +57,20 @@ import {
   ASSET_INFO_SHEET_RE,
   MANAGEMENT_ENTRY_SHEET_RE,
   REMOTE_DESKTOP_PROFILE_SHEET_RE,
+  TELEMETRY_SUBSCRIPTION_SHEET_RE,
   assetTypeForSheetName,
   normalizeImportHeader,
   mergeManagementMethods,
   mergeRemoteDesktopProfiles,
+  mergeTelemetrySubscriptions,
   parseManagementMethodSheet,
   parseRemoteDesktopProfileSheet,
+  parseTelemetrySubscriptionSheet,
   formatAssetImportError,
   getMissingSnmpCredentialRows,
   type ManagementMethodImportRow,
   type RemoteDesktopProfileImportRow,
+  type TelemetrySubscriptionImportRow,
 } from './importUtils';
 
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
@@ -884,7 +888,9 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       return;
     }
     const mgmtIp = String(form.management_ip || '').trim();
-    if (!editingAsset && mgmtIp && !isValidIpAddress(mgmtIp)) {
+    const isProductionEdit = Boolean(editingAsset)
+      && String(editingAsset?.lifecycle_status || '').trim().toLowerCase() === 'production';
+    if ((!editingAsset || isProductionEdit) && mgmtIp && !isValidIpAddress(mgmtIp)) {
       setModalError(zh ? `管理IP "${mgmtIp}" 格式不正确，请输入有效的 IPv4 或 IPv6 地址` : `Management IP "${mgmtIp}" is not a valid IP address`);
       return;
     }
@@ -1429,12 +1435,38 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       const missingSnmpDetails = missingSnmpRows.map(item => zh
         ? `第 ${item.row} 条（${item.identity}）：未填写 SNMP 社区名或 SNMPv2/v3 Profile，主机名和型号无法自动同步。请补充其中一项；SSH 登录凭据不能代替 SNMP 凭据。`
         : `Item ${item.row} (${item.identity}): no SNMP Community or SNMPv2/v3 profile was supplied, so hostname and model cannot sync automatically. Configure either one; SSH credentials do not replace SNMP credentials.`);
-      const importDetails = [...failedDetails, ...missingSnmpDetails, ...platformBindingDetails, ...serialRefreshDetails, ...serialSyncSkippedDetails, ...skippedDetails].slice(0, 8);
+      const importDetails = [...failedDetails, ...missingSnmpDetails, ...platformBindingDetails, ...serialRefreshDetails, ...serialSyncSkippedDetails, ...skippedDetails];
+      const telemetrySummary = res.telemetry_setup && typeof res.telemetry_setup === 'object'
+        ? res.telemetry_setup as Record<string, unknown>
+        : {};
+      const telemetryResults = Array.isArray(telemetrySummary.items)
+        ? telemetrySummary.items as Array<Record<string, unknown>>
+        : [];
+      const telemetryFailed = telemetryResults.filter((item) => item.status === 'failed' || item.status === 'partial');
+      const telemetryPending = Number(telemetrySummary.pending || 0);
+      telemetryFailed.slice(0, 4).forEach((item) => {
+        const identity = String(item.asset_tag || item.device_id || '');
+        importDetails.push(zh
+          ? `第 ${Number(item.row || '?')} 行${identity ? `（${identity}）` : ''}：Telemetry 配置登记失败：${String(item.message || '请检查采集器、证书和模板引用')}`
+          : `Row ${Number(item.row || '?')}${identity ? ` (${identity})` : ''}: Telemetry setup failed: ${String(item.message || 'Check collector, TLS and template references')}`);
+      });
+      if (telemetryPending > 0) {
+        importDetails.push(zh
+          ? `Telemetry 配置正在后台登记 ${telemetryPending} 台；订阅保持停用，需人工配置设备侧协议后再启用。`
+          : `Telemetry setup is registering ${telemetryPending} device(s) in the background; subscriptions stay disabled until device-side configuration is completed.`);
+      }
       const missingSnmpSummary = missingSnmpRows.length > 0
         ? (zh
           ? `；${missingSnmpRows.length} 台设备缺少 SNMP Community/Profile，无法自动同步主机名和型号`
           : `; ${missingSnmpRows.length} device(s) lack SNMP Community/Profile, so hostname and model cannot sync automatically`)
         : '';
+      const telemetrySetupSummary = telemetryPending > 0
+        ? (zh ? `；Telemetry 正在后台登记 ${telemetryPending} 台` : `; Telemetry setup pending for ${telemetryPending} device(s)`)
+        : telemetryResults.length > 0
+          ? (zh
+            ? `；Telemetry 已登记 ${Number(telemetrySummary.registered || 0)} 台，失败 ${Number(telemetrySummary.failed || 0)} 台`
+            : `; Telemetry registered ${Number(telemetrySummary.registered || 0)}, failed ${Number(telemetrySummary.failed || 0)}`)
+          : '';
       const enrichmentPending = Boolean(res.enrichment_pending);
       const pendingEnrichmentSummary = serialRefreshRows.length > 0
         ? (zh
@@ -1450,11 +1482,11 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
             : '; device names, SNMP identity, and platform binding will continue in the background; refresh Network Devices later to view them')
           : '';
       setFeedbackMsg({
-        type: skippedCount > 0 || failedCount > 0 || missingSnmpRows.length > 0 || platformBindingNeedsAction ? 'warning' : 'success',
+        type: skippedCount > 0 || failedCount > 0 || missingSnmpRows.length > 0 || platformBindingNeedsAction || telemetryFailed.length > 0 ? 'warning' : 'success',
         text: zh
-          ? `导入完成：新增 ${res.created} 条，跳过 ${skippedCount} 条，失败 ${failedCount} 条${missingSnmpSummary}${pendingEnrichmentSummary}`
-          : `Import done: ${res.created} created, ${skippedCount} skipped, ${failedCount} failed${missingSnmpSummary}${pendingEnrichmentSummary}`,
-        details: importDetails.length > 0 ? importDetails : undefined,
+          ? `导入完成：新增 ${res.created} 条，跳过 ${skippedCount} 条，失败 ${failedCount} 条${missingSnmpSummary}${telemetrySetupSummary}${pendingEnrichmentSummary}`
+          : `Import done: ${res.created} created, ${skippedCount} skipped, ${failedCount} failed${missingSnmpSummary}${telemetrySetupSummary}${pendingEnrichmentSummary}`,
+        details: importDetails.length > 0 ? importDetails.slice(0, 8) : undefined,
       });
     } catch {
       setFeedbackMsg({ type: 'error', text: zh ? '连接失败，导入未完成' : 'Connection failed, import incomplete' });
@@ -1614,6 +1646,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         const managementMethodErrors: string[] = [];
         const remoteDesktopProfiles: RemoteDesktopProfileImportRow[] = [];
         const remoteDesktopProfileErrors: string[] = [];
+        const telemetrySubscriptions: TelemetrySubscriptionImportRow[] = [];
+        const telemetrySubscriptionErrors: string[] = [];
         const templateMismatchRows: string[] = [];
         const snmpPreflightErrors: string[] = [];
         const sshProfilePreflightErrors: string[] = [];
@@ -1630,6 +1664,12 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
             const parsed = parseRemoteDesktopProfileSheet(ws);
             remoteDesktopProfiles.push(...parsed.rows);
             remoteDesktopProfileErrors.push(...parsed.errors);
+            continue;
+          }
+          if (TELEMETRY_SUBSCRIPTION_SHEET_RE.test(name.trim())) {
+            const parsed = parseTelemetrySubscriptionSheet(ws);
+            telemetrySubscriptions.push(...parsed.rows);
+            telemetrySubscriptionErrors.push(...parsed.errors);
             continue;
           }
           const raw = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: '' });
@@ -1749,16 +1789,19 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
           requireEntryForAllAssets: hasAssetSheet,
         });
         const remoteDesktopMerged = mergeRemoteDesktopProfiles(merged.assets, remoteDesktopProfiles);
+        const telemetryMerged = mergeTelemetrySubscriptions(remoteDesktopMerged.assets, telemetrySubscriptions);
         const methodErrors = [
           ...managementMethodErrors,
           ...merged.errors,
           ...remoteDesktopProfileErrors,
           ...remoteDesktopMerged.errors,
+          ...telemetrySubscriptionErrors,
+          ...telemetryMerged.errors,
         ];
         if (methodErrors.length > 0) {
           setFeedbackMsg({
             type: 'error',
-            text: zh ? '管理入口或远程桌面配置存在错误，请检查' : 'Management entry or remote desktop configuration has errors',
+            text: zh ? '导入工作表配置存在错误，请检查管理入口、远程桌面或 Telemetry 采集工作表' : 'Import worksheet configuration has errors; check the management entry, remote desktop, or Telemetry collection sheet',
             details: methodErrors.slice(0, 8),
           });
           return;
@@ -1790,11 +1833,11 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
 
         const missingList = Object.values(missingMap);
         if (missingList.length > 0) {
-          setPendingImportPayload(mapped);
+          setPendingImportPayload(telemetryMerged.assets);
           setMissingRacks(missingList);
           setShowValidationModal(true);
         } else {
-          await doImport(mapped);
+          await doImport(telemetryMerged.assets);
         }
       } catch { setFeedbackMsg({ type: 'error', text: zh ? '文件解析失败' : 'Failed to parse' }); }
     };

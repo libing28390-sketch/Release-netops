@@ -144,6 +144,7 @@ export const usePageTitle = ({
     if (activeTab === 'monitoring-plans') return language === 'zh' ? '采集计划' : 'Collection Plans';
     if (activeTab === 'monitoring-modules') return language === 'zh' ? '模块目录' : 'Module Catalog';
     if (activeTab === 'monitoring-collectors') return language === 'zh' ? '采集器管理' : 'Collectors';
+    if (activeTab === 'telemetry-management') return language === 'zh' ? 'Telemetry 采集' : 'Telemetry Collection';
     if (activeTab === 'monitoring-health') return language === 'zh' ? '采集健康' : 'Collection Health';
     if (activeTab === 'access') return language === 'zh' ? '操作工作台' : 'Operation Workspace';
     if (activeTab === 'access-favorites') return language === 'zh' ? '我的收藏' : 'My Favorites';

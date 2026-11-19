@@ -35,6 +35,7 @@ from api.config_templates import router as config_templates_router
 from api.automation import router as automation_router
 from api.users import router as users_router
 from api.topology import router as topology_router
+from api.topology_icons import router as topology_icons_router
 from api.configs import router as configs_router, run_scheduled_backup, _get_schedule_from_db, reschedule_backup
 from api.config_backup_policies import router as config_backup_policies_router
 from api.playbooks import router as playbooks_router
@@ -45,6 +46,7 @@ from services.device_health_service import record_device_health_snapshot
 from api.notifications import router as notifications_router
 from api.monitoring import router as monitoring_router
 from api.monitoring_v1 import router as monitoring_v1_router
+from api.telemetry import router as telemetry_router
 from api.monitoring_storage import router as monitoring_storage_router
 from api.device_health import router as device_health_router
 from api.alerts import router as alerts_router
@@ -172,6 +174,13 @@ async def lifespan(app: FastAPI):
 
     # Initialize Database once
     init_db()
+    # The separate gRPC receiver uses this random capability only to publish
+    # batched health into PostgreSQL. It cannot change collection config.
+    try:
+        from services.telemetry_config_service import ensure_receiver_status_token
+        ensure_receiver_status_token()
+    except OSError:
+        logger.warning("Telemetry receiver status token could not be initialized")
     load_persisted_security_policy()
     try:
         seed_data()
@@ -855,9 +864,11 @@ app.include_router(config_search_router,  prefix="/api")
 app.include_router(config_diff_analysis_router, prefix="/api")
 app.include_router(monitoring_router,     prefix="/api")
 app.include_router(monitoring_v1_router,  prefix="/api")
+app.include_router(telemetry_router, prefix="/api")
 app.include_router(monitoring_storage_router, prefix="/api")
 app.include_router(alerts_router,         prefix="/api")
 app.include_router(topology_router,       prefix="/api")
+app.include_router(topology_icons_router, prefix="/api")
 app.include_router(ipam_router,           prefix="/api")
 app.include_router(capacity_router,       prefix="/api")
 app.include_router(interfaces_router,     prefix="/api")
