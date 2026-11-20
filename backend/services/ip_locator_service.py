@@ -3786,6 +3786,51 @@ def _get_ip_locator_context(
                         'route_interface': gw_iface or connected_hop.get('interface') or '',
                         'route_last_updated': connected_hop.get('collected_at') or '',
                     })
+                if not context['l3'].get('gateway') and gw_dev_id:
+                    gw_iface_norm = normalize_interface_name(gw_iface).lower() if gw_iface else ''
+                    try:
+                        gw_ip_candidates = list(conn.execute(
+                            '''SELECT interface_name, ip_address, ip_prefix_length
+                               FROM interfaces
+                               WHERE device_id = ?
+                                 AND ip_address IS NOT NULL AND ip_address != '' ''',
+                            (gw_dev_id,),
+                        ).fetchall())
+                        try:
+                            gw_ip_candidates.extend(conn.execute(
+                                '''SELECT i.interface_name, i.ip_address, i.ip_prefix_length
+                                   FROM cmdb_device_interface_observations i
+                                   JOIN cmdb_collection_snapshots s
+                                     ON s.device_id = i.device_id
+                                    AND s.domain = 'interface_inventory'
+                                    AND s.successful_generation = i.generation
+                                   WHERE i.device_id = ?
+                                     AND i.ip_address IS NOT NULL AND i.ip_address != '' ''',
+                                (gw_dev_id,),
+                            ).fetchall())
+                        except Exception:
+                            pass
+                        matched_gw_ip = ''
+                        for cand in gw_ip_candidates:
+                            cand_ip = str(cand['ip_address'] or '').strip()
+                            if not cand_ip:
+                                continue
+                            cand_norm = normalize_interface_name(str(cand['interface_name'] or '')).lower()
+                            if gw_iface_norm and cand_norm == gw_iface_norm:
+                                matched_gw_ip = cand_ip
+                                break
+                            cand_plen = cand['ip_prefix_length']
+                            if cand_plen is not None:
+                                try:
+                                    cand_net = ipaddress.ip_network(f'{cand_ip}/{int(cand_plen)}', strict=False)
+                                    if cand_net.version == ip_obj.version and ip_obj in cand_net:
+                                        matched_gw_ip = cand_ip
+                                except (ValueError, TypeError):
+                                    pass
+                        if matched_gw_ip:
+                            context['l3']['gateway'] = matched_gw_ip
+                    except Exception:
+                        pass
 
             best_route = _select_best_route(
                 route_rows,
