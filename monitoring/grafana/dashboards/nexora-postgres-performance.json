@@ -6,7 +6,92 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "全网总览",
+      "tooltip": "切换到 全网总览",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-overview/nexora-network-overview"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "单设备详情",
+      "tooltip": "切换到 单设备详情",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-device/nexora-network-device"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "接口全景",
+      "tooltip": "切换到 接口全景",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-interface/nexora-network-interface"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "无线专网",
+      "tooltip": "切换到 无线专网",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-wireless/nexora-network-wireless"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "出口质量",
+      "tooltip": "切换到 出口质量",
+      "type": "link",
+      "url": "/grafana/d/nexora-outbound-probe-quality/nexora-outbound-probe-quality"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "采集健康",
+      "tooltip": "切换到 采集健康",
+      "type": "link",
+      "url": "/grafana/d/nexora-monitoring-health/nexora-monitoring-health"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": true,
+      "title": "返回 Nexora 监控",
+      "tooltip": "在新标签页打开 Nexora 网络监控页面",
+      "type": "link",
+      "url": "/monitor/network"
+    }
+  ],
   "panels": [
     {
       "id": 900,
@@ -98,7 +183,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -109,7 +194,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -197,7 +286,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -208,7 +297,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -275,7 +368,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -286,7 +379,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -353,7 +450,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -364,7 +461,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -431,7 +532,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -442,7 +543,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -509,7 +614,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -520,7 +625,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -587,7 +696,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -598,7 +707,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -618,7 +731,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 10
+        "y": 9
       },
       "panels": []
     },
@@ -634,7 +747,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 11
+        "y": 10
       },
       "fieldConfig": {
         "defaults": {
@@ -645,10 +758,10 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 10,
-            "gradientMode": "none",
+            "fillOpacity": 18,
+            "gradientMode": "opacity",
             "showPoints": "never"
           }
         },
@@ -705,7 +818,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 11
+        "y": 10
       },
       "fieldConfig": {
         "defaults": {
@@ -716,10 +829,10 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 10,
-            "gradientMode": "none",
+            "fillOpacity": 18,
+            "gradientMode": "opacity",
             "showPoints": "never"
           }
         },
@@ -773,7 +886,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 20
+        "y": 18
       },
       "panels": []
     },
@@ -789,7 +902,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 21
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -859,7 +972,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 21
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -934,29 +1047,30 @@
       "id": 903,
       "title": "统计重置说明",
       "type": "row",
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 30
+        "y": 27
       },
-      "panels": []
-    },
-    {
-      "id": 12,
-      "title": "pg_stat_statements 计数器说明",
-      "type": "text",
-      "gridPos": {
-        "h": 4,
-        "w": 24,
-        "x": 0,
-        "y": 31
-      },
-      "options": {
-        "mode": "markdown",
-        "content": "面板使用 `rate()` 计算 5 分钟速率，Prometheus 会处理可观测到的计数器下降。\n\n执行 `pg_stat_statements_reset()` 等统计重置会重置累计值；postgres_exporter v0.20.1 的 stat_statements 指标不包含该扩展的重置时间，因此本页无法显示具体重置时点。"
-      }
+      "panels": [
+        {
+          "id": 12,
+          "title": "pg_stat_statements 计数器说明",
+          "type": "text",
+          "gridPos": {
+            "h": 4,
+            "w": 24,
+            "x": 0,
+            "y": 1
+          },
+          "options": {
+            "mode": "markdown",
+            "content": "面板使用 `rate()` 计算 5 分钟速率，Prometheus 会处理可观测到的计数器下降。\n\n执行 `pg_stat_statements_reset()` 等统计重置会重置累计值；postgres_exporter v0.20.1 的 stat_statements 指标不包含该扩展的重置时间，因此本页无法显示具体重置时点。"
+          }
+        }
+      ]
     }
   ],
   "refresh": "30s",
@@ -1027,5 +1141,5 @@
   "title": "13 PostgreSQL 数据库性能（PostgreSQL Database Performance）",
   "description": "展示 postgres_exporter 的 pg_stat_statements counters 与数据库级 shared buffer 命中率。Top SQL 按 Query ID 识别，不使用或展示 SQL 文本。",
   "uid": "nexora-postgres-performance",
-  "version": 30
+  "version": 33
 }

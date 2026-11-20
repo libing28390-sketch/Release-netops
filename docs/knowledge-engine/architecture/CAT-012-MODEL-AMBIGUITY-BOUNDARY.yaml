@@ -1,0 +1,51 @@
+task_id: CAT-012
+priority: P0
+owner: NET
+milestone: M2
+status: frozen_ambiguity_policy
+depends_on: [CAT-005, CAT-006, CAT-007, CAT-008, CAT-010, CAT-011]
+
+input_contract:
+  resolution_outcomes: [unique, ambiguous, candidates, unknown]
+  candidate_context_required: [vendor_id, family_code, series_code, product_model_id]
+  missing_context: generic_scope_and_clarification
+  model_id_parsing_for_identity: forbidden
+
+safe_knowledge_boundary:
+  unique_model:
+    scope: model
+    clarification: none
+    safe_kinds: [vendor, product_family, product_series, product_model]
+  same_vendor_family_series_multiple_models:
+    scope: series
+    clarification_fields: [product_model]
+    safe_kinds: [vendor, product_family, product_series, series_capabilities]
+    model_specific_and_platform_specific: forbidden
+  same_vendor_family_multiple_series:
+    scope: family
+    clarification_fields: [product_series, product_model]
+  same_vendor_multiple_families:
+    scope: vendor
+    clarification_fields: [product_family, product_series, product_model]
+  cross_vendor_or_unknown:
+    scope: generic
+    clarification_fields: [vendor, product_family, product_series, product_model]
+    catalog_specific_knowledge: forbidden
+
+security:
+  driver_selection_allowed: false
+  credential_selection_allowed: false
+  write_command_generation_allowed: false
+  platform_specific_knowledge_requires_unique_model: true
+  no_vendor_guess_from_alias: true
+
+audit:
+  required_fields: [resolution_outcome, knowledge_scope, clarification_required, clarification_fields, rationale]
+  stable_rationale_codes: true
+
+persistence:
+  production_ddl: none_in_CAT-012
+
+rollback:
+  runtime: disable_CAT012_policy_and_keep_CAT011_clarification_response
+  data: preserve_v1_metadata_and_resolution_trace

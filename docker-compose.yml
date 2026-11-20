@@ -175,9 +175,13 @@ services:
       - ALERT_NOTIFICATION_BROKER_PASSWORD=
       - TEMPLATES_CACHE_TTL_SECONDS=${TEMPLATES_CACHE_TTL_SECONDS:-2}
       - SCHEDULER_MISFIRE_GRACE_SECONDS=${SCHEDULER_MISFIRE_GRACE_SECONDS:-30}
-      # Keep one worker by default because the lifespan-owned telemetry loops
-      # must run once per deployment, not once per Uvicorn worker process.
+      # Keep one worker + embedded scheduler by default for single-container
+      # simplicity. For high-concurrency production rollouts, enable the
+      # `split-scheduler` profile with RUN_SCHEDULER=0 and WORKERS=2..4 on the
+      # web service while `netops-scheduler` runs RUN_SCHEDULER=1 exclusively.
       - WORKERS=${WORKERS:-1}
+      - RUN_SCHEDULER=${RUN_SCHEDULER:-1}
+      - SESSION_CACHE_TTL_SECONDS=${SESSION_CACHE_TTL_SECONDS:-15}
       # LibreNMS secrets are sourced from this shared .env file for the
       # optional runtime services below. Explicitly clear them in the Nexora
       # container so the broad env_file contract cannot expose them to the
@@ -216,6 +220,56 @@ services:
       timeout: 5s
       retries: 3
       start_period: 120s
+
+  # Optional dedicated background scheduler container for high-concurrency
+  # deployments: start with `--profile split-scheduler` and set RUN_SCHEDULER=0
+  # + WORKERS=2..4 on the `netops` web container so periodic polls never compete
+  # with browser API latency.
+  netops-scheduler:
+    image: nexora-netops
+    container_name: nexora-scheduler
+    profiles: ["split-scheduler"]
+    env_file:
+      - .env
+    init: true
+    mem_limit: ${NETOPS_SCHEDULER_MEM_LIMIT:-1536m}
+    cpus: "${NETOPS_SCHEDULER_CPUS:-1.5}"
+    pids_limit: 256
+    stop_grace_period: 30s
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - NODE_ENV=production
+      - ENVIRONMENT=production
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set to a non-default secret}@db:5432/${POSTGRES_DB:-netops}
+      - MONITORING_METRIC_BACKEND=${MONITORING_METRIC_BACKEND:-victoriametrics}
+      - VICTORIAMETRICS_URL=${VICTORIAMETRICS_URL:-http://victoriametrics:8428}
+      - VICTORIAMETRICS_ALLOWED_HOSTS=${VICTORIAMETRICS_ALLOWED_HOSTS:-victoriametrics}
+      - MONITORING_VM_RUNTIME_DIR=/app/data/vm-runtime
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set to a non-default secret}
+      - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY must be set to a non-default secret}
+      - WORKERS=1
+      - RUN_SCHEDULER=1
+      - PORT=8004
+    volumes:
+      - nexora-data:/app/data
+      - nexora-telemetry-status:/app/data/telemetry-control
+      - nexora-vm-runtime:/app/data/vm-runtime
+      - nexora-remote-desktop-recordings:/app/data/remote_desktop_recordings
+      - nexora-backup:/app/backup
+      - nexora-monitoring-artifacts:/app/artifacts/monitoring
+    depends_on:
+      db:
+        condition: service_healthy
+      vm-runtime-volume-init:
+        condition: service_completed_successfully
+    networks:
+      - default
+      - librenms_control
+      - remote_desktop_api
+      - telemetry_control
+    restart: unless-stopped
+    logging: *container-logging
 
   alert-redis:
     image: redis:7.4.2-alpine
@@ -460,7 +514,7 @@ services:
   snmp-exporter:
     image: prom/snmp-exporter:v0.26.0
     container_name: nexora-snmp-exporter
-    mem_limit: ${SNMP_EXPORTER_MEM_LIMIT:-128m}
+    mem_limit: ${SNMP_EXPORTER_MEM_LIMIT:-256m}
     cpus: "${SNMP_EXPORTER_CPUS:-1.0}"
     pids_limit: 128
     environment:
@@ -516,7 +570,7 @@ services:
   vmagent:
     image: victoriametrics/vmagent:v1.103.0
     container_name: nexora-vmagent
-    mem_limit: ${VMAGENT_MEM_LIMIT:-192m}
+    mem_limit: ${VMAGENT_MEM_LIMIT:-256m}
     cpus: "${VMAGENT_CPUS:-1.0}"
     pids_limit: 128
     environment:
@@ -743,12 +797,17 @@ services:
   grafana:
     image: grafana/grafana:12.1.0
     container_name: nexora-grafana
-    mem_limit: ${GRAFANA_MEM_LIMIT:-384m}
+    mem_limit: ${GRAFANA_MEM_LIMIT:-512m}
     cpus: "${GRAFANA_CPUS:-1.0}"
     pids_limit: 256
     environment:
       - TZ=${TZ:-Asia/Shanghai}
       - GF_DATE_FORMATS_DEFAULT_TIMEZONE=${GRAFANA_DEFAULT_TIMEZONE:-Asia/Shanghai}
+      - GF_DATABASE_WAL=true
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      - GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES=false
+      - GF_NEWS_NEWS_FEED_ENABLED=false
       - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-%(protocol)s://%(domain)s/grafana/}
       # Grafana handles the /grafana subpath; Nginx preserves it when proxying.
       - GF_SERVER_SERVE_FROM_SUB_PATH=true

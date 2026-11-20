@@ -1,0 +1,70 @@
+task_id: ING-016
+priority: P0
+owner: BE
+milestone: M2
+status: implemented_process_local_control_surface
+authority: PostgreSQL_for_future_durable_job_adapter
+
+goal: >-
+  Expose one tenant-scoped operator control surface for import-job progress,
+  cooperative cancellation, bounded retry attempts, failed phase state and
+  structured redacted error details without changing V1 reindex rows.
+
+read_model:
+  progress: [total_count, processed_count, parsed_count, succeeded_count, failed_count, skipped_count, retryable_failed_count, error_count, progress_percent]
+  phase: [accepted, scoped, fetched, parsed, normalized, classified, chunked, embedded, indexed, validated, committed, completed, failed, cancelled]
+  execution_state: [queued, running, retry_wait, paused, cancel_requested, cancelled, succeeded, failed]
+  client_counter_write: forbidden
+  tenant_predicate: required_on_every_read_and_mutation
+
+cancellation:
+  endpoint: POST /api/knowledge-v2/ingestion/jobs/{job_id}/cancel
+  behavior: queued_without_lease_is_acknowledged; running_is_cooperative_request_until_worker_safe_point
+  idempotency: repeated_request_returns_current_snapshot_without_new_work
+  terminal: cancelled_phase_and_cancel_evidence_are_retained
+
+retry:
+  endpoint: POST /api/knowledge-v2/ingestion/jobs/{job_id}/retry
+  allowed_source_state: failed
+  behavior: create_new_queued_child_attempt_and_retain_failed_parent
+  identity: retry_of_job_id_and_deterministic_parent_retry_key
+  forbidden: terminal_success_replay; cancelled_job_replay; in_place_failed_to_running_transition
+
+errors:
+  endpoint: GET /api/knowledge-v2/ingestion/jobs/{job_id}/errors
+  shape: [code, safe_message, phase, item_id, source_id, attempt_no, retryable, occurred_at, correlation_id]
+  storage: bounded_append_only_job_error_snapshot
+  redaction: stable_allowlist_message_only; no_secret_raw_body_raw_device_output_or_exception_text
+  failed_phase: job_phase_failed_and_execution_state_failed_after_non_retryable_or_exhausted_retry
+
+authorization:
+  resource: knowledge_import
+  permissions: [read, cancel, retry]
+  cross_tenant: not_found_without_tenant_disclosure
+  request_fields: [reason, request_id]
+  unknown_api_fields: forbidden
+
+api:
+  list: GET /api/knowledge-v2/ingestion/jobs
+  detail: GET /api/knowledge-v2/ingestion/jobs/{job_id}
+  errors: GET /api/knowledge-v2/ingestion/jobs/{job_id}/errors
+  responses: additive_success_data_message_envelope
+
+storage:
+  current: process_local_until_DB011_MIG_job_gate
+  future_adapter: kb_import_job_with_relational_progress_and_json_error_extension
+  v1_compatibility: no_ai_knowledge_reindex_job_mutation_or_row_deletion
+
+rollback:
+  runtime: disable_control_endpoints_and_route_ingestion_to_existing_import_adapters
+  data: retain_failed_parent_snapshots_and_v1_reindex_rows
+  production_ddl: none_in_ING_016
+
+verification:
+  focused_tests: backend/tests/ai/test_ingestion_job_control_surface.py
+  regression: backend/tests/ai/test_ingestion_pipeline_state_machine.py
+  gates: [tenant_isolation, cancel_idempotency, retry_parent_retention, progress_read_only, error_redaction, api_contract, v1_baseline, lint, build]
+
+handoff:
+  next_task: ING-017
+  note: durable Import Job lease, heartbeat and duplicate-worker fencing remain release-gated in the next BE+DBA task.

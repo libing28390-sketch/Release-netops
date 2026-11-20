@@ -11,9 +11,10 @@ from __future__ import annotations
 import logging
 import math
 import os
+import threading
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import APIRouter, Response
 
@@ -22,6 +23,68 @@ from database import _USE_PG, get_db_connection
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["internal metrics"])
+
+_METRICS_CACHE_LOCK = threading.Lock()
+_METRICS_CACHE: dict[tuple[str, str, str], tuple[float, bytes, str]] = {}
+_METRICS_INFLIGHT: dict[tuple[str, str, str], threading.Event] = {}
+
+
+def _metrics_cache_ttl_seconds() -> float:
+    raw = os.environ.get("GRAFANA_METRICS_CACHE_TTL_SECONDS")
+    if raw is None:
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            return 0.0
+        return 10.0
+    try:
+        return max(0.0, min(60.0, float(raw)))
+    except (TypeError, ValueError):
+        return 10.0
+
+
+def clear_grafana_metrics_cache() -> None:
+    """Clear short-lived Prometheus scrape cache (used in tests)."""
+    with _METRICS_CACHE_LOCK:
+        _METRICS_CACHE.clear()
+
+
+def _cached_scrape_response(
+    cache_name: str,
+    builder: Callable[[], tuple[bytes, int, str]],
+) -> Response:
+    ttl = _metrics_cache_ttl_seconds()
+    if ttl <= 0:
+        body, status_code, media_type = builder()
+        return Response(content=body, status_code=status_code, media_type=media_type)
+
+    cache_key = (cache_name, os.environ.get("DATABASE_URL", ""), str(id(get_db_connection)))
+    while True:
+        now_mono = time.monotonic()
+        with _METRICS_CACHE_LOCK:
+            cached = _METRICS_CACHE.get(cache_key)
+            if cached is not None and cached[0] > now_mono:
+                return Response(content=cached[1], status_code=200, media_type=cached[2])
+            inflight = _METRICS_INFLIGHT.get(cache_key)
+            if inflight is None:
+                inflight = threading.Event()
+                _METRICS_INFLIGHT[cache_key] = inflight
+                owns = True
+            else:
+                owns = False
+        if owns:
+            break
+        inflight.wait(timeout=15.0)
+
+    try:
+        body, status_code, media_type = builder()
+        if status_code == 200:
+            with _METRICS_CACHE_LOCK:
+                _METRICS_CACHE[cache_key] = (time.monotonic() + ttl, body, media_type)
+        return Response(content=body, status_code=status_code, media_type=media_type)
+    finally:
+        with _METRICS_CACHE_LOCK:
+            event = _METRICS_INFLIGHT.pop(cache_key, None)
+            if event is not None:
+                event.set()
 
 _ALERT_SEVERITIES = (
     "critical",
@@ -931,7 +994,10 @@ def _collect_hardware(lines: list[str], conn: Any, now: datetime) -> dict[str, A
 @router.get("/metrics", include_in_schema=False)
 def grafana_metrics() -> Response:
     """Return aggregate-only Prometheus text for the internal Grafana scraper."""
+    return _cached_scrape_response("metrics", _build_grafana_metrics)
 
+
+def _build_grafana_metrics() -> tuple[bytes, int, str]:
     now = datetime.now(timezone.utc)
     cutoffs = {
         "1h": (now - timedelta(hours=1)).replace(microsecond=0).isoformat(),
@@ -968,13 +1034,16 @@ def grafana_metrics() -> Response:
     health_lines.append(_metric_line("nexora_monitoring_database_available", database_available))
     lines = health_lines + lines
     body = "\n".join(line for line in lines if line) + ("\n" if lines else "")
-    return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
+    return body.encode("utf-8"), 200, "text/plain; version=0.0.4; charset=utf-8"
 
 
 @router.get("/hardware-metrics", include_in_schema=False)
 def grafana_hardware_metrics() -> Response:
     """Export per-device hardware series separately from low-cardinality API metrics."""
+    return _cached_scrape_response("hardware_metrics", _build_grafana_hardware_metrics)
 
+
+def _build_grafana_hardware_metrics() -> tuple[bytes, int, str]:
     scrape_started = time.perf_counter()
     lines: list[str] = []
     conn = None
@@ -985,10 +1054,10 @@ def grafana_hardware_metrics() -> Response:
         scrape_stats = _collect_hardware(lines, conn, datetime.now(timezone.utc))
     except Exception as exc:
         logger.warning("Grafana hardware metrics unavailable (%s)", type(exc).__name__)
-        return Response(
-            content="hardware metrics temporarily unavailable\n",
-            status_code=503,
-            media_type="text/plain; charset=utf-8",
+        return (
+            b"hardware metrics temporarily unavailable\n",
+            503,
+            "text/plain; charset=utf-8",
         )
     finally:
         if conn is not None:
@@ -998,8 +1067,8 @@ def grafana_hardware_metrics() -> Response:
                 pass
 
     body = "\n".join(line for line in lines if line) + ("\n" if lines else "")
-    response = Response(content=body.encode("utf-8"), media_type="text/plain; version=0.0.4; charset=utf-8")
-    body_bytes = len(response.body)
+    body_encoded = body.encode("utf-8")
+    body_bytes = len(body_encoded)
     logger.info(
         "Grafana hardware metrics scrape sensor_rows=%d devices=%d capabilities=%d "
         "render_errors=%d sensor_query_ms=%.1f sensor_decode_ms=%.1f "
@@ -1022,7 +1091,7 @@ def grafana_hardware_metrics() -> Response:
         (time.perf_counter() - scrape_started) * 1000,
         body_bytes,
     )
-    return response
+    return body_encoded, 200, "text/plain; version=0.0.4; charset=utf-8"
 
 
 __all__ = ["router", "grafana_metrics", "grafana_hardware_metrics"]

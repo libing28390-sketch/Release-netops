@@ -142,6 +142,8 @@ interface LocatorContext {
 
 interface LocateResult {
   target_ip: string;
+  ip?: string;
+  query_type?: 'ip' | 'mac';
   found: boolean;
   mac: string | null;
   mac_display: string | null;
@@ -1171,6 +1173,15 @@ ${rep.repair_commands}
     }
   }, [activeTab, nsotEndpoints, nsotLoading, fetchNsotData]);
 
+  const isMacQuery = (value: string): boolean => {
+    const trimmed = value.trim();
+    return (
+      /^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$/.test(trimmed)
+      || /^([0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4}$/.test(trimmed)
+      || /^[0-9a-fA-F]{12}$/.test(trimmed)
+    );
+  };
+
   const doLocate = useCallback(async (targetIp?: string, forceRefresh: boolean = false) => {
     const trimmed = (targetIp ?? ip).trim();
     if (!trimmed) return;
@@ -1181,23 +1192,40 @@ ${rep.repair_commands}
     setResult(null);
 
     try {
-      const data = await locateIpWithRun<LocateResult>({
-        ip: trimmed,
-        token,
-        forceRefresh,
-        onStage: setLocateStage,
-      });
+      let data: LocateResult;
+      if (isMacQuery(trimmed)) {
+        const resp = await fetch('/api/ip-locator/locate-mac', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ mac: trimmed }),
+        });
+        const payload = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          throw new Error(typeof payload?.detail === 'string' ? payload.detail : `HTTP ${resp.status}`);
+        }
+        data = payload as LocateResult;
+      } else {
+        data = await locateIpWithRun<LocateResult>({
+          ip: trimmed,
+          token,
+          forceRefresh,
+          onStage: setLocateStage,
+        });
+      }
       setResult(data);
 
       const primary = data.locations?.find(l => !l.is_uplink) || data.locations?.[0];
       setHistory(prev => [{
-        ip: trimmed,
+        ip: data.ip || trimmed,
         found: data.found,
         mac: formatMacAddress(data.mac_display || '-'),
         switch_name: primary?.switch_name || '-',
         port: primary?.port || '-',
         time: new Date().toLocaleTimeString(),
-      }, ...prev.filter(h => h.ip !== trimmed)].slice(0, 20));
+      }, ...prev.filter(h => h.ip !== (data.ip || trimmed))].slice(0, 20));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1361,14 +1389,14 @@ ${rep.repair_commands}
         >
           <div className="relative w-full min-w-0 sm:flex-1 sm:max-w-lg">
             <MapPin size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#0891b2]" />
-            <label htmlFor="ip-locator-search" className="sr-only">{zh ? 'IP 地址' : 'IP address'}</label>
+            <label htmlFor="ip-locator-search" className="sr-only">{zh ? 'IP 或 MAC 地址' : 'IP or MAC address'}</label>
             <input
               id="ip-locator-search"
               type="text"
               value={ip}
               onChange={e => setIp(e.target.value)}
               aria-describedby="ip-locator-search-help"
-              placeholder={zh ? '输入 IP 地址，如 10.1.1.100 或 192.168.1.1' : 'Enter IP address, e.g. 10.1.1.100'}
+              placeholder={zh ? '输入 IP 或 MAC 地址，如 10.1.1.100、aa:bb:cc:dd:ee:ff 或 aabb.ccdd.eeff' : 'Enter IP or MAC address, e.g. 10.1.1.100 or aa:bb:cc:dd:ee:ff'}
               className="w-full pl-10 pr-4 py-3 rounded-xl border border-black/10 text-sm bg-white focus:ring-2 focus:ring-[#06b6d4]/30 focus:border-[#06b6d4] outline-none transition-all placeholder:text-black/30"
               autoFocus
             />

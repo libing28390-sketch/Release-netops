@@ -1,0 +1,71 @@
+schema_version: 1
+project: Nexora Knowledge Engine V2
+task_id: GOV-012
+owner: ARCH
+policy:
+  required_layers: [api, database, frontend, permission, logging, rollback]
+  triggers:
+    - api_contract_or_route_change
+    - database_schema_migration_or_backfill
+    - frontend_client_or_state_change
+    - auth_rbac_tenant_or_gateway_change
+    - audit_log_metric_trace_or_provenance_change
+    - provider_model_rag_network_or_v1_fallback_change
+    - feature_flag_release_or_rollback_change
+  automatic_full_review_when:
+    - two_or_more_layers_are_affected
+    - one_layer_changes_another_layer_public_contract
+    - runtime_security_or_data_behavior_is_changed
+  light_review_exemptions:
+    - prose_only
+    - test_fixture_only_without_contract_change
+    - documentation_only_without_runtime_or_security_effect
+  no_split_commit_evasion: true
+layers:
+  - id: api
+    reviewers: [BE, ARCH]
+    evidence: [openapi_diff, contract_tests, auth_error_tests, compatibility_test]
+  - id: database
+    reviewers: [DBA, BE]
+    evidence: [fresh_migration, upgrade_migration, rollback_or_forward_fix, lock_index_review]
+  - id: frontend
+    reviewers: [FE, QA]
+    evidence: [typescript_check, component_contract_test, ui_state_matrix, v1_fallback_check]
+  - id: permission
+    reviewers: [SEC, ARCH]
+    evidence: [rbac_matrix, tenant_isolation_test, gateway_dlp_check, secret_scan]
+  - id: logging
+    reviewers: [OBS, SEC]
+    evidence: [structured_log_sample, audit_query, redaction_assertion, trace_metric_correlation]
+  - id: rollback
+    reviewers: [OPS, DBA, ARCH]
+    evidence: [rollback_runbook, flag_kill_switch_test, migration_compatibility, v1_recovery_test]
+required_artifacts:
+  - impact_dependency_graph
+  - api_contract_diff
+  - database_migration_plan
+  - frontend_state_and_accessibility_matrix
+  - security_permission_matrix
+  - observability_and_redaction_plan
+  - release_rollback_runbook
+  - test_lint_build_security_regression_evidence
+review_states: [PENDING, ANALYZING, IMPLEMENTING, TESTING, VERIFYING, DONE, FAILED, FIXING, BLOCKED]
+gate:
+  allowed_conclusions: [PASS, CONDITIONAL, BLOCKED]
+  require_evidence_for_done: true
+  require_all_applicable_layers_pass: true
+  block_on:
+    - contract_mismatch
+    - migration_without_rollback_or_compatibility
+    - permission_or_tenant_test_missing
+    - secret_or_pii_leak
+    - gateway_bypass_or_network_write_risk
+    - v1_fallback_missing
+    - kill_switch_unverified
+    - tests_lint_build_failed
+    - evidence_missing
+emergency:
+  allowed_for: P0
+  minimum_controls: [v2_disabled_or_kill_switch, audit_retained, rollback_point]
+  full_review_due_hours: 24
+  cannot_permanently_bypass: [database, permission, logging, rollback]

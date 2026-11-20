@@ -1,0 +1,72 @@
+task_id: ING-021
+title: "Import Metadata preview and explicit human confirmation"
+status: implemented
+scope:
+  - legacy document upload and paste flows used by the Knowledge UI
+  - server-side parsing/normalization before document persistence
+  - tenant and authenticated-actor binding for confirmation
+non_goals:
+  - no change to PostgreSQL document/chunk schema
+  - no removal of the V1 document endpoint or its legacy clients
+  - no external source fetch during metadata preview
+api:
+  preview:
+    method: POST
+    path: /api/ai/assistant/documents/metadata-preview
+    permission: ai.knowledge.manage
+    request:
+      name: string
+      content: string
+      vendor: string
+      platform: string|null
+      knowledge_source_type: string
+      source_trust_level: string
+      chunk_size: integer
+      metadata: object
+    response:
+      data:
+        preview_id: string
+        confirmation_token: string
+        expires_at: unix_seconds
+        metadata_parse_status: "missing|parsed"
+        normalized: object
+        warnings: string[]
+        requires_confirmation: true
+  import:
+    method: POST
+    path: /api/ai/assistant/documents
+    additive_fields:
+      metadata_confirmation_token: string|null
+      metadata_confirmed: boolean
+    behavior:
+      - "When a token is supplied, metadata_confirmed must be true."
+      - "The token must match tenant, authenticated actor, content hash, metadata, and import options."
+      - "Expired, tampered, cross-tenant, or stale tokens fail closed before database writes."
+      - "When both fields are omitted, the existing V1-compatible path remains available."
+normalization:
+  source_of_truth: "YAML Front Matter through parse_markdown_document/validate_metadata"
+  directory_behavior: "directory metadata is a validation hint and never overrides Front Matter"
+  legacy_missing_front_matter: "accepted with an explicit warning and upload/source hints"
+  unknown_platform: "represented as null and warned; never guessed from prose"
+security:
+  token: "HMAC-SHA256 signed, 15 minute TTL, no raw content in claims"
+  binding: "tenant_id + actor_id + SHA256(content) + canonical input digest"
+  redaction: "credential/identity/ACL-like metadata keys are rejected and not returned"
+  audit_boundary: "confirmation is explicit in the import request; persistence remains in the existing transactional document service"
+failure_codes:
+  - METADATA_PARSE_INVALID
+  - METADATA_VALIDATION_INVALID
+  - METADATA_AUTHORITY_FIELD_FORBIDDEN
+  - METADATA_SECRET_FIELD_FORBIDDEN
+  - METADATA_CONFIRMATION_REQUIRED
+  - METADATA_CONFIRMATION_INVALID
+  - METADATA_CONFIRMATION_EXPIRED
+  - METADATA_CONFIRMATION_SCOPE_MISMATCH
+  - METADATA_CONFIRMATION_STALE
+acceptance:
+  - "A user sees a server-generated normalized preview before import."
+  - "Canceling confirmation creates no document or chunk."
+  - "Changing bytes or metadata after preview requires a new preview."
+  - "Legacy clients without the additive fields continue to use the existing endpoint."
+rollback:
+  - "Remove the UI preview call and additive fields; server endpoint and token validation are additive and can be disabled without a schema rollback."

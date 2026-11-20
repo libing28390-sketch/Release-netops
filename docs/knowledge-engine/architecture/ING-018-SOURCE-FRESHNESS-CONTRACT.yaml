@@ -1,0 +1,74 @@
+task_id: ING-018
+title: Explicit conditional source refresh
+milestone: M2
+priority: P1
+owner: BE+OPS
+status: implemented_pass
+
+decision:
+  source_version_authority: kb_source_version
+  source_version_mutability: append_only
+  refresh_observation_authority: kb_source_refresh_observation
+  conditional_request_headers:
+    - If-None-Match
+    - If-Modified-Since
+  hash_algorithm: sha256_lowercase_hex
+  response_body_policy: hash_only_memory_boundary
+  automatic_refresh: false
+
+outcomes:
+  not_modified:
+    http_status: 304
+    source_version_write: false
+    observation_write: true
+    content_hash: previous_immutable_source_version
+  unchanged:
+    http_status: 200
+    source_version_write: deduplicated
+    observation_write: true
+    content_hash: server_computed_response_hash
+  changed:
+    http_status: 200
+    source_version_write: append_new_immutable_version
+    observation_write: true
+    content_hash: server_computed_response_hash
+  failed:
+    source_version_write: false
+    observation_write: redacted_error_code_only
+
+security:
+  validators_are_server_owned: true
+  accepted_request_headers: [if-none-match, if-modified-since]
+  arbitrary_headers_forbidden: true
+  tenant_scope: every_registry_and_observation_query
+  ssrf_boundary: CAT-004_safe_outbound_http
+  raw_body_in_api_or_audit: forbidden
+  error_text_in_observation: forbidden
+
+database:
+  migration: m0120_knowledge_v2_source_freshness
+  production_ddl: release_gated_transaction_probe
+  immutable_version_facts_untouched: true
+  observation_table: kb_source_refresh_observation
+  observation_retention: append_only_audit_timeline
+
+operations:
+  trigger: user_initiated_single_source_fetch_only
+  scheduler_job_id: null
+  background_url_polling: forbidden
+  stable_failure_codes: true
+
+api:
+  history: GET /api/knowledge-v2/sources/{source_id}/refresh-observations
+  existing_fetch_contract_preserved: true
+
+rollback:
+  runtime: explicit_fetch_contract_remains_available
+  data: retain_observations_and_immutable_source_versions
+  v1_impact: none
+
+verification:
+  focused_tests:
+    - backend/tests/catalog/test_ing018_source_freshness.py
+    - backend/tests/database/test_m0120_knowledge_v2_source_freshness.py
+  required_gates: [conditional_headers, http_304, same_hash, changed_hash, tenant_scope, migration, v1]

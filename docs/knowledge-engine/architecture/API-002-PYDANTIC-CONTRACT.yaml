@@ -1,0 +1,103 @@
+task_id: API-002
+title: Pydantic contracts for Provider, Model, Source, Document, Product, Alias, Import, and Search
+status: verified
+contract_version: nxa.kb.api.contracts.v2
+scope:
+  provider:
+    request_models:
+      - ProviderCreateContract
+      - ProviderUpdateContract
+      - ProviderKeyRotationRequest
+      - ProviderKeyInvalidationRequest
+    response_models:
+      - ProviderResponseContract
+      - ProviderTestResponseContract
+    rules:
+      - plaintext api_key is accepted only on create/rotate and is never present in response models
+      - key rotation rejects control characters and is bounded to 4096 characters
+  model:
+    request_models:
+      - ModelCreateContract
+      - ModelUpdateContract
+      - ModelRouteCreateContract
+      - ModelAccessRequest
+      - DefaultModelRequest
+    response_models:
+      - ModelResponseContract
+      - ModelRouteResponseContract
+    rules:
+      - model type and provider type are allowlisted by the existing schema validators
+      - access and preference requests have bounded subject/model identifiers
+  source:
+    request_models:
+      - SourceCreateContract
+      - SourceUpdateContract
+      - SourceVersionContract
+      - SourceLifecycleContract
+      - SourceFetchContract
+    rules:
+      - extra fields are rejected
+      - source URL, content, hashes, parser metadata, lifecycle reason, and fetch method are bounded
+  document:
+    request_models:
+      - DocumentLifecycleContract
+      - DocumentVersionActionContract
+      - KnowledgeDocumentCreateRequest
+    rules:
+      - destructive lifecycle actions require the existing explicit confirmation contract
+      - document body and extension metadata are bounded; tenant and audit identity remain server-owned
+  product_and_alias:
+    request_models:
+      - ProductCatalogModelRequest
+      - ProductAliasRequest
+      - CatalogVersionBundleContract
+      - CatalogVersionImportContract
+      - CatalogVersionRollbackContract
+    rules:
+      - Product and Alias arrays are nested Pydantic models, not list[dict]
+      - alias kind and lifecycle status use explicit allowlists
+      - normalized_alias is server-derived and cannot be submitted by clients
+      - software scope and platform binding are bounded extension objects; driver/write authority is never granted by catalog input
+  import:
+    request_models:
+      - OfficialUrlImportContract
+      - ImportCancelContract
+      - ImportRetryContract
+      - KnowledgeBaseCreateRequest
+      - KnowledgeReindexRequest
+      - KnowledgeDirectoryCreateRequest
+      - KnowledgeDirectoryRenameRequest
+    rules:
+      - idempotency/request identifiers, retry counts, batch sizes, paths, and names are bounded
+      - multipart content remains validated by the dedicated upload boundary
+  search:
+    request_models:
+      - SearchContract
+      - RetrievalFilters
+    rules:
+      - query and top_k are bounded
+      - filters are an explicit allowlist; arbitrary raw SQL/debug fields are rejected
+implementation:
+  module: backend/api/knowledge_v2_contracts.py
+  wired_routes:
+    - backend/ai/api/providers.py
+    - backend/ai/api/models.py
+    - backend/ai/api/assistant.py
+    - backend/api/knowledge_catalog.py
+  compatibility:
+    - existing Source, Document, and Import route model names remain available
+    - legacy /api/knowledge-v2 path remains available through API-001 compatibility alias
+    - server-owned tenant binding remains validated by service layers until API-008 completes the full isolation pass
+security:
+  extra_fields: reject
+  secret_response_fields: forbidden
+  tenant_identity: server_owned_or_service_validated
+  raw_sql_filters: forbidden
+verification:
+  focused_tests: backend/tests/ai/test_api_v2_contracts.py
+  regression_tests:
+    - backend/tests/catalog/test_cat015_catalog_versioning.py
+    - backend/tests/catalog/test_cat013_catalog_management.py
+    - backend/tests/ai/test_rag_acceptance_v2.py
+    - backend/tests/ai/test_knowledge_pagination.py
+  result: PASS

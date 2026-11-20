@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleDashed,
+  Clock3,
   Database,
   Gauge,
   Loader2,
@@ -132,7 +133,7 @@ function StatusPill({ value, type, fallback = '未知', label }: { value?: strin
       : type === 'support' ? SUPPORT_LABELS
         : DATA_LABELS;
   return (
-    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-bold ${statusTone(normalized, type)}`}>
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${statusTone(normalized, type)}`}>
       {label || labels[normalized] || value || fallback}
     </span>
   );
@@ -155,18 +156,18 @@ function profileDisplayName(profile: TelemetryProtocolProfile): string {
 }
 
 function EvidenceList({ paths }: { paths?: TelemetryPathEvidence[] }) {
-  if (!paths?.length) return <p className="mt-2 text-xs text-[var(--muted-text)]">尚无逐路径验证记录</p>;
+  if (!paths?.length) return <p className="mt-2 text-[11px] text-[var(--muted-text)]">尚无逐路径验证记录</p>;
   return (
     <ul className="mt-2 space-y-1">
       {paths.slice(0, 4).map((item, index) => (
-        <li key={`${item.path}:${item.metric_key || ''}:${index}`} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+        <li key={`${item.path}:${item.metric_key || ''}:${index}`} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px]">
           <code className="max-w-full break-all rounded bg-black/[0.04] px-1.5 py-0.5 text-slate-600 dark:bg-white/[0.06] dark:text-slate-300">{item.path}</code>
           {item.metric_key && <span className="text-[var(--muted-text)]">{item.metric_key}</span>}
           <StatusPill value={item.validation_status} type="support" />
           {item.evidence && <span className="w-full break-words text-[var(--muted-text)]">依据：{item.evidence}</span>}
         </li>
       ))}
-      {paths.length > 4 && <li className="text-xs text-[var(--muted-text)]">另有 {paths.length - 4} 条路径证据</li>}
+      {paths.length > 4 && <li className="text-[10px] text-[var(--muted-text)]">另有 {paths.length - 4} 条路径证据</li>}
     </ul>
   );
 }
@@ -176,7 +177,7 @@ function OfficialSourceList({ sources }: { sources?: string[] }) {
   return (
     <div className="mt-2 flex flex-wrap gap-2">
       {sources.map((source, index) => (
-        <a key={`${source}:${index}`} href={source} target="_blank" rel="noreferrer" className="text-xs font-semibold text-cyan-700 underline underline-offset-2 hover:text-cyan-900">
+        <a key={`${source}:${index}`} href={source} target="_blank" rel="noreferrer" className="text-[10px] font-semibold text-cyan-700 underline underline-offset-2 hover:text-cyan-900">
           厂商资料 {index + 1}
         </a>
       ))}
@@ -186,14 +187,11 @@ function OfficialSourceList({ sources }: { sources?: string[] }) {
 
 function MetricValue({ label, value, icon: Icon }: { label: string; value: string; icon: LucideIcon }) {
   return (
-    <div className="flex items-center gap-4 rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] px-5 py-4">
-      <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-cyan-500/10 text-cyan-700 dark:text-cyan-300">
-        <Icon size={19} aria-hidden="true" />
-      </span>
-      <div className="min-w-0">
-        <p className="text-xs font-medium text-[var(--muted-text)]">{label}</p>
-        <p className="mt-0.5 text-2xl font-semibold tabular-nums tracking-tight text-[var(--app-text)]">{value}</p>
+    <div className="rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] p-3">
+      <div className="flex items-center justify-between gap-2 text-[10px] font-bold text-[var(--muted-text)]">
+        <span>{label}</span><Icon size={14} />
       </div>
+      <p className="mt-2 text-lg font-extrabold text-[var(--app-text)]">{value}</p>
     </div>
   );
 }
@@ -215,8 +213,8 @@ function CapacityTable({ capacity }: { capacity: TelemetryCollectorCapacity }) {
   const cell = (value: number | null | undefined, format?: (value: number) => string) => value == null ? '—' : format ? format(value) : value.toLocaleString('zh-CN');
   return (
     <div className="mt-3 overflow-x-auto rounded-xl border border-[var(--card-border)]">
-      <table className="w-full min-w-[500px] text-left text-xs">
-        <thead className="bg-black/[0.025] text-xs font-bold text-[var(--muted-text)] dark:bg-white/[0.035]">
+      <table className="w-full min-w-[500px] text-left text-[11px]">
+        <thead className="bg-black/[0.025] text-[10px] font-bold text-[var(--muted-text)] dark:bg-white/[0.035]">
           <tr><th className="px-3 py-2">容量维度</th><th className="px-3 py-2">上限</th><th className="px-3 py-2">已预留</th><th className="px-3 py-2">实测</th></tr>
         </thead>
         <tbody className="divide-y divide-[var(--card-border)]">
@@ -230,8 +228,8 @@ function CapacityTable({ capacity }: { capacity: TelemetryCollectorCapacity }) {
           ))}
         </tbody>
       </table>
-      <p className="border-t border-[var(--card-border)] px-3 py-2 text-xs leading-relaxed text-[var(--muted-text)]">单条 gRPC / JSON 消息限制 4 MiB，写入批次限制 1 MiB；Telemetry 数据经独立接收器推送到 telemetry-vmagent，不进入现有 64 MiB 抓取响应。队列上限为 16 GiB，当前实际队列占用未接入数据库监控，显示“—”。</p>
-      <p className="border-t border-[var(--card-border)] px-3 py-2 text-xs text-[var(--muted-text)]">容量统计时间：{displayDate(capacity.measured_at)}</p>
+      <p className="border-t border-[var(--card-border)] px-3 py-2 text-[10px] leading-relaxed text-[var(--muted-text)]">单条 gRPC / JSON 消息限制 4 MiB，写入批次限制 1 MiB；Telemetry 数据经独立接收器推送到 telemetry-vmagent，不进入现有 64 MiB 抓取响应。队列上限为 16 GiB，当前实际队列占用未接入数据库监控，显示“—”。</p>
+      <p className="border-t border-[var(--card-border)] px-3 py-2 text-[10px] text-[var(--muted-text)]">容量统计时间：{displayDate(capacity.measured_at)}</p>
     </div>
   );
 }
@@ -239,20 +237,19 @@ function CapacityTable({ capacity }: { capacity: TelemetryCollectorCapacity }) {
 function StatusDetails({ status }: { status: TelemetrySubscriptionStatus }) {
   return (
     <div className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-4">
-      <div><p className="text-xs font-bold text-[var(--muted-text)]">版本</p><p className="mt-1 text-xs text-[var(--app-text)]">期望 {status.desired_version ?? '—'} · 已发布 {status.published_version ?? '—'} · 已应用 {status.applied_version ?? '—'}</p></div>
-      <div><p className="text-xs font-bold text-[var(--muted-text)]">最近接收</p><p className="mt-1 text-xs text-[var(--app-text)]">{displayDate(status.last_received_at)}</p></div>
-      <div><p className="text-xs font-bold text-[var(--muted-text)]">最近有效样本</p><p className="mt-1 text-xs text-[var(--app-text)]">{displayDate(status.last_valid_at)}</p></div>
-      {status.clock_skew_ms != null && <div><p className="text-xs font-bold text-[var(--muted-text)]">设备时钟偏差</p><p className="mt-1 text-xs text-[var(--app-text)]">{status.clock_skew_ms.toLocaleString('zh-CN')} 毫秒</p></div>}
-      <div><p className="text-xs font-bold text-[var(--muted-text)]">活动序列 / 速率</p><p className="mt-1 text-xs text-[var(--app-text)]">{status.active_series ?? '—'} / {status.samples_per_second ?? '—'} 样本/秒</p></div>
-      {status.quality && <div><p className="text-xs font-bold text-[var(--muted-text)]">数据质量</p><p className="mt-1 text-xs text-[var(--app-text)]">{status.quality}</p></div>}
-      {status.error && <div className="sm:col-span-2 xl:col-span-3"><p className="text-xs font-bold text-rose-700">{status.error.code} · {status.error.retryable ? '可重试' : '需处理'}</p><p className="mt-1 text-xs text-rose-700">{status.error.message}</p></div>}
+      <div><p className="text-[10px] font-bold text-[var(--muted-text)]">版本</p><p className="mt-1 text-[11px] text-[var(--app-text)]">期望 {status.desired_version ?? '—'} · 已发布 {status.published_version ?? '—'} · 已应用 {status.applied_version ?? '—'}</p></div>
+      <div><p className="text-[10px] font-bold text-[var(--muted-text)]">最近接收</p><p className="mt-1 text-[11px] text-[var(--app-text)]">{displayDate(status.last_received_at)}</p></div>
+      <div><p className="text-[10px] font-bold text-[var(--muted-text)]">最近有效样本</p><p className="mt-1 text-[11px] text-[var(--app-text)]">{displayDate(status.last_valid_at)}</p></div>
+      {status.clock_skew_ms != null && <div><p className="text-[10px] font-bold text-[var(--muted-text)]">设备时钟偏差</p><p className="mt-1 text-[11px] text-[var(--app-text)]">{status.clock_skew_ms.toLocaleString('zh-CN')} 毫秒</p></div>}
+      <div><p className="text-[10px] font-bold text-[var(--muted-text)]">活动序列 / 速率</p><p className="mt-1 text-[11px] text-[var(--app-text)]">{status.active_series ?? '—'} / {status.samples_per_second ?? '—'} 样本/秒</p></div>
+      {status.quality && <div><p className="text-[10px] font-bold text-[var(--muted-text)]">数据质量</p><p className="mt-1 text-[11px] text-[var(--app-text)]">{status.quality}</p></div>}
+      {status.error && <div className="sm:col-span-2 xl:col-span-3"><p className="text-[10px] font-bold text-rose-700">{status.error.code} · {status.error.retryable ? '可重试' : '需处理'}</p><p className="mt-1 text-[11px] text-rose-700">{status.error.message}</p></div>}
     </div>
   );
 }
 
 const TelemetryManagementPage: React.FC<TelemetryManagementPageProps> = ({ canManage = true, devices = [] }) => {
   const [profiles, setProfiles] = useState<TelemetryProtocolProfile[]>([]);
-  const [view, setView] = useState<'subscriptions' | 'configuration'>('subscriptions');
   const [collectors, setCollectors] = useState<TelemetryCollectorOption[]>([]);
   const [subscriptions, setSubscriptions] = useState<TelemetrySubscription[]>([]);
   const [totalSubscriptions, setTotalSubscriptions] = useState(0);
@@ -391,19 +388,15 @@ const TelemetryManagementPage: React.FC<TelemetryManagementPageProps> = ({ canMa
   const failedCount = currentPageSubscriptions.filter((item) => item.runtime?.publish_state === 'FAILED' || item.runtime?.connection_state === 'ERROR' || item.runtime?.data_state === 'INVALID').length;
 
   return (
-    <section className="w-full space-y-5">
-      <header className="flex flex-wrap items-center justify-between gap-4 py-3">
-        <div className="flex items-center gap-3">
-          <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-cyan-500/10 text-cyan-700 dark:text-cyan-300">
-            <Activity size={22} aria-hidden="true" />
-          </span>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-[var(--app-text)]">Telemetry 采集</h1>
-            <p className="mt-1 text-sm text-[var(--muted-text)]">管理设备订阅，查看采集状态和接收器容量。</p>
-          </div>
+    <section className="space-y-5">
+      <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-4 shadow-sm md:p-5">
+        <div>
+          <p className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-700"><Activity size={13} />Telemetry 管理</p>
+          <h1 className="mt-1 text-xl font-extrabold text-[var(--app-text)]">协议档、订阅与容量</h1>
+          <p className="mt-1 text-xs text-[var(--muted-text)]">查看设备支持范围、采集状态和采集器资源预留。</p>
         </div>
-        <button type="button" onClick={refresh} disabled={isLoading} className="inline-flex items-center gap-2 rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] px-4 py-2 text-sm font-medium text-[var(--app-text)] hover:border-cyan-500 disabled:opacity-50">
-          {isLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+        <button type="button" onClick={refresh} disabled={isLoading} className="inline-flex items-center gap-2 rounded-lg border border-[var(--card-border)] px-3 py-2 text-xs font-bold text-[var(--app-text)] transition hover:bg-black/[0.04] disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/[0.06]">
+          {isLoading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
           刷新数据
         </button>
       </header>
@@ -430,181 +423,160 @@ const TelemetryManagementPage: React.FC<TelemetryManagementPageProps> = ({ canMa
         </div>
       )}
 
-      <div role="group" aria-label="Telemetry 采集视图" className="flex flex-wrap gap-x-6 border-b border-[var(--card-border)] px-1">
-        {([
-          { id: 'subscriptions', label: '订阅与运行状态', icon: Activity },
-          { id: 'configuration', label: '设备配置', icon: Server },
-        ] as const).map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            type="button"
-            aria-pressed={view === id}
-            aria-controls={`telemetry-${id}`}
-            onClick={() => setView(id)}
-            className={`inline-flex items-center gap-2 border-b-2 px-2 py-3 text-sm font-semibold transition ${view === id ? 'border-cyan-600 text-cyan-700 dark:text-cyan-300' : 'border-transparent text-[var(--muted-text)] hover:text-[var(--app-text)]'}`}
-          >
-            <Icon size={16} aria-hidden="true" />
-            {label}
-          </button>
-        ))}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <MetricValue label="当前页订阅" value={`${currentPageSubscriptions.length} / ${loadedPage === page ? totalSubscriptions : '—'}`} icon={Activity} />
+        <MetricValue label="期望启用" value={activeCount.toLocaleString('zh-CN')} icon={Play} />
+        <MetricValue label="异常订阅" value={failedCount.toLocaleString('zh-CN')} icon={AlertTriangle} />
       </div>
 
-      <div id="telemetry-subscriptions" hidden={view !== 'subscriptions'} className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-3">
-          <MetricValue label="当前页订阅" value={`${currentPageSubscriptions.length} / ${loadedPage === page ? totalSubscriptions : '—'}`} icon={Activity} />
-          <MetricValue label="期望启用" value={activeCount.toLocaleString('zh-CN')} icon={Play} />
-          <MetricValue label="异常订阅" value={failedCount.toLocaleString('zh-CN')} icon={AlertTriangle} />
-        </div>
+      <TelemetryControlSetupPanel
+        devices={devices}
+        profiles={profiles}
+        canManage={canManage && !mutationDenied}
+        onChanged={refresh}
+      />
 
-        <section className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-4 shadow-sm md:p-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 className="flex items-center gap-2 text-base font-semibold text-[var(--app-text)]"><Activity size={16} className="text-cyan-700 dark:text-cyan-300" />订阅列表</h2>
-              <p className="mt-1 text-xs text-[var(--muted-text)]">期望开关、发布状态、连接状态和数据状态分别展示。</p>
-            </div>
+      <section className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-4 shadow-sm md:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="flex items-center gap-2 text-sm font-extrabold text-[var(--app-text)]"><ShieldCheck size={16} className="text-cyan-700" />协议档</h2>
+            <p className="mt-1 text-[11px] text-[var(--muted-text)]">显示协议支持范围和已核验的数据路径，不代表设备已连接。</p>
           </div>
-          {isLoading && currentPageSubscriptions.length === 0 ? (
-            <div className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--card-border)] py-12 text-xs text-[var(--muted-text)]"><Loader2 size={15} className="animate-spin" />正在加载订阅…</div>
-          ) : currentPageSubscriptions.length ? (
-            <div className="mt-4 overflow-x-auto rounded-xl border border-[var(--card-border)]">
-              <table className="w-full min-w-[980px] text-left text-xs">
-                <thead className="bg-black/[0.025] text-xs font-bold text-[var(--muted-text)] dark:bg-white/[0.035]">
-                  <tr><th className="px-3 py-2.5">设备</th><th className="px-3 py-2.5">订阅 / 协议档</th><th className="px-3 py-2.5">期望</th><th className="px-3 py-2.5">发布</th><th className="px-3 py-2.5">连接</th><th className="px-3 py-2.5">数据</th><th className="px-3 py-2.5">最近有效样本</th><th className="px-3 py-2.5">操作</th></tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--card-border)]">
-                  {currentPageSubscriptions.map((subscription) => {
-                    const busy = busyActions[subscription.id];
-                    const runtime = subscription.runtime;
-                    const label = subscription.device_name || subscription.asset_tag || subscription.device_id;
-                    return (
-                      <Fragment key={subscription.id}>
-                        <tr key={subscription.id} className="align-top">
-                          <td className="px-3 py-3"><p className="font-bold text-[var(--app-text)]">{label}</p><p className="mt-0.5 font-mono text-xs text-[var(--muted-text)]">{subscription.device_id}</p></td>
-                          <td className="px-3 py-3"><p className="font-semibold text-[var(--app-text)]">{subscription.name}</p><p className="mt-0.5 text-xs text-[var(--muted-text)]">{subscription.profile_name || '未关联协议档'}{subscription.template_name ? ` · ${subscription.template_name} v${subscription.template_version ?? '—'}` : ''}</p><p className="mt-0.5 text-xs text-[var(--muted-text)]">{subscription.interval_seconds ? `${subscription.interval_seconds} 秒周期` : '周期未知'}{subscription.collector_name ? ` · ${subscription.collector_name}` : ''}</p></td>
-                          <td className="px-3 py-3"><StatusPill value={subscription.desired_enabled ? 'ENABLED' : 'DISABLED'} type={subscription.desired_enabled ? 'support' : 'connection'} label={subscription.desired_enabled ? '期望启用' : '期望停用'} /></td>
-                          <td className="px-3 py-3"><StatusPill value={runtime?.publish_state} type="publish" /></td>
-                          <td className="px-3 py-3"><StatusPill value={runtime?.connection_state} type="connection" /></td>
-                          <td className="px-3 py-3"><StatusPill value={runtime?.data_state} type="data" /></td>
-                          <td className="px-3 py-3 text-xs text-[var(--muted-text)]">{displayDate(runtime?.last_valid_at)}</td>
-                          <td className="px-3 py-3">
-                            <div className="flex flex-wrap gap-1.5">
-                              <button type="button" disabled={managedDisabled || Boolean(busy)} onClick={() => void submitAction(subscription, subscription.desired_enabled ? 'disable' : 'enable')} className={`inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50 ${subscription.desired_enabled ? 'bg-slate-600 hover:bg-slate-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
-                                {busy ? <Loader2 size={12} className="animate-spin" /> : subscription.desired_enabled ? <Pause size={12} /> : <Play size={12} />}{subscription.desired_enabled ? '停用' : '启用'}
-                              </button>
-                              <button type="button" disabled={managedDisabled || Boolean(busy)} onClick={() => void submitAction(subscription, 'retry')} className="inline-flex items-center gap-1 rounded-md border border-[var(--card-border)] px-2 py-1.5 text-xs font-bold text-[var(--app-text)] hover:bg-black/[0.04] disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/[0.06]">
-                                {busy === 'retry' ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}重试
-                              </button>
-                              <button type="button" aria-expanded={expandedId === subscription.id} onClick={() => setExpandedId((current) => current === subscription.id ? null : subscription.id)} className="rounded-md px-2 py-1.5 text-xs font-bold text-cyan-700 hover:bg-cyan-50">{expandedId === subscription.id ? '收起' : '状态详情'}</button>
-                            </div>
-                          </td>
-                        </tr>
-                        {expandedId === subscription.id && (
-                          <tr key={`${subscription.id}:status`}><td colSpan={8} className="bg-black/[0.02] dark:bg-white/[0.025]">
-                            {statusLoading ? <p className="flex items-center gap-2 p-3 text-xs text-[var(--muted-text)]"><Loader2 size={13} className="animate-spin" />正在加载状态详情…</p>
-                              : statusIssue ? <p role="alert" className="p-3 text-xs text-rose-700">{statusIssue}</p>
-                                : expandedStatus ? <StatusDetails status={expandedStatus} /> : <p className="p-3 text-xs text-[var(--muted-text)]">暂无状态详情。</p>}
-                          </td></tr>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--card-border)] px-3 py-2">
-                <span className="text-xs text-[var(--muted-text)]">第 {page} / {Math.max(1, currentPageCount)} 页 · 共 {totalSubscriptions} 条</span>
-                <div className="flex gap-1.5">
-                  <button type="button" disabled={page <= 1 || isLoading} onClick={() => setPage((value) => Math.max(1, value - 1))} className="inline-flex items-center gap-1 rounded-md border border-[var(--card-border)] px-2 py-1.5 text-xs font-bold disabled:opacity-40"><ChevronLeft size={12} />上一页</button>
-                  <button type="button" disabled={page >= currentPageCount || isLoading} onClick={() => setPage((value) => value + 1)} className="inline-flex items-center gap-1 rounded-md border border-[var(--card-border)] px-2 py-1.5 text-xs font-bold disabled:opacity-40">下一页<ChevronRight size={12} /></button>
+          <span className="rounded-full bg-black/[0.04] px-2.5 py-1 text-[10px] font-bold text-[var(--muted-text)] dark:bg-white/[0.06]">{profiles.length} 个协议档</span>
+        </div>
+        {isLoading && profiles.length === 0 ? (
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3" aria-label="正在加载协议档">
+            {[0, 1, 2].map((item) => <div key={item} className="h-28 animate-pulse rounded-xl bg-black/[0.04] dark:bg-white/[0.05]" />)}
+          </div>
+        ) : profiles.length ? (
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {profiles.map((profile) => (
+              <article key={profile.id} className="rounded-xl border border-[var(--card-border)] p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0"><p className="truncate text-xs font-extrabold text-[var(--app-text)]">{profileDisplayName(profile)}</p><p className="mt-0.5 text-[10px] text-[var(--muted-text)]">{displayVendor(profile.vendor)}{profile.platform ? ` · ${profile.platform}` : ''}</p></div>
+                  <StatusPill value={profile.support_status} type="support" />
                 </div>
+                <p className="mt-2 text-[10px] leading-relaxed text-[var(--muted-text)]">{profileScope(profile)}</p>
+                <code className="mt-1 block break-all text-[9px] text-[var(--muted-text)]">ID: {profile.id}</code>
+                {profile.min_interval_seconds != null && <p className="mt-1 text-[10px] text-[var(--muted-text)]">最小采样周期 {profile.min_interval_seconds} 秒</p>}
+                <OfficialSourceList sources={profile.official_sources} />
+                <EvidenceList paths={profile.paths} />
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-4 rounded-xl border border-dashed border-[var(--card-border)] px-4 py-7 text-center text-xs text-[var(--muted-text)]">
+            {loadIssues.some((issue) => issue.source === '协议档') ? '协议档暂不可用，请检查上方错误信息后重试。' : '暂无可用协议档。'}
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-4 shadow-sm md:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="flex items-center gap-2 text-sm font-extrabold text-[var(--app-text)]"><Activity size={16} className="text-violet-600" />订阅列表</h2>
+            <p className="mt-1 text-[11px] text-[var(--muted-text)]">期望开关、发布状态、连接状态和数据状态分别展示。</p>
+          </div>
+          <span className="inline-flex items-center gap-1 rounded-full bg-black/[0.04] px-2.5 py-1 text-[10px] font-bold text-[var(--muted-text)] dark:bg-white/[0.06]"><Clock3 size={12} />运行状态由后端采集器确认</span>
+        </div>
+        {isLoading && currentPageSubscriptions.length === 0 ? (
+          <div className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--card-border)] py-12 text-xs text-[var(--muted-text)]"><Loader2 size={15} className="animate-spin" />正在加载订阅…</div>
+        ) : currentPageSubscriptions.length ? (
+          <div className="mt-4 overflow-x-auto rounded-xl border border-[var(--card-border)]">
+            <table className="w-full min-w-[980px] text-left text-[11px]">
+              <thead className="bg-black/[0.025] text-[10px] font-bold text-[var(--muted-text)] dark:bg-white/[0.035]">
+                <tr><th className="px-3 py-2.5">设备</th><th className="px-3 py-2.5">订阅 / 协议档</th><th className="px-3 py-2.5">期望</th><th className="px-3 py-2.5">发布</th><th className="px-3 py-2.5">连接</th><th className="px-3 py-2.5">数据</th><th className="px-3 py-2.5">最近有效样本</th><th className="px-3 py-2.5">操作</th></tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--card-border)]">
+                {currentPageSubscriptions.map((subscription) => {
+                  const busy = busyActions[subscription.id];
+                  const runtime = subscription.runtime;
+                  const label = subscription.device_name || subscription.asset_tag || subscription.device_id;
+                  return (
+                    <Fragment key={subscription.id}>
+                      <tr key={subscription.id} className="align-top">
+                        <td className="px-3 py-3"><p className="font-bold text-[var(--app-text)]">{label}</p><p className="mt-0.5 font-mono text-[10px] text-[var(--muted-text)]">{subscription.device_id}</p></td>
+                        <td className="px-3 py-3"><p className="font-semibold text-[var(--app-text)]">{subscription.name}</p><p className="mt-0.5 text-[10px] text-[var(--muted-text)]">{subscription.profile_name || '未关联协议档'}{subscription.template_name ? ` · ${subscription.template_name} v${subscription.template_version ?? '—'}` : ''}</p><p className="mt-0.5 text-[10px] text-[var(--muted-text)]">{subscription.interval_seconds ? `${subscription.interval_seconds} 秒周期` : '周期未知'}{subscription.collector_name ? ` · ${subscription.collector_name}` : ''}</p></td>
+                        <td className="px-3 py-3"><StatusPill value={subscription.desired_enabled ? 'ENABLED' : 'DISABLED'} type={subscription.desired_enabled ? 'support' : 'connection'} label={subscription.desired_enabled ? '期望启用' : '期望停用'} /></td>
+                        <td className="px-3 py-3"><StatusPill value={runtime?.publish_state} type="publish" /></td>
+                        <td className="px-3 py-3"><StatusPill value={runtime?.connection_state} type="connection" /></td>
+                        <td className="px-3 py-3"><StatusPill value={runtime?.data_state} type="data" /></td>
+                        <td className="px-3 py-3 text-[10px] text-[var(--muted-text)]">{displayDate(runtime?.last_valid_at)}</td>
+                        <td className="px-3 py-3">
+                          <div className="flex flex-wrap gap-1.5">
+                            <button type="button" disabled={managedDisabled || Boolean(busy)} onClick={() => void submitAction(subscription, subscription.desired_enabled ? 'disable' : 'enable')} className={`inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-[10px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-50 ${subscription.desired_enabled ? 'bg-slate-600 hover:bg-slate-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
+                              {busy ? <Loader2 size={12} className="animate-spin" /> : subscription.desired_enabled ? <Pause size={12} /> : <Play size={12} />}{subscription.desired_enabled ? '停用' : '启用'}
+                            </button>
+                            <button type="button" disabled={managedDisabled || Boolean(busy)} onClick={() => void submitAction(subscription, 'retry')} className="inline-flex items-center gap-1 rounded-md border border-[var(--card-border)] px-2 py-1.5 text-[10px] font-bold text-[var(--app-text)] hover:bg-black/[0.04] disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/[0.06]">
+                              {busy === 'retry' ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}重试
+                            </button>
+                            <button type="button" aria-expanded={expandedId === subscription.id} onClick={() => setExpandedId((current) => current === subscription.id ? null : subscription.id)} className="rounded-md px-2 py-1.5 text-[10px] font-bold text-cyan-700 hover:bg-cyan-50">{expandedId === subscription.id ? '收起' : '状态详情'}</button>
+                          </div>
+                        </td>
+                      </tr>
+                      {expandedId === subscription.id && (
+                        <tr key={`${subscription.id}:status`}><td colSpan={8} className="bg-black/[0.02] dark:bg-white/[0.025]">
+                          {statusLoading ? <p className="flex items-center gap-2 p-3 text-[11px] text-[var(--muted-text)]"><Loader2 size={13} className="animate-spin" />正在加载状态详情…</p>
+                            : statusIssue ? <p role="alert" className="p-3 text-[11px] text-rose-700">{statusIssue}</p>
+                              : expandedStatus ? <StatusDetails status={expandedStatus} /> : <p className="p-3 text-[11px] text-[var(--muted-text)]">暂无状态详情。</p>}
+                        </td></tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--card-border)] px-3 py-2">
+              <span className="text-[10px] text-[var(--muted-text)]">第 {page} / {Math.max(1, currentPageCount)} 页 · 共 {totalSubscriptions} 条</span>
+              <div className="flex gap-1.5">
+                <button type="button" disabled={page <= 1 || isLoading} onClick={() => setPage((value) => Math.max(1, value - 1))} className="inline-flex items-center gap-1 rounded-md border border-[var(--card-border)] px-2 py-1.5 text-[10px] font-bold disabled:opacity-40"><ChevronLeft size={12} />上一页</button>
+                <button type="button" disabled={page >= currentPageCount || isLoading} onClick={() => setPage((value) => value + 1)} className="inline-flex items-center gap-1 rounded-md border border-[var(--card-border)] px-2 py-1.5 text-[10px] font-bold disabled:opacity-40">下一页<ChevronRight size={12} /></button>
               </div>
             </div>
-          ) : (
-            <div className="mt-4 rounded-xl border border-dashed border-[var(--card-border)] px-4 py-10 text-center">
-              {isLoading ? <Loader2 size={16} className="mx-auto animate-spin text-[var(--muted-text)]" /> : loadIssues.some((issue) => issue.source === '订阅列表') ? <XCircle size={18} className="mx-auto text-rose-500" /> : <CircleDashed size={18} className="mx-auto text-[var(--muted-text)]" />}
-              <p className="mt-2 text-sm font-semibold text-[var(--app-text)]">{loadIssues.some((issue) => issue.source === '订阅列表') ? '订阅列表暂不可用' : '暂无 Telemetry 订阅'}</p>
-              <p className="mt-1 text-xs text-[var(--muted-text)]">{loadIssues.some((issue) => issue.source === '订阅列表') ? '请查看上方错误信息并刷新重试。' : '配置设备和订阅后，运行状态会显示在这里。'}</p>
-              {!isLoading && !loadIssues.some((issue) => issue.source === '订阅列表') && canManage && (
-                <button type="button" onClick={() => setView('configuration')} className="mt-3 rounded-lg bg-cyan-700 px-4 py-2 text-xs font-semibold text-white hover:bg-cyan-800">
-                  配置设备
-                </button>
-              )}
-            </div>
-          )}
-        </section>
-
-        <section className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-4 shadow-sm md:p-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 className="flex items-center gap-2 text-base font-semibold text-[var(--app-text)]"><Gauge size={16} className="text-cyan-700 dark:text-cyan-300" />采集器容量摘要</h2>
-              <p className="mt-1 text-xs text-[var(--muted-text)]">对比准入上限、已预留和实际观测值。</p>
-            </div>
-            <label className="flex items-center gap-2 text-xs font-semibold text-[var(--muted-text)]">
-              采集器
-              <select value={selectedCollectorId} onChange={(event) => setSelectedCollectorId(event.target.value)} disabled={!collectorOptions.length} className="max-w-[240px] rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2 py-1.5 text-xs text-[var(--app-text)] disabled:opacity-50">
-                {collectorOptions.map((collector) => <option key={collector.id} value={collector.id}>{collector.label}</option>)}
-              </select>
-            </label>
           </div>
-          {capacityLoading ? (
-            <div className="mt-3 flex items-center gap-2 rounded-xl border border-dashed border-[var(--card-border)] px-3 py-7 text-xs text-[var(--muted-text)]"><Loader2 size={14} className="animate-spin" />正在加载容量摘要…</div>
-          ) : capacityIssue ? (
-            <div role="alert" className={`mt-3 flex items-start gap-2 rounded-xl border px-3 py-3 text-xs ${capacityIssue.forbidden ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
-              {capacityIssue.forbidden ? <ShieldAlert size={14} className="mt-0.5 shrink-0" /> : <AlertTriangle size={14} className="mt-0.5 shrink-0" />}{capacityIssue.message}
-            </div>
-          ) : capacity ? (
-            <CapacityTable capacity={capacity} />
-          ) : (
-            <div className="mt-3 rounded-xl border border-dashed border-[var(--card-border)] px-4 py-8 text-center">
-              {collectorOptions.length ? <Database size={18} className="mx-auto text-[var(--muted-text)]" /> : <Server size={18} className="mx-auto text-[var(--muted-text)]" />}
-              <p className="mt-2 text-xs font-semibold text-[var(--app-text)]">{collectorOptions.length ? '暂无容量摘要' : '当前订阅页没有关联采集器'}</p>
-              <p className="mt-1 text-xs text-[var(--muted-text)]">{collectorOptions.length ? '选择采集器后查看资源上限、预留和观测值。' : '采集器容量会在订阅关联采集器后展示。'}</p>
-            </div>
-          )}
-        </section>
+        ) : (
+          <div className="mt-4 rounded-xl border border-dashed border-[var(--card-border)] px-4 py-10 text-center">
+            {isLoading ? <Loader2 size={16} className="mx-auto animate-spin text-[var(--muted-text)]" /> : loadIssues.some((issue) => issue.source === '订阅列表') ? <XCircle size={18} className="mx-auto text-rose-500" /> : <CircleDashed size={18} className="mx-auto text-[var(--muted-text)]" />}
+            <p className="mt-2 text-xs font-semibold text-[var(--app-text)]">{loadIssues.some((issue) => issue.source === '订阅列表') ? '订阅列表暂不可用' : '暂无 Telemetry 订阅'}</p>
+            <p className="mt-1 text-[10px] text-[var(--muted-text)]">{loadIssues.some((issue) => issue.source === '订阅列表') ? '请查看上方错误信息并刷新重试。' : '配置设备和订阅后，运行状态会显示在这里。'}</p>
+          </div>
+        )}
+      </section>
 
-        <footer className="flex items-center gap-2 px-1 text-xs text-[var(--muted-text)]">
-          {failedCount ? <AlertTriangle size={12} className="text-amber-600" /> : <CheckCircle2 size={12} className="text-emerald-600" />}
-          页面只呈现控制面返回的期望配置和运行状态，不会向设备下发协议配置。
-        </footer>
-      </div>
+      <section className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-4 shadow-sm md:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="flex items-center gap-2 text-sm font-extrabold text-[var(--app-text)]"><Gauge size={16} className="text-amber-600" />采集器容量摘要</h2>
+            <p className="mt-1 text-[11px] text-[var(--muted-text)]">对比准入上限、已预留和实际观测值。</p>
+          </div>
+          <label className="flex items-center gap-2 text-[10px] font-semibold text-[var(--muted-text)]">
+            采集器
+            <select value={selectedCollectorId} onChange={(event) => setSelectedCollectorId(event.target.value)} disabled={!collectorOptions.length} className="max-w-[240px] rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2 py-1.5 text-[11px] text-[var(--app-text)] disabled:opacity-50">
+              {collectorOptions.map((collector) => <option key={collector.id} value={collector.id}>{collector.label}</option>)}
+            </select>
+          </label>
+        </div>
+        {capacityLoading ? (
+          <div className="mt-3 flex items-center gap-2 rounded-xl border border-dashed border-[var(--card-border)] px-3 py-7 text-xs text-[var(--muted-text)]"><Loader2 size={14} className="animate-spin" />正在加载容量摘要…</div>
+        ) : capacityIssue ? (
+          <div role="alert" className={`mt-3 flex items-start gap-2 rounded-xl border px-3 py-3 text-xs ${capacityIssue.forbidden ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+            {capacityIssue.forbidden ? <ShieldAlert size={14} className="mt-0.5 shrink-0" /> : <AlertTriangle size={14} className="mt-0.5 shrink-0" />}{capacityIssue.message}
+          </div>
+        ) : capacity ? (
+          <CapacityTable capacity={capacity} />
+        ) : (
+          <div className="mt-3 rounded-xl border border-dashed border-[var(--card-border)] px-4 py-8 text-center">
+            {collectorOptions.length ? <Database size={18} className="mx-auto text-[var(--muted-text)]" /> : <Server size={18} className="mx-auto text-[var(--muted-text)]" />}
+            <p className="mt-2 text-xs font-semibold text-[var(--app-text)]">{collectorOptions.length ? '暂无容量摘要' : '当前订阅页没有关联采集器'}</p>
+            <p className="mt-1 text-[10px] text-[var(--muted-text)]">{collectorOptions.length ? '选择采集器后查看资源上限、预留和观测值。' : '采集器容量会在订阅关联采集器后展示。'}</p>
+          </div>
+        )}
+      </section>
 
-      <div id="telemetry-configuration" hidden={view !== 'configuration'} className="space-y-4">
-        <TelemetryControlSetupPanel
-          devices={devices}
-          profiles={profiles}
-          canManage={canManage && !mutationDenied}
-          reloadKey={reloadKey}
-          onChanged={refresh}
-        />
-        <details className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-4 shadow-sm md:p-5">
-          <summary className="cursor-pointer text-sm font-semibold text-[var(--app-text)]">协议支持范围 <span className="ml-2 text-xs font-normal text-[var(--muted-text)]">{profiles.length} 个协议档</span></summary>
-          {isLoading && profiles.length === 0 ? (
-            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3" aria-label="正在加载协议档">
-              {[0, 1, 2].map((item) => <div key={item} className="h-28 animate-pulse rounded-xl bg-black/[0.04] dark:bg-white/[0.05]" />)}
-            </div>
-          ) : profiles.length ? (
-            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {profiles.map((profile) => (
-                <article key={profile.id} className="rounded-xl border border-[var(--card-border)] p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="min-w-0"><p className="truncate text-xs font-extrabold text-[var(--app-text)]">{profileDisplayName(profile)}</p><p className="mt-0.5 text-xs text-[var(--muted-text)]">{displayVendor(profile.vendor)}{profile.platform ? ` · ${profile.platform}` : ''}</p></div>
-                    <StatusPill value={profile.support_status} type="support" />
-                  </div>
-                  <p className="mt-2 text-xs leading-relaxed text-[var(--muted-text)]">{profileScope(profile)}</p>
-                  <code className="mt-1 block break-all text-[9px] text-[var(--muted-text)]">ID: {profile.id}</code>
-                  {profile.min_interval_seconds != null && <p className="mt-1 text-xs text-[var(--muted-text)]">最小采样周期 {profile.min_interval_seconds} 秒</p>}
-                  <OfficialSourceList sources={profile.official_sources} />
-                  <EvidenceList paths={profile.paths} />
-                </article>
-              ))}
-            </div>
-          ) : (
-            <div className="mt-4 rounded-xl border border-dashed border-[var(--card-border)] px-4 py-7 text-center text-xs text-[var(--muted-text)]">
-              {loadIssues.some((issue) => issue.source === '协议档') ? '协议档暂不可用，请检查上方错误信息后重试。' : '暂无可用协议档。'}
-            </div>
-          )}
-        </details>
-      </div>
+      <footer className="flex items-center gap-2 px-1 text-[10px] text-[var(--muted-text)]">
+        {failedCount ? <AlertTriangle size={12} className="text-amber-600" /> : <CheckCircle2 size={12} className="text-emerald-600" />}
+        页面只呈现控制面返回的期望配置和运行状态，不会向设备下发协议配置。
+      </footer>
     </section>
   );
 };

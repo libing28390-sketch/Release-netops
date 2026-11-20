@@ -1,0 +1,18 @@
+scope: [SEC-001, SEC-002, SEC-003, SEC-004, SEC-005, SEC-006, SEC-007, SEC-008, SEC-009, SEC-010, SEC-011, SEC-012, SEC-013, SEC-014, SEC-015, SEC-016, SEC-017, SEC-018, SEC-019, SEC-020, COP-001, COP-002, COP-003, COP-004, COP-005, COP-006, COP-007, COP-008, COP-009, COP-010, COP-011, COP-012, COP-013, COP-014, COP-015, COP-016, COP-017, COP-018, COP-019, COP-020, COP-021, COP-022, COP-023, COP-024, DIA-001, DIA-002, DIA-003, DIA-004, DIA-005, DIA-006, DIA-007, DIA-008, DIA-009, DIA-010, DIA-011, DIA-012, DIA-013, DIA-014, DIA-015, DIA-016, DIA-017, DIA-018, DIA-019]
+database_authority: PostgreSQL
+acceptance_database: PostgreSQL 18.4
+sqlite: excluded_from_acceptance
+commands:
+  migration: "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_sec_copilot_dia_pg_probe.py"
+  backend_security: "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe -m pytest backend/tests/ai -q -p no:cacheprovider"
+  backend_diagnostics: "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe -m pytest backend/tests/vendor_audit/test_dia_001_019_diagnostic_orchestrator.py -q -p no:cacheprovider"
+  frontend_lint: "npm.cmd run lint"
+  frontend_build: "npm.cmd run build"
+gates:
+  schema: [m0142, m0143, m0144, jsonb_finding_categories, tenant_incident_index, no_raw_payload_columns]
+  security: [default_deny, secret_block, gateway_boundary, tenant_scope, metadata_only_audit, kill_switch]
+  copilot: [copilot_v2_contract, stream_abort_recovery, durable_feedback, context_budget, case_handoff, role_navigation]
+  diagnostics: [state_machine, cmdb_identity, explicit_platform_commands, read_only_authorization, bounded_timeout_concurrency, minimized_evidence, stable_errors, no_write_path]
+rollback:
+  database: additive_migrations_no_destructive_downgrade
+  runtime: disable_security_copilot_diagnostic_routes_and_restore_v1_assistant

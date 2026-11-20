@@ -1,0 +1,126 @@
+task_id: DB-002
+milestone: M1
+status: frozen_for_implementation
+scope: V2_canonical_entities_and_compatibility_adapters
+authority: PostgreSQL
+legacy_mode: current_TEXT_ids_and_tenant-default_are_adapter_only
+columns:
+  id:
+    canonical_type: uuid
+    nullable: false
+    semantics: immutable_server_generated_entity_identity
+    generation: server_side_uuid_v4_or_v7_behind_one_factory
+    forbidden: [business_meaning,_client_supplied_identity,reuse_after_delete]
+  tenant_id:
+    canonical_type: uuid
+    nullable: false
+    semantics: explicit_authorization_scope_for_every_tenant_row
+    source: authenticated_request_or_system_job_context
+    forbidden: [NULL,empty_string,client_body_override,cross_tenant_fallback]
+    legacy_adapter: tenant-default_maps_only_in_local_or_explicit_backfill_scope
+  created_at:
+    canonical_type: timestamptz
+    nullable: false
+    semantics: first_persist_time_in_UTC
+    write_rule: server_or_database_default_only; immutable_after_insert
+  updated_at:
+    canonical_type: timestamptz
+    nullable: false
+    semantics: last_successful_mutation_time_in_UTC
+    write_rule: server_side_unit_of_work_or_trigger; must_not_be_older_than_created_at
+  created_by:
+    canonical_type: uuid
+    nullable: false
+    semantics: opaque_authenticated_principal_or_registered_system_principal
+    security: never_raw_email_api_key_prompt_or_device_secret
+  updated_by:
+    canonical_type: uuid
+    nullable: false
+    semantics: opaque_principal_that_performed_last_mutation
+    security: never_raw_email_api_key_prompt_or_device_secret
+  status:
+    canonical_type: text
+    nullable: false
+    semantics: entity_specific_lifecycle_or_processing_state
+    write_rule: transition_allowlist_and_audit_event_required
+    unknown_behavior: fail_closed_and_exclude_from_active_reads
+common_invariants:
+  - id_is_unique_within_table_and_immutable
+  - tenant_id_is_in_every_primary_scope_and_authorization_predicate
+  - created_at_and_updated_at_are_timestamptz_UTC
+  - created_at_is_less_than_or_equal_to_updated_at
+  - created_by_and_updated_by_are_opaque_principal_ids
+  - status_is_never_inferred_from_boolean_enabled_or_is_deleted
+  - status_transition_is_auditable_and_entity_specific
+  - legacy_text_values_are_mapped_without_overwriting_original_rows
+status_taxonomy:
+  shared_storage_values: [draft,active,disabled,archived,quarantined,superseded,failed]
+  rule: entities_may_use_a_stricter_subset_and_must_document_it
+  prohibited_as_default: [unknown,all,empty_string,NULL]
+  future_lifecycle_task: DB-003_defines_soft_delete_disable_archive_purge_transitions
+scope_matrix:
+  tenant_scoped_entities:
+    - kb_vendor
+    - kb_product_family
+    - kb_product_series
+    - kb_product_model
+    - kb_product_alias
+    - kb_os_family
+    - kb_os_generation
+    - kb_release_train
+    - kb_software_version
+    - kb_source_registry
+    - kb_source_version
+    - kb_collection
+    - kb_document
+    - kb_document_version
+    - kb_document_product
+    - kb_document_software
+    - kb_chunk_version
+    - kb_chunk
+    - kb_chunk_edge
+    - kb_embedding_model
+    - kb_chunk_embedding
+    - kb_index_version
+    - kb_import_job
+    - ai_provider
+    - ai_model
+    - ai_model_route
+    - ai_request_trace
+  global_reference_entities: []
+legacy_gap_audit:
+  ai_provider:
+    observed: [id_TEXT, no_tenant_id, created_by_nullable, no_status, enabled_boolean]
+    action: additive_adapter_then_backfill_and_constraint_in_later_migration
+  ai_model:
+    observed: [id_TEXT, no_tenant_id, created_by_missing, no_status, enabled_boolean]
+    action: additive_adapter_then_backfill_and_constraint_in_later_migration
+  ai_model_route:
+    observed: [id_TEXT, scene_global_unique, model_id_not_primary_model_id, no_tenant_id, no_status]
+    action: tenant_scoped_route_adapter_with_explicit_primary_and_fallback
+  ai_knowledge_base:
+    observed: [id_TEXT, no_tenant_id, created_by_nullable, no_updated_at, enabled_boolean]
+    action: map_to_kb_collection_without_deleting_v1
+  ai_document:
+    observed: [id_TEXT, no_tenant_id_in_0103, created_by_missing, TEXT_timestamps, status_default_without_allowlist]
+    action: map_to_kb_document_and_document_version
+  ai_document_chunk:
+    observed: [id_TEXT, no_tenant_id, created_by_missing, no_status, TEXT_embedding]
+    action: map_to_kb_chunk_generation_and_embedding_contract
+  ai_knowledge_reindex_job:
+    observed: [id_TEXT, tenant_id_TEXT_default, created_by_missing, status_TEXT_default]
+    action: preserve_job_state_and_convert_scope_only_after_authoritative_tenant_mapping
+constraints_before_migration:
+  - production_postgresql_snapshot_and_schema_revision_available
+  - every_legacy_row_has_explicit_tenant_mapping_or_is_quarantined
+  - system_principal_mapping_is_registered
+  - timestamp_parse_and_timezone_report_has_zero_unresolved_rows
+  - status_values_are_mapped_to_entity_allowlist
+  - duplicate_ids_and_cross_tenant_collisions_are_zero
+  - fresh_upgrade_idempotent_downgrade_and_v1_parallel_tests_pass
+  - no_secret_or_raw_user_identity_is_copied_into_audit_fields
+rollback:
+  schema: drop_only_verified_additive_constraints_or_columns_after_disable_flag
+  data: retain_legacy_text_values_and_original_rows
+  runtime: route_reads_to_v1_adapter_and_local_deterministic_fallback
+next_tasks: [DB-003, DB-004, DB-005, DB-006, DB-007, DB-008, DB-009, DB-010, DB-017, DB-018]

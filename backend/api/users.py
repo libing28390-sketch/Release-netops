@@ -468,6 +468,73 @@ async def generate_captcha(request: Request):
     }
 
 
+import threading as _session_cache_threading
+
+_SESSION_CACHE_LOCK = _session_cache_threading.Lock()
+_SESSION_CACHE: dict[tuple[str, str], tuple[float, float, dict]] = {}
+_SESSION_CACHE_MAX_ENTRIES = 2048
+
+
+def _session_cache_ttl_seconds() -> float:
+    try:
+        return max(0.0, float(os.environ.get('SESSION_CACHE_TTL_SECONDS', '15')))
+    except (TypeError, ValueError):
+        return 15.0
+
+
+def _session_cache_namespace() -> str:
+    return os.environ.get('DATABASE_URL', '')
+
+
+def invalidate_session_cache(
+    *,
+    token: str | None = None,
+    user_id: str | None = None,
+    username: str | None = None,
+    clear_all: bool = False,
+) -> None:
+    """Evict cached session entries immediately on logout, password reset, or user updates."""
+    with _SESSION_CACHE_LOCK:
+        if clear_all:
+            _SESSION_CACHE.clear()
+            return
+        ns = _session_cache_namespace()
+        if token:
+            _SESSION_CACHE.pop((ns, token), None)
+        if user_id or username:
+            uid = str(user_id or '').strip()
+            uname = str(username or '').strip().lower()
+            stale_keys = [
+                key
+                for key, (_cached_at, _created_at, payload) in _SESSION_CACHE.items()
+                if key[0] == ns and (
+                    (uid and str(payload.get('user_id') or '') == uid)
+                    or (uname and str(payload.get('username') or '').lower() == uname)
+                )
+            ]
+            for key in stale_keys:
+                _SESSION_CACHE.pop(key, None)
+
+
+def get_cached_session_fast(token: str) -> dict | None:
+    """Non-blocking fast-path lookup for middleware; returns None on cache miss."""
+    ttl = _session_cache_ttl_seconds()
+    if not token or ttl <= 0:
+        return None
+    key = (_session_cache_namespace(), token)
+    now_mono = time.monotonic()
+    now_wall = time.time()
+    with _SESSION_CACHE_LOCK:
+        entry = _SESSION_CACHE.get(key)
+        if not entry:
+            return None
+        cached_at, created_at_float, payload = entry
+        if (now_mono - cached_at) > ttl or (now_wall - created_at_float) > _SESSION_TTL:
+            _SESSION_CACHE.pop(key, None)
+            return None
+        return dict(payload)
+
+
 def _clean_sessions():
     """Remove expired sessions from DB."""
     cutoff = time.time() - _SESSION_TTL
@@ -477,6 +544,7 @@ def _clean_sessions():
         conn.commit()
     finally:
         conn.close()
+    invalidate_session_cache(clear_all=True)
 
 def _store_session(token: str, user_dict: dict):
     """Persist session to DB."""
@@ -489,9 +557,13 @@ def _store_session(token: str, user_dict: dict):
         conn.commit()
     finally:
         conn.close()
+    invalidate_session_cache(token=token)
 
 def _get_session(token: str) -> dict | None:
-    """Retrieve a session from DB. Returns None if not found or expired."""
+    """Retrieve a session from short-TTL memory cache or DB. Returns None if not found or expired."""
+    cached = get_cached_session_fast(token)
+    if cached is not None:
+        return cached
     conn = get_db_connection()
     try:
         row = conn.execute(
@@ -521,12 +593,22 @@ def _get_session(token: str) -> dict | None:
             )
             conn.execute('DELETE FROM sessions WHERE token = ?', (token,))
             conn.commit()
+            invalidate_session_cache(token=token)
             return None
-        return dict(row)
+        payload = dict(row)
+        ttl = _session_cache_ttl_seconds()
+        if ttl > 0:
+            key = (_session_cache_namespace(), token)
+            with _SESSION_CACHE_LOCK:
+                if len(_SESSION_CACHE) >= _SESSION_CACHE_MAX_ENTRIES:
+                    _SESSION_CACHE.clear()
+                _SESSION_CACHE[key] = (time.monotonic(), created_at_float, dict(payload))
+        return payload
     finally:
         conn.close()
 
 def _delete_session(token: str):
+    invalidate_session_cache(token=token)
     conn = get_db_connection()
     try:
         conn.execute('DELETE FROM sessions WHERE token = ?', (token,))
@@ -1252,6 +1334,7 @@ async def forgot_password_reset(request: Request, payload: dict = Body(...)):
             (username,),
         )
         conn.commit()
+        invalidate_session_cache(username=username)
 
         log_audit_event(
             event_type='PASSWORD_RESET_COMPLETED',
@@ -1320,6 +1403,7 @@ async def forgot_password_mfa_reset(request: Request, payload: dict = Body(...))
         conn.execute('DELETE FROM login_failures WHERE username = ?', (username,))
         conn.execute('DELETE FROM sessions WHERE user_id = ?', (user['id'],))
         conn.commit()
+        invalidate_session_cache(user_id=str(user['id']))
 
         log_audit_event(
             event_type='PASSWORD_RESET_COMPLETED',
@@ -1525,6 +1609,7 @@ async def _update_user_record(
                 # privileged transition out of the requester's restricted scope.
                 conn.execute('DELETE FROM user_resource_scopes WHERE user_id = ?', (user_id,))
         conn.commit()
+        invalidate_session_cache(user_id=str(user_id))
         result = conn.execute(
             'SELECT id, username, role, role_profile, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email, mfa_enabled FROM users WHERE id = ?',
             (user_id,)

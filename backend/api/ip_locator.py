@@ -12,6 +12,7 @@ from core.config import settings
 from core.rbac import authorize_resource, require_role
 from core.tenant_policy import TENANT_ISOLATION_ENABLED, tenant_id_for_write, tenant_scope_for_user
 from database import get_db_connection
+from pydantic import BaseModel, Field
 from services.ip_locator_service import (
     get_arp_table_async,
     run_arp_sweep_async,
@@ -20,7 +21,8 @@ from services.ip_locator_service import (
     get_ip_inventory_async,
     get_route_cache_async,
     get_routing_neighbors_async,
-    get_bgp_routes_async
+    get_bgp_routes_async,
+    locate_mac_path_async,
 )
 from services.connectivity_service import run_probe_async
 from services.diagnose_service import run_diagnose_async
@@ -83,6 +85,43 @@ async def api_trace_ip(body: IPLocatorRunRequest, user=require_role("Viewer")):
         actor_role=user.get('role'),
         target_type='ip_address',
         target_name=body.ip,
+    )
+    return result
+
+
+class MACLocateRequest(BaseModel):
+    mac: str = Field(..., min_length=12, max_length=32)
+    site_id: str = Field(default='', max_length=128)
+
+
+@router.post('/ip-locator/locate-mac')
+async def api_locate_mac(body: MACLocateRequest, user=require_role("Viewer")):
+    """Locate a MAC address across authorized FDB snapshots, topology uplinks, and reverse ARP/ND."""
+    authorized_device_ids = await asyncio.to_thread(
+        _authorized_locator_device_ids,
+        user,
+        site_id=body.site_id,
+        online_only=False,
+    )
+    try:
+        result = await locate_mac_path_async(
+            body.mac,
+            site_id=body.site_id,
+            authorized_device_ids=authorized_device_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    log_audit_event(
+        event_type='ip_locator.locate_mac',
+        category='network',
+        severity='info',
+        status='success' if result.get('found') else 'not_found',
+        summary=f"MAC locate: {result.get('mac_display') or body.mac} (locations={len(result.get('locations') or [])})",
+        actor_username=user.get('username'),
+        actor_role=user.get('role'),
+        target_type='mac_address',
+        target_name=result.get('mac_display') or body.mac,
     )
     return result
 

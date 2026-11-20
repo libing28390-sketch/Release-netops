@@ -1,0 +1,57 @@
+task_id: API-004
+title: Unified pagination, sorting, filters, error codes, and permission-denial responses
+status: verified
+contract_version: nxa.api.response.v2
+pagination:
+  request_fields:
+    page: {type: integer, minimum: 1, default: 1}
+    page_size: {type: integer, minimum: 1, maximum: 100, default: 20}
+    sort_by: {type: string, pattern: '^[a-z][a-z0-9_]*$', server_allowlisted: true}
+    sort_order: {type: string, enum: [asc, desc], default: desc}
+  response_meta:
+    pagination:
+      - page
+      - page_size
+      - total
+      - total_pages
+      - sort_by
+      - sort_order
+    filters: server_normalized_non_secret_values
+  rules:
+    - page and sort bounds are enforced before service/database execution
+    - sort field is selected from a per-resource allowlist; client values never become SQL identifiers
+    - existing data fields remain compatible; metadata is additive
+resources:
+  - catalog products and aliases
+  - source registry, source versions, and refresh observations
+  - knowledge documents
+errors:
+  envelope:
+    success: false
+    error:
+      code: stable_machine_code
+      message: safe_user_message
+      request_id: request_trace_id
+      details: bounded_optional_object
+    detail: compatibility_safe_message
+  status_codes:
+    400: BAD_REQUEST
+    401: AUTHENTICATION_REQUIRED
+    403: PERMISSION_DENIED
+    404: RESOURCE_NOT_FOUND
+    409: CONFLICT
+    422: VALIDATION_ERROR
+    429: RATE_LIMITED
+  rules:
+    - stable V2/V1 AI paths include X-Request-ID on errors
+    - RBAC denial is code PERMISSION_DENIED and does not expose policy internals
+    - validation errors contain bounded field locations only
+frontend:
+  client: src/api/http.ts
+  behavior:
+    - ApiError exposes status, code, detail, and requestId
+    - existing callers may continue using the safe message/detail
+verification:
+  backend_contract_tests: backend/tests/ai/test_api004_response_contract.py
+  frontend_contract_tests: src/api/http.test.ts
+  result: PASS

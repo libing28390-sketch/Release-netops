@@ -1,0 +1,132 @@
+task_id: AUD-014
+milestone: M0
+priority: P0
+scope: ai_role_visibility_and_permission_alignment
+sources:
+  backend:
+    - backend/ai/security/permissions.py
+    - backend/ai/api/providers.py
+    - backend/ai/api/models.py
+    - backend/ai/api/prompts.py
+    - backend/ai/api/agents.py
+    - backend/ai/api/assistant.py
+    - backend/ai/api/security.py
+    - backend/ai/api/usage.py
+  frontend:
+    - src/components/AppSidebar/navConfig.ts
+    - src/components/AppSidebar/index.tsx
+    - src/components/ModuleSubNav.tsx
+    - src/components/TopHeader.tsx
+    - src/pages/ai/AiCenterPage.tsx
+    - src/pages/ai/Providers/ProviderManagementTab.tsx
+    - src/pages/ai/Models/ModelManagementTab.tsx
+    - src/pages/ai/PromptCenter/PromptCenterTab.tsx
+    - src/pages/ai/Agents/AgentManagementTab.tsx
+    - src/pages/ai/Knowledge/KnowledgeManagementTab.tsx
+    - src/pages/ai/Security/SecurityPolicyTab.tsx
+role_permissions:
+  Administrator:
+    all_ai_permissions: true
+  Operator:
+    includes:
+      - ai.view
+      - ai.use
+      - ai.assistant
+      - ai.audit.view
+      - ai.agent.use
+    excludes:
+      - ai.provider.manage
+      - ai.model.manage
+      - ai.prompt.manage
+      - ai.knowledge.manage
+  Viewer:
+    includes:
+      - ai.view
+      - ai.command_explain
+      - ai.config_analyze
+      - ai.diff_analyze
+      - ai.alarm_analyze
+    excludes:
+      - ai.assistant
+      - ai.agent.use
+      - ai.provider.manage
+      - ai.model.manage
+      - ai.prompt.manage
+      - ai.knowledge.manage
+      - ai.audit.view
+frontend_nav:
+  ai_center_min_role: Viewer
+  required_role_items:
+    - ai-security: Administrator
+  unguarded_items:
+    - ai-providers
+    - ai-models
+    - ai-prompts
+    - ai-copilot
+    - ai-agents
+    - ai-knowledge
+    - ai-governance
+    - ai-usage
+page_permission_source:
+  AiCenterPage_receives_current_user: false
+  management_tabs_use_permission_hook: false
+  direct_route_guard: false
+endpoint_matrix:
+  providers:
+    list: ai.provider.manage
+    write: ai.provider.manage
+  models:
+    list: ai.view
+    write: ai.model.manage
+  prompts:
+    list: ai.view
+    write: ai.prompt.manage
+  agents:
+    list_and_trace: ai.view
+    run_and_cancel: ai.agent.use
+  knowledge:
+    read: ai.view
+    write: ai.knowledge.manage
+  security:
+    read_and_dry_run: ai.audit.view
+    write_and_kill_switch: ai.provider.manage
+  copilot:
+    chat: ai.assistant
+findings:
+  - id: AUD014-F01
+    severity: P0
+    status: OPEN
+    summary: AI routes and navigation are not permission guarded
+  - id: AUD014-F02
+    severity: P0
+    status: OPEN
+    summary: Viewer sees Copilot and Agent actions that fail only after click
+  - id: AUD014-F03
+    severity: P0
+    status: OPEN
+    summary: Operator cannot list providers because provider list requires manage permission
+  - id: AUD014-F04
+    severity: P1
+    status: OPEN
+    summary: management buttons are not hidden or disabled for missing manage permission
+  - id: AUD014-F05
+    severity: P1
+    status: OPEN
+    summary: Security has nav role filter but no page/direct-route guard
+  - id: AUD014-F06
+    severity: P1
+    status: OPEN
+    summary: frontend requiredRole and backend AI permission codes are separate sources
+  - id: AUD014-F07
+    severity: P2
+    status: OPEN
+    summary: 403 handling is inconsistent across AI pages
+verification:
+  production_api_called: false
+  production_database_changed: false
+  source_assertions: PASS
+  yaml_assertions: PASS
+conclusion:
+  audit_status: PASS
+  role_visibility_release_ready: false
+  p0_blockers: 3

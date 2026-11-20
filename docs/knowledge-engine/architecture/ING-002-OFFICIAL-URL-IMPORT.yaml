@@ -1,0 +1,76 @@
+task_id: ING-002
+priority: P0
+owner: BE
+milestone: M2
+status: frozen_for_implementation
+depends_on: [ING-001, CAT-001, CAT-003, CAT-004, DB-008]
+decision:
+  choice: one_reviewed_url_to_source_version_manifest_job
+  summary: >-
+    Accept exactly one reviewed official HTTPS URL per request, preflight it
+    against the CAT-001 host/path allowlist and source metadata contract, then
+    create or reuse one tenant-scoped source registry row and collect it through
+    the CAT-004 safe outbound boundary. The result is an immutable source
+    version manifest and a running ING-001 continuation at fetched; later
+    parser/chunk/index tasks own publication.
+  invariants:
+    - one_request_has_one_canonical_url
+    - query_fragment_userinfo_non_https_and_unallowlisted_path_fail_before_network
+    - official_metadata_requires_vendor_family_version_scope_and_terms_review
+    - source_registry_is_the_only_source_version_write_boundary
+    - safe_fetch_is_the_only_network_boundary
+    - response_body_is_not_returned_or_persisted_in_this_adapter
+    - same_tenant_idempotency_replays_without_second_fetch
+    - different_tenant_or_scope_cannot_replay_the_job
+    - ingestion_stops_at_fetched_until_later_parser_pipeline_tasks
+    - V1_source_hints_and_reindex_rows_are_unchanged
+
+request_contract:
+  endpoint: POST /api/knowledge-v2/ingestion/official-url
+  required: [url, vendor, product_family, version_scope, terms_review_status]
+  optional: [source_kind, reviewer, reviewed_at, name, description, idempotency_key, request_id, max_retries]
+  source_kind_allowlist: [official_url, product_page, configuration_guide, command_reference, release_note, product_support]
+  version_scope_required: [primary, compatibility]
+  terms_review_status: [approved, waived, not_required]
+  max_retries: 0..5
+  unknown_fields: forbidden
+
+flow:
+  - phase: accepted
+    action: validate_payload_and_compute_tenant_idempotency_scope
+  - phase: scoped
+    action: preflight_canonical_url_CAT001_and_source_metadata_without_network
+  - phase: fetched
+    action: ensure_active_source_registry_row_then_CAT004_safe_fetch_and_record_immutable_hash_manifest
+  - phase: continuation
+    action: leave_job_running_with_continuation_required_true_for_ING006_plus_parser_and_publication
+
+source_registry_boundary:
+  create_or_reuse: tenant_id_plus_canonical_url
+  lifecycle: draft_then_validate_then_active
+  trust_level: official
+  version_status: fetched
+  raw_content_storage: hash_only_memory_boundary
+  immutable_facts: [source_registry_id, fetched_at, content_hash, byte_size, parser_name, parser_version, fetch_url, source_etag, source_last_modified]
+
+failure_contract:
+  before_network: [IMPORT_INPUT_INVALID, OFFICIAL_URL_NOT_ALLOWLISTED, OFFICIAL_URL_METADATA_INVALID, URL_QUERY_FORBIDDEN, URL_FRAGMENT_FORBIDDEN, URL_USERINFO_FORBIDDEN]
+  safe_outbound_mapping: [SOURCE_TIMEOUT, PROVIDER_UNAVAILABLE, SECRET_OR_SSRF_VIOLATION, DATA_INTEGRITY]
+  behavior: record_structured_ING001_error_and_return_job_snapshot_without_raw_body
+  retry: bounded_by_ING001_max_retries
+
+security_and_rollback:
+  rbac: knowledge_source.create_and_tenant_scope
+  network: CAT004_safe_fetch_only
+  audit: source_created_source_enabled_fetch_started_fetch_completed_fetch_failed
+  no_secrets: url_userinfo_query_tokens_headers_cookies_raw_body_forbidden
+  rollback: disable_route_and_retain_immutable_source_versions; restore_V1_source_hint_read_path
+  production_ddl: none_in_ING002
+
+acceptance:
+  - focused_single_url_tests_and_CAT003_CAT004_regression_pass
+  - allowlist_and_metadata_preflight_happens_before_network
+  - one_successful_fetch_records_hash_only_source_version_and_no_body_response
+  - idempotent_replay_does_not_fetch_twice
+  - SSRF_and_invalid_input_are_redacted_and_fail_closed
+  - compile_yaml_secret_diff_lint_build_V1_and_DB_AI_checks_pass

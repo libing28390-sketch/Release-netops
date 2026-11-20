@@ -556,12 +556,6 @@ def list_monitoring_network_devices(
 
     conn = get_db_connection()
     try:
-        total_row = conn.execute(
-            f"SELECT COUNT(*) AS total FROM devices d LEFT JOIN physical_assets pa ON pa.id = d.asset_id LEFT JOIN sites s ON s.id = d.site_id WHERE {' AND '.join(status_where)}",
-            tuple(status_params),
-        ).fetchone()
-        total = int(total_row['total'] or 0) if total_row else 0
-
         status_row = conn.execute(
             f"""
             SELECT
@@ -572,6 +566,14 @@ def list_monitoring_network_devices(
             """,
             tuple(where_params),
         ).fetchone()
+        online_count = int((status_row['online_count'] if status_row else 0) or 0)
+        offline_count = int((status_row['offline_count'] if status_row else 0) or 0)
+        if status == 'online':
+            total = online_count
+        elif status == 'offline':
+            total = offline_count
+        else:
+            total = online_count + offline_count
 
         site_rows = conn.execute(
             f"""
@@ -1068,10 +1070,6 @@ def monitoring_device_realtime(
             'uptime_seconds': None,
         })
         device.update(current_hardware_component_statuses(conn, device_id))
-        device['interface_data'] = [
-            item for item in (fetch_interface_data(conn, device['id']) or [])
-            if not _is_virtual_interface_name(item.get('interface_name') or item.get('name'))
-        ]
 
         # Hardware inventory samples and standard sysUpTime are exported only
         # by the normalized VictoriaMetrics families. The native provider has
@@ -1092,29 +1090,25 @@ def monitoring_device_realtime(
                     mode="victoriametrics" if selected_backend == "native" else selected_backend
                 )
 
-                cpu_payload = provider_inst.instant(query="cpu_usage_percent", asset_id=lookup_id, metric_key="cpu_usage_percent")
-                cpu_val = extract_instant_metric_value(cpu_payload.get("data"))
-                if cpu_val is not None:
-                    device['cpu_usage'] = cpu_val
-
-                mem_payload = provider_inst.instant(query="memory_usage_percent", asset_id=lookup_id, metric_key="memory_usage_percent")
-                mem_val = extract_instant_metric_value(mem_payload.get("data"))
-                if mem_val is not None:
-                    device['memory_usage'] = mem_val
-
-                temp_payload = provider_inst.instant(query="temperature_celsius", asset_id=lookup_id, metric_key="temperature_celsius")
-                temp_val = extract_instant_metric_value(temp_payload.get("data"))
-                if temp_val is not None:
-                    device['temp'] = temp_val
-
-                uptime_payload = provider_inst.instant(
-                    query="device_uptime_seconds",
-                    asset_id=lookup_id,
-                    metric_key="device_uptime_seconds",
+                hw_queries = (
+                    ("cpu_usage_percent", "cpu_usage"),
+                    ("memory_usage_percent", "memory_usage"),
+                    ("temperature_celsius", "temp"),
+                    ("device_uptime_seconds", "uptime_seconds"),
                 )
-                uptime_val = extract_instant_metric_value(uptime_payload.get("data"))
-                if uptime_val is not None:
-                    device['uptime_seconds'] = uptime_val
+                if hasattr(provider_inst, "batch_instant"):
+                    hw_payloads = provider_inst.batch_instant([
+                        (metric_key, lookup_id, metric_key) for metric_key, _ in hw_queries
+                    ])
+                else:
+                    hw_payloads = [
+                        provider_inst.instant(query=metric_key, asset_id=lookup_id, metric_key=metric_key)
+                        for metric_key, _ in hw_queries
+                    ]
+                for (_, device_field), metric_payload in zip(hw_queries, hw_payloads):
+                    metric_val = extract_instant_metric_value(metric_payload.get("data"))
+                    if metric_val is not None:
+                        device[device_field] = metric_val
             except Exception as vm_err:
                 logger.debug("Failed to query real-time hardware metrics from provider for %s: %s", device_id, vm_err)
 
@@ -1385,15 +1379,25 @@ def monitoring_device_trend(
                 if device.get('asset_id') and device.get('id') and str(device['asset_id']) != str(device['id'])
                 else target_asset_id
             )
-            for metric_key in metric_keys:
-                result = provider_instance.range(
-                    query=metric_key,
-                    metric_key=metric_key,
-                    asset_id=lookup_id,
-                    start=start_dt,
-                    end=end_dt,
-                    step_seconds=300 if range_hours > 24 else 60,
-                )
+            step_seconds = 300 if range_hours > 24 else 60
+            if hasattr(provider_instance, "batch_range"):
+                range_results = provider_instance.batch_range([
+                    (metric_key, start_dt, end_dt, step_seconds, lookup_id, metric_key)
+                    for metric_key in metric_keys
+                ])
+            else:
+                range_results = [
+                    provider_instance.range(
+                        query=metric_key,
+                        metric_key=metric_key,
+                        asset_id=lookup_id,
+                        start=start_dt,
+                        end=end_dt,
+                        step_seconds=step_seconds,
+                    )
+                    for metric_key in metric_keys
+                ]
+            for metric_key, result in zip(metric_keys, range_results):
                 if str(result.get('status') or '').lower() == 'error':
                     provider_errors.append(str(result.get('error') or f'{metric_key} query failed'))
                 if result.get('shadow'):

@@ -1,0 +1,93 @@
+schema_version: 1
+task_id: AUD-011
+scope: "审计会话持久化、上下文截断、租户隔离和消息引用保存"
+sources:
+  - backend/database/migrations/m0105_ai_security_operations_graph.py
+  - backend/ai/services/conversation_service.py
+  - backend/ai/api/assistant.py
+  - backend/ai/api/chat_v1.py
+  - backend/ai/services/assistant.py
+  - backend/ai/security/classification.py
+  - backend/ai/security/minimizer.py
+  - backend/ai/security/tokenization.py
+schema:
+  conversations_table: ai_conversations
+  messages_table: ai_messages
+  conversation_fields: [tenant_id, user_id_opaque, status, context_budget]
+  message_fields: [conversation_id, sequence_no, role, content_safe, reasoning_internal, tool_calls_json, citations_json, token_count]
+  message_parent_fk: true
+  message_parent_on_delete: CASCADE
+  message_sequence_unique: true
+  message_tenant_column: false
+runtime:
+  persistence:
+    v2_non_stream_user: true
+    v2_non_stream_assistant: true
+    v2_stream_user: true
+    v2_stream_assistant: true
+    v1_user: true
+    v1_assistant: true
+  context:
+    service_default_max_messages: 20
+    service_max_messages_cap: 100
+    v2_llm_history_limit: 6
+    v1_llm_history_limit: 20
+    context_budget_persisted: true
+    context_budget_enforced: false
+    token_aware_truncation: false
+  isolation:
+    conversation_tenant_and_user_check: true
+    message_query_after_parent_check: true
+    api_payload_can_override_tenant: false
+    negative_cross_tenant_probe: pass
+    negative_cross_user_probe: pass
+  citations:
+    json_roundtrip: true
+    v2_non_stream_saved: true
+    v2_stream_saved: false
+    v1_saved: false
+    import_preserves_citations: false
+    normalized_citation_table: false
+    evidence_foreign_key: false
+    url_version_locator_contract: false
+  safety:
+    l4_block: true
+    l3_minimize: true
+    identifier_tokenization: true
+    content_max_chars: 200000
+    reasoning_internal_max_chars: 10000
+findings:
+  - id: AUD011-F01
+    severity: P0
+    status: open_for_followup
+    description: "context_budget is stored but not used for token-aware truncation; message-count limits can exceed the declared budget."
+  - id: AUD011-F02
+    severity: P0
+    status: open_for_followup
+    description: "SQLite foreign_keys=0 leaves ai_messages orphaned after parent-only conversation delete."
+  - id: AUD011-F03
+    severity: P1
+    status: open_for_followup
+    description: "Citation persistence differs across V1/V2 and streaming/import paths, with no normalized provenance locator contract."
+  - id: AUD011-F04
+    severity: P2
+    status: observed
+    description: "Provider failure can leave a persisted user message without an assistant message; this is an auditable half-turn state."
+probes:
+  context_budget_probe:
+    context_budget: 4096
+    default_messages: 8
+    default_token_sum: 6688
+    max_messages: 8
+  delete_probe:
+    sqlite_foreign_keys: 0
+    conversations_after_delete: 0
+    messages_after_delete: 8
+conclusion:
+  audit_status: PASS
+  persistence_connected: true
+  tenant_isolation_ready: true
+  token_budget_ready: false
+  citation_contract_ready: false
+  sqlite_delete_cascade_ready: false
+  production_release_allowed: false

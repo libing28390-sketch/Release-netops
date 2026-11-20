@@ -1,0 +1,1912 @@
+{
+  "schema_version": 1,
+  "dataset_id": "nexora-kb-eval-anchors-50-source-reviewed-v2-20260905",
+  "status": "FAIL",
+  "review_status": "PENDING_HUMAN_REVIEW",
+  "gold_status": "PASS",
+  "database_validation": "read_only_postgresql",
+  "database_error": null,
+  "human_review_required": true,
+  "case_count": 50,
+  "vendor_counts": {
+    "Cisco": 18,
+    "H3C": 6,
+    "Huawei": 16,
+    "Ruijie": 6,
+    "unknown": 4
+  },
+  "missing_review_field_cases": [
+    "ANCHOR-001",
+    "ANCHOR-002",
+    "ANCHOR-003",
+    "ANCHOR-004",
+    "ANCHOR-005",
+    "ANCHOR-006",
+    "ANCHOR-007",
+    "ANCHOR-008",
+    "ANCHOR-009",
+    "ANCHOR-010",
+    "ANCHOR-011",
+    "ANCHOR-012",
+    "ANCHOR-013",
+    "ANCHOR-014",
+    "ANCHOR-015",
+    "ANCHOR-016",
+    "ANCHOR-017",
+    "ANCHOR-018",
+    "ANCHOR-019",
+    "ANCHOR-020",
+    "ANCHOR-021",
+    "ANCHOR-022",
+    "ANCHOR-023",
+    "ANCHOR-024",
+    "ANCHOR-025",
+    "ANCHOR-026",
+    "ANCHOR-027",
+    "ANCHOR-028",
+    "ANCHOR-029",
+    "ANCHOR-030",
+    "ANCHOR-031",
+    "ANCHOR-032",
+    "ANCHOR-033",
+    "ANCHOR-034",
+    "ANCHOR-035",
+    "ANCHOR-036",
+    "ANCHOR-037",
+    "ANCHOR-038",
+    "ANCHOR-039",
+    "ANCHOR-040",
+    "ANCHOR-041",
+    "ANCHOR-042",
+    "ANCHOR-043",
+    "ANCHOR-044",
+    "ANCHOR-045",
+    "ANCHOR-046",
+    "ANCHOR-047",
+    "ANCHOR-048",
+    "ANCHOR-049",
+    "ANCHOR-050"
+  ],
+  "missing_gold_cases": [],
+  "missing_annotation_field_cases": [],
+  "missing_feature_annotation_cases": [],
+  "unresolved_gold_document_ids": [],
+  "inferred_feature_cases": [],
+  "explicit_feature_scope_cases": [
+    "ANCHOR-003",
+    "ANCHOR-004",
+    "ANCHOR-029",
+    "ANCHOR-049"
+  ],
+  "metadata_mismatch_cases": [],
+  "metadata_insufficient_cases": [],
+  "known_projected_document_id_count": 145,
+  "records": [
+    {
+      "id": "ANCHOR-001",
+      "expected_outcome": "answer",
+      "vendor": "Huawei",
+      "platform": "huawei_vrp",
+      "feature": "vlan",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-huawei-vlan-basic",
+        "official-template-official-huawei-vlanif"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-huawei-vlan-basic",
+        "official-template-official-huawei-vlanif"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-002",
+      "expected_outcome": "answer",
+      "vendor": "Cisco",
+      "platform": "cisco_iosxe",
+      "feature": "vlan",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-cisco-vlan-basic",
+        "official-template-official-cisco-svi"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-cisco-vlan-basic",
+        "official-template-official-cisco-svi"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-003",
+      "expected_outcome": "answer",
+      "vendor": "Huawei",
+      "platform": "huawei_vrp",
+      "feature": "interface",
+      "feature_scope": [
+        "interface",
+        "access_port",
+        "trunk"
+      ],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-huawei-ce6885-interface-status-diagnostic",
+        "official-template-official-huawei-access-port",
+        "official-template-official-huawei-trunk-port"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-huawei-ce6885-interface-status-diagnostic",
+        "official-template-official-huawei-access-port",
+        "official-template-official-huawei-trunk-port"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-004",
+      "expected_outcome": "answer",
+      "vendor": "Cisco",
+      "platform": "cisco_iosxe",
+      "feature": "interface",
+      "feature_scope": [
+        "interface",
+        "access_port",
+        "trunk"
+      ],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-cisco-interface-switchport-basic",
+        "official-template-official-cisco-access-port",
+        "official-template-official-cisco-trunk-port"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-cisco-interface-switchport-basic",
+        "official-template-official-cisco-access-port",
+        "official-template-official-cisco-trunk-port"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-005",
+      "expected_outcome": "answer",
+      "vendor": "Huawei",
+      "platform": "huawei_vrp",
+      "feature": "ospf",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-huawei-s5700-ospf-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-huawei-s5700-ospf-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-006",
+      "expected_outcome": "answer",
+      "vendor": "Cisco",
+      "platform": "cisco_iosxe",
+      "feature": "ospf",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-cisco-c9300-ospf-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-cisco-c9300-ospf-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-007",
+      "expected_outcome": "answer",
+      "vendor": "Huawei",
+      "platform": "huawei_vrp",
+      "feature": "ssh",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-huawei-ssh-basic",
+        "official-template-official-huawei-aaa-local"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-huawei-ssh-basic",
+        "official-template-official-huawei-aaa-local"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-008",
+      "expected_outcome": "answer",
+      "vendor": "Cisco",
+      "platform": "cisco_iosxe",
+      "feature": "ssh",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-cisco-ssh-basic",
+        "official-template-official-cisco-aaa-local"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-cisco-ssh-basic",
+        "official-template-official-cisco-aaa-local"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-009",
+      "expected_outcome": "answer",
+      "vendor": "Huawei",
+      "platform": "huawei_vrp",
+      "feature": "ntp",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-huawei-ntp-client-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-huawei-ntp-client-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-010",
+      "expected_outcome": "answer",
+      "vendor": "Cisco",
+      "platform": "cisco_iosxe",
+      "feature": "ntp",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-cisco-ntp-client-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-cisco-ntp-client-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-011",
+      "expected_outcome": "answer",
+      "vendor": "Huawei",
+      "platform": "huawei_vrp",
+      "feature": "static_route",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-huawei-static-route-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-huawei-static-route-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-012",
+      "expected_outcome": "answer",
+      "vendor": "Cisco",
+      "platform": "cisco_iosxe",
+      "feature": "static_route",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-cisco-static-route-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-cisco-static-route-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-013",
+      "expected_outcome": "answer",
+      "vendor": "Huawei",
+      "platform": "huawei_vrp",
+      "feature": "bgp",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-huawei-bgp-basic",
+        "official-template-official-huawei-ce6800-bgp-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-huawei-bgp-basic",
+        "official-template-official-huawei-ce6800-bgp-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-014",
+      "expected_outcome": "answer",
+      "vendor": "Huawei",
+      "platform": "huawei_vrp",
+      "feature": "lacp",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-huawei-eth-trunk"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-huawei-eth-trunk"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-015",
+      "expected_outcome": "answer",
+      "vendor": "Huawei",
+      "platform": "huawei_vrp",
+      "feature": "acl",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-huawei-acl-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-huawei-acl-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-016",
+      "expected_outcome": "answer",
+      "vendor": "Huawei",
+      "platform": "huawei_vrp",
+      "feature": "bfd",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-huawei-ospf-bfd-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-huawei-ospf-bfd-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-017",
+      "expected_outcome": "answer",
+      "vendor": "Huawei",
+      "platform": "huawei_vrpv8",
+      "feature": "vxlan",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-huawei-ce12800-vxlan-evpn-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-huawei-ce12800-vxlan-evpn-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-018",
+      "expected_outcome": "answer",
+      "vendor": "Huawei",
+      "platform": "huawei_vrp",
+      "feature": "port_security",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-huawei-port-security-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-huawei-port-security-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-019",
+      "expected_outcome": "answer",
+      "vendor": "Huawei",
+      "platform": "huawei_vrp",
+      "feature": "system_monitoring",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-huawei-cpu-memory-diagnostic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-huawei-cpu-memory-diagnostic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-020",
+      "expected_outcome": "answer",
+      "vendor": "Huawei",
+      "platform": "huawei_vrp",
+      "feature": "pam",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-huawei-super-password-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-huawei-super-password-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-021",
+      "expected_outcome": "answer",
+      "vendor": "Cisco",
+      "platform": "cisco_iosxe",
+      "feature": "trunk",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-cisco-trunk-port"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-cisco-trunk-port"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-022",
+      "expected_outcome": "answer",
+      "vendor": "Cisco",
+      "platform": "cisco_nxos",
+      "feature": "bgp",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-cisco-bgp-basic",
+        "official-template-official-cisco-nexus-vxlan-evpn-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-cisco-nexus-bgp-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-023",
+      "expected_outcome": "answer",
+      "vendor": "Cisco",
+      "platform": "cisco_iosxe",
+      "feature": "lacp",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-cisco-lacp-port-channel"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-cisco-lacp-port-channel"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-024",
+      "expected_outcome": "answer",
+      "vendor": "Cisco",
+      "platform": "cisco_iosxe",
+      "feature": "acl",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-cisco-acl-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-cisco-acl-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-025",
+      "expected_outcome": "answer",
+      "vendor": "Cisco",
+      "platform": "cisco_iosxe",
+      "feature": "ospf",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-cisco-c9300-ospf-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-cisco-c9300-ospf-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-026",
+      "expected_outcome": "answer",
+      "vendor": "Cisco",
+      "platform": "cisco_iosxe",
+      "feature": "arp",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-cisco-arp-mac-diagnostic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-cisco-arp-mac-diagnostic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-027",
+      "expected_outcome": "answer",
+      "vendor": "Cisco",
+      "platform": "cisco_iosxe",
+      "feature": "hsrp",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-cisco-hsrp-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-cisco-hsrp-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-028",
+      "expected_outcome": "answer",
+      "vendor": "Cisco",
+      "platform": "cisco_iosxe",
+      "feature": "pam",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-cisco-aaa-authentication-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-cisco-aaa-authentication-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-029",
+      "expected_outcome": "answer",
+      "vendor": "H3C",
+      "platform": "h3c_comware_v7",
+      "feature": "vlan",
+      "feature_scope": [
+        "vlan",
+        "trunk"
+      ],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-h3c-vlan-basic",
+        "official-template-official-h3c-trunk-port"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-h3c-vlan-basic",
+        "official-template-official-h3c-trunk-port"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-030",
+      "expected_outcome": "answer",
+      "vendor": "H3C",
+      "platform": "h3c_comware_v7",
+      "feature": "interface",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-h3c-interface-brief-diagnostic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-h3c-interface-brief-diagnostic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-031",
+      "expected_outcome": "answer",
+      "vendor": "H3C",
+      "platform": "h3c_comware_v7",
+      "feature": "lacp",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-h3c-lacp-bridge-aggregation"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-h3c-lacp-bridge-aggregation"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-032",
+      "expected_outcome": "answer",
+      "vendor": "H3C",
+      "platform": "h3c_comware_v7",
+      "feature": "bgp",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-h3c-bgp-basic",
+        "official-template-official-h3c-s6800-s9825-bgp-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-h3c-bgp-basic",
+        "official-template-official-h3c-s6800-s9825-bgp-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-033",
+      "expected_outcome": "answer",
+      "vendor": "H3C",
+      "platform": "h3c_comware_v7",
+      "feature": "acl",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-h3c-acl-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-h3c-acl-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-034",
+      "expected_outcome": "answer",
+      "vendor": "H3C",
+      "platform": "h3c_comware_v7",
+      "feature": "arp",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-h3c-arp-mac-diagnostic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-h3c-arp-mac-diagnostic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-035",
+      "expected_outcome": "answer",
+      "vendor": "Ruijie",
+      "platform": "ruijie_rgos",
+      "feature": "vlan",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "ruijie-rgos-vlan-access"
+      ],
+      "acceptable_document_ids": [
+        "ruijie-rgos-vlan-access"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-036",
+      "expected_outcome": "answer",
+      "vendor": "Ruijie",
+      "platform": "ruijie_rgos",
+      "feature": "lacp",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "ruijie-rgos-aggregateport"
+      ],
+      "acceptable_document_ids": [
+        "ruijie-rgos-aggregateport"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-037",
+      "expected_outcome": "answer",
+      "vendor": "Ruijie",
+      "platform": "ruijie_rgos",
+      "feature": "static_route",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "ruijie-rgos-show-route"
+      ],
+      "acceptable_document_ids": [
+        "ruijie-rgos-show-route"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-038",
+      "expected_outcome": "answer",
+      "vendor": "Ruijie",
+      "platform": "ruijie_rgos",
+      "feature": "ospf",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "ruijie-rgos-ospf"
+      ],
+      "acceptable_document_ids": [
+        "ruijie-rgos-ospf"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-039",
+      "expected_outcome": "answer",
+      "vendor": "Ruijie",
+      "platform": "ruijie_rgos",
+      "feature": "lldp",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "ruijie-rgos-show-lldp"
+      ],
+      "acceptable_document_ids": [
+        "ruijie-rgos-show-lldp"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-040",
+      "expected_outcome": "answer",
+      "vendor": "Ruijie",
+      "platform": "ruijie_rgos",
+      "feature": "acl",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "ruijie-rgos-acl"
+      ],
+      "acceptable_document_ids": [
+        "ruijie-rgos-acl"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-041",
+      "expected_outcome": "answer",
+      "vendor": "Cisco",
+      "platform": "cisco_iosxe",
+      "feature": "vlan",
+      "feature_scope": [],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-cisco-vlan-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-cisco-vlan-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-042",
+      "expected_outcome": "clarify",
+      "vendor": "Cisco",
+      "platform": "cisco_iosxe",
+      "feature": null,
+      "feature_scope": [],
+      "feature_source": "not_applicable_or_unresolved",
+      "gold_document_ids": [],
+      "acceptable_document_ids": [],
+      "gold_policy": "not_required_guard_case",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "not_run",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": []
+      }
+    },
+    {
+      "id": "ANCHOR-043",
+      "expected_outcome": "clarify",
+      "vendor": "Huawei",
+      "platform": "huawei_vrp",
+      "feature": null,
+      "feature_scope": [],
+      "feature_source": "not_applicable_or_unresolved",
+      "gold_document_ids": [],
+      "acceptable_document_ids": [],
+      "gold_policy": "not_required_guard_case",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "not_run",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": []
+      }
+    },
+    {
+      "id": "ANCHOR-044",
+      "expected_outcome": "answer",
+      "vendor": "Cisco",
+      "platform": "cisco_iosxe",
+      "feature": null,
+      "feature_scope": [],
+      "feature_source": "not_applicable_or_unresolved",
+      "gold_document_ids": [],
+      "acceptable_document_ids": [],
+      "gold_policy": "not_required_guard_case",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "not_run",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": []
+      }
+    },
+    {
+      "id": "ANCHOR-045",
+      "expected_outcome": "answer",
+      "vendor": "Cisco",
+      "platform": "cisco_iosxe",
+      "feature": null,
+      "feature_scope": [],
+      "feature_source": "not_applicable_or_unresolved",
+      "gold_document_ids": [],
+      "acceptable_document_ids": [],
+      "gold_policy": "not_required_guard_case",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "not_run",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": []
+      }
+    },
+    {
+      "id": "ANCHOR-046",
+      "expected_outcome": "no_match",
+      "vendor": null,
+      "platform": null,
+      "feature": null,
+      "feature_scope": [],
+      "feature_source": "not_applicable_or_unresolved",
+      "gold_document_ids": [],
+      "acceptable_document_ids": [],
+      "gold_policy": "not_required_guard_case",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "not_run",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": []
+      }
+    },
+    {
+      "id": "ANCHOR-047",
+      "expected_outcome": "no_match",
+      "vendor": null,
+      "platform": null,
+      "feature": "ssh",
+      "feature_scope": [],
+      "feature_source": "query_inference",
+      "gold_document_ids": [],
+      "acceptable_document_ids": [],
+      "gold_policy": "not_required_guard_case",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "not_run",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": []
+      }
+    },
+    {
+      "id": "ANCHOR-048",
+      "expected_outcome": "clarify",
+      "vendor": null,
+      "platform": null,
+      "feature": "lacp",
+      "feature_scope": [],
+      "feature_source": "query_inference",
+      "gold_document_ids": [],
+      "acceptable_document_ids": [],
+      "gold_policy": "not_required_guard_case",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "not_run",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": []
+      }
+    },
+    {
+      "id": "ANCHOR-049",
+      "expected_outcome": "answer",
+      "vendor": "Huawei",
+      "platform": "huawei_vrp",
+      "feature": "vlan",
+      "feature_scope": [
+        "vlan",
+        "access_port"
+      ],
+      "feature_source": "case_annotation",
+      "gold_document_ids": [
+        "official-template-official-huawei-access-port",
+        "official-template-official-huawei-vlan-basic"
+      ],
+      "acceptable_document_ids": [
+        "official-template-official-huawei-access-port",
+        "official-template-official-huawei-vlan-basic"
+      ],
+      "gold_policy": "required_acceptable_set",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "pass",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": [
+          "vendor",
+          "cli_platform",
+          "feature"
+        ]
+      }
+    },
+    {
+      "id": "ANCHOR-050",
+      "expected_outcome": "no_match",
+      "vendor": null,
+      "platform": null,
+      "feature": null,
+      "feature_scope": [],
+      "feature_source": "not_applicable_or_unresolved",
+      "gold_document_ids": [],
+      "acceptable_document_ids": [],
+      "gold_policy": "not_required_guard_case",
+      "missing_annotation_fields": [],
+      "gold_id_source_status": "source_evidence_found",
+      "unresolved_gold_document_ids": [],
+      "reviewer": null,
+      "reviewed_at": null,
+      "annotation_status": "pending_human_review",
+      "missing_review_fields": [
+        "reviewer",
+        "reviewed_at",
+        "annotation_status"
+      ],
+      "metadata_validation": {
+        "status": "not_run",
+        "mismatch_document_ids": [],
+        "insufficient_document_ids": [],
+        "checked_fields": []
+      }
+    }
+  ],
+  "source_scan_known_projected_document_id_count": 91
+}

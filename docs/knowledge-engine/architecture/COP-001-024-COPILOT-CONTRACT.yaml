@@ -1,0 +1,30 @@
+tasks: [COP-001, COP-002, COP-003, COP-004, COP-005, COP-006, COP-007, COP-008, COP-009, COP-010, COP-011, COP-012, COP-013, COP-014, COP-015, COP-016, COP-017, COP-018, COP-019, COP-020, COP-021, COP-022, COP-023, COP-024]
+title: Engineer-facing Copilot contract
+roles:
+  engineer: [copilot, conversations, fault_cases, knowledge_search]
+  administrator: [copilot, conversations, fault_cases, knowledge_search, providers, models, prompts, agents, security, governance, usage]
+backend_authority:
+  tenant: authenticated_user_tenant
+  permissions: [ai.assistant, ai.copilot.feedback, ai.diagnostics.run]
+  provider_and_model: server_selected_and_audited
+intent_risk: [consultation_low, knowledge_retrieval_low, diagnosis_medium, config_generation_high]
+context:
+  structured_fields: [device_id, interface, site_id, time_range, alert_ids, recent_changes, topology_neighbors, metrics, history_events, vendor, model, version, impact_scope]
+  attachment: preflight_security_scan_before_context
+  budget: bounded_and_explained
+response:
+  contract_version: copilot.v2
+  includes: [confirmed_facts, assumptions, confidence, required_evidence, next_checks, source_labels, recognized_identity, runtime_flags, context_budget]
+  excludes: [provider_secret, raw_security_finding, unauthorized_document, raw_tool_output]
+controls:
+  stop: abort_stream_and_leave_recoverable_message
+  retry_edit_continue: explicit_user_actions
+  feedback: durable_tenant_scoped_reasons
+  cases: create_and_handoff_draft
+diagnostics:
+  default: read_only
+  authorization: per_step
+  writes: never_from_copilot
+rollback:
+  runtime: disable_new_context_controls_and_use_v1_chat_contract
+  data: retain_conversations_and_feedback; no_raw_payloads

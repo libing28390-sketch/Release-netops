@@ -1,0 +1,65 @@
+{
+  "status": "BLOCKED",
+  "task_id": "MIG-007",
+  "authority": "PostgreSQL",
+  "sqlite": "forbidden",
+  "candidate": {
+    "candidate_snapshot_id": "",
+    "candidate_fixture_grade": "verified",
+    "candidate_fixture_reason_codes": [],
+    "allowlisted_source_count": 4,
+    "source_version_fact_count": 0,
+    "source_ref_hashes": [
+      "49a8f198afee82a8",
+      "49a8f198afee82a8",
+      "7d505c7fc67850a0",
+      "0bd95e4c741a5546"
+    ],
+    "candidate_scope": {
+      "vendor": "Huawei",
+      "product_family": "CloudEngine 6800",
+      "product_series": "CloudEngine 6800",
+      "product_model": "CE6885-48YS8CQ",
+      "os_family": "VRP8",
+      "software_train": "V300",
+      "primary_version": "V300R024C10SPC500",
+      "cli_platform": "huawei_vrp"
+    },
+    "documented_version_scope_hash": "cc87ce13f824a9d59b5f11eb2a85ba536c8975c2691f5c0cc016c0486e6ce89d",
+    "reasons": [
+      "CATALOG_OWNER_REVIEW_REQUIRED",
+      "SOURCE_VERSION_FACTS_MISSING"
+    ],
+    "review_status": "REQUIRED"
+  },
+  "live": {
+    "status": "PASS",
+    "database": "PostgreSQL",
+    "transaction_read_only": true,
+    "legacy_documents": 156,
+    "tenant_default_documents": 154,
+    "exact_candidate_legacy_rows": 0,
+    "same_tenant_active_valid_source_rows": 0,
+    "same_tenant_verified_source_versions": 0,
+    "source_registry_rows": 3,
+    "source_version_rows": 3,
+    "production_database_write": false,
+    "external_fetch": false,
+    "sqlite": "forbidden"
+  },
+  "blocker_reasons": [
+    "CATALOG_OWNER_REVIEW_REQUIRED",
+    "NO_LEGACY_ROW_IN_EXACT_VERSION_SCOPE",
+    "SOURCE_REGISTRY_BINDING_MISSING",
+    "SOURCE_VERSION_BINDING_MISSING",
+    "SOURCE_VERSION_FACTS_MISSING"
+  ],
+  "production_database_write": false,
+  "external_fetch": false,
+  "provider_calls": 0,
+  "report_redacted": true,
+  "duration_seconds": 0.173,
+  "rollback": "discard_preflight_report_and_keep_v1_projection",
+  "allowlist_sha256": "0f3b37db75248bcf10e8eadf7241f7913befd1ac46e17e0e5d2cf9f38eeb316f",
+  "snapshot_sha256": "941c79bf6d5a1c064b4941a39983a5f71391dd9783c044bcaebb3831375b0ce9"
+}

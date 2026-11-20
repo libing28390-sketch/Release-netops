@@ -1,13 +1,12 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import type { Device } from '../types';
-import { EMPTY_TAG_FILTER, type TagFilterConfig } from '../components/TagConditionPicker';
+import { EMPTY_TAG_FILTER, type TagFilterConfig } from '../types/tagFilter';
 import type { Language } from '../i18n.tsx';
 import { parseJsonObject } from '../components/shared';
 import {
   normalizeTopologyPort,
   type TopologyOperationalState,
 } from '../utils/topologyCore';
-import { buildTopologyExportFilename, getTopologyExportPixelRatio } from '../utils/topologyExport';
 import { TOPOLOGY_LINK_LOAD_TIERS } from '../utils/topologyLinkLoad';
 import { useTopologyVisibleDevices } from './useTopologyVisibleDevices';
 import { useTopologySelectionSync } from './useTopologySelectionSync';
@@ -737,6 +736,7 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
   }, [language]);
 
   const graphInventory = useMemo(() => {
+    if (!enabled) return [] as Device[];
     const existingIds = new Set(devices.map((device) => String(device.id)));
     topologyGraphNodeDevices.forEach((device) => existingIds.add(String(device.id)));
     const inventory = [
@@ -748,7 +748,7 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
       ...device,
       ...(topologyCollectionStatuses[String(device.id)] || {}),
     }));
-  }, [devices, topologyCollectionStatuses, topologyGraphNodeDevices, topologyUnmanagedNodes]);
+  }, [devices, enabled, topologyCollectionStatuses, topologyGraphNodeDevices, topologyUnmanagedNodes]);
 
   const {
     topologySiteOptions,
@@ -772,6 +772,7 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
 
   // -- All decorated links (unfiltered by toggle, used for stats) --
   const topologyAllDecoratedLinks = useMemo<TopologyDecoratedLink[]>(() => {
+    if (!enabled || topologyLinks.length === 0) return [];
     const deviceMap = new Map<string, Device>();
     topologyVisibleDevices.forEach((device) => {
       deviceMap.set(device.id, device);
@@ -781,7 +782,7 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
       .map((link) => describeTopologyLink(link, deviceMap.get(link.source_device_id), deviceMap.get(link.target_device_id)));
 
     return managedDecoratedLinks;
-  }, [describeTopologyLink, topologyLinks, topologyVisibleDeviceIds, topologyVisibleDevices]);
+  }, [describeTopologyLink, enabled, topologyLinks, topologyVisibleDeviceIds, topologyVisibleDevices]);
 
   // -- Apply hideStaleLinks toggle filter --
   const topologyVisibleLinks = useMemo<TopologyDecoratedLink[]>(() => {
@@ -991,8 +992,11 @@ export const useTopology = ({ devices, language, showToast, isAuthenticated, ena
         topologySvg.appendChild(exportOverlay);
       }
 
+      const [{ buildTopologyExportFilename, getTopologyExportPixelRatio }, { toPng }] = await Promise.all([
+        import('../utils/topologyExport'),
+        import('html-to-image'),
+      ]);
       const exportPixelRatio = getTopologyExportPixelRatio(width, height);
-      const { toPng } = await import('html-to-image');
       const dataUrl = await toPng(topologySvg as unknown as HTMLElement, {
         backgroundColor: '#ffffff',
         cacheBust: true,

@@ -7,7 +7,6 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ReferenceLine, Legend
 } from 'recharts';
-import * as XLSX from 'xlsx';
 import { useChartTheme } from '../hooks/useChartTheme';
 import PageHero from '../components/PageHero';
 import { ActionButton } from '../components/ui/ActionIconButton';
@@ -350,7 +349,8 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
     return { total: riskItems.length, critical, warning, normal };
   }, [riskItems]);
 
-  const handleExport = () => {
+  const handleExport = async () => {
+    const XLSX = await import('xlsx');
     const data = filteredRisks.map(r => ({
       [zh ? '主机名' : 'Hostname']: r.hostname,
       [zh ? '资源类型' : 'Resource']: zh ? r.resource : r.resourceEn,

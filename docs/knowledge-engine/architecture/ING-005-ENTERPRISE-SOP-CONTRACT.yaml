@@ -1,0 +1,77 @@
+task_id: ING-005
+priority: P0
+owner: BE
+milestone: M2
+status: frozen_for_implementation
+depends_on: [DB-008, DB-009, DB-013, ING-001, ING-003, ING-004]
+decision:
+  choice: tenant_owned_sop_upload_with_forced_internal_domain
+  summary: >-
+    Accept exactly one tenant-owned local SOP file without any external source
+    URL. Generate a server-owned internal source URI, force source_type and
+    source_kind to enterprise, trust_level to internal, document_kind to
+    enterprise_sop and classification to INTERNAL. Reuse the bounded file,
+    hash-only Source Version and ING-001 pipeline boundaries.
+  invariants:
+    - external_or_official_source_claims_are_forbidden
+    - classification_cannot_be_promoted_by_the_uploader
+    - source_uri_is_server_owned_and_not_network_collectable
+    - tenant_owner_department_and_content_hash_are_scoped_and_audited
+    - provenance_is_saved_with_the_internal_source_version
+    - official_and_enterprise_domains_are_not_mixed
+    - same_tenant_content_idempotency_replays_without_duplicate_version
+    - no_raw_upload_body_or_filesystem_path_is_returned_or_audited
+    - V1_knowledge_rows_and_source_hints_remain_unchanged
+
+request_contract:
+  endpoint: POST /api/knowledge-v2/ingestion/enterprise-sop
+  content_type: multipart/form-data
+  required_parts: [file]
+  optional_parts: [title, owner, department, classification, description, idempotency_key, request_id, max_retries]
+  classification_default: INTERNAL
+  classification_allowlist: [INTERNAL]
+  file_boundary: ING-004_bounded_filename_type_magic_utf8_and_20MB_limit
+
+domain_contract:
+  source_type: enterprise
+  source_kind: enterprise
+  trust_level: internal
+  knowledge_domain: enterprise
+  document_kind: enterprise_sop
+  source_authority: tenant_owned
+  source_uri_template: https://internal.nexora.local/tenant/{tenant_hash}/enterprise-sop/{content_hash}
+  external_network: forbidden
+  official_vendor_allowlist: not_applicable
+
+metadata_and_provenance:
+  required_metadata: [knowledge_domain, document_kind, classification, trust_level, owner, department, source_authority, provenance]
+  proof_type: tenant_owned_local_file_hash
+  provenance_facts: [source_url, filename, content_type, content_hash, byte_size, captured_at, captured_by, owner, department, classification]
+  hash: sha256_lowercase_hex_server_owned
+  raw_content_storage: hash_only_memory_boundary
+
+pipeline:
+  phase_flow: [accepted, scoped, fetched, continuation]
+  job_kind: document_import
+  fetched_means: source_version_manifest_recorded_not_published
+  continuation_required: true
+  parser_and_publication: later_ingestion_tasks
+
+security_and_audit:
+  rbac: knowledge_source.create
+  tenant_scope: source_and_job_required
+  audit_events: [enterprise_sop_import_started, enterprise_sop_import_completed, enterprise_sop_import_failed, fetch_completed]
+  audit_forbidden: [raw_file_body, filesystem_path, external_url, credentials]
+  rollback: disable_or_quarantine_enterprise_source_and_retain_immutable_version
+  production_ddl: none
+  v1_impact: none
+
+acceptance:
+  focused_tests: backend/tests/catalog/test_ing005_enterprise_sop_import.py
+  required_checks:
+    - default_internal_classification_and_enterprise_trust_boundary
+    - public_or_official_or_external_claims_fail_closed
+    - server_owned_internal_source_uri_and_provenance
+    - tenant_idempotency_and_version_deduplication
+    - rbac_file_boundary_route_contract
+    - CAT_DB_AI_V1_compile_yaml_secret_diff_lint_build_gates

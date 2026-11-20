@@ -1,0 +1,50 @@
+task_id: EVAL-020
+title: Dependency, secret, permission, logging, and error-response security gate
+original_requirement: "执行依赖、Secret、权限、日志和错误响应安全检查。"
+status: PASS_PENDING_EXECUTION
+database_under_test: PostgreSQL_only
+sqlite: forbidden
+scope:
+  dependency:
+    - python_pip_check
+    - package_lock_integrity
+    - no_unpinned_or_missing_runtime_dependency_reported
+  secret:
+    - validate_kb_v2_test_config_fail_closed
+    - production_literal_secret_scan
+    - scan_output_never_contains_secret_values
+    - provider_keys_are_masked_and_never_returned_plaintext
+  permission:
+    - every_backend_ai_route_requires_require_ai_permission
+    - existing_permission_and_tenant_boundary_tests
+    - PostgreSQL_read_only_authority_probe
+  logging:
+    - AI_domain_logger_calls_do_not_emit_raw_secret_or_payload_values
+    - sanitizer_runtime_regression
+    - request_id_and_audit_context_remain_available
+  error_response:
+    - stable_error_code_and_request_id_contract
+    - provider_auth_and_gateway_failure_mapping
+    - raw_provider_body_and_exception_text_not_returned
+  v1_preservation:
+    - PostgreSQL_V1_baseline_10_cases
+    - production_database_write_false
+    - transaction_rollback
+required_commands:
+  - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts\\knowledge_engine_v2_eval020_security_check.py"
+  - "$env:PYTHONPATH='backend'; .venv\\Scripts\\pytest.exe tests\\knowledge_engine_v2\\test_eval020_security.py -q -p no:cacheprovider"
+  - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts\\knowledge_engine_v2_v1_baseline_pg.py"
+  - "npm.cmd run lint"
+  - "npm.cmd run build"
+  - "git diff --check"
+exit_criteria:
+  - dependency_check_pass
+  - no_production_secret_literal_in_scanned_runtime_scope
+  - ai_route_permission_coverage_100_percent
+  - AI_log_redaction_checks_pass
+  - stable_error_contract_checks_pass
+  - PostgreSQL_authority_and_V1_baseline_pass
+  - no_sqlite_evidence
+  - lint_build_and_diff_check_pass
+  - evidence_and_rollback_recorded
+rollback: "Revert EVAL-020 audit artifacts and any narrowly scoped log-safety fixes; no production DDL or data mutation is performed."

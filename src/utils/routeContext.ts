@@ -219,6 +219,8 @@ export function getRouteContext(pathname: string): RouteContext {
       ipamPage = 'routing-contexts';
     } else if (second === 'fhrp') {
       ipamPage = 'fhrp';
+    } else if (second === 'resources') {
+      ipamPage = 'resources';
     } else {
       ipamPage = 'ips';
     }

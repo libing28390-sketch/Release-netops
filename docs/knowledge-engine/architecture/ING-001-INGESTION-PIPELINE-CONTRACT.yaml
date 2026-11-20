@@ -1,0 +1,94 @@
+task_id: ING-001
+priority: P0
+owner: ARCH+BE
+milestone: M2
+status: frozen_for_implementation
+depends_on: [DB-003, DB-008, DB-011, AUD-024]
+decision:
+  choice: one_tenant_scoped_ingestion_control_plane_with_explicit_phase_and_error_contract
+  summary: >-
+    All future official URL, local file, SOP, parser, chunk, embedding and
+    index work uses one execution-state machine and one phase contract. V1
+    reindex and generic network-operation rows remain intact until the
+    DB-011 migration and release gates are complete.
+  invariants:
+    - lifecycle_status_is_separate_from_execution_state
+    - tenant_and_idempotency_scope_are_server_owned
+    - only_allowlisted_job_kinds_and_phases_are_accepted
+    - phase_progress_is_monotonic_or_explicitly_retried
+    - counters_are_non_negative_and_progress_is_server_derived
+    - terminal_success_requires_completed_phase_and_full_progress
+    - retry_is_bounded_and_never_replays_a_terminal_success
+    - cancellation_is_cooperative_and_idempotent
+    - worker_lease_fencing_prevents_duplicate_or_stale_workers
+    - errors_are_stable_redacted_structured_and_classified
+    - no_network_write_command_is_reachable_from_knowledge_ingestion
+
+job_contract:
+  job_kinds: [document_import, document_reindex, chunk_rebuild, embedding_rebuild, index_build, scope_refresh, catalog_backfill, dry_run_validation]
+  initial_execution_state: queued
+  terminal_execution_states: [cancelled, succeeded, failed]
+  execution_state_transitions:
+    queued: [running, cancel_requested]
+    running: [retry_wait, paused, cancel_requested, succeeded, failed]
+    retry_wait: [running, failed]
+    paused: [running]
+    cancel_requested: [cancelled]
+    cancelled: []
+    succeeded: []
+    failed: []
+  idempotency_key: unique_per_tenant_and_scope_fingerprint
+  tenant_predicate: required_in_create_read_update_claim_cancel_retry_and_progress
+
+phase_contract:
+  phases: [accepted, scoped, fetched, parsed, normalized, classified, chunked, embedded, indexed, validated, committed, completed, failed, cancelled]
+  normal_order: [accepted, scoped, fetched, parsed, normalized, classified, chunked, embedded, indexed, validated, committed, completed]
+  transition_rule: monotonic_forward_or_explicit_retry_to_same_phase
+  skip_rule: skipped_phases_must_be_declared_in_phase_evidence
+  worker_rule: phase_work_requires_running_execution_state
+  terminal_rules:
+    completed: execution_state_must_be_succeeded_and_processed_count_must_equal_total_count
+    failed: structured_error_must_be_retained
+    cancelled: cancellation_request_and_cancel_evidence_must_be_retained
+
+progress_contract:
+  counters: [total_count, processed_count, parsed_count, failed_count, succeeded_count, skipped_count, retryable_failed_count, error_count]
+  invariants:
+    - all_counters_non_negative
+    - processed_count_lte_total_count
+    - parsed_plus_skipped_plus_failed_lte_processed
+    - succeeded_plus_skipped_plus_failed_lte_processed
+    - progress_percent_server_derived
+  zero_total_percent: 100
+  client_counter_write: forbidden
+
+error_contract:
+  module: backend/services/ingestion_pipeline_service.py
+  shape: [code, safe_message, phase, item_id, source_id, attempt_no, retryable, occurred_at, correlation_id]
+  retryable_codes: [SOURCE_TIMEOUT, RATE_LIMITED, TRANSIENT_DATABASE, PROVIDER_UNAVAILABLE, WORKER_LOST]
+  non_retryable_codes: [INVALID_SCOPE, ACL_DENIED, PARSER_CONTRACT, UNSUPPORTED_FORMAT, SECRET_OR_SSRF_VIOLATION, DATA_INTEGRITY, INTERNAL_ERROR]
+  classification: stable_allowlist_with_safe_message_map
+  forbidden_in_error: [DSN, password, API_credential, bearer_token, raw_document, device_output, prompt]
+
+lease_and_cancel:
+  lease_fields: [lease_owner, lease_expires_at, heartbeat_at, fencing_token]
+  stale_worker_result: STALE_LEASE
+  expired_lease_result: retry_wait_until_budget_exhausted_then_failed
+  cancel_safe_point: worker_acknowledges_cancel_request_before_next_side_effect
+  repeated_cancel: idempotent_current_snapshot
+
+implementation_and_rollback:
+  implementation: backend/services/ingestion_pipeline_service.py
+  compatibility_exports:
+    - backend/services/ingestion_pipeline.py
+    - backend/ai/services/ingestion_pipeline.py
+  persistence: contract_only_process_local_until_DB011_migration_gate
+  v1_impact: none
+  production_ddl: none
+  rollback: disable_V2_pipeline_adapter_and_route_work_to_existing_V1_reindex_without_deleting_V1_rows
+
+acceptance:
+  - state_machine_and_phase_order_have_focused_tests
+  - progress_retry_cancel_lease_and_error_redaction_have_negative_tests
+  - DB011_contract_and_existing_V1_reindex_tests_remain_green
+  - compile_yaml_secret_diff_lint_build_and_V1_baseline_checks_pass

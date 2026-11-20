@@ -1,18 +1,18 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Terminal as XTerm } from 'xterm';
-import { FitAddon } from 'xterm-addon-fit';
-import 'xterm/css/xterm.css';
+import type { Terminal as XTerm } from 'xterm';
+import type { FitAddon } from 'xterm-addon-fit';
 import {
   Package, Plus, Trash2, Search, X, RefreshCw, Download, Pencil, Copy,
   Server, Router, AlertTriangle, SlidersHorizontal,
-  Wifi, Upload, FileText,
+  Wifi, Upload, FileText, Layers,
   AlertCircle, CheckCircle2, Info,
   Flame, Lock, Terminal, Eye, EyeOff, Loader2, Shield, User, MonitorSpeaker
 } from 'lucide-react';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
-import * as XLSX from 'xlsx';
+import type * as XLSXTypes from 'xlsx';
 import { AnimatePresence, motion } from 'motion/react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 import Pagination from '../../components/Pagination';
 import { DataTable, DataTableFrame } from '../../components/DataTable';
@@ -28,6 +28,7 @@ import { useInventoryStore } from '../../store/inventoryStore';
 import type { TagDefinition } from '../../types';
 
 import { Asset, AssetSummary, AssetManagementTabProps } from './types';
+import StackMembersModal from './StackMembersModal';
 import {
   STATUSES,
   TYPES,
@@ -53,24 +54,10 @@ import {
 } from './constants';
 import { statusMeta, typeMeta } from './helpers';
 import { getMissingAssetRequiredFields, assetRequiredFieldLabel } from './requiredFields';
-import {
-  ASSET_INFO_SHEET_RE,
-  MANAGEMENT_ENTRY_SHEET_RE,
-  REMOTE_DESKTOP_PROFILE_SHEET_RE,
-  TELEMETRY_SUBSCRIPTION_SHEET_RE,
-  assetTypeForSheetName,
-  normalizeImportHeader,
-  mergeManagementMethods,
-  mergeRemoteDesktopProfiles,
-  mergeTelemetrySubscriptions,
-  parseManagementMethodSheet,
-  parseRemoteDesktopProfileSheet,
-  parseTelemetrySubscriptionSheet,
-  formatAssetImportError,
-  getMissingSnmpCredentialRows,
-  type ManagementMethodImportRow,
-  type RemoteDesktopProfileImportRow,
-  type TelemetrySubscriptionImportRow,
+import type {
+  ManagementMethodImportRow,
+  RemoteDesktopProfileImportRow,
+  TelemetrySubscriptionImportRow,
 } from './importUtils';
 
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
@@ -308,7 +295,11 @@ const toFallbackTemplateExcelSerial = (value: unknown): number | null => {
   return (timestamp - Date.UTC(1899, 11, 30)) / 86400000;
 };
 
-const formatFallbackTemplateDateColumns = (worksheet: XLSX.WorkSheet, headers: string[]) => {
+const formatFallbackTemplateDateColumns = (
+  XLSX: typeof XLSXTypes,
+  worksheet: XLSXTypes.WorkSheet,
+  headers: string[],
+) => {
   const dateColumns = headers
     .map((header, index) => ({ header, index }))
     .filter(({ header }) => ['购买日期', '保修到期', 'Purchase Date', 'Warranty Expiry'].includes(header));
@@ -347,6 +338,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [loading, setLoading]           = useState(true);
   const [assetError, setAssetError] = useState<AssetLoadIssue | null>(null);
   const [assetsLastLoadedAt, setAssetsLastLoadedAt] = useState<Date | null>(null);
+  const assetScrollContainerRef = React.useRef<HTMLDivElement>(null);
   const assetFetchSequenceRef = React.useRef(0);
   const summaryFetchSequenceRef = React.useRef(0);
 
@@ -362,6 +354,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [terminalInput, setTerminalInput] = useState('');
   const terminalWsRef = React.useRef<WebSocket | null>(null);
   const [terminals, setTerminals] = useState<Record<string, { term: XTerm; fit: FitAddon }>>({});
+  const terminalInitializingRef = React.useRef<Set<string>>(new Set());
   const [showApprovalModal, setShowApprovalModal] = useState(false);
   const [approvalData, setApprovalData] = useState({ ticket: '', reason: '', mfa: '' });
   const [isApproved, setIsApproved] = useState(false);
@@ -373,25 +366,35 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [terminalRequesting, setTerminalRequesting] = useState(false);
 
   const initTerminal = (container: HTMLDivElement, id: string) => {
-    if (terminals[id]) return;
-    const term = new XTerm({
-      cursorBlink: true,
-      fontSize: 12,
-      fontFamily: 'JetBrains Mono, Menlo, Monaco, Consolas, "Courier New", monospace',
-      theme: { background: '#0b1220', foreground: '#dbeafe', cursor: '#00bceb' },
-    });
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-    term.open(container);
-    fitAddon.fit();
+    if (terminals[id] || terminalInitializingRef.current.has(id)) return;
+    terminalInitializingRef.current.add(id);
+    void Promise.all([
+      import('xterm'),
+      import('xterm-addon-fit'),
+      import('xterm/css/xterm.css'),
+    ]).then(([{ Terminal: XTerm }, { FitAddon }]) => {
+      if (!container.isConnected) return;
+      const term = new XTerm({
+        cursorBlink: true,
+        fontSize: 12,
+        fontFamily: 'JetBrains Mono, Menlo, Monaco, Consolas, "Courier New", monospace',
+        theme: { background: '#0b1220', foreground: '#dbeafe', cursor: '#00bceb' },
+      });
+      const fitAddon = new FitAddon();
+      term.loadAddon(fitAddon);
+      term.open(container);
+      fitAddon.fit();
 
-    term.onData(data => {
-      if (terminalWsRef.current?.readyState === WebSocket.OPEN) {
-        terminalWsRef.current.send(data);
-      }
-    });
+      term.onData(data => {
+        if (terminalWsRef.current?.readyState === WebSocket.OPEN) {
+          terminalWsRef.current.send(data);
+        }
+      });
 
-    setTerminals(prev => ({ ...prev, [id]: { term, fit: fitAddon } }));
+      setTerminals(prev => ({ ...prev, [id]: { term, fit: fitAddon } }));
+    }).finally(() => {
+      terminalInitializingRef.current.delete(id);
+    });
   };
 
   const [feedbackMsg, setFeedbackMsg] = useState<{
@@ -411,6 +414,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
 
   const [selectedIds, setSelectedIds]   = useState<Set<string>>(new Set());
   const [drawerAsset, setDrawerAsset]   = useState<Asset | null>(null);
+  const [stackModal, setStackModal]     = useState<{ mode: 'import' | 'members'; asset?: Asset | null } | null>(null);
 
   const [showModal, setShowModal]       = useState(false);
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
@@ -601,6 +605,13 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     : 0;
 
   const displayAssets = assets;
+  const shouldVirtualizeAssets = displayAssets.length > 60;
+  const assetRowVirtualizer = useVirtualizer({
+    count: shouldVirtualizeAssets ? displayAssets.length : 0,
+    getScrollElement: () => assetScrollContainerRef.current,
+    estimateSize: () => 48,
+    overscan: 12,
+  });
 
   const hasFilters = Boolean(
     search.trim() ||
@@ -1302,6 +1313,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     };
     scheduleImportListRefresh();
     try {
+      const { formatAssetImportError, getMissingSnmpCredentialRows } = await import('./importUtils');
       const r = await fetch('/api/assets/import?detailed=true', {
         method: 'POST',
         headers: authHeaders(true),
@@ -1639,6 +1651,20 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     const reader = new FileReader();
     reader.onload = async (ev) => {
       try {
+        const [XLSX, {
+          ASSET_INFO_SHEET_RE,
+          MANAGEMENT_ENTRY_SHEET_RE,
+          REMOTE_DESKTOP_PROFILE_SHEET_RE,
+          TELEMETRY_SUBSCRIPTION_SHEET_RE,
+          assetTypeForSheetName,
+          normalizeImportHeader,
+          mergeManagementMethods,
+          mergeRemoteDesktopProfiles,
+          mergeTelemetrySubscriptions,
+          parseManagementMethodSheet,
+          parseRemoteDesktopProfileSheet,
+          parseTelemetrySubscriptionSheet,
+        }] = await Promise.all([import('xlsx'), import('./importUtils')]);
         const data = new Uint8Array(ev.target?.result as ArrayBuffer);
         const wb = XLSX.read(data, { type: 'array' });
         const mapped: Record<string, string>[] = [];
@@ -1879,6 +1905,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       // Fall through to the in-browser legacy generator.
     }
 
+    const XLSX = await import('xlsx');
     const wb = XLSX.utils.book_new();
 
     const guideRows = zh ? [
@@ -1973,7 +2000,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     const serverAssetExamples = projectRows(legacyAssetExamples.filter(row => row[0] === (zh ? '服务器' : 'server')), serverAssetIndexes);
     const appendAssetSheet = (sheetName: string, headers: string[], examples: (string | number)[][]) => {
       const sheet = XLSX.utils.aoa_to_sheet([headers, ...examples]);
-      formatFallbackTemplateDateColumns(sheet, headers);
+      formatFallbackTemplateDateColumns(XLSX, sheet, headers);
       sheet['!cols'] = headers.map((_, index) => ({ wch: index === 0 || index === 2 ? 18 : 16 }));
       XLSX.utils.book_append_sheet(wb, sheet, sheetName);
     };
@@ -2266,7 +2293,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
           : 'Device inventory and lifecycle · SNMP hostname sync runs during network device import'}
       />
 
-      <div className="flex-1 overflow-auto p-5 space-y-4">
+      <div ref={assetScrollContainerRef} className="flex-1 overflow-auto p-5 space-y-4">
         <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleImport} />
 
         {summaryError && (
@@ -2771,6 +2798,15 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                   >
                     <Upload size={13} />
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setStackModal({ mode: 'import', asset: null })}
+                    className="p-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 hover:bg-gray-50 hover:text-blue-600 transition-all cursor-pointer"
+                    title={zh ? '堆叠成员导入' : 'Import stack members'}
+                    aria-label={zh ? '堆叠成员导入' : 'Import stack members'}
+                  >
+                    <Layers size={13} />
+                  </button>
                 </div>
               </div>
 
@@ -2873,7 +2909,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                         </div>
                       </div>
                     </td></tr>
-                  ) : displayAssets.map(a => {
+                  ) : (() => {
+                    const renderAssetRow = (a: Asset) => {
                     const sel = selectedIds.has(a.id);
                     const isDrawerTarget = drawerAsset?.id === a.id;
 
@@ -2895,6 +2932,13 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                         ))}
                         <TableActionCell className="px-3 py-2.5 whitespace-nowrap" onClick={e => e.stopPropagation()}>
                           <ActionIconGroup label={zh ? '资产操作' : 'Asset actions'}>
+                            {a.asset_type === 'network_device' && (
+                              <ActionIconButton
+                                icon={Layers}
+                                label={zh ? '堆叠成员' : 'Stack members'}
+                                onClick={() => setStackModal({ mode: 'members', asset: a })}
+                              />
+                            )}
                             <ActionIconButton icon={Copy} label={zh ? '复制' : 'Copy'} variant="accent" onClick={() => openCopy(a)} />
                             <ActionIconButton icon={Pencil} label={zh ? '编辑' : 'Edit'} onClick={() => openEdit(a)} />
                             <ActionIconButton icon={Trash2} label={zh ? '删除' : 'Delete'} variant="danger" onClick={() => { setDeleteError(null); setDeleteTarget(a); }} />
@@ -2902,7 +2946,34 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                         </TableActionCell>
                       </tr>
                     );
-                  })}
+                    };
+                    if (!shouldVirtualizeAssets) {
+                      return displayAssets.map(renderAssetRow);
+                    }
+                    const virtualItems = assetRowVirtualizer.getVirtualItems();
+                    const paddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
+                    const paddingBottom = virtualItems.length > 0
+                      ? Math.max(0, assetRowVirtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end)
+                      : 0;
+                    return (
+                      <>
+                        {paddingTop > 0 && (
+                          <tr aria-hidden="true">
+                            <td colSpan={visibleAssetColumns.length + 2} style={{ height: `${paddingTop}px`, padding: 0, border: 0 }} />
+                          </tr>
+                        )}
+                        {virtualItems.map((vItem) => {
+                          const row = displayAssets[vItem.index];
+                          return row ? renderAssetRow(row) : null;
+                        })}
+                        {paddingBottom > 0 && (
+                          <tr aria-hidden="true">
+                            <td colSpan={visibleAssetColumns.length + 2} style={{ height: `${paddingBottom}px`, padding: 0, border: 0 }} />
+                          </tr>
+                        )}
+                      </>
+                    );
+                  })()}
                 </tbody>
               </DataTable>
             </DataTableFrame>
@@ -3154,6 +3225,16 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         onConfirm={handleValidationConfirm}
         saving={validationModalSaving}
       />
+
+      {stackModal && (
+        <StackMembersModal
+          mode={stackModal.mode}
+          asset={stackModal.asset}
+          language={language}
+          onClose={() => setStackModal(null)}
+          onChanged={() => { void fetchAssets(); }}
+        />
+      )}
     </div>
   );
 };

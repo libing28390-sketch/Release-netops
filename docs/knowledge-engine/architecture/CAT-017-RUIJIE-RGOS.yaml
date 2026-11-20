@@ -1,0 +1,82 @@
+task_id: CAT-017
+priority: P2
+owner: NET+AI
+milestone: M2
+status: frozen_for_reviewed_sample
+depends_on: [GOV-008, DB-006, DB-007, CAT-001, CAT-002, CAT-012, CAT-016]
+decision:
+  choice: additive_ruijie_rgos_catalog_seed_without_live_collection
+  summary: >-
+    Add a Ruijie RG-S6220/RGOS 11 reviewed sample to the read-only catalog.
+    Keep product identity, OS generation, release train, software version,
+    device platform, Netmiko driver and parser namespace independent. Do not
+    widen CAT-001's Huawei/Cisco first-batch allowlist or enable collection.
+  invariants:
+    - Ruijie_model_identity_is_explicit_and_not_vendor_inferred
+    - RGOS_generation_and_release_train_are_orthogonal_to_product
+    - exact_RGOS_versions_are_reviewed_candidates_only
+    - ruijie_rgos_is_catalog_parser_namespace_and_ruijie_os_is_connection_driver
+    - unknown_or_ambiguous_values_fail_closed
+    - CAT001_first_batch_allowlist_remains_unchanged
+    - V1_metadata_and_device_fields_are_never_rewritten
+
+catalog_scope:
+  artifact: docs/knowledge-engine/catalog/CAT-017-RUIJIE-RGOS.yaml
+  vendor: ruijie
+  product_family: rg_s6220
+  product_series: s6220
+  model_samples: [RG-S6220-48XS4QXS-L, RG-S6220-48XT4QXS, RG-S6220-48XS6QXS-H]
+  os_family: rgos
+  generation: rgos11
+  release_train: rgos_11_0_5
+  primary_version: RGOS 11.0(5)B9P59
+  compatibility_version: RGOS 11.0(5)B3P2
+  candidate_versions: [RGOS 11.0(5)B9P27]
+
+mapping_contract:
+  vendor_id: ruijie
+  catalog_platform: ruijie_rgos
+  netmiko_driver: ruijie_os
+  parser_platform: ruijie_rgos
+  parser_filename_namespace: ruijie_rgos
+  query_command_family: show
+  write_authority: false
+  parser_authority: false
+  explicit_mapping_required: true
+
+source_boundary:
+  source_authority: Ruijie Networks
+  source_allowlist_status: pending_CAT001_additive_extension
+  allowed_host: www.ruijie.com.cn
+  source_urls:
+    - https://www.ruijie.com.cn/fw/wd-cp-6220/
+    - https://www.ruijie.com.cn/cp/jh-shjzhx-sjzxjr/s6248xsh/
+    - https://www.ruijie.com.cn/fw/wd/86075/
+    - https://www.ruijie.com.cn/fw/wd/88538/
+  query_userinfo_fragment: forbidden
+  live_collection: forbidden_until_CAT001_extension_CAT003_activation_CAT004_gate
+
+resolution:
+  exact_model: unique_only_after_review
+  partial_model: candidates_and_clarification
+  unknown_model: UNKNOWN_and_no_vendor_or_driver_guess
+  exact_version: reviewed_candidate_only_until_source_record_activation
+  unknown_version: UNKNOWN_and_require_source_or_clarification
+  ambiguous_vendor: no_first_match_fallback
+
+data_and_rollback:
+  production_ddl: none
+  persistence: contract_only_read_only_seed
+  v1_impact: none
+  rollback: remove_CAT017_seed_from_read_only_projection_and_retain_v1_fields
+
+acceptance:
+  - product_hierarchy_contains_three_unique_Ruijie_RG_S6220_models
+  - RGOS11_train_contains_three_unique_valid_versions
+  - software_filter_returns_only_Ruijie_rows_for_exact_RGOS_version
+  - platform_mapping_matches_network_driver_contract
+  - source_urls_are_https_exact_host_path_without_query_userinfo_fragment
+  - unknown_and_ambiguous_resolution_is_fail_closed
+  - no_production_DDL_or_v1_rewrite
+  - focused_catalog_and_regression_tests_pass
+  - lint_build_compile_secret_scan_and_diff_checks_pass

@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, FileSpreadsheet, FileText, LoaderCircle } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import { ActionIconButton } from './ActionIconButton';
 
 export type TableExportFormat = 'xlsx' | 'csv';
@@ -185,18 +184,19 @@ function downloadBlob(blob: Blob, filename: string): void {
 }
 
 export function exportVisibleTable(table: HTMLTableElement, format: TableExportFormat, filename: string): void {
-  exportTableData(readVisibleTableData(table), format, filename);
+  void exportTableData(readVisibleTableData(table), format, filename);
 }
 
 export function exportExplicitTable(data: TableExportData, format: TableExportFormat, filename: string): void {
-  exportTableData(readExplicitTableData(data), format, filename);
+  void exportTableData(readExplicitTableData(data), format, filename);
 }
 
-function createExportPayload(data: { headers: string[]; rows: ExportCell[][] }, format: TableExportFormat, filename: string): { blob: Blob; filename: string } {
+async function createExportPayload(data: { headers: string[]; rows: ExportCell[][] }, format: TableExportFormat, filename: string): Promise<{ blob: Blob; filename: string }> {
   const { headers, rows } = data;
   if (!headers.length) throw new Error('The table has no exportable columns.');
   const normalizedFilename = safeFilename(filename);
   if (format === 'xlsx') {
+    const XLSX = await import('xlsx');
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Data');
@@ -210,9 +210,9 @@ function createExportPayload(data: { headers: string[]; rows: ExportCell[][] }, 
   return { blob, filename: `${normalizedFilename}.csv` };
 }
 
-function createPreparedDownloads(data: { headers: string[]; rows: ExportCell[][] }, filename: string): PreparedTableDownloads {
-  const xlsxPayload = createExportPayload(data, 'xlsx', filename);
-  const csvPayload = createExportPayload(data, 'csv', filename);
+async function createPreparedDownloads(data: { headers: string[]; rows: ExportCell[][] }, filename: string): Promise<PreparedTableDownloads> {
+  const xlsxPayload = await createExportPayload(data, 'xlsx', filename);
+  const csvPayload = await createExportPayload(data, 'csv', filename);
   const xlsxHref = URL.createObjectURL(xlsxPayload.blob);
   try {
     const csvHref = URL.createObjectURL(csvPayload.blob);
@@ -226,8 +226,8 @@ function createPreparedDownloads(data: { headers: string[]; rows: ExportCell[][]
   }
 }
 
-function exportTableData(data: { headers: string[]; rows: ExportCell[][] }, format: TableExportFormat, filename: string): void {
-  const payload = createExportPayload(data, format, filename);
+async function exportTableData(data: { headers: string[]; rows: ExportCell[][] }, format: TableExportFormat, filename: string): Promise<void> {
+  const payload = await createExportPayload(data, format, filename);
   downloadBlob(payload.blob, payload.filename);
 }
 
@@ -262,14 +262,19 @@ export const TableExportMenu: React.FC<TableExportMenuProps> = ({
     else revoke();
   }, []);
 
-  const setPreparedExportData = useCallback((data: TableExportData | null) => {
+  const setPreparedExportData = useCallback(async (data: TableExportData | null, requestId: number) => {
     const normalized = data
       ? readExplicitTableData(data)
       : tableRef?.current
         ? readVisibleTableData(tableRef.current)
         : null;
     if (!normalized) throw new Error('Export table is unavailable.');
-    const downloads = createPreparedDownloads(normalized, filename);
+    const downloads = await createPreparedDownloads(normalized, filename);
+    if (requestId !== exportDataRequestId.current) {
+      URL.revokeObjectURL(downloads.xlsx.href);
+      URL.revokeObjectURL(downloads.csv.href);
+      return;
+    }
     setPreparedData(normalized);
     setPreparedDownloads(downloads);
     preparedDownloadUrls.current.push(downloads.xlsx.href, downloads.csv.href);
@@ -280,27 +285,18 @@ export const TableExportMenu: React.FC<TableExportMenuProps> = ({
     clearPreparedDownloads(1000);
     setPreparedData(null);
     setExportError('');
-    if (typeof exportData !== 'function') {
-      setIsPreparingData(false);
-      try {
-        setPreparedExportData(exportData ?? null);
-      } catch (error) {
-        const normalizedError = error instanceof Error ? error : new Error(String(error));
-        setExportError(normalizedError.message);
-        onExportError?.(normalizedError);
-      }
-      return;
-    }
     setIsPreparingData(true);
-    let request: Promise<TableExportData>;
+    let request: Promise<TableExportData | null>;
     try {
-      request = Promise.resolve(exportData());
+      request = typeof exportData === 'function'
+        ? Promise.resolve(exportData())
+        : Promise.resolve(exportData ?? null);
     } catch (error) {
       request = Promise.reject(error);
     }
-    void request.then((data) => {
+    void request.then(async (data) => {
       if (requestId !== exportDataRequestId.current) return;
-      setPreparedExportData(data ?? null);
+      await setPreparedExportData(data ?? null, requestId);
     }).catch((error) => {
       if (requestId !== exportDataRequestId.current) return;
       setPreparedData(null);

@@ -20,6 +20,7 @@
  */
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { preloadRouteChunk } from '../../utils/routePreload';
 import {
   Activity,
   BarChart2,
@@ -263,6 +264,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
         active={location.pathname === '/dashboard'}
         icon={Home}
         mini
+        onPrefetch={() => preloadRouteChunk('/dashboard')}
         onClick={() => handleNav('/dashboard')}
       />
       <div className="border-t border-[var(--header-border)] my-2" />
@@ -359,6 +361,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
                       hasChildren={nestedChildren.length > 0}
                       isOpen={isChildOpen}
                       onToggleOpen={() => toggleChild(child.id)}
+                      onPrefetch={() => preloadRouteChunk(child.path)}
                       onClick={() => {
                         if (nestedChildren.length > 0 && !isChildOpen) {
                           toggleChild(child.id);
@@ -378,6 +381,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
                               icon={NestedIcon}
                               indent
                               nested
+                              onPrefetch={() => preloadRouteChunk(nestedChild.path)}
                               onClick={() => handleNav(nestedChild.path)}
                             />
                           );
@@ -419,6 +423,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
                     hasChildren={nestedChildren.length > 0}
                     isOpen={isChildOpen}
                     onToggleOpen={() => toggleChild(child.id)}
+                    onPrefetch={() => preloadRouteChunk(child.path)}
                     onClick={() => {
                       if (nestedChildren.length > 0 && !isChildOpen) {
                         toggleChild(child.id);
@@ -438,6 +443,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
                             icon={NestedIcon}
                             indent
                             nested
+                            onPrefetch={() => preloadRouteChunk(nestedChild.path)}
                             onClick={() => handleNav(nestedChild.path)}
                           />
                         );

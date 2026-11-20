@@ -6,7 +6,92 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "全网总览",
+      "tooltip": "切换到 全网总览",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-overview/nexora-network-overview"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "单设备详情",
+      "tooltip": "切换到 单设备详情",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-device/nexora-network-device"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "接口全景",
+      "tooltip": "切换到 接口全景",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-interface/nexora-network-interface"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "无线专网",
+      "tooltip": "切换到 无线专网",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-wireless/nexora-network-wireless"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "出口质量",
+      "tooltip": "切换到 出口质量",
+      "type": "link",
+      "url": "/grafana/d/nexora-outbound-probe-quality/nexora-outbound-probe-quality"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "采集健康",
+      "tooltip": "切换到 采集健康",
+      "type": "link",
+      "url": "/grafana/d/nexora-monitoring-health/nexora-monitoring-health"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": true,
+      "title": "返回 Nexora 监控",
+      "tooltip": "在新标签页打开 Nexora 网络监控页面",
+      "type": "link",
+      "url": "/monitor/network"
+    }
+  ],
   "panels": [
     {
       "id": 900,
@@ -77,7 +162,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -88,7 +173,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -159,7 +248,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -170,7 +259,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -237,7 +330,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -248,7 +341,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -322,7 +419,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -333,7 +430,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -403,7 +504,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -414,7 +515,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -481,7 +586,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -492,7 +597,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -538,10 +647,10 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "stepAfter",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
+            "fillOpacity": 18,
+            "gradientMode": "opacity",
             "showPoints": "never"
           }
         },
@@ -591,10 +700,10 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
+            "fillOpacity": 18,
+            "gradientMode": "opacity",
             "showPoints": "never"
           }
         },
@@ -806,7 +915,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -817,7 +926,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -888,7 +1001,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -899,7 +1012,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -969,7 +1086,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -980,7 +1097,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -1046,7 +1167,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -1057,7 +1178,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -1123,7 +1248,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -1134,7 +1259,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -1205,7 +1334,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -1216,7 +1345,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -1250,10 +1383,10 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
+            "fillOpacity": 18,
+            "gradientMode": "opacity",
             "showPoints": "never"
           }
         },
@@ -1305,10 +1438,10 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
+            "fillOpacity": 18,
+            "gradientMode": "opacity",
             "showPoints": "never"
           }
         },
@@ -1360,10 +1493,10 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
+            "fillOpacity": 18,
+            "gradientMode": "opacity",
             "showPoints": "never"
           }
         },
@@ -1432,172 +1565,177 @@
       "id": 903,
       "title": "容器资源与观测",
       "type": "row",
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
         "y": 43
       },
-      "panels": []
-    },
-    {
-      "id": 19,
-      "title": "Docker 容器采集观测数",
-      "type": "stat",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 0,
-        "y": 44
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "thresholds"
+      "panels": [
+        {
+          "id": 19,
+          "title": "Docker 容器采集观测数",
+          "type": "stat",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#3B82F6",
-                "value": null
-              }
-            ]
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 1
           },
-          "mappings": [
-            {
-              "type": "special",
-              "options": {
-                "match": "null",
-                "result": {
-                  "text": "暂无采集数据",
-                  "color": "#64748B"
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#3B82F6",
+                    "value": null
+                  }
+                ]
+              },
+              "mappings": [
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "null",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                },
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
                 }
-              }
+              ]
             },
-            {
-              "type": "special",
-              "options": {
-                "match": "nan",
-                "result": {
-                  "text": "暂无采集数据",
-                  "color": "#64748B"
-                }
-              }
-            }
-          ]
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "expr": "count(count by (name) (container_last_seen{name!=\"\"}))",
-          "refId": "A",
-          "instant": true
-        }
-      ],
-      "description": "统计已观测到的容器，不代表容器健康。"
-    },
-    {
-      "id": 20,
-      "title": "Docker 容器采集观测清单",
-      "type": "table",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 20,
-        "x": 4,
-        "y": 44
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "thresholds"
+            "overrides": []
           },
-          "custom": {
-            "filterable": true
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "最后观测时间"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "dateTimeAsIso"
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "cellHeight": "sm",
-        "showHeader": true,
-        "footer": {
-          "show": false
-        },
-        "enablePagination": true
-      },
-      "targets": [
-        {
-          "expr": "max by (name) (container_last_seen{name!=\"\"}) * 1000",
-          "format": "table",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "transformations": [
-        {
-          "id": "organize",
           "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "id": true,
-              "instance": true,
-              "job": true
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
             },
-            "indexByName": {
-              "name": 0,
-              "Value": 1
-            },
-            "renameByName": {
-              "name": "容器名称",
-              "Value": "最后观测时间"
+            "textMode": "auto",
+            "text": {
+              "titleSize": 13,
+              "valueSize": 28
             }
-          }
+          },
+          "targets": [
+            {
+              "expr": "count(count by (name) (container_last_seen{name!=\"\"}))",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "description": "统计已观测到的容器，不代表容器健康。"
+        },
+        {
+          "id": 20,
+          "title": "Docker 容器采集观测清单",
+          "type": "table",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 20,
+            "x": 4,
+            "y": 1
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "filterable": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "最后观测时间"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "dateTimeAsIso"
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "cellHeight": "sm",
+            "showHeader": true,
+            "footer": {
+              "show": false
+            },
+            "enablePagination": true
+          },
+          "targets": [
+            {
+              "expr": "max by (name) (container_last_seen{name!=\"\"}) * 1000",
+              "format": "table",
+              "instant": true,
+              "refId": "A"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true,
+                  "__name__": true,
+                  "id": true,
+                  "instance": true,
+                  "job": true
+                },
+                "indexByName": {
+                  "name": 0,
+                  "Value": 1
+                },
+                "renameByName": {
+                  "name": "容器名称",
+                  "Value": "最后观测时间"
+                }
+              }
+            }
+          ],
+          "description": "最后观测时间不代表容器健康状态。"
         }
-      ],
-      "description": "最后观测时间不代表容器健康状态。"
+      ]
     }
   ],
   "refresh": "30s",
@@ -1619,5 +1757,5 @@
   "title": "10 监控平台健康（Monitoring Platform Health）",
   "description": "覆盖平台服务可用性、remote-write 队列、VictoriaMetrics 存储和应用容器资源。数据库连接来自 API SELECT 1；Docker API 仅通过内网只读代理供 cAdvisor 获取容器元数据，cAdvisor 仅只读访问宿主 /sys cgroup，不挂载宿主根目录。",
   "uid": "nexora-platform-health",
-  "version": 30
+  "version": 33
 }

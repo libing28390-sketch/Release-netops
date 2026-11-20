@@ -1,0 +1,51 @@
+task_id: OBS-008
+title: PostgreSQL index, slow-query, cache-hit, and capacity observability
+status: user_verify_pending
+contract_version: nxa.database.observability.v1
+authority:
+  service: backend/ai/services/database_observability.py
+  API: backend/ai/api/usage.py::GET /api/ai/metrics
+  frontend: src/pages/ai/Usage/UsageDashboardTab.tsx
+  capacity_baseline: backend/database/capacity.py::DB-024
+signals:
+  relation_bloat:
+    source: [pg_stat_user_tables, pg_class, pg_total_relation_size, pg_indexes_size]
+    scope: allowlisted_knowledge_relations
+    warning: dead_rows_divided_by_live_rows_greater_than_20_percent
+  slow_queries:
+    preferred_source: pg_stat_statements
+    fallback_source: pg_stat_activity
+    threshold_env: NEXORA_SLOW_QUERY_THRESHOLD_MS
+    default_threshold_ms: 500
+    payload: bounded query id/timing aggregates only
+    query_text: forbidden
+  cache_hit:
+    source: pg_statio_user_tables
+    payload: aggregate heap hits/reads/hit_rate only
+  capacity:
+    source: pg_database_size
+    budget_source: DB-024 operational_relation_budget_bytes
+    synthetic_rows: forbidden
+status:
+  pass: all probes available and below warning thresholds
+  warn: a relation or capacity threshold is exceeded
+  degraded: a catalog probe is unavailable
+  sqlite: NOT_APPLICABLE
+security:
+  permission: ai.audit.view
+  read_only_catalog_queries: true
+  no_query_text: true
+  no_query_parameters: true
+  no_credentials: true
+  no_tenant_ids: true
+  no_document_content: true
+database:
+  authority: PostgreSQL
+  migration_required: false
+  writes: forbidden
+  extension_note: pg_stat_statements is optional; pg_stat_activity provides a safe current-active fallback when it is not installed/preloaded
+  rollback: remove endpoint/UI exposure; no persisted state exists
+verification:
+  unit: backend/tests/ai/test_obs008_database_observability.py
+  live_probe: scripts/knowledge_engine_v2_obs008_pg_probe.py
+  result: PASS_AUTOMATED_USER_VISIBLE_CONFIRMATION_REQUIRED

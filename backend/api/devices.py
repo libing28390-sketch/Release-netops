@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Body, Query, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from collections.abc import Mapping
 import uuid
 import json
@@ -2551,9 +2551,74 @@ def rotation_credential_devices(
     }
 
 
+class PasswordRotationPolicyUpdate(BaseModel):
+    auto_rotate_enabled: Optional[bool] = None
+    interval_days: Optional[int] = Field(default=None, ge=1, le=3650)
+    notify_days: Optional[int] = Field(default=None, ge=1, le=365)
+    included_roles: Optional[list[str]] = None
+
+
+@router.get("/devices/rotation/policy")
+def get_device_rotation_policy(user=require_role("Viewer")):
+    """获取当前生效的凭据自动轮换策略（所有已认证用户只读可见）。"""
+    del user
+    from services.password_rotation_service import get_rotation_policy
+    return {"success": True, "data": get_rotation_policy()}
+
+
+@router.get("/devices/rotation/policy/impact")
+def get_device_rotation_policy_impact(
+    roles: Optional[str] = Query(default=None),
+    user=require_role("Administrator"),
+):
+    """开启或调整自动轮换策略前预览受影响的设备与账号范围（仅管理员）。"""
+    del user
+    from services.password_rotation_service import preview_rotation_policy_impact
+    role_list = [r.strip() for r in roles.split(",") if r.strip()] if roles else None
+    return {"success": True, "data": preview_rotation_policy_impact(included_roles=role_list)}
+
+
+@router.put("/devices/rotation/policy")
+def update_device_rotation_policy(
+    body: PasswordRotationPolicyUpdate,
+    user: dict = require_role("Administrator"),
+):
+    """更新凭据自动轮换开关与策略并写入审计日志（仅管理员）。"""
+    from services.password_rotation_service import update_rotation_policy
+    try:
+        changed = update_rotation_policy(
+            auto_rotate_enabled=body.auto_rotate_enabled,
+            interval_days=body.interval_days,
+            notify_days=body.notify_days,
+            included_roles=body.included_roles,
+            updated_by=user.get('username', 'admin'),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    log_audit_event(
+        event_type='PASSWORD_ROTATION_POLICY_UPDATE',
+        category='security',
+        severity='high',
+        status='success',
+        summary=(
+            f"Updated password rotation policy: "
+            f"auto_rotate={changed['before']['auto_rotate_enabled']}->{changed['after']['auto_rotate_enabled']}, "
+            f"interval={changed['after']['interval_days']}d, notify={changed['after']['notify_days']}d, "
+            f"roles={changed['after']['included_roles']}"
+        ),
+        actor_username=user.get('username', 'admin'),
+        actor_role=user.get('role', 'Administrator'),
+        target_type='password_rotation_policy',
+        target_id='default',
+        details={'before': changed['before'], 'after': changed['after']},
+    )
+    return {"success": True, "data": changed['after']}
+
+
 @router.get("/devices/rotation/expiring")
-def rotation_expiring(days: int = Query(default=14), user=require_role("Administrator")):
-    """即将过期的设备列表（仅管理员）。"""
+def rotation_expiring(days: Optional[int] = Query(default=None), user=require_role("Administrator")):
+    """即将过期的设备列表（仅管理员；未指定 days 时使用生效策略的提醒提前量）。"""
+    del user
     from services.password_rotation_service import check_expiring
     return {"success": True, "data": check_expiring(days_ahead=days)}
 

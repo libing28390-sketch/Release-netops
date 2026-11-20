@@ -1,0 +1,75 @@
+task_id: ING-008
+priority: P0
+owner: AI+SEC
+milestone: M2
+status: frozen_for_implementation
+depends_on: [ING-007]
+decision:
+  choice: deterministic_local_scan_with_fail_closed_quarantine_gate
+  summary: >-
+    Scan the cleaned document before metadata extraction, chunking or
+    publication. Prompt Injection, knowledge-pollution, credential and
+    sensitive-dump indicators produce a redacted finding and quarantine
+    decision; no suspicious document is partially published.
+  invariants:
+    - ING007_cleaning_is_required_for_html
+    - prompt_injection_patterns_are_detected_across_blocks_and_document_text
+    - control_tags_role_reassignment_jailbreak_and_secret_prompt_requests_are_detected
+    - authority_override_no_verify_and_unverified_source_claims_are_detected
+    - sensitive_credentials_private_keys_snmp_and_full_dumps_are_isolated
+    - invisible_unicode_obfuscation_is_detected
+    - conflicting_vendor_or_manufacturer_declarations_are_isolated
+    - findings_never_contain_raw_source_text
+    - each_finding_has_stable_code_category_severity_locator_and_hash
+    - quarantine_sets_publication_allowed_false
+    - empty_after_cleaning_is_quarantined
+    - clean_documents_have_explicit_allow_decision
+
+implementation:
+  canonical_service: backend/services/document_security_scan.py
+  ai_compatibility_export: backend/ai/services/document_security_scan.py
+  public_functions: [scan_document_security, isolate_document]
+  result: DocumentSecurityScanResult
+  scanner_identity: [nexora-document-security-scanner, 1.0.0]
+  input: [ParsedDocument, CleanedDocument]
+
+rules:
+  prompt_injection:
+    - PI_OVERRIDE_CONTEXT
+    - PI_ROLE_REASSIGNMENT
+    - PI_SECRET_PROMPT_REQUEST
+    - PI_CONTROL_TAG
+    - PI_JAILBREAK_MODE
+    - PI_TOOL_EXECUTION_DIRECTIVE
+    - PI_CLASSIFIER_MATCH
+  knowledge_pollution:
+    - KP_SOURCE_AUTHORITY_OVERRIDE
+    - KP_NO_VERIFY_OR_CITE
+    - KP_UNVERIFIED_AUTHORITY_CLAIM
+    - KP_METADATA_CONFLICT
+    - KP_CREDENTIAL_EXPOSURE
+    - KP_PRIVATE_KEY
+    - KP_SENSITIVE_DUMP
+    - KP_INVISIBLE_TEXT
+
+failure_contract:
+  codes: [SECURITY_DOCUMENT_REQUIRED, SECURITY_CLEANING_REQUIRED, SECURITY_DOCUMENT_TOO_LARGE]
+  redaction: no_raw_body_no_matched_phrase_no_dependency_exception_no_filesystem_path
+
+security_and_boundary:
+  max_bytes: 20000000
+  network: forbidden
+  persistence: none; later ING-015 owns durable lifecycle/quarantine state
+  publication_gate: quarantine_or_empty_means_publication_allowed_false
+  audit: scanner_name_version_document_hash_reason_codes_finding_hashes_locators
+  rollback: retain_quarantine_gate_and_disable_only_non_security_rule_additions
+  production_ddl: none
+
+acceptance:
+  focused_tests: backend/tests/ai/test_ing008_document_security_scan.py
+  required_checks:
+    - clean_allow_prompt_injection_and_knowledge_pollution_quarantine
+    - credential_private_key_sensitive_dump_and_obfuscation_isolation
+    - html_cleaning_dependency_and_empty_boundary
+    - redacted_findings_no_network_filesystem_imports
+    - AI_catalog_database_V1_compile_yaml_secret_diff_lint_build_gates

@@ -1,0 +1,93 @@
+task_id: AUD-018
+milestone: M0
+priority: P0
+scope: ai_provider_api_key_crypto_master_key_rotation_masking_error_logs
+write_path:
+  route: /api/ai/providers
+  permission: ai.provider.manage
+  encryption_helper: backend/ai/security/crypto.py::encrypt_api_key
+  persisted_columns:
+    - ai_provider.api_key_encrypted
+    - ai_provider.api_key_masked
+  plaintext_request_only: true
+read_path:
+  route: /api/ai/providers
+  encrypted_column_selected: false
+  response_field: api_key_masked
+  gateway_decrypt_helper: backend/ai/security/crypto.py::decrypt_api_key
+  transport_header_only: true
+crypto:
+  algorithm: AES-256-GCM
+  nonce_bytes: 12
+  key_derivation: SHA-256(raw_secret)
+  associated_data: false
+  envelope_version: false
+  key_id: false
+  tamper_behavior: decrypt_returns_none
+master_key:
+  primary_setting: CREDENTIAL_ENCRYPTION_KEY
+  fallback_setting: SECRET_KEY
+  hardcoded_fallback: nexora-ai-default-key
+  config_defaults:
+    credential_encryption_key: change-me-to-a-random-secret
+    secret_key: supersecret
+  fail_closed_on_missing_or_default: false
+rotation:
+  provider_table_has_version_metadata: false
+  old_ciphertext_retained: false
+  rotation_endpoint: false
+  rotation_service: false
+  scheduler_or_migration: false
+  rollback_metadata: false
+  provider_update_reencrypts_only_when_new_key_present: true
+masking:
+  response_exposes_plaintext: false
+  function: mask_api_key
+  long_key_format: first_4_plus_four_stars_plus_last_4
+  short_key_format: eight_stars
+  fingerprint_only: false
+logging:
+  provider_api_key_direct_logger_call_found: false
+  provider_change_audit_event: false
+  generic_filter_covers_api_key: false
+  ai_sanitizer_covers_api_key: true
+  gateway_raw_response_public: false
+findings:
+  - id: AUD018-F01
+    severity: P0
+    status: OPEN
+    summary: weak defaults and SECRET_KEY/hardcoded fallback can encrypt with an uncontrolled master key
+  - id: AUD018-F02
+    severity: P0
+    status: OPEN
+    summary: no versioned key envelope, rotation, revocation, dual-key window, or rollback metadata
+  - id: AUD018-F03
+    severity: P1
+    status: OPEN
+    summary: AI key crypto is separate from core credential crypto and cannot share rotation policy
+  - id: AUD018-F04
+    severity: P1
+    status: OPEN
+    summary: create/update does not emit a dedicated metadata-only credential change audit event
+  - id: AUD018-F05
+    severity: P1
+    status: OPEN
+    summary: generic logging filter does not match api_key or Authorization/Bearer values
+  - id: AUD018-F06
+    severity: P2
+    status: OBSERVED
+    summary: mask reveals first and last four characters instead of fingerprint-only display
+verification:
+  source_inventory: PASS
+  crypto_round_trip: PASS
+  tamper_rejection: PASS
+  weak_default_exposure: PASS
+  rotation_surface_scan: PASS
+  response_masking_scan: PASS
+  logging_redaction_scan: PASS
+  production_external_call: false
+  production_database_changed: false
+conclusion:
+  audit_status: PASS
+  p0_blockers: 2
+  implementation_status: findings_open

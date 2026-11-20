@@ -1,0 +1,203 @@
+{
+  "captured_at": "2026-10-11T13:51:25.515468+08:00",
+  "head": "e529df23a35e8ced015caca8223979654f79b38b",
+  "basis": "current worktree; source hashes captured at audit delivery, not an assertion of a clean HEAD checkout",
+  "worktree_dirty": true,
+  "sources": [
+    {
+      "path": "backend/main.py",
+      "sha256": "3e81a8820be49522d5626781d1bd7d38ebefe626503c10337d4cb4af6f3b56e2",
+      "line_count": 1096
+    },
+    {
+      "path": "backend/core/api_security.py",
+      "sha256": "9eaa69f2ad3ec9c9f77a8bfbeabf6b4c51fa9e9406af42b419afbaec251c1f43",
+      "line_count": 67
+    },
+    {
+      "path": "backend/core/rbac.py",
+      "sha256": "b9322d7e0a263473dc8efab4f7252f971242e1cb1a89a057c7fddce7172b3712",
+      "line_count": 327
+    },
+    {
+      "path": "backend/api/users.py",
+      "sha256": "849093b1e2703d9f8514a908168e4feee4b1567cf403c2c4cd5b81772c15e8a0",
+      "line_count": 1754
+    },
+    {
+      "path": "backend/api/access_scopes.py",
+      "sha256": "4f47251575343cfc645c8682291da6b2815436bffebeb4695d2df10275059ba1",
+      "line_count": 35
+    },
+    {
+      "path": "backend/services/access_scope_service.py",
+      "sha256": "8430f8eda83249566f86cc83326492a94fcd2a8d43974fc3d09adf09251e648a",
+      "line_count": 87
+    },
+    {
+      "path": "backend/services/rack_scope_service.py",
+      "sha256": "9cc3ac3750f2f6c8ac8f4af62ff587e5ddad2339e3fee8b88e6fd2145fea10e1",
+      "line_count": 192
+    },
+    {
+      "path": "backend/api/change_orders/core.py",
+      "sha256": "86aa299dba194ef67dd6fcc461e17f1d52134f06cef0aaf230be9ed684e0f3d6",
+      "line_count": 525
+    },
+    {
+      "path": "backend/api/change_orders/transition.py",
+      "sha256": "fc90d5f3553db06b889c008bc87754058805c3be8954de9a96d99ff7a167d1be",
+      "line_count": 261
+    },
+    {
+      "path": "backend/api/change_orders/helpers.py",
+      "sha256": "ca8aa84ebd41ec067a1c9fcee5514caf2b7e07850066dcbf0d1765b8648e45e1",
+      "line_count": 936
+    },
+    {
+      "path": "backend/api/change_orders/schemas.py",
+      "sha256": "b1180ffe786c2aef2b20d5bbf5ad2e353b64f139fda8059fb529f239e8f764c5",
+      "line_count": 60
+    },
+    {
+      "path": "backend/api/playbooks/routes.py",
+      "sha256": "b7cb55010e71ed80ce9209a813be668468062b2cc7b1a12b1aaad3302c8265ce",
+      "line_count": 1399
+    },
+    {
+      "path": "backend/api/playbooks/engine.py",
+      "sha256": "95f7e540265b0a36238db608760730f11545c715399bc22df9c67ecd69aa8065",
+      "line_count": 917
+    },
+    {
+      "path": "backend/services/playbook_execution_approval_service.py",
+      "sha256": "3ba0df12887949d20f8d482f9ad4545511375208742d55e59b49511ee1deaf2c",
+      "line_count": 209
+    },
+    {
+      "path": "backend/services/playbook_version_service.py",
+      "sha256": "560c7ae707fbde5ff8b3ac84599820de9ada2e7e1934bac4f237d18f567cfce6",
+      "line_count": 380
+    },
+    {
+      "path": "backend/services/platform_registry_service.py",
+      "sha256": "286850d082ab49f17066a481cd1993a4b19b01c1acb6eb23514916a767616659",
+      "line_count": 2253
+    },
+    {
+      "path": "backend/api/automation.py",
+      "sha256": "31bd949f98127d88f4af3f36c6f865eba42a43b27e3ab9ffe8cc34471a06ca45",
+      "line_count": 476
+    },
+    {
+      "path": "backend/api/scheduled_jobs.py",
+      "sha256": "a4a2fbb4317806c6af1dc263b16654bb78ad6284924e91932e7ab0651b5e1d25",
+      "line_count": 776
+    },
+    {
+      "path": "backend/services/config_approval_service.py",
+      "sha256": "56f096bf5d76d4a730ad6988b883e62e3a44ee9622fc222a76f4fe55fe597d73",
+      "line_count": 535
+    },
+    {
+      "path": "backend/services/scheduler_service.py",
+      "sha256": "977a44c3ef54d8bb6cc8d94a2816c2cd2974fc0b8518d0385f9f6dd3b45cc37e",
+      "line_count": 3126
+    },
+    {
+      "path": "backend/services/automation_service.py",
+      "sha256": "a42a5b8f326941d66b86c1b31eaa7a07cbb2f4b9aa4eb7aafd491a1bc95e7a1d",
+      "line_count": 99
+    },
+    {
+      "path": "backend/engine/orchestrator.py",
+      "sha256": "87a16dfd86e7518eaa5e100fdf30225709f8fe1374630b3b54cd1626f7f47e41",
+      "line_count": 270
+    },
+    {
+      "path": "backend/engine/drivers/linux_driver.py",
+      "sha256": "90ee7ae0f93de368e8d11b9ba317aa7fc1a2909ecb59cbbf605fce383c9b5cf9",
+      "line_count": 99
+    },
+    {
+      "path": "backend/api/devices.py",
+      "sha256": "44cdeb4165e121f24589579d9b3da44a191040f86497bbaf2ecaa3a998799277",
+      "line_count": 3317
+    },
+    {
+      "path": "backend/services/operational_data_service.py",
+      "sha256": "3deea5ae33d140e5c309b70698535cc16cd75989fd1b144c8144c1f8c148fae7",
+      "line_count": 2772
+    },
+    {
+      "path": "backend/services/nsot_collection_preview_service.py",
+      "sha256": "62f60595f56a065a88b2312abb097f44d0a874c6552e702447ef28884d36249d",
+      "line_count": 731
+    },
+    {
+      "path": "backend/services/audit_service.py",
+      "sha256": "4c1fee21994af7c6367990f7d516f58676f4e8d578f4383ba35b569c5d90d417",
+      "line_count": 204
+    },
+    {
+      "path": "backend/database/schema.py",
+      "sha256": "0ce213701f74825d411e0c93e243414cb0af68038698012eea7a132bcbbedcb4",
+      "line_count": 5554
+    },
+    {
+      "path": "backend/database/migrations/m0093_user_role_profiles.py",
+      "sha256": "b7ab9da1c52f3b78462d52d5a4a215717e3b636d505edc20e9dfb6fe19f3d918",
+      "line_count": 22
+    },
+    {
+      "path": "backend/database/migrations/m0228_admin_tenant_assignment.py",
+      "sha256": "3764336622c4a8fc1196df731e5a41e653cefc01b31058cd8b60b75138e3c1f9",
+      "line_count": 36
+    },
+    {
+      "path": "src/pages/UsersTab.tsx",
+      "sha256": "c292f36b6b3e7d617916757e94d48120092bb699caf713075277c25b9a1b6d4c",
+      "line_count": 481
+    },
+    {
+      "path": "src/hooks/useAuth.ts",
+      "sha256": "9450ae93eb41adecb5109bc5a8642e0f4df44cc28b371f7e1c474c620a28bc61",
+      "line_count": 420
+    },
+    {
+      "path": "src/App.tsx",
+      "sha256": "0b70d6529ea4b439fdee6420695347ca602093dd7e5a0ec62c233f582474a0be",
+      "line_count": 2050
+    },
+    {
+      "path": "backend/tests/conftest.py",
+      "sha256": "a603c59a17e90e3974ed1b70c37c56e95e09a4f554723d81f3b07995bb4215ee",
+      "line_count": 232
+    },
+    {
+      "path": "backend/tests/pg_test_utils.py",
+      "sha256": "1239de85e1f81aac59dab5c2591d48a108636c3e5911e30e4b797028b2ab6d67",
+      "line_count": 324
+    },
+    {
+      "path": "backend/tests/security/test_api_access_boundary.py",
+      "sha256": "e0cfb70942ede64cafe655bae53435a1b8387f319bc20ad7a26c60ca41d35b37",
+      "line_count": 163
+    },
+    {
+      "path": "backend/tests/security/test_audit_regressions.py",
+      "sha256": "529178726d33f4002901166fa993c0ef0d5591fdc22228b5d0d3487200832373",
+      "line_count": 276
+    },
+    {
+      "path": "backend/tests/security/test_user_tenant_assignment.py",
+      "sha256": "25ab34940804847658418077ac95e2283afea2e2992abc534d6a48bd824e4f0e",
+      "line_count": 140
+    },
+    {
+      "path": "backend/tests/platform_registry/test_playbook_versions.py",
+      "sha256": "d74cd99fdf8ed52b45f440a91668c01cbd8aed14a58844a71164e3ed28c59c30",
+      "line_count": 685
+    }
+  ]
+}

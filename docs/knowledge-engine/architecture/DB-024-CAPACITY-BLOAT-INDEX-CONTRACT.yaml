@@ -1,0 +1,72 @@
+task_id: DB-024
+priority: P2
+owner: DBA
+milestone: M1
+status: implemented_read_only_capacity_evaluation
+authority: PostgreSQL_with_SQLite_compatibility_fixture
+contract_version: v2.0
+depends_on: [DB-015, DB-016, DB-021, DB-023]
+
+decision:
+  choice: explicit_scale_model_plus_postgresql_catalog_bloat_probe
+  summary: >-
+    Evaluate the 10k-document/100k-Chunk and 10k-document/1m-Chunk scenarios
+    with an explicit storage/index assumption model, then compare it with
+    read-only PostgreSQL relation and dead/live tuple statistics when the V2
+    tables exist. The probe never inserts synthetic rows, runs VACUUM/ANALYZE,
+    creates indexes, or claims SQLite is production capacity evidence. All
+    estimates are labeled assumptions and require an isolated staging load
+    before production sizing.
+  invariants:
+    - scenarios_include_10k_documents_100k_and_1m_chunks
+    - every_storage_number_has_explicit_assumption
+    - production_probe_is_read_only_catalog_only
+    - bloat_signal_is_dead_to_live_ratio_not_unverified_rewrite
+    - vector_index_multiplier_is_model_and_version_dependent
+    - no_synthetic_production_rows_or_ddl
+    - V1_tables_and_migration_history_unchanged
+
+scenarios:
+  - name: 10k_documents_100k_chunks
+    documents: 10000
+    chunks: 100000
+  - name: 10k_documents_1m_chunks
+    documents: 10000
+    chunks: 1000000
+
+assumptions:
+  document_row_bytes: 4096
+  chunk_row_bytes: 6144
+  document_index_bytes_per_row: 96
+  chunk_btree_bytes_per_row: 96
+  embedding_dimensions: 1536
+  vector_index_multiplier: 1.55
+  json_gin_bytes_per_chunk: 220
+  bloat_budget_ratio: 0.20
+  operational_relation_budget_bytes: 549755813888
+  warning: staging_measurement_required_before_production_sizing
+
+probe:
+  postgres_catalog: [pg_total_relation_size, pg_indexes_size, pg_stat_user_tables.n_live_tup, pg_stat_user_tables.n_dead_tup, pg_class.reltuples]
+  write_operations: forbidden
+  sqlite: NOT_APPLICABLE_for_production_capacity; formula_and_compatibility_tests_only
+  bloat_threshold: dead_rows_divided_by_live_rows_greater_than_20_percent_warns
+  index_ceiling: relation_budget_and_index_bytes_are_reported; PostgreSQL_physical_limit_is_not_a_workload_budget
+
+security_and_governance:
+  authorization: approved_read_only_DBA_or_monitoring_identity
+  output: counts_bytes_ratios_and_assumption_labels_only
+  redaction: [no_dsn, no_password, no_api_key, no_raw_document, no_raw_chunk, no_device_credential]
+  production_gate: staging_load_and_EXPLAIN_benchmark_before_1m_chunk_cutover
+
+rollback:
+  schema: no_schema_change
+  data: no_rows_inserted_or_deleted
+  operational: discard_report_only
+
+verification:
+  contract_tests: backend/tests/database/test_db024_capacity_bloat_index.py
+  required_checks: [contract_markers, scenario_counts, monotonic_estimates, explicit_assumptions, postgres_read_only_probe, sqlite_non_production, failure_paths, V1_preservation, report_markers]
+  next_benchmark_tasks: [RET-022, EVAL-018]
+
+next_tasks: [CAT-001]

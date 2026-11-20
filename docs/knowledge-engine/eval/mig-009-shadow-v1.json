@@ -1,0 +1,27 @@
+{
+  "task_id": "MIG-009",
+  "status": "PASS",
+  "reason_codes": [],
+  "checks": {
+    "contract_postgresql_authority": true,
+    "v1_primary_shadow_seam": true,
+    "shadow_flag_and_v1_default": true,
+    "no_double_answer": true,
+    "tenant_scoped_shadow": true,
+    "failure_fallback_stable_code": true,
+    "redacted_comparison": true,
+    "trace_projection": true,
+    "v1_rows_preserved": true,
+    "no_external_or_write": true,
+    "sqlite_not_acceptance": true
+  },
+  "postgres_shadow_probe": {
+    "status": "NOT_RUN",
+    "reason": "static_gate_only"
+  },
+  "production_database_write": false,
+  "shadow_retrieval_executed_by_gate": false,
+  "external_provider_request": false,
+  "network_device_write": false,
+  "sqlite": "forbidden_for_acceptance"
+}

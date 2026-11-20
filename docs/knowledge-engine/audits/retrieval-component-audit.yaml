@@ -1,0 +1,119 @@
+schema_version: 1
+task_id: AUD-009
+scope: "确认当前 FTS、pg_trgm、Alias、Metadata Filter、Reranker 的实际完成度"
+sources:
+  - backend/ai/services/rag_retriever.py
+  - backend/ai/services/product_resolver.py
+  - backend/ai/services/intent_parser.py
+  - backend/ai/services/knowledge_metadata.py
+  - backend/ai/services/rag_policy.py
+  - backend/ai/services/assistant.py
+  - backend/database/migrations/m0103_ai_platform_tables.py
+  - backend/database/migrations/m0113_rag_metadata_v2.py
+  - backend/tests/ai/test_rag_retriever_v2.py
+  - backend/tests/ai/test_rag_acceptance_v2.py
+components:
+  fts:
+    status: not_implemented
+    actual_path: "Python _search_tokens/_calc_keyword_relevance coverage and command phrase matching"
+    postgres_tsvector: false
+    postgres_tsquery: false
+    sqlite_fts5: false
+    dedicated_index: false
+    tested_fallback: true
+  pg_trgm:
+    status: not_implemented
+    extension: false
+    gin_trgm_ops: false
+    gist_trgm_ops: false
+    similarity_function: false
+    dedicated_index: false
+  alias:
+    status: partial
+    vendor_aliases: true
+    feature_aliases: true
+    product_series_aliases: true
+    product_registry_resolution: true
+    assistant_callsite: backend/ai/services/assistant.py:98
+    persistent_alias_table: false
+    tenant_scope: false
+    provenance_version_approval: false
+    sqlite_array_matching: "LOWER(CAST(metadata_json AS TEXT)) LIKE LOWER(?)"
+  metadata_filter:
+    status: implemented_with_hardening_required
+    sql_before_scoring: true
+    fields:
+      - status
+      - tenant_id
+      - exclude_from_rag
+      - vendor
+      - document_category
+      - product_family
+      - product_series
+      - product_model
+      - os_family
+      - os_generation
+      - software_train
+      - software_release
+      - feature_domain
+      - feature
+      - subfeature
+      - cli_platform
+      - rag_priority
+      - applicability_arrays
+    postgres_strategy: "scalar indexes plus JSONB containment"
+    sqlite_strategy: "scalar indexes plus text containment fallback"
+    acl_recheck: true
+    tenant_recheck: true
+    applicability_key_allowlist: false
+    chunk_acl_column: false
+  reranker:
+    status: deterministic_hybrid_ranker_only
+    formula: "0.65*keyword + 0.20*vector + 0.15*metadata"
+    trust_tiebreak: true
+    document_dedup: true
+    sibling_context_expansion: true
+    command_low_keyword_guard: true
+    dedicated_service: false
+    cross_encoder: false
+    llm_rerank: false
+    model_version: false
+    offline_ndcg_recall_metrics: false
+    sql_candidate_limit: false
+implementation_evidence:
+  lexical_tokenization: backend/ai/services/rag_retriever.py:63-129
+  metadata_sql_filter: backend/ai/services/rag_retriever.py:160-275
+  hybrid_score: backend/ai/services/rag_retriever.py:419
+  product_aliases: backend/ai/services/product_resolver.py:34-48
+  registry_resolution_call: backend/ai/services/assistant.py:98
+  acl_recheck: backend/ai/services/rag_retriever.py:381-383
+  pg_metadata_gin: backend/database/migrations/m0113_rag_metadata_v2.py:135-149
+findings:
+  - id: AUD009-F01
+    severity: P0
+    status: open_for_followup
+    description: "AI retrieval has no PostgreSQL FTS/SQLite FTS5 implementation or index; keyword score is a Python heuristic."
+  - id: AUD009-F02
+    severity: P0
+    status: open_for_followup
+    description: "pg_trgm is absent, so fuzzy similarity cannot be claimed."
+  - id: AUD009-F03
+    severity: P1
+    status: open_for_followup
+    description: "Alias coverage is static/advisory and lacks persistent tenant-scoped governance and cross-database contract tests."
+  - id: AUD009-F04
+    severity: P1
+    status: open_for_followup
+    description: "Metadata applicability keys are interpolated into JSONB expressions without an explicit allowlist; SQLite LIKE can false-positive."
+  - id: AUD009-F05
+    severity: P0
+    status: open_for_followup
+    description: "The current deterministic hybrid ranker is not a dedicated reranker and SQL does not enforce candidate top-N."
+conclusion:
+  audit_status: PASS
+  fts_ready: false
+  pg_trgm_ready: false
+  alias_ready: partial
+  metadata_filter_ready: true
+  dedicated_reranker_ready: false
+  production_release_allowed: false

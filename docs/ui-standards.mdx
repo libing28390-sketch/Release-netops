@@ -1,0 +1,40 @@
+# Web UI Standards
+
+This document defines the shared treatment for table row actions, contact fields, and password inputs. Use the shared components so the same behavior and visual states carry across pages.
+
+## Table row actions
+
+- Use `TableActionHeader` for the action-column heading and `TableActionCell` for each row. Both align to the right edge; the action cell keeps its controls on one line.
+- Put icon-only controls inside the cell's shared `ActionIconGroup`. Use `ActionIconButton` at its default `sm` size (32 × 32 px), with a specific accessible label and tooltip for every action.
+- Use the neutral variant for ordinary actions, `accent` for the primary or test action, and `danger` only for destructive actions. Disabled actions use the component's standard disabled state.
+- Table row actions are icon-only. Map the same intent to the same Lucide icon everywhere: view/details `Eye`, edit `Pencil`, enable/disable `Power`/`PowerOff`, copy `Copy`, delete `Trash2`, retry `RotateCcw`, refresh/sync `RefreshCw`, and configure `Settings2`.
+- Keep every action icon visible at rest; do not hide it until row hover. Use a specific accessible label and tooltip so the icon remains understandable to pointer and keyboard users.
+- Use labelled `ActionButton` controls for form submission, modal footers, and toolbar actions where visible text helps identify the action; do not build page-specific button geometry or spacing.
+- Keep the group unframed by default. The bordered table rail is an explicit variant for cases where a table design needs a visible grouping surface.
+
+## Table exports
+
+- Add the shared `TableExportMenu` to every data table. Give it a ref to exactly one table and a stable filename; show both Excel (`.xlsx`) and UTF-8 CSV (`.csv`) in the same menu.
+- Keep the export icon in the table's existing header/control row. Use the action heading when present; otherwise place it in the final header cell. Do not add a dedicated export-only row.
+- Build exported columns from the table's visible header cells in their existing order. Do not add fields that the table does not show or silently omit displayed business fields. The row-action column is excluded because it is a control, not record data.
+- Keep one exported field per visible data header. If a cell currently combines distinct record attributes (for example hostname and asset tag, provider and model, or start and end time), split the UI into separate columns and export them in that same order; never concatenate separate attributes into one cell for export.
+- Exclude internal identifiers such as asset IDs, site IDs, UUIDs, and database row IDs. If a business key happens to be labeled `ID`, mark its header `data-export="include"`; mark any other intentionally excluded header `data-export="ignore"`. When an internal ID is decorative text in a data cell, mark that node `data-export-ignore`.
+- Keep sensitive columns in their displayed position but export blank cell values for passwords, secrets, API/access keys, credentials, authentication tokens, and webhook endpoints. Use `data-export="sensitive"` for a sensitive column whose header does not make that meaning clear. Token-count/usage metrics remain exportable; `data-export="include"` never overrides sensitive-value blanking.
+- Export every row that matches the active filters across all pages; pagination must not limit the export. Client-side tables should provide the full filtered dataset, and server-paginated tables should fetch all matching pages before generating the file. Use `data-export-value` on a cell only when its display text is not the value users should receive.
+- Use `data-export-primary`/`data-export-ignore` only for decorative badges, explanatory helper text, and internal identifiers that are intentionally excluded. If secondary text is a distinct business attribute, give it a visible column and export it instead of hiding it behind a primary-value marker.
+- CSV uses UTF-8 with BOM for spreadsheet compatibility and escapes formula-like cell content. Keep the filename free of a format extension; the component adds it.
+
+## Contact fields
+
+- Use `IconInputField` for display name, phone, and email fields in create, edit, and profile forms. Keep a visible label above the field and a leading semantic icon inside it.
+- Use equal columns at desktop widths and stack the fields on narrow screens. Keep a 38 px input height, 12 px corner radius, muted placeholder, and cyan focus border/ring.
+- Use the light or dark theme prop to match the surrounding surface. Keep labels and field dimensions consistent across themes.
+- Show red border and helper text only when validation fails. Set the input's invalid state and connect the error text with `aria-describedby`; do not make empty fields red before validation runs unless the form's existing validation contract calls for it.
+- Keep labels programmatically connected to inputs, and treat decorative icons as hidden from assistive technology.
+
+## Password and secret fields
+
+- Use `PasswordInputField` for password, PIN, API-key, and signing-secret entry. It provides a consistent 40 px input, theme-aware surface and focus state, and a standard in-field reveal icon.
+- Keep a visible label outside the field and provide context-appropriate placeholder and autocomplete values. Pass localized show/hide labels to the reveal control.
+- Preserve validation through `aria-invalid` and `aria-describedby`; use `wrapperClassName` for layout and avoid re-styling the input per page.
+- Keep password visibility local to each field unless the surrounding interaction explicitly requires a shared visibility toggle.

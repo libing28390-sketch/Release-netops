@@ -1,0 +1,46 @@
+{
+  "task_id": "REL-009",
+  "status": "BLOCKED",
+  "static_checks": {
+    "contract_postgresql": true,
+    "compose_yaml": true,
+    "compose_secret_defaults_absent": true,
+    "docker_non_root": true,
+    "runtime_dirs_declared": true,
+    "network_write_disabled": true,
+    "log_sanitizer": true,
+    "production_fail_closed": true,
+    "log_path_project_owned": true,
+    "config_path_project_owned": true,
+    "path_traversal_boundary": true,
+    "public_static_excludes_sensitive_dirs": true,
+    "backup_private_permissions": true,
+    "tracked_examples_are_placeholder_safe": true
+  },
+  "runtime": {
+    "status": "BLOCKED",
+    "missing_or_placeholder_keys": [
+      "SECRET_KEY",
+      "CREDENTIAL_ENCRYPTION_KEY",
+      "DATABASE_URL"
+    ],
+    "postgres_url_scheme_ok": true,
+    "paths_project_owned": true,
+    "log_sanitizer": "PASS",
+    "filesystem_permissions": {
+      "platform": "nt",
+      "posix_mode_check": "not_applicable_windows_acl_required"
+    },
+    "secret_value_hashes": {
+      "SECRET_KEY": "d3cb379775fe",
+      "CREDENTIAL_ENCRYPTION_KEY": "d650752b8f2c",
+      "POSTGRES_PASSWORD": "a942b37ccfaf",
+      "DATABASE_URL": "25f85c639afb"
+    }
+  },
+  "database": "PostgreSQL_only",
+  "sqlite": "forbidden_for_acceptance",
+  "production_database_write": false,
+  "external_provider_request": false,
+  "secret_values_emitted": false
+}

@@ -1,0 +1,156 @@
+schema_version: 1
+baseline_id: nexora-kb-v1-20260809
+system_under_test: current-local-rag-retrieval-path
+metrics:
+  retrieval_accuracy: exact set equality between returned storage document ids and expected ids; no-match is correct only when result set is empty
+  wrong_vendor_rate: cases with an explicit expected vendor whose returned result contains a different vendor
+  version_conflict_rate: cases with an expected CLI platform whose returned result contains a different platform
+  citation_accuracy: macro precision of returned document ids against gold citation ids; empty gold/no-match is one correct outcome
+  latency_ms: wall-clock local retrieval latency measured around RAGRetriever.search; report average, p50, p95, max
+documents:
+  - id: hw-ce-series
+    name: huawei.cloudengine-6800.product_registry.series
+    vendor: Huawei
+    platform: huawei_yunshan_v300
+    category: hardware
+    series: CloudEngine 6800
+    train: V300
+    feature: null
+    content: CloudEngine 6800 product hardware registry
+    metadata: {document_type: product_registry, product_models: []}
+  - id: hw-ce-model
+    name: huawei.cloudengine-6800.ce6885.product_registry.model
+    vendor: Huawei
+    platform: huawei_yunshan_v300
+    category: hardware
+    series: CloudEngine 6800
+    model: CE6885-48YS8CQ
+    train: V300
+    feature: null
+    content: CE6885-48YS8CQ product hardware registry
+    metadata: {document_type: product_registry, product_models: [CE6885-48YS8CQ]}
+  - id: hw-v600
+    name: huawei.s5735-l-v2.product_registry.series
+    vendor: Huawei
+    platform: huawei_yunshan_v600
+    category: hardware
+    series: S5735-L-V2
+    train: V600
+    feature: null
+    content: S5735-L-V2 product hardware registry
+    metadata: {document_type: product_registry, product_models: []}
+  - id: arp-v600
+    name: huawei.yunshan.v600.display_arp.command
+    vendor: Huawei
+    platform: huawei_yunshan_v600
+    category: command
+    series: S5735-L-V2
+    train: V600
+    feature: arp
+    content: display arp guide Huawei V600 S5735-L-V2
+    metadata: {applicable_product_series: [S5735-L-V2]}
+  - id: vlan-v600
+    name: huawei.yunshan.v600.vlan_access.configuration
+    vendor: Huawei
+    platform: huawei_yunshan_v600
+    category: configuration
+    series: S5735-L-V2
+    train: V600
+    feature: vlan
+    content: vlan configuration guide Huawei V600 S5735-L-V2
+    metadata: {applicable_product_series: [S5735-L-V2]}
+  - id: ospf-v300
+    name: huawei.yunshan.v300.display_ospf_peer.output.001
+    vendor: Huawei
+    platform: huawei_yunshan_v300
+    category: cli_output
+    train: V300
+    feature: ospf
+    content: display ospf peer output Huawei V300
+    metadata: {}
+  - id: ospf-v600
+    name: huawei.yunshan.v600.display_ospf_peer_brief.output.001
+    vendor: Huawei
+    platform: huawei_yunshan_v600
+    category: cli_output
+    train: V600
+    feature: ospf
+    content: display ospf peer brief output Huawei V600
+    metadata: {}
+  - id: cisco-arp
+    name: cisco.iosxe.show_arp.command
+    vendor: Cisco
+    platform: cisco_iosxe
+    category: command
+    train: V17
+    feature: arp
+    content: show ip arp Cisco IOS XE
+    metadata: {}
+  - id: h3c-ospf
+    name: h3c.comware.display_ospf_peer.command
+    vendor: H3C
+    platform: h3c_comware
+    category: command
+    train: Comware7
+    feature: ospf
+    content: display ospf peer H3C Comware
+    metadata: {}
+cases:
+  - id: Q01
+    query: S5735-L-V2 V600 ARP
+    request: {vendor: Huawei, product_series: S5735-L-V2, software_train: V600, cli_platform: huawei_yunshan_v600, document_category: command, feature: arp}
+    expected_ids: [arp-v600]
+    expected_vendor: Huawei
+    expected_platforms: [huawei_yunshan_v600]
+  - id: Q02
+    query: S5735-L-V2 V600 VLAN config
+    request: {vendor: Huawei, product_series: S5735-L-V2, software_train: V600, cli_platform: huawei_yunshan_v600, document_category: configuration, feature: vlan}
+    expected_ids: [vlan-v600]
+    expected_vendor: Huawei
+    expected_platforms: [huawei_yunshan_v600]
+  - id: Q03
+    query: Huawei V300 OSPF output
+    request: {vendor: Huawei, software_train: V300, cli_platform: huawei_yunshan_v300, document_category: cli_output, feature: ospf}
+    expected_ids: [ospf-v300]
+    expected_vendor: Huawei
+    expected_platforms: [huawei_yunshan_v300]
+  - id: Q04
+    query: Huawei V600 OSPF output
+    request: {vendor: Huawei, software_train: V600, cli_platform: huawei_yunshan_v600, document_category: cli_output, feature: ospf}
+    expected_ids: [ospf-v600]
+    expected_vendor: Huawei
+    expected_platforms: [huawei_yunshan_v600]
+  - id: Q05
+    query: display ospf peer meaning
+    request: {vendor: Huawei, document_category: cli_output, feature: ospf}
+    expected_ids: [ospf-v300, ospf-v600]
+    expected_vendor: Huawei
+  - id: Q06
+    query: CloudEngine 6800 hardware
+    request: {vendor: Huawei, product_series: CloudEngine 6800, document_category: hardware}
+    expected_ids: [hw-ce-series, hw-ce-model]
+    expected_vendor: Huawei
+    expected_platforms: [huawei_yunshan_v300]
+  - id: Q07
+    query: CloudEngine 6800 OSPF config
+    request: {vendor: Huawei, product_series: CloudEngine 6800, document_category: configuration, feature: ospf}
+    expected_ids: []
+    expected_vendor: Huawei
+  - id: Q08
+    query: Cisco ARP
+    request: {vendor: Cisco, document_category: command, feature: arp}
+    expected_ids: [cisco-arp]
+    expected_vendor: Cisco
+    expected_platforms: [cisco_iosxe]
+  - id: Q09
+    query: H3C OSPF command
+    request: {vendor: H3C, document_category: command, feature: ospf}
+    expected_ids: [h3c-ospf]
+    expected_vendor: H3C
+    expected_platforms: [h3c_comware]
+  - id: Q10
+    query: S5735-L-V2 V600 ARP no vendor
+    request: {product_series: S5735-L-V2, software_train: V600, cli_platform: huawei_yunshan_v600, document_category: command, feature: arp}
+    expected_ids: [arp-v600]
+    expected_vendor: Huawei
+    expected_platforms: [huawei_yunshan_v600]

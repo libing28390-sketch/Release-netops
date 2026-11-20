@@ -393,18 +393,6 @@ def _version_scope_matches(scope: str, version: str) -> bool:
     return bool(re.search(pattern, version, flags=re.IGNORECASE))
 
 
-def _has_profile_version(profile: dict[str, Any], device: dict[str, Any]) -> bool:
-    version = str(device.get("version") or "").strip()
-    if not _known_device_value(version) or _h3c_release_pending(profile, version):
-        return False
-    # A VRP core version such as 8.180 does not identify the product release.
-    return not (
-        str(profile.get("vendor") or "").casefold() == "huawei"
-        and re.search(r"\bV\d{3}R", str(profile.get("version_scope") or ""), re.IGNORECASE)
-        and re.fullmatch(r"(?:VRP\s+)?V?\d+(?:\.\d+)+", version, re.IGNORECASE)
-    )
-
-
 def _validate_profile_known_scope(profile: dict[str, Any], device: dict[str, Any], *, draft: bool = False) -> str:
     """Reject known model/version mismatches and report missing identity fields."""
     _validate_profile_vendor(profile, device)
@@ -433,7 +421,7 @@ def _validate_profile_known_scope(profile: dict[str, Any], device: dict[str, Any
     version_scope = str(profile.get("version_scope") or "").strip()
     version = str(device.get("version") or "").strip()
     if version_scope:
-        if not _has_profile_version(profile, device):
+        if not _known_device_value(version) or _h3c_release_pending(profile, version):
             pending.append("version")
         else:
             version_text = version.casefold()
@@ -449,7 +437,8 @@ def _profile_identification_fields(profile: dict[str, Any], device: dict[str, An
     missing: list[str] = []
     if profile.get("model_scope") and not _known_device_value(device.get("model")):
         missing.append("model")
-    if profile.get("version_scope") and not _has_profile_version(profile, device):
+    version = str(device.get("version") or "").strip()
+    if profile.get("version_scope") and (not _known_device_value(version) or _h3c_release_pending(profile, version)):
         missing.append("version")
     return missing
 

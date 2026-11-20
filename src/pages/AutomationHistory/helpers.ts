@@ -1,4 +1,3 @@
-import * as XLSX from 'xlsx';
 
 /**
  * Split a combined output string into per-command blocks.
@@ -267,8 +266,9 @@ export function splitOutputByCommand(output: string, commands: string[]): Array<
 }
 
 /** Export parsed records to a real .xlsx file */
-export function downloadExcel(records: Record<string, any>[], fields: string[], filename: string): void {
+export async function downloadExcel(records: Record<string, any>[], fields: string[], filename: string): Promise<void> {
   if (!records || records.length === 0) return;
+  const XLSX = await import('xlsx');
   const data = records.map(r => {
     const row: Record<string, any> = {};
     for (const f of fields) row[f] = r[f] ?? '';

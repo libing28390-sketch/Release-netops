@@ -1,0 +1,104 @@
+task_id: ING-011
+title: Product OS Version Entity Resolution
+priority: P0
+milestone: M2
+status: implemented_pending_gate
+owner: BE+AI
+
+purpose:
+  - Resolve document metadata to an active tenant-scoped product model.
+  - Resolve explicit OS family/generation, release train, and reviewed version scope.
+  - Preserve unresolved values for review without guessing from body text.
+
+upstream:
+  required: [ING-010]
+  accepted_input:
+    - DocumentMetadataResult
+    - normalized_metadata_mapping
+  quarantine_rule: entity_resolution_allowed_false_must_short_circuit
+  body_text_authority: forbidden
+
+catalog_authority:
+  source: active_tenant_catalog_snapshot
+  reviewed_seed: read_only_candidate_contract_only
+  draft_rows: excluded_from_resolution
+  row_status_required: active
+  aliases: active_exact_or_canonical_may_resolve; prefix_and_trigram_are_candidates_only
+  no_first_match: true
+  production_ddl: none
+  future_foreign_keys: deferred_to_DB-006_DB-007_DB-009_gate
+
+product_resolution:
+  exact_model_code: unique_only_when_one_active_model_matches
+  exact_or_canonical_alias: unique_only_when_one_active_model_matches
+  series_or_family: candidates_and_clarification
+  prefix_or_trigram: candidates_and_clarification
+  unknown: preserve_unknown_and_request_review
+  vendor_conflict: fail_closed
+  cross_vendor_fallback: forbidden
+  output_fields: [product_model_id, vendor_id, family_code, series_code, model_code]
+
+software_resolution:
+  os_family: explicit_catalog_scope_match_required
+  os_generation: explicit_catalog_scope_match_required
+  release_train: explicit_catalog_scope_match_required
+  software_release: exact_reviewed_scope_value_required
+  version_range: never_fabricate_exact_version
+  incompatible_scope: conflict_and_not_retrieval_eligible
+  unknown_scope: review_and_not_retrieval_eligible
+  cli_platform: explicit_binding_hint_only_after_exact_product_and_scope_match
+
+outcomes:
+  resolved:
+    decision: proceed
+    retrieval_eligible: true
+  candidates:
+    decision: review
+    retrieval_eligible: false
+  ambiguous:
+    decision: review
+    retrieval_eligible: false
+  unknown:
+    decision: review
+    retrieval_eligible: false
+  conflict:
+    decision: review_or_quarantine
+    retrieval_eligible: false
+  quarantined:
+    decision: quarantine
+    retrieval_eligible: false
+  dependency_unavailable:
+    decision: review
+    retrieval_eligible: false
+
+security:
+  tenant_scope: exact_snapshot_tenant_match_required
+  secret_keys_and_values: reject_without_echoing_value
+  raw_body: never_returned
+  source_urls_and_credentials: never_copied_to_candidates
+  driver_selection_allowed: false
+  execution_write_authority: false
+  candidate_limit: 20
+  deterministic_order: vendor_id_series_code_product_model_id
+
+compatibility:
+  v1_metadata: preserved
+  v1_retrieval_fallback: retained_when_only_contract_seed_is_available
+  legacy_tenant_filter: request_tenant_or_explicit_shared_default_only
+  database_writes: none
+
+rollback:
+  runtime: disable_v2_catalog_resolver_and_keep_legacy_read_only_adapter
+  data: no_rows_written; no_legacy_rows_rewritten
+
+acceptance:
+  - exact_model_os_version_resolves
+  - canonical_alias_resolves
+  - prefix_and_trigram_return_candidates
+  - unknown_never_infers_from_body
+  - vendor_and_os_conflicts_fail_closed
+  - unreviewed_version_is_not_exact
+  - tenant_mismatch_is_rejected
+  - upstream_quarantine_short_circuits
+  - dependency_errors_are_stable_and_redacted
+  - driver_authority_remains_false

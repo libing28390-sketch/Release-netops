@@ -1,0 +1,247 @@
+task_id: DB-003
+milestone: M1
+status: frozen_for_implementation
+scope: V2_tenant_scoped_entities
+state_values:
+  draft:
+    active_read: false
+    rag_candidate: false
+    meaning: created_but_not_approved
+  active:
+    active_read: true
+    rag_candidate: true
+    meaning: approved_and_eligible_subject_to_acl_and_trust
+  disabled:
+    active_read: false
+    rag_candidate: false
+    meaning: intentionally_not_operational_but_retained
+  archived:
+    active_read: false
+    rag_candidate: false
+    meaning: retained_for_history_and_restore_but_not_default_use
+  deleted:
+    active_read: false
+    rag_candidate: false
+    meaning: soft_deleted_and_restorable_until_purge
+  quarantined:
+    active_read: false
+    rag_candidate: false
+    meaning: isolated_for_security_parse_acl_or_quality_review
+  failed:
+    active_read: false
+    rag_candidate: false
+    meaning: processing_failed_and_requires_retry_or_review
+  superseded:
+    active_read: false
+    rag_candidate: false
+    meaning: replaced_by_newer_generation_or_version
+  purged:
+    active_read: false
+    rag_candidate: false
+    meaning: irreversible_sanitized_deletion_terminal_state
+behaviors:
+  soft_delete:
+    status: deleted
+    reversible: true
+    visibility: exclude_from_default_reads_search_rag_and_exports
+    retain: original_rows_hashes_audit_and_relationship_history
+    required_fields: [deleted_at, deleted_by, deletion_reason]
+    permission: kb.delete
+    preconditions: [tenant_scope, not_legal_hold, actor_authorized, optimistic_version_match]
+    rollback: restore_status_and_clear_delete_markers_after_review
+  disable:
+    status: disabled
+    reversible: true
+    visibility: exclude_from_active_operation_and_rag_but_visible_to_authorized_admin
+    retain: all_data_and_audit_history
+    required_fields: [disabled_at, disabled_by, disable_reason]
+    permission: entity.manage
+    preconditions: [tenant_scope, actor_authorized, dependent_route_or_index_check]
+    rollback: set_status_active_only_after_dependency_health_check
+  archive:
+    status: archived
+    reversible: true
+    visibility: exclude_from_default_reads_rag_and_new_routes_but_available_for_history
+    retain: source_hash_versions_audit_and_restore_manifest
+    required_fields: [archived_at, archived_by, archive_reason]
+    permission: entity.archive
+    preconditions: [tenant_scope, retention_policy_check, no_active_cutover_dependency]
+    rollback: restore_status_active_or_disabled_and_republish_only_after_gate
+  purge:
+    status: purged
+    reversible: false
+    visibility: no_business_read; only_tombstone_and_audit_metadata_retained
+    retain: purge_tombstone_request_id_hash_and_approval_audit_only
+    required_fields: [purge_requested_at, purged_at, purged_by, purge_reason]
+    permission: entity.purge
+    preconditions: [tenant_scope, retention_elapsed, no_legal_hold, no_active_reference, backup_or_manifest_verified, dual_approval, dry_run_zero_conflicts]
+    rollback: forbidden; restore_requires_external_approved_backup_and_new_identity
+transitions:
+  - from: draft
+    to: active
+    operation: publish_or_enable
+    permission: entity.manage
+  - from: active
+    to: disabled
+    operation: disable
+    permission: entity.manage
+  - from: active
+    to: archived
+    operation: archive
+    permission: entity.archive
+  - from: active
+    to: deleted
+    operation: soft_delete
+    permission: kb.delete
+  - from: active
+    to: quarantined
+    operation: quarantine
+    permission: security.quarantine
+  - from: disabled
+    to: active
+    operation: restore_or_enable
+    permission: entity.manage
+  - from: disabled
+    to: archived
+    operation: archive
+    permission: entity.archive
+  - from: disabled
+    to: deleted
+    operation: soft_delete
+    permission: kb.delete
+  - from: archived
+    to: active
+    operation: restore
+    permission: entity.archive
+  - from: archived
+    to: deleted
+    operation: soft_delete
+    permission: kb.delete
+  - from: deleted
+    to: active
+    operation: restore
+    permission: kb.restore
+  - from: deleted
+    to: purged
+    operation: purge
+    permission: entity.purge
+  - from: quarantined
+    to: active
+    operation: approve_after_review
+    permission: security.review
+  - from: quarantined
+    to: deleted
+    operation: soft_delete
+    permission: kb.delete
+  - from: failed
+    to: draft
+    operation: retry_or_requeue
+    permission: job.manage
+  - from: failed
+    to: deleted
+    operation: soft_delete
+    permission: kb.delete
+  - from: superseded
+    to: archived
+    operation: retain_history
+    permission: entity.archive
+  - from: purged
+    to: purged
+    operation: idempotent_repeat
+    permission: entity.purge
+terminal_states: [purged]
+extension_columns:
+  - name: deleted_at
+    type: timestamptz
+    applies_to: soft_deletable_entities
+  - name: deleted_by
+    type: uuid
+    applies_to: soft_deletable_entities
+  - name: deletion_reason
+    type: text
+    applies_to: soft_deletable_entities
+  - name: disabled_at
+    type: timestamptz
+    applies_to: disableable_entities
+  - name: disabled_by
+    type: uuid
+    applies_to: disableable_entities
+  - name: disable_reason
+    type: text
+    applies_to: disableable_entities
+  - name: archived_at
+    type: timestamptz
+    applies_to: archivable_entities
+  - name: archived_by
+    type: uuid
+    applies_to: archivable_entities
+  - name: archive_reason
+    type: text
+    applies_to: archivable_entities
+  - name: purge_requested_at
+    type: timestamptz
+    applies_to: purgeable_entities
+  - name: purged_at
+    type: timestamptz
+    applies_to: purgeable_entities
+  - name: purged_by
+    type: uuid
+    applies_to: purgeable_entities
+  - name: purge_reason
+    type: text
+    applies_to: purgeable_entities
+  - name: legal_hold
+    type: boolean
+    applies_to: purgeable_entities
+entity_policies:
+  source_and_document_facts:
+    entities: [kb_source_registry, kb_source_version, kb_document, kb_document_version]
+    allowed: [draft,active,disabled,archived,deleted,quarantined,purged]
+    purge_rule: manual_dual_approval_after_retention_and_legal_hold_check; never_automatic
+    rag_rule: only_active_and_acl_visible
+  catalog_facts:
+    entities: [kb_vendor, kb_product_family, kb_product_series, kb_product_model, kb_product_alias, kb_os_family, kb_os_generation, kb_release_train, kb_software_version]
+    allowed: [draft,active,disabled,archived,deleted,purged]
+    purge_rule: only_without_document_or_route_references
+  derived_retrieval:
+    entities: [kb_chunk_version, kb_chunk, kb_chunk_edge, kb_embedding_model, kb_chunk_embedding, kb_index_version]
+    allowed: [draft,active,disabled,archived,deleted,superseded,purged,failed]
+    cascade_rule: parent_generation_disable_or_delete_removes_retrieval_eligibility_before_physical_purge
+    purge_rule: purge_only_if_no_ready_index_reference_and_rebuild_manifest_exists
+  ai_control_plane:
+    entities: [ai_provider, ai_model, ai_model_route]
+    allowed: [draft,active,disabled,archived,deleted,purged]
+    disable_rule: disable_before_delete; active_route_reference_blocks_purge
+    purge_rule: only_without_active_route_and_after_secret_audit_retention
+    secret_rule: purge_secret_reference_before_or_with_row_purge; retain_no_plaintext_secret
+  jobs_and_observability:
+    entities: [kb_import_job, ai_request_trace]
+    allowed: [draft,active,disabled,archived,deleted,purged,failed]
+    purge_rule: retention_and_audit_policy; traces_are_append_only_until_retention
+visibility_predicates:
+  default_business_read: status = active AND legal_hold_is_not_relevant_to_read
+  default_rag_read: status = active AND exclude_from_rag = false AND trust_acl_pass
+  admin_history_read: status IN [disabled,archived,deleted,quarantined,failed,superseded]
+  purge_read: status = purged AND request_has_purge_audit_permission
+concurrency_and_audit:
+  compare_and_set: update_only_where_id_tenant_id_status_expected_and_updated_at_expected
+  lock: row_lock_parent_before_child_cascade
+  idempotency: request_id_or_lifecycle_event_id_unique_per_tenant
+  audit_event: record_before_after_status_actor_reason_request_id_and_reference_counts
+  cascade: logical_state_change_first; physical_delete_only_in_purge_worker_after_gate
+security:
+  deny_by_default: unknown_status_missing_tenant_missing_actor_or_failed_authorization
+  purge: dual_control_admin_plus_data_owner_or_security_reviewer
+  secrets: secret_reference_revocation_is_separate_audited_step
+  network_devices: no_lifecycle_operation_executes_device_write_command
+v1_compatibility:
+  enabled_boolean: map_true_to_active_false_to_disabled_only_in_adapter
+  legacy_missing_status: quarantine_or_explicit_review; never_assume_active_for_new_rag
+  legacy_delete: retain_v1_row_and_project_deleted_state_without_physical_delete
+  cutover: feature_flag_and_last_ready_generation_required
+rollback:
+  soft_delete: restore_status_if_audit_and_dependency_checks_pass
+  disable: restore_active_if_route_and_security_health_pass
+  archive: restore_active_or_disabled_after_republish_gate
+  purge: irreversible; restore_from_approved_external_backup_as_new_version_only
+next_tasks: [DB-004, DB-009, DB-010, DB-011, DB-017, DB-018, MIG-004, MIG-014, REL-010]

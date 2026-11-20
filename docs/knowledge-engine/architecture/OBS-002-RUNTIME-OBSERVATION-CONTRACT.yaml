@@ -1,0 +1,47 @@
+task_id: OBS-002
+title: Retrieval runtime observation
+status: verified
+contract_version: nxa.retrieval.runtime.v1
+authority:
+  trace_store: backend/ai/services/retrieval_trace_store.py
+  producer: backend/ai/services/assistant.py
+  gateway: backend/ai/gateway/llm_gateway.py
+  storage: bounded in-process read model until DB-012 physical projections are release-gated
+fields:
+  reranker:
+    allowlist: [stage, name, candidate_count, timeout_ms, cost_units, reason]
+    bounds: candidate_count_nonnegative; timeout_ms_nonnegative; cost_units_nonnegative
+  citation:
+    allowlist: [count, warning_count, verified_count, failed_count]
+    source: citation_validation_and_warning_summary
+  latency:
+    allowlist: [retrieval_ms, reranker_ms, llm_ms, total_ms]
+    bounds: nonnegative_integer_milliseconds
+  tokens:
+    allowlist: [input, output, total]
+    bounds: nonnegative_integer; total_defaults_to_input_plus_output
+  provider_model:
+    allowlist: [provider_id, model_id, requested_model_id, route_reason, fallback_used]
+    secret_policy: identifiers_only; credentials_and_payloads_forbidden
+  security:
+    allowlist: [decision, policy_version, result_code]
+    values: allow|block|prepared|provider_error|not_recorded
+    source: AI_Security_Gateway_result
+merge:
+  rule: nested_runtime_updates_are_additive_and_must_not_drop_prior_stages
+  terminal_security_block: true
+privacy:
+  - provider/model identifiers are bounded strings; API keys, headers, prompts and provider payloads are excluded
+  - security result is a policy outcome only; detection findings and sensitive source text are not projected
+  - citation projection remains metadata-only and bounded by OBS-001 limits
+tenant_scope: strict server-owned tenant trace scope
+compatibility:
+  - KUI-017 trace list/detail fields remain available
+  - no PostgreSQL DDL and no V1 table mutation
+  - non-stream and SSE paths record the same runtime field vocabulary
+verification:
+  tests:
+    - backend/tests/ai/test_obs001_retrieval_observation.py
+    - backend/tests/catalog/test_kui_017_retrieval_trace.py
+    - backend/tests/ai/test_api006_sse_contract.py
+  result: PASS

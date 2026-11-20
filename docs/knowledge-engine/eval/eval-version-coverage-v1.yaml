@@ -1,0 +1,135 @@
+schema_version: 1
+coverage_id: nexora-kb-eval-version-coverage-v1-20260817
+status: frozen
+parent_dataset_id: nexora-kb-eval-v1-20260817
+source_policy:
+  database: none
+  sqlite: not_used
+  external_network: forbidden
+  secrets: forbidden
+classes:
+  - class_id: specified
+    source: parent_dataset
+    parent_query_type: version_exact
+    case_count: 12
+    expected_version_relation: exact
+    expected_outcome: answer
+    citation_required: true
+  - class_id: unspecified
+    source: parent_dataset
+    parent_query_type: exact
+    case_count: 12
+    expected_version_relation: unspecified
+    expected_outcome: answer
+    citation_required: true
+  - class_id: conflict
+    source: parent_dataset
+    parent_query_type: version_conflict
+    case_count: 12
+    expected_version_relation: conflict
+    expected_outcome: no_match
+    citation_required: false
+  - class_id: unknown
+    source: eval_fixture
+    parent_query_type: synthetic_unknown_version
+    case_count: 12
+    expected_version_relation: unknown
+    expected_outcome: no_match
+    citation_required: false
+    cases:
+      - id: EVAL-V004-U001
+        query: "Huawei CE6885-48YS8CQ VLAN version V999R999C99"
+        vendor: Huawei
+        intent: vlan
+        product_series: CE6800
+        product_model: CE6885-48YS8CQ
+        supported_versions: [V300R023C10]
+        requested_version: V999R999C99
+      - id: EVAL-V004-U002
+        query: "Cisco C9300-48P VLAN version 99.99.99"
+        vendor: Cisco
+        intent: vlan
+        product_series: C9300
+        product_model: C9300-48P
+        supported_versions: [17.9.4]
+        requested_version: 99.99.99
+      - id: EVAL-V004-U003
+        query: "Huawei CE6885-48YS8CQ Interface version V999R999C99"
+        vendor: Huawei
+        intent: interface
+        product_series: CE6800
+        product_model: CE6885-48YS8CQ
+        supported_versions: [V300R023C10]
+        requested_version: V999R999C99
+      - id: EVAL-V004-U004
+        query: "Cisco C9300-48P Interface version 99.99.99"
+        vendor: Cisco
+        intent: interface
+        product_series: C9300
+        product_model: C9300-48P
+        supported_versions: [17.9.4]
+        requested_version: 99.99.99
+      - id: EVAL-V004-U005
+        query: "Huawei CE6885-48YS8CQ OSPF version V999R999C99"
+        vendor: Huawei
+        intent: ospf
+        product_series: CE6800
+        product_model: CE6885-48YS8CQ
+        supported_versions: [V300R023C10]
+        requested_version: V999R999C99
+      - id: EVAL-V004-U006
+        query: "Cisco C9300-48P OSPF version 99.99.99"
+        vendor: Cisco
+        intent: ospf
+        product_series: C9300
+        product_model: C9300-48P
+        supported_versions: [17.9.4]
+        requested_version: 99.99.99
+      - id: EVAL-V004-U007
+        query: "Huawei CE6885-48YS8CQ SSH version V999R999C99"
+        vendor: Huawei
+        intent: ssh
+        product_series: CE6800
+        product_model: CE6885-48YS8CQ
+        supported_versions: [V300R023C10]
+        requested_version: V999R999C99
+      - id: EVAL-V004-U008
+        query: "Cisco C9300-48P SSH version 99.99.99"
+        vendor: Cisco
+        intent: ssh
+        product_series: C9300
+        product_model: C9300-48P
+        supported_versions: [17.9.4]
+        requested_version: 99.99.99
+      - id: EVAL-V004-U009
+        query: "Huawei CE6885-48YS8CQ NTP version V999R999C99"
+        vendor: Huawei
+        intent: ntp
+        product_series: CE6800
+        product_model: CE6885-48YS8CQ
+        supported_versions: [V300R023C10]
+        requested_version: V999R999C99
+      - id: EVAL-V004-U010
+        query: "Cisco C9300-48P NTP version 99.99.99"
+        vendor: Cisco
+        intent: ntp
+        product_series: C9300
+        product_model: C9300-48P
+        supported_versions: [17.9.4]
+        requested_version: 99.99.99
+      - id: EVAL-V004-U011
+        query: "Huawei CE6885-48YS8CQ Route version V999R999C99"
+        vendor: Huawei
+        intent: route
+        product_series: CE6800
+        product_model: CE6885-48YS8CQ
+        supported_versions: [V300R023C10]
+        requested_version: V999R999C99
+      - id: EVAL-V004-U012
+        query: "Cisco C9300-48P Route version 99.99.99"
+        vendor: Cisco
+        intent: route
+        product_series: C9300
+        product_model: C9300-48P
+        supported_versions: [17.9.4]
+        requested_version: 99.99.99

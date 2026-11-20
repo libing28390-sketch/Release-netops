@@ -1,0 +1,74 @@
+title: LLM-001..LLM-037 PostgreSQL authoritative verification plan
+scope:
+  tasks: [LLM-001, LLM-002, LLM-003, LLM-004, LLM-005, LLM-006, LLM-007, LLM-008, LLM-009, LLM-010, LLM-011, LLM-012, LLM-013, LLM-014, LLM-015, LLM-016, LLM-017, LLM-018, LLM-019, LLM-020, LLM-021, LLM-022, LLM-023, LLM-024, LLM-025, LLM-026, LLM-027, LLM-028, LLM-029, LLM-030, LLM-031, LLM-032, LLM-033, LLM-034, LLM-035, LLM-036, LLM-037]
+  production_database: PostgreSQL
+  authority: PostgreSQL 18 with pg_trgm and vector extensions
+  v1_preservation: true
+policy:
+  database_under_test: PostgreSQL_only
+  acceptance_rule: Every database, migration, tenant, ACL, quota, audit, routing and provenance claim must be exercised against the configured PostgreSQL database.
+  transaction_safety: Migration and fixture probes run in an explicit transaction and roll back all probe rows; no production data is deleted.
+  sqlite:
+    status: not_used
+    acceptance: forbidden
+    reason: The deployed Nexora environment uses PostgreSQL; SQLite cannot prove PostgreSQL constraints, JSONB, indexes, locking, concurrency, or query plans.
+    legacy_tests: No SQLite test is part of the LLM test plan; any historical SQLite-only fixture is excluded from milestone counts and evidence.
+  missing_environment: Mark the affected task BLOCKED when PostgreSQL, required extension, credential, permission, or isolated test database is unavailable; do not substitute SQLite.
+required_probes:
+  - name: llm_pg_migration_and_contract_probe
+    command: .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_llm_pg_probe.py
+    checks: [real_postgresql_connection, m0139_m0140_m0141_idempotency, provider_model_scope, route_fallback, ACL_tenant_scope, key_rotation_audit, rollback]
+  - name: llm_backend_contract_tests
+    command: $env:PYTHONPATH='backend'; .venv\\Scripts\\pytest.exe backend/tests/ai/test_llm_001_037_multi_provider.py -q -p no:cacheprovider
+    checks: [provider_schemas, adapter_registry, capability_guards, stable_errors, routing_precedence]
+  - name: llm_v1_postgres_baseline
+    command: .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_v1_baseline_pg.py
+    checks: [retrieval_accuracy, wrong_vendor_rate, version_conflict_rate, citation_accuracy, transaction_rollback]
+  - name: llm_frontend_quality
+    command: npm.cmd run lint; npm.cmd run build
+    checks: [provider_management, model_capability_display, model_switcher, authorized_model_visibility]
+task_gate:
+  LLM-001: [multiple_provider_rows, provider_name_uniqueness, tenant_scope]
+  LLM-002: [endpoint, timeout, retry, proxy, enabled, default_model_fields]
+  LLM-003: [AES_256_GCM, master_key_required, masked_key, no_plaintext_logs]
+  LLM-004: [rotation, invalidation, audit, retired_key_recovery, redacted_errors]
+  LLM-005: [adapter_registry, provider_type_dispatch, unknown_type_fail_closed]
+  LLM-006: [deepseek_adapter, official_endpoint, model_mapping]
+  LLM-007: [openai_compatible_adapter, safe_endpoint_validation]
+  LLM-008: [openai, azure, ollama, local, qwen_differences]
+  LLM-009: [security_gateway, public_probe_only, no_direct_bypass]
+  LLM-010: [health_status, latency, success_time, stable_error_code]
+  LLM-011: [health_backoff, retry_budget, circuit_safety]
+  LLM-012: [provider_CRUD, edit, disable, test, delete_preview, key_rotation]
+  LLM-013: [provider_model_unique_scope, duplicate_rejection]
+  LLM-014: [chat, reasoning, embedding, rerank]
+  LLM-015: [context, output, tools, JSON, stream, thinking, temperature_capabilities]
+  LLM-016: [manual_model, optional_discovery, no_untrusted_auto_enable]
+  LLM-017: [unsupported_parameter_rejection_or_safe_drop]
+  LLM-018: [enable_disable_default_priority_display_name]
+  LLM-019: [safe_delete_preview, route_and_provenance_reference_checks]
+  LLM-020: [provider_grouping, capability_badges]
+  LLM-021: [health_latency_error_token_cost_summary]
+  LLM-022: [explicit_message, session, user_default, scene_route, system_default_precedence]
+  LLM-023: [tenant_role_user_acl]
+  LLM-024: [opaque_stable_model_id]
+  LLM-025: [copilot_sse_and_nonstream_model_selection]
+  LLM-026: [conversation_model_persistence]
+  LLM-027: [next_message_switch_preserves_history]
+  LLM-028: [requested_actual_provider_route_provenance]
+  LLM-029: [primary_fallback_enabled_priority]
+  LLM-030: [classification_and_capability_compatible_fallback]
+  LLM-031: [explicit_fallback_metadata]
+  LLM-032: [stable_provider_model_route_errors]
+  LLM-033: [tenant_user_provider_quota_concurrency_circuit_breaker]
+  LLM-034: [budget_cost_estimate_alert_overage]
+  LLM-035: [frontend_authorized_models_only]
+  LLM-036: [switcher_provider_model_purpose_speed_context_status]
+  LLM-037: [multi_provider_same_name_disable_fallback_acl_concurrency]
+rollback:
+  application: disable_new_provider_or_model_route_and_use_existing_v1_default_route
+  database: rollback_transaction_for_probes; additive_m0139_m0140_columns_and_tables_are_retained_until_release_rollback_window
+  data_loss: forbidden
+reporting:
+  every_task_evidence_must_include: [postgres_command, database_name, server_version, extension_versions, test_result, SQL_or_API_evidence, security_result, rollback_result, v1_result, known_limits]
+  final_gate: No LLM task is DONE when its database evidence was produced only by SQLite or by an unexecuted PG plan.

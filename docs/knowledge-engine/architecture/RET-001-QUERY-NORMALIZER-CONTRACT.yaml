@@ -1,0 +1,46 @@
+task: RET-001
+title: Query Normalizer input/output contract
+version: query-normalizer-v1
+input:
+  query:
+    type: string
+    required: true
+    max_length: 20000
+    treatment: redact_known_secret_literals_before_debug_or_external_use
+  context:
+    tenant_id: required_and_server_owned
+    access_scope: server_owned_scope_label
+output:
+  normalized_text: deterministic_whitespace_normalized_and_bounded
+  query_hash: sha256_of_original_utf8_query
+  entities:
+    vendor: nullable
+    product: nullable
+    model: nullable
+    os_family: nullable
+    generation: nullable
+    version: nullable
+    topic: nullable
+    command: nullable
+    error: nullable
+    intent: required_enum
+  document_category: nullable_enum
+  tokens: deterministic_ascii_tokens
+  warnings: redacted_stable_codes_only
+rules:
+  - absent_entities_are_null
+  - no_llm_or_context_inference_may_fill_an_absent_entity
+  - product_aliases_are_explicit_canonicalization_only
+  - unknown_or_ambiguous_values_are_retained_as_null_or_candidate_data
+  - tenant_and_access_scope_are_never_read_from_query_metadata
+security:
+  raw_query_not_in_debug_or_audit_payload
+  secrets_not_in_error_or_trace_payload
+compatibility:
+  legacy_intent_parser_fields_remain_available_as_additive_projection
+rollback:
+  disable_normalizer_feature_flag_and_use_legacy_deterministic_parser
+acceptance:
+  - RET-001
+  - RET-002
+  - RET-003

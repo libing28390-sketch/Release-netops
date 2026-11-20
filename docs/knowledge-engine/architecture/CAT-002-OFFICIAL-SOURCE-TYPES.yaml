@@ -1,0 +1,143 @@
+task_id: CAT-002
+priority: P0
+owner: NET+AI
+milestone: M2
+status: reviewed_for_knowledge_backfill
+authority: CAT-001_official_source_allowlist
+contract_version: v1.1
+depends_on: [CAT-001]
+
+decision:
+  choice: typed_official_source_taxonomy
+  summary: >-
+    Every official source record declares one explicit source type. The type
+    controls provenance, expected content, version scope, and parser review;
+    it never replaces exact URL allowlisting, tenant authorization, or source
+    trust review. Unknown types fail closed.
+  invariants:
+    - source_type_is_required_and_allowlisted
+    - official_url_is_a_provenance_entry_not_a_fetch_wildcard
+    - product_page_is_product_identity_context_only
+    - configuration_guide_is_procedure_reference_not_write_authority
+    - command_reference_requires_platform_and_version_scope
+    - troubleshooting_guide_requires_symptoms_evidence_diagnostics_and_verification
+    - release_note_requires_explicit_version_and_date_scope
+    - one_url_may_not_be_reclassified_by_model_inference
+
+source_types:
+  - code: official_url
+    label: Official URL
+    purpose: verified_vendor_entry_point_or_documentation_index
+    required_fields: [canonical_url, vendor, host, path_prefix, source_type, trust_level, reviewed_at]
+    content_expectations: [vendor_identity, official_navigation, product_or_documentation_scope]
+    parser_policy: metadata_only_until_a_child_source_is_typed
+    allowed_for_direct_chunking: false
+
+  - code: product_page
+    label: Product page
+    purpose: product_family_model_and_platform_identity
+    required_fields: [canonical_url, vendor, product_family, model_pattern, platform_code, source_type, trust_level, reviewed_at]
+    content_expectations: [product_name, supported_models, platform_or_os, lifecycle_or_scope_links]
+    parser_policy: html_metadata_and_link_extraction_after_review
+    allowed_for_direct_chunking: true
+
+  - code: configuration_guide
+    label: Configuration guide
+    purpose: versioned_feature_configuration_and_operational_procedure_reference
+    required_fields: [canonical_url, vendor, product_family, platform_code, version_scope, source_type, trust_level, reviewed_at]
+    content_expectations: [prerequisites, procedure, command_context, warnings, rollback_or_cleanup_notes]
+    parser_policy: section_and_command_boundary_preserving
+    allowed_for_direct_chunking: true
+
+  - code: command_reference
+    label: Command reference
+    purpose: platform_and_release_specific_cli_semantics_and_output_reference
+    required_fields: [canonical_url, vendor, product_family, platform_code, os_family, version_scope, source_type, trust_level, reviewed_at]
+    content_expectations: [syntax, parameters, modes, defaults, examples, command_history]
+    parser_policy: command_atom_preserving_no_split
+    allowed_for_direct_chunking: true
+
+  - code: troubleshooting_guide
+    label: Troubleshooting guide
+    purpose: versioned_symptom_evidence_diagnostic_remediation_and_verification_reference
+    required_fields: [canonical_url, vendor, product_family, platform_code, version_scope, source_type, trust_level, reviewed_at]
+    content_expectations: [symptoms, scope, evidence, diagnostic_commands, remediation, verification, rollback_or_escalation]
+    parser_policy: section_and_command_boundary_preserving_with_evidence_blocks
+    allowed_for_direct_chunking: true
+
+  - code: release_note
+    label: Release note / version explanation
+    purpose: release_identity_changes_deprecations_and_compatibility_scope
+    required_fields: [canonical_url, vendor, product_family, version_scope, release_date_or_document_revision, source_type, trust_level, reviewed_at]
+    content_expectations: [release_version, resolved_issues, known_issues, upgrade_notes, compatibility_or_deprecation]
+    parser_policy: version_fact_extraction_with_unknown_quarantine
+    allowed_for_direct_chunking: true
+
+classification:
+  source_type_is_explicit: true
+  unknown_type_behavior: reject_before_fetch_or_index
+  precedence_for_multi_label_documents: [release_note, troubleshooting_guide, command_reference, configuration_guide, product_page, official_url]
+  no_model_inference: true
+  split_rule: one_document_version_one_primary_type; secondary_labels_require_reviewed_metadata
+  source_kind_to_type_mapping:
+    product_support: [official_url, product_page]
+    configuration_guide: [configuration_guide]
+    command_reference: [command_reference]
+    troubleshooting_guide: [troubleshooting_guide]
+    release_note: [release_note]
+
+provenance:
+  required_fields: [source_id, canonical_url, vendor, product_family, source_type, version_scope, content_hash, fetched_at, parser_name, parser_version, reviewer, reviewed_at]
+  version_scope:
+    primary_and_compatibility_required_for_first_batch: true
+    unknown_version: quarantine
+    version_inference_from_filename_only: forbidden
+  trust_and_authority:
+    trust_level: official
+    source_type_not_authorization: true
+    source_type_not_device_write_permission: true
+  redaction: [credentials, cookies, bearer_tokens, api_keys, serial_numbers, private_addresses]
+
+first_batch_examples:
+  Huawei:
+    product_page:
+      - https://support.huawei.com/enterprise/en/switches/ce6860-san-pid-252423549
+    configuration_guide:
+      - https://support.huawei.com/enterprise/en/doc/EDOC1100463796/2a5291b7/configuration-precautions-for-vxlan
+      - https://support.huawei.com/enterprise/en/doc/EDOC1100463785/a01f202f/md-cli-maintenance-operations
+    command_reference:
+      - https://info.support.huawei.com/enterprise/en/doc/EDOC1100439391/69a4eddd/documentation-conventions
+    release_note:
+      - https://support.huawei.com/enterprise/en/switches/ce6860-san-pid-255084689
+  Cisco:
+    product_page:
+      - https://www.cisco.com/c/en/us/products/switches/catalyst-9300-series-switches/index.html
+    configuration_guide:
+      - https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-9/configuration_guide.html
+    command_reference:
+      - https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-9/command_reference/b_179_9300_cr/system_management_commands.html
+      - https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-18/command_reference/b_1718_9300_cr/system_management_commands.html
+    release_note:
+      - https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-9/release_notes.html
+  H3C:
+    troubleshooting_guide:
+      - https://www.h3c.com/cn/d_202603/2776299_30005_0.htm
+  Ruijie:
+    troubleshooting_guide:
+      - https://www.ruijie.com.cn/fw/wt/93439/
+
+acceptance:
+  - exactly_six_allowlisted_source_types
+  - required_fields_and_parser_policy_are_defined_per_type
+  - primary_and_compatibility_version_scope_is_explicit
+  - unknown_type_and_unknown_version_fail_closed
+  - examples_remain_inside_CAT001_host_and_path_boundary
+  - source_type_never_grants_tenant_or_device_write_authority
+  - V1_source_hints_and_official_reference_fields_remain_compatible
+
+rollback:
+  runtime: disable_typed_source_collection_and_keep_reviewed_v1_hints
+  data: preserve_source_versions_and_content_hash_facts
+  activation: CAT-003/CAT-004 reject missing_type_or_unknown_version
+
+next_tasks: [CAT-003, CAT-004, CAT-005]

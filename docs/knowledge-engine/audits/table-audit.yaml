@@ -1,0 +1,80 @@
+schema_version: 1
+task_id: AUD-003
+runtime_observation:
+  sqlite_path: data/netops.db
+  access_mode: read_only
+  table_count: 114
+  latest_schema_migration: 11
+  ai_tables_present: false
+  note: Local runtime database predates m0103 AI migrations; do not treat absence as a successful V2 deploy.
+migration_sources:
+  core: [m0103_ai_platform_tables, m0104_ai_pgvector_rag, m0105_ai_security_operations_graph]
+  compatibility: [m0106_repair_post_105_compatibility, m0110_repair_ai_document_platforms]
+  rag_v2: [m0111_ai_chunking_v2, m0112_ai_knowledge_directories, m0113_rag_metadata_v2, m0114_rag_priority_text]
+tables:
+  - name: ai_provider
+    owner: m0103
+    tenant_scope: global
+    key: id
+    sensitive_columns: [api_key_encrypted, api_key_masked]
+  - name: ai_model
+    owner: m0103
+    tenant_scope: global
+    foreign_keys: [provider_id_to_ai_provider]
+  - name: ai_model_route
+    owner: m0103
+    tenant_scope: global
+    unique: [scene]
+    integrity_gap: fallback_model_id_has_no_foreign_key
+  - name: ai_document
+    owner: m0103
+    extensions: [m0105_tenant_acl_trust_source_metadata, m0111_chunking, m0113_embedding_metadata]
+    tenant_scope: service_filtered
+  - name: ai_document_chunk
+    owner: m0103
+    extensions: [m0111_chunk_roles, m0113_metadata_embedding_contract]
+    vector_storage: json_text_until_proven_pgvector
+  - name: ai_knowledge_base
+    owner: m0103
+    extensions: [m0105_tenant_acl]
+  - name: ai_conversations
+    owner: m0105
+    tenant_scope: tenant_and_opaque_user
+  - name: ai_messages
+    owner: m0105
+    foreign_keys: [conversation_id_to_ai_conversations]
+    unique: [conversation_id_sequence_no]
+  - name: ai_tasks
+    owner: m0105
+    integrity_gap: conversation_id_has_no_declared_foreign_key
+  - name: ai_tool_calls
+    owner: m0105
+    integrity_gap: task_id_has_no_declared_foreign_key
+  - name: ai_evidence
+    owner: m0105
+    integrity_gap: lifecycle_foreign_keys_not_declared
+  - name: ai_outbound_audits
+    owner: m0105
+    sensitive_policy: no_raw_payload
+  - name: ai_security_policies
+    owner: m0105
+    tenant_scope: tenant_version_unique
+  - name: ai_kill_switch
+    owner: m0105
+    singleton: true
+  - name: ai_knowledge_directory
+    owner: m0112
+    unique: [knowledge_base_id_tenant_id_path]
+  - name: ai_knowledge_reindex_job
+    owner: m0113
+    tenant_scope: tenant
+findings:
+  - id: AUD003-F01
+    severity: P0
+    description: Current local runtime DB has not applied m0103+ and has no AI tables.
+  - id: AUD003-F02
+    severity: P1
+    description: Provider/model/capability/route tables are global and several cross-table references lack foreign keys.
+  - id: AUD003-F03
+    severity: P1
+    description: Chunk embedding is persisted as JSON text in the portable shape; pgvector usage remains a separate audit item.

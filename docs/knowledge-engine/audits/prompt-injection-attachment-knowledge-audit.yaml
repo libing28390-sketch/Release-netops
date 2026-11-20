@@ -1,0 +1,80 @@
+task_id: AUD-020
+milestone: M0
+priority: P0
+scope: prompt_injection_hidden_html_malicious_attachment_knowledge_pollution
+controls:
+  prompt_injection:
+    classifier: PROMPT_INJECTION_RE
+    detected_level: L3_SENSITIVE
+    default_gateway_action: MINIMIZE_OR_TOKENIZE
+    hard_block: false
+    multi_language_or_encoded_coverage: false
+  output_markup:
+    dangerous_container_removal: [script, iframe, object, embed, form]
+    dangerous_url_replacement: [javascript, data, vbscript]
+    html_escape: true
+    input_or_rag_html_normalization: false
+  rag:
+    tenant_acl_hard_filter: true
+    exclude_from_rag_filter: true
+    source_trust_level_returned: true
+    untrusted_data_marker: true
+    non_executable_context_protocol: false
+    injection_scan_before_active: false
+  attachments:
+    browser_text_read: true
+    browser_zip_extraction: true
+    server_multipart_endpoint: false
+    server_size_limit: false
+    archive_limits: false
+    mime_magic_validation: false
+    path_traversal_validation: false
+    malware_or_macro_scan: false
+  ingestion:
+    status_written_active: true
+    ingestion_status_written_ready: true
+    quarantine_state: false
+    provenance_scanner_verdict: false
+    review_or_approval: false
+    source_trust_allowlist: false
+findings:
+  - id: AUD020-F01
+    severity: P0
+    status: OPEN
+    summary: prompt injection is detected but not blocked or isolated as non-executable data
+  - id: AUD020-F02
+    severity: P0
+    status: OPEN
+    summary: knowledge imports become active and ready without injection/malware review or quarantine
+  - id: AUD020-F03
+    severity: P0
+    status: OPEN
+    summary: attachment and ZIP controls are browser-only and bypassable through JSON API
+  - id: AUD020-F04
+    severity: P1
+    status: OPEN
+    summary: hidden HTML/comments/SVG/CSS are not normalized at input or RAG ingestion
+  - id: AUD020-F05
+    severity: P1
+    status: OPEN
+    summary: untrusted_data is a marker, not a model-enforced non-instruction context contract
+  - id: AUD020-F06
+    severity: P1
+    status: OBSERVED
+    summary: source trust is a free-form client-supplied string and only a ranking signal
+verification:
+  classifier_injection_detection: PASS
+  gateway_injection_original_content_observed: PASS
+  credential_block_before_egress: PASS
+  output_dangerous_markup_escape: PASS
+  hidden_html_input_preserved: PASS
+  frontmatter_body_preserved: PASS
+  rag_untrusted_marker_source_review: PASS
+  targeted_ai_rag_tests: "27 passed in 0.82s"
+  production_database_changed: false
+  production_external_call: false
+conclusion:
+  audit_status: PASS
+  p0_findings_open: 3
+  p1_findings_open: 3
+  implementation_status: findings_open

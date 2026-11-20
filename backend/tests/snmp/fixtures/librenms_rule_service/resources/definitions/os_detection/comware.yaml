@@ -1,0 +1,5 @@
+# Focused excerpt of LibreNMS resources/definitions/os_detection/comware.yaml.
+os: comware
+text: HPE Comware
+discovery:
+  - sysObjectID: .1.3.6.1.4.1.25506.

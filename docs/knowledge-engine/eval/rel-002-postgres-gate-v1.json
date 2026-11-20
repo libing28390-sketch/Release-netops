@@ -1,0 +1,63 @@
+{
+  "task_id": "REL-002",
+  "status": "BLOCKED",
+  "reason_codes": [
+    "MIGRATION_NAME_DRIFT"
+  ],
+  "static": {
+    "status": "PASS",
+    "checks": {
+      "required_extensions_allowlist": true,
+      "extension_inspection": true,
+      "extension_failure_codes": true,
+      "strict_runner_call": true,
+      "unsafe_history_rejected": true,
+      "pending_rejected": true,
+      "ordered_discovery": true,
+      "history_drift_detection": true,
+      "failure_rollback": true
+    }
+  },
+  "postgres": {
+    "database": "postgresql",
+    "transaction_read_only": true,
+    "extensions": {
+      "required": [
+        "vector",
+        "pg_trgm"
+      ],
+      "installed": {
+        "vector": "0.8.6",
+        "pg_trgm": "1.6"
+      },
+      "available": {
+        "pg_trgm": "1.6",
+        "vector": "0.8.6"
+      },
+      "missing": [],
+      "ok": true
+    },
+    "history": {
+      "discovered_count": 152,
+      "discovered_highest": 152,
+      "applied_count": 152,
+      "applied_highest": 152,
+      "pending_versions": [],
+      "unknown_applied_versions": [],
+      "name_drift": [
+        {
+          "version": 152,
+          "recorded_name": "retrieval_rollout_flags",
+          "expected_name": "config_backup_tftp_and_startup"
+        }
+      ],
+      "history_safe": false,
+      "pending_empty": true
+    },
+    "production_database_write": false,
+    "sqlite": "forbidden"
+  },
+  "external_calls": false,
+  "production_database_write": false,
+  "sqlite": "forbidden_for_acceptance"
+}

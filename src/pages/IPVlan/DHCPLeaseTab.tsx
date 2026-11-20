@@ -8,7 +8,7 @@ import {
   X,
   PlusCircle,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
 import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
@@ -25,6 +25,10 @@ interface DHCPLease {
   hostname: string;
   dhcp_server: string;
   lease_state: string;
+  source_lease_state?: string;
+  effective_state?: string;
+  is_expired?: boolean;
+  blocks_local_allocation?: boolean;
   lease_start: string;
   lease_end: string;
   pool_id?: string | null;
@@ -366,7 +370,7 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
           ? (zh ? '范围待确认' : 'Scope pending')
           : `${lease.address_space_name || lease.address_space_id} · ${lease.pool_name || lease.pool_id || '-'}`,
       },
-      { header: zh ? '租约状态' : 'Lease State', value: (lease) => lease.lease_state.toUpperCase() },
+      { header: zh ? '租约状态' : 'Lease State', value: (lease) => (lease.effective_state || lease.lease_state).toUpperCase() },
       { header: zh ? '租用生效时间' : 'Lease Started', value: (lease) => lease.lease_start || '-' },
       { header: zh ? '租用过期时间' : 'Lease Expires', value: (lease) => lease.lease_end || '-' },
     ], allLeases);
@@ -462,9 +466,14 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
                       <td className="px-4 py-4 text-xs font-bold text-indigo-600">{node.dhcp_server}</td>
                       <td className="px-4 py-4">
                         {node.scope_pending || node.scope_status === 'scope_unknown' || !node.address_space_id ? (
-                          <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-                            {zh ? '范围待确认' : 'Scope pending'}
-                          </span>
+                          <div className="space-y-0.5">
+                            <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                              {zh ? '范围待确认' : 'Scope pending'}
+                            </span>
+                            <div className="text-[10px] text-gray-400">
+                              {zh ? '不参与自动分配占用' : 'Does not block auto-allocation'}
+                            </div>
+                          </div>
                         ) : (
                           <div className="space-y-0.5 text-[10px]">
                             <div className="font-semibold text-gray-700">{node.address_space_name || node.address_space_id}</div>
@@ -473,14 +482,28 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
                         )}
                       </td>
                       <td className="px-4 py-4">
-                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                          node.lease_state === 'active' 
-                            ? 'bg-emerald-50 text-emerald-600 border border-emerald-500/10' 
-                            : 'bg-rose-50 text-rose-600 border border-rose-500/10'
-                        }`}>
-                          <span className={`w-1 h-1 rounded-full ${node.lease_state === 'active' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                          {node.lease_state.toUpperCase()}
-                        </span>
+                        {(() => {
+                          const effectiveState = (node.effective_state || node.lease_state || 'active').toLowerCase();
+                          const sourceState = (node.source_lease_state || node.lease_state || 'active').toLowerCase();
+                          const derivedExpired = effectiveState === 'expired' && sourceState === 'active';
+                          return (
+                            <div className="flex flex-col items-start gap-0.5">
+                              <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                effectiveState === 'active'
+                                  ? 'bg-emerald-50 text-emerald-600 border border-emerald-500/10'
+                                  : 'bg-rose-50 text-rose-600 border border-rose-500/10'
+                              }`}>
+                                <span className={`w-1 h-1 rounded-full ${effectiveState === 'active' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                                {effectiveState.toUpperCase()}
+                              </span>
+                              {derivedExpired && (
+                                <span className="text-[10px] text-amber-700">
+                                  {zh ? '已过租期（来源仍标记 ACTIVE）' : 'Past lease_end (source ACTIVE)'}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-4 py-4 font-mono text-[10px] text-gray-500">{node.lease_start || '-'}</td>
                       <td className="px-4 py-4 font-mono text-[10px] text-gray-500">{node.lease_end || '-'}</td>

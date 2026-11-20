@@ -1,0 +1,52 @@
+schema_version: 1
+coverage_id: nexora-kb-eval-query-type-coverage-v1-20260817
+status: frozen
+parent_dataset_id: nexora-kb-eval-v1-20260817
+source_policy:
+  database: none
+  sqlite: not_used
+  external_network: forbidden
+  secrets: forbidden
+types:
+  - query_type: exact
+    expected_outcome: answer
+    citation_required: true
+    gold_document_ids: required
+    case_count: 12
+    boundary: positive_exact_match
+  - query_type: alias
+    expected_outcome: answer
+    citation_required: true
+    gold_document_ids: required
+    case_count: 12
+    boundary: positive_alias_match
+  - query_type: prefix
+    expected_outcome: answer
+    citation_required: true
+    gold_document_ids: required
+    case_count: 12
+    boundary: positive_prefix_match
+  - query_type: ambiguous
+    expected_outcome: clarify
+    citation_required: false
+    gold_document_ids: at_least_two
+    case_count: 12
+    boundary: fail_closed_missing_vendor
+  - query_type: typo
+    expected_outcome: answer
+    citation_required: true
+    gold_document_ids: required
+    case_count: 12
+    boundary: positive_typo_tolerance
+  - query_type: wrong_vendor
+    expected_outcome: no_match
+    citation_required: false
+    gold_document_ids: empty
+    case_count: 12
+    boundary: fail_closed_wrong_vendor
+  - query_type: product_conflict
+    expected_outcome: no_match
+    citation_required: false
+    gold_document_ids: empty
+    case_count: 12
+    boundary: fail_closed_product_conflict

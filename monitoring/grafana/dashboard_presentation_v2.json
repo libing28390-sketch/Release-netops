@@ -312,10 +312,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "stepAfter",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -334,10 +334,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -710,10 +710,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -732,10 +732,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -754,10 +754,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -1203,10 +1203,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -1274,10 +1274,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -1296,10 +1296,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -1318,10 +1318,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -1340,10 +1340,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -1362,10 +1362,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -1861,10 +1861,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -2235,10 +2235,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -2288,10 +2288,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -2729,10 +2729,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -3199,10 +3199,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -3282,10 +3282,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -3384,10 +3384,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -3467,10 +3467,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -3581,10 +3581,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -3664,10 +3664,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -3924,10 +3924,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -4572,10 +4572,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -4625,10 +4625,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -5250,10 +5250,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -5288,10 +5288,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -5436,10 +5436,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -5493,10 +5493,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -5957,10 +5957,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -6604,10 +6604,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 10,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -7044,10 +7044,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -7112,10 +7112,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -7270,10 +7270,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -7398,10 +7398,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -7770,10 +7770,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -7853,10 +7853,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -8402,10 +8402,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -8455,10 +8455,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -8538,10 +8538,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -8560,10 +8560,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -8790,10 +8790,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -8903,10 +8903,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -8956,10 +8956,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -9302,10 +9302,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -9340,10 +9340,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -9382,10 +9382,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -9420,10 +9420,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -9462,10 +9462,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -10064,10 +10064,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -10117,10 +10117,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -10312,10 +10312,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -10410,10 +10410,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -10966,10 +10966,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -11224,10 +11224,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -11246,10 +11246,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -11745,10 +11745,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 10,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -11783,10 +11783,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 10,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },

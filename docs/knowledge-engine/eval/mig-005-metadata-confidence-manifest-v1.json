@@ -1,0 +1,1901 @@
+{
+  "manifest_version": "nexora-knowledge-engine-v2-metadata-confidence-manifest/v1",
+  "task_id": "MIG-005",
+  "source_authority": "PostgreSQL",
+  "generated_at": "2026-08-17T14:35:05Z",
+  "entries": [
+    {
+      "legacy_id": "__api005_pg_document_e7e1f82435ce",
+      "legacy_document_id": "__api005_pg_document_e7e1f82435ce",
+      "tenant_id_hash": "04c08fb018574948876e8882b25e705536777f08544e2b5d53d181a0a58ff2f3",
+      "grade": "needs_validation",
+      "metadata_hash": "d2328a5b6672deaf882b2faafd1bf6c5493c6216f52498ecd41ea3f64aae8571",
+      "parse_status": "missing",
+      "reason_codes": [
+        "metadata_parse_status_unverified",
+        "official_only_type_invalid",
+        "required_field_missing"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "__api005_pg_document",
+      "legacy_document_id": "__api005_pg_document",
+      "tenant_id_hash": "1cca293c59e2b24ac8c9d82935b419d38c953e25bc2d6b5d72766524351c9e2d",
+      "grade": "needs_validation",
+      "metadata_hash": "d2328a5b6672deaf882b2faafd1bf6c5493c6216f52498ecd41ea3f64aae8571",
+      "parse_status": "missing",
+      "reason_codes": [
+        "metadata_parse_status_unverified",
+        "official_only_type_invalid",
+        "required_field_missing"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_00a84424f803",
+      "legacy_document_id": "huawei.cloudengine-6800.ce6885-48ys8cq.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "a876c8d991c4b637a0886fe0fe65878bd705ec59d3b9cbcbd3aa0239be9df24d",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_039a644280c7",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s48p4xez-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "945988e9cb90a179a297feeabcea8f29a4c7a35afa07452c59cfac6f4fc3a7e2",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_03daea623c91",
+      "legacy_document_id": "huawei.s5755-s.cloudengine-s5755-s48un8yz.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "9adb95d1facd47c6669c6c6db44633366b3217562e100e950d2168c7a4402e71",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_04d80b94ad24",
+      "legacy_document_id": "huawei.s5735-s-v2.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "4e0a9743b5ceb3d9e11c1fb85621ba6e7ba5a592e28509863031e9a197a9d651",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_0534da74b984",
+      "legacy_document_id": "huawei.s5731-l.cloudengine-s5731-l4p2hw-rua.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "95af692e87681a851e4546a7b4a55106f071b7d5203ef8a50a0d8f51dcd52d69",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_05553a973a6f",
+      "legacy_document_id": "huawei.s5735r-l-v2.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "445c1a5bfdda77b669b6dee732c52023f2a6a2b46eeab7d84cf03fa08f57b97d",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_0582fa5910d6",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s24t8j4xez-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "d9e4cb6f1c097d3084dc8115f53275e8a1b8a5f9ecf7a4ec05d4ca9658d056e0",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_067457dcabc0",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s24p4xe-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "dc613d03928c0186f60c89b836ea59b83600347baec67aa8d88666be294408e6",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_083f9f23d1ad",
+      "legacy_document_id": "huawei.s5735r-a2.cloudengine-s5735r-24t4s-qa2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "89b52cf0a3a828c03da57e655c8c48eab822f6e0999095498ea49452555edf48",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_0b89c0008b11",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s48t4xe-xa-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "6bd314deeebd5a0c49dceac89650955b95283dd8feabc28955245bfafb70e50b",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_0fd23e00fc60",
+      "legacy_document_id": "huawei.s12700e.cloudengine-s12700e-8.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "f71816cdedcbf451cc31d734c7189135e7eb12e5e0615918d5ac0fecd8e10a63",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_105cf5e023cc",
+      "legacy_document_id": "huawei.s5735-l.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "f80a33cbf46c5169e7b6230941753a27a76385fff5955e5e1830810425358e8b",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_115bd04de3f4",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s48p4xe-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "54480c8d113cf2864fda045afec91487a9ae4ec96a8535c2ad8e90b9c4d37d6c",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_11e443061980",
+      "legacy_document_id": "huawei.s5731-s.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "197e33e32c1c073a59ecca574cd783ba925c4dae2956938f83a6afb4583a440e",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_16e3c7a518c5",
+      "legacy_document_id": "huawei.s5731i-l.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "69dc04dcbef0ccb36d36e4e246b537e4b44d10ecf4ab72a443cceb4a2fe186b7",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_18c845dd8597",
+      "legacy_document_id": "huawei.s6730-h-v2.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "b821fac2098c215bc75d22c8c90303952177adbb79d75c7377e5d34170be192a",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_18e19ab37a91",
+      "legacy_document_id": "huawei.s5735i-s-v2.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "ca59b511132ca82c9a20ff13206234086d9c50e27ba7c8a23c4f32236457b888",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_1929a58ffe63",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s48u4xe-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "8b5095f3da73a319d3271b56c47c9453c2d6db1bf5d98c72f1a9473ab376afaa",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_1c65da922b47",
+      "legacy_document_id": "huawei.s5735r-s-v2.cloudengine-s5735r-s48t4x-xa-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "60972f209e804584b7b56d67bc1c197935cf3817d625c9db765ee2bf79be329b",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_1ca28aff3695",
+      "legacy_document_id": "huawei.s5731-l.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "33ba83c2e09de72d23fe39128f99a65ff965402a116a3a67e6b43ba3672ef663",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_209a4041daff",
+      "legacy_document_id": "huawei.s5735-l-v2.cloudengine-s5735-l24t8j4xe-a-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "b7eb8e6be5665ccdbbeea7c4aeca43cbdcc9bd2e55c783f47083bca9b0a9ea87",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_22ce1784ad6c",
+      "legacy_document_id": "huawei.s1731i-l.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "3a6f58c9ef4326f0485b4411d3abe60cc26bd07bf0df5d5c9a54e1a88fac900f",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_23b42ee2978d",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s24t8j4xe-xa-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "cd634919f721b7fb2f722645d86130c3f5ff70b741891ab761a024fc9841ab76",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_2486b541b133",
+      "legacy_document_id": "huawei.s6730-s.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "d43eea2f60e4ca8edccbae309bdd2b2af7dda4da8e1a6472d04644289f761009",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_25d72c3ee0d0",
+      "legacy_document_id": "huawei.s5735i-l-v2.cloudengine-s5735i-l8p4x-a-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "e43e27a8e03f21ff645f28c8fca6baf191134857facb5a10b5fb4e3e02cfe486",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_2625faec9949",
+      "legacy_document_id": "huawei.s5735-l.cloudengine-s5735-l48p4x-a.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "3242629f8e7f65498bd20e9b9070567f44ecc2d6f4aa77932a334d607cb2cfe7",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_26afcaa4d5f8",
+      "legacy_document_id": "huawei.s7700.s7706.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "2af603cea54845ffe65f92217fefd3f0a12be50781573859c999d00d520255e9",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_275c8fbebcdb",
+      "legacy_document_id": "huawei.s5755-s.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "cd0b0b1ee5072da961d3db5fe06b49d4318baa67a9477f8325d7fb671f0461f6",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_28658308bf85",
+      "legacy_document_id": "huawei.s5735-l1.cloudengine-s5735-l24t4x-qa1.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "1d675ab248aab3fee407e5fc2b30c26402c461685b374835e0108abc44bd978d",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_2aea54cc73cd",
+      "legacy_document_id": "huawei.s5735-l-v2.cloudengine-s5735-l48t4xe-a-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "763258f2c5a4068bfd8066fb0cb0c9b69fbd3cf61f0cc5a43279306ede5a05bd",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_2b78ab6c9603",
+      "legacy_document_id": "huawei.s5735-l-v2.cloudengine-s5735-l8p4s-a-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "55237cbbb303e51a072298fda56fc91a7ea46b04a221252eed3bed29365ca0c0",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_2eab50dbbf25",
+      "legacy_document_id": "huawei.s6750-h.cloudengine-s6750-h36c.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "369e6a08642460d58a4147d0243e854fd3c064751c52f37f7d575cc1e31a94dc",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_2f044dc40fda",
+      "legacy_document_id": "huawei.s5755-s.cloudengine-s5755-s48t4x4y-ht.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "150751003784f704de0f4f7ecfa5be44e57eb257fc24b9a67d63ef907f95fe92",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_315c420fadd3",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s48s4xe-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "99a6302e6fbf157d7f1e11d7f1719bbc96399f4489093d4ec85ee97f33eabc99",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_3288ebcb4462",
+      "legacy_document_id": "huawei.s6780-h.cloudengine-s6780-h4z.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "db8d556418d32786db873001e0e80b0b68b054902f8dde682c45119dd7c8b874",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_33f7799574e5",
+      "legacy_document_id": "huawei.s16700.cloudengine-s16700-8.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "f7e9ea3c92b26dafa8e96ec259b1abb8c948716f672344d05484e12356293ab8",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_361a7ec29e62",
+      "legacy_document_id": "huawei.s5735i-s-v2.cloudengine-s5735i-s24u4xe-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "cfd63f64a4f1133a9c13629c7ef219e33a6e7f599a204351a4c350284987996d",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_364240a142ab",
+      "legacy_document_id": "huawei.s5755-s.cloudengine-s5755-s48u8y.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "398824e55df08073bae697a2e93bb214fda6879d7617fb966a0d2a96bfffa344",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_382f734a82b3",
+      "legacy_document_id": "huawei.s5735-l-v2.cloudengine-s5735-l10t4x-a-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "8de74dc918c9bd0998cf3aedd3fbe4fb72b536205231f97aa179f5981949b9c1",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_38b4e2193217",
+      "legacy_document_id": "huawei.s5731-h.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "bd384ca17f470c5705a0c2aa24fe987998f4a18afdce1175fa08602d3f5afb66",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_3afdc1b73d34",
+      "legacy_document_id": "huawei.s6750-s.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "19ea7b64a9ab32956faa0780599c2d6eb4c7b4e2d50224febc02bd405070d23b",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_3b73043077ae",
+      "legacy_document_id": "huawei.s5732-h.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "158772ef3ef643365320c309b4300c86f77f8dd8c3db48677119d4d700b13775",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_3d364d346b75",
+      "legacy_document_id": "huawei.s5735-l-v2.cloudengine-s5735-l8t4s-a-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "30d20712bf2595512d082f5a540decc3cef7a27664b80425b15df0136c03fddb",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_3db3afbe10cc",
+      "legacy_document_id": "huawei.s6730-h.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "7a9945477735ee4ad5ddaa01f11e97c6fdebe695f0e75bad08aad1f8301c9f59",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_4129ea418b05",
+      "legacy_document_id": "huawei.s5755-h.cloudengine-s5755-h24u4y2cz.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "0cebc7091bd6e9b02e9399380992b8c55237ae30143ad17430513c063b5bd8e6",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_417e0f53dd87",
+      "legacy_document_id": "huawei.s5735r-a2.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "4cbddff0d8887e694605545742051de2b9d80a7f3ce695f0c81de907dbe00b56",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_456786d1b319",
+      "legacy_document_id": "huawei.s5735-l1.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "4606c165873e397bbad5f0a0ac1e2a4c620da1a895abae337e14acc226d86c4f",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_465ae81e30ac",
+      "legacy_document_id": "huawei.s5735-l-v2.cloudengine-s5735-l48t4xe-d-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "6e8e4c47880bb3d9c2143156cde245dfc9d2d8535299d869dda06a4cba5dcdc6",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_46f2f8051abe",
+      "legacy_document_id": "huawei.cloudengine-5800.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "92da4e46f0b6db95bdb76f4d4d4f9000e829afb7d093d94700a0377b2ae821e0",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_47066e102218",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s48t4xez-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "731ed3201d86b66d2561130f807c51669869233b54079a106a9d6d5240ac01db",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_479204d82a4d",
+      "legacy_document_id": "huawei.s5736-s.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "1a3df83cbaa2af85a44622af8c32dc5a6798095824d7b37058666c10cc776e27",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_479435e952be",
+      "legacy_document_id": "huawei.s5755-s.cloudengine-s5755-s24un8yz.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "21c6b89bf95203c3346b498c2d7a831d4c2824ec4204999c3dee01e8e3086488",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_48b2a2bd7dbd",
+      "legacy_document_id": "huawei.s5735-l-v2.cloudengine-s5735-l24t4x-qa-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "448ec4c5157e4ee8f59c5e78879cf69e90e49b87a642cce5d850207befce9e5a",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_4d638e17b2aa",
+      "legacy_document_id": "huawei.s5731i-l.cloudengine-s5731i-l8p2s2xn.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "31b32d71d9d9718bc3e165228b17f2eabadf24de1c79d4cc4b0aaf32a45dd543",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_4ea3c9299e9a",
+      "legacy_document_id": "huawei.s5735-l-v2.cloudengine-s5735-l48t4s-a-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "273f624f80efb85127691f806705f48ac34b6f9cad2a626baaf6a7832504a4be",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_4f683b77f368",
+      "legacy_document_id": "huawei.s5755-h.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "9337d49dbe3f1036ad4b4e1485fe6aecae664b94e26f86faee5b33eda06a87a8",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_522b2dc5fb85",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s24p8j4xez-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "20ec5e349ed5af2506337f16eab5c406b0ea64742945155ae228b3022c500801",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_53c4c957977f",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s48t4xe-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "c79aa2bc8351644ba037b049493feab3050a24059e0a7475f208f5868f8280ee",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_56c39e6176c6",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s24hs4xe-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "b6b6e598ee4b9992ed3818aa0e5b6ecefc471573e0a83e77edd0e165e3b08613",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_56f436a11e21",
+      "legacy_document_id": "huawei.s5755-s.cloudengine-s5755-s48t8y.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "f4733443328792acf9e873a317e52da064ff1a03307ec69d4b94d7ab0e364ddf",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_5788c9a75067",
+      "legacy_document_id": "huawei.s5735-l-v2.cloudengine-s5735-l48p4xe-a-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "bfb59b5612f73afcac32402d8bbd4569a05b8236a9df52e2fb4ef6c6fa01b895",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_57d59ce28c7a",
+      "legacy_document_id": "huawei.s6735-s.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "36c8354e9e5e9ab0a1e4db220ec320e3e429ca4db516bd43b96c9d80a69323d8",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_58927dd704e6",
+      "legacy_document_id": "huawei.s5735i-l-v2.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "d7d73ade4df7e9fe91601b9a909346ced2ffff9696cbb70a58d25f8b729a10ca",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_5a2a89174af7",
+      "legacy_document_id": "huawei.s6730-s-v2.cloudengine-s6730-s48x6q-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "87ab0ff3735505fcabf4e3a59343a0f7f40c38a2c491eec7d74890c6169809af",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_5a57c0b2a0b8",
+      "legacy_document_id": "huawei.s5755-s.cloudengine-s5755-s48n8yz.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "1d8a897983c2e24b3623c2cbb9be30aae066b018b628895be3a4af697eb8dbe4",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_5eebdc71f240",
+      "legacy_document_id": "huawei.s5735i-h-v2.cloudengine-s5735i-h24u8s4xe-qa-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "3d8d1855c8f3d1ab4fe4729c24c5dc590dde31c3db4123f6ccd066f5422290c0",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_5fabcd4d5819",
+      "legacy_document_id": "huawei.s5735r-s-v2.cloudengine-s5735r-s24p4x-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "55d5c2e8b27996c76ddcaf8dff474ef7b76f7500aae7efae0860e604a1843cae",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_62b4f7f5a77d",
+      "legacy_document_id": "huawei.s6730-h.cloudengine-s6730-h48x6c.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "d9806119f2e55246c16daf89ca8bf3eeb0d48eec2e530a0868c9afc74ff1a47b",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_63f4ffffdf76",
+      "legacy_document_id": "huawei.s5735i-h-v2.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "43b50697ac273d985a1fccd8f0b00ea206dc0d720a2bad663d4035ddd378c6d0",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_6729160e6031",
+      "legacy_document_id": "huawei.cloudengine-9800.ce9866-128dq.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "972b2d2d9c39933ee4513194d5eb88d86273b1f330795cb77a46e6c9687a8134",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_68c36415ec45",
+      "legacy_document_id": "huawei.cloudengine-8800.ce8851-32cq8dq-k.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "89b10a012c8752ae990c9c9d402bdd2ead4a07f7a84548650ae61e133be55f03",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_6ac1a3d6fb24",
+      "legacy_document_id": "huawei.s5732-h.cloudengine-s5732-h48s6q.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "9e3dcb6ca5d14ac47a032a1e4bf043567386e03838072119f21e44050f4d4e55",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_6df75b882020",
+      "legacy_document_id": "huawei.s5755-s.cloudengine-s5755-s24p8y.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "85a0350b9c858e51b05d0c5f7e8f4133997e437dd11de6adb1ddc2170ab6e784",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_6e0650fccfcb",
+      "legacy_document_id": "huawei.s8700.cloudengine-s8700-4.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "5ea5dac95663fdaefd8a43a060be41832daebcc59e4749402c0ef541a3008346",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_6f15213c3be1",
+      "legacy_document_id": "huawei.s5751r-l.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "357d285380881406627a72bab44910f0a31ddaa3d841d4fd974158aee4e51b55",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_6f2f2b49ccfe",
+      "legacy_document_id": "huawei.s6730-h-v2.cloudengine-s6730-h48x6cz-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "dec537d6fb91e5dae4b2df33980a93c582bd1251717f838684efa1ce141d7a4a",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_6fb8b92ef1d0",
+      "legacy_document_id": "huawei.s5755-s.cloudengine-s5755-s24p8j8yz.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "ed90501e6abb1b7572ba620ed1ed54f4702576b0ca61fbecc228d6092eb1fc3c",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_7430b1bb8dcc",
+      "legacy_document_id": "huawei.s5735-l-v2.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "8e16d8dd96ccf423c6e687a444f5c8d68c4fe10f25de8c95543af145e346d73f",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_751f0a4c8ddd",
+      "legacy_document_id": "huawei.s5735r-a2.cloudengine-s5735r-24p4s-a2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "6563162156157cb7a4e1d27d2705d6202c5799e09570ce733b22217670cb6216",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_75faa967474a",
+      "legacy_document_id": "huawei.s7700.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "da07dd146f31ba007fd4ce191fb24dd699ac0ac146b171717c3d5313086579be",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_7809fd686cc0",
+      "legacy_document_id": "huawei.s5735-l-v2.cloudengine-s5735-l8p2t4x-a-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "1eecf6b3811bc06a21a68b129fecd31f8e8f174779966417d582a0dac7d46fd1",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_7ab4c02b0a82",
+      "legacy_document_id": "huawei.s5735-l-v2.cloudengine-s5735-l48lp4xe-a-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "43e090eae1da7a40cce8bf7287582a50c57ba04e7655f1c5444b6606f80ba85a",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_80649a759efd",
+      "legacy_document_id": "huawei.s5735i-s-v2.cloudengine-s5735i-s24u4xe-t-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "c8a3fc45010c5fb8e41813e3e20fb14072e450fbeee86c665ba99adfa8aed708",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_814974883bcf",
+      "legacy_document_id": "huawei.s5735-l-v2.cloudengine-s5735-l24t4xe-d-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "cec4fe20ecc87fd6fb3e8f2ac8e29eca0f004b319623f90230ce608999386478",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_8310c50a31f2",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s48hs4xe-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "d5f1940850b78eae8985a4ddb582fecb0027dcec7fc0560bd07e70a0607079a8",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_836e8a2e2891",
+      "legacy_document_id": "huawei.s1731i-l.cloudengine-s1731i-l5tn.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "a9842de2fa918bb224b309aa47a77c0922f5ad16197a302a81253258b2034a7c",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_84e8839aecf5",
+      "legacy_document_id": "huawei.s5735-l-v2.cloudengine-s5735-l16t4s-a-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "5f8982e302eeab5690b6a35089b4ad6d2be29ab07953fd8d6461d30f1ac08090",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_85ac3156df7e",
+      "legacy_document_id": "huawei.s5735i-s-spe-v2.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "b115bbff2898c56a279b69554acc123a678023354be11554c0d64b23ef545f64",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_8857528b0147",
+      "legacy_document_id": "huawei.s5735-l-v2.cloudengine-s5735-l24p4s-a-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "6f8d8fb7d1e9f385c486a4efaf7b86a921826595ea330a7575093d656a0f32f0",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_88e88aeadc49",
+      "legacy_document_id": "huawei.s5755-s.cloudengine-s5755-s24u8y.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "9419eab1ffa56126df03cf72a6ccfae98381b3333bc86e74d71812048ef7b4b8",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_8b55d6c0b873",
+      "legacy_document_id": "huawei.s5755-s.cloudengine-s5755-s48p8yz.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "cc626b46627cb42d29b9760a1ee9e0de4ffd0084733371201ad8da36a340adf3",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_8d8c92ab81bc",
+      "legacy_document_id": "huawei.cloudengine-6800.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "4794003073668fc24e41e0ec66b37a64a0605cc38a66c9b580fb255c379a0cc9",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_8e368f3a5625",
+      "legacy_document_id": "huawei.s5755-s.cloudengine-s5755-s48p8y.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "3117b67382917b6739ca0a8543c48184c1f96ac9b0277cb5d2da7bea6ee81208",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_8e597b685303",
+      "legacy_document_id": "huawei.cloudengine-5800.ce5885-48t8ys.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "cfded39e99eeee4f1e8ddc2f39c621f807c6a6de5ae35b789832f9d7988c4417",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_8f4675014bc6",
+      "legacy_document_id": "huawei.s6750-s.cloudengine-s6750-s16x8yz.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "abb4d719cbe8e324f93b86c9ab0a22fe883783e00890aff512ca864c80eb8fe0",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_900be122cf47",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s48t4xe-c-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "249ba6b46e5b1266c359401cc390e6462e2584c4e31dc5769506fe83c3ba98df",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_9028c46ef7ec",
+      "legacy_document_id": "huawei.s6750-h.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "69838bd46054192f96739ed5490cf0cc9ebd1881c7accec5a68075c2dd90c3c6",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_929b3e23714b",
+      "legacy_document_id": "huawei.s5731-h.cloudengine-s5731-h24p4xc.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "8fdb31f016035fdd4da0dd2f4234bd8485b5c9da69a58372cdf11c7fa592bcf3",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_941792234b87",
+      "legacy_document_id": "huawei.s5731-h.cloudengine-s5731-h48t4xc-b.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "6282f6c645f1d4dda3c69be6e0c40a8747d6e22c69ce241243e0c8f05c53f585",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_95098922c987",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s24t4xe-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "bd50578061bf63a89b4f6366605ed824d11bffc3f5561b505d9e80a1e9f445d9",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_966519de4fdf",
+      "legacy_document_id": "huawei.s6730-s.cloudengine-s6730-s48x6q.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "1f8b006a1c1af7243082048648fcba770d1f50e5d458fecdcb02b38dacc0a2e6",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_96af000cc9ac",
+      "legacy_document_id": "huawei.s5736-s.cloudengine-s5736-s48t4xc.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "12c61560dba694806c181bb027d2dc0033213913f6c2c01482a0a307843a611c",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_99b52365d243",
+      "legacy_document_id": "huawei.ce16800.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "52b692850e1e81fcd4cfc6e03abea03ef6571a69b90ae68e811841c99fd21f09",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_9a7183b780ef",
+      "legacy_document_id": "huawei.s5755-s.cloudengine-s5755-s24u8j8yz.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "9bd31702cf3a54cd329d1892f71f9e3b012727a3392af04eb8248fa5146b9c10",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_9a8ab09be2b8",
+      "legacy_document_id": "huawei.s5755-s.cloudengine-s5755-s48u8yz.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "b4ba64b1442292a2dc9863e34ef3f3ae761601258d2d506b3d12a9e6b84fa564",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_9ab6e804029a",
+      "legacy_document_id": "huawei.xh9000.xh9320-64eo.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "6d51d91a9aadc084af1e53603f492c18218ad504a0133cc1d60c75e92b057ded",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_9b1a2a82901f",
+      "legacy_document_id": "huawei.s6730-s-v2.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "2101da43e5f6c0ea8d5f21e3b8ae9d379046c0a4a7d61590e28fabb30fbadc3b",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_9b5883e4d6d0",
+      "legacy_document_id": "huawei.s5735-l-v2.cloudengine-s5735-l24t4xe-a-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "a3067f4c1b5ddba582878e1ef607732133151780d6e07744cba5ebb6c2bca9b3",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_9bd12d2802cd",
+      "legacy_document_id": "huawei.s16700.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "3924e2ff214791f91e82625ffdb87971ac870348ea97a7f402852d1ccc24549e",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_9e86ddaba8a7",
+      "legacy_document_id": "huawei.s5751-l.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "3af9fa007cd050b8ca469d693d42251dbd39cf58dbabac8bbb4bc2ea2b107b11",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_9f4f30142428",
+      "legacy_document_id": "huawei.s8700.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "cccd5f284ea6edb7e9a352edd6253ef0ce87bccdc7fd0a7e2a112e67069f5a22",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_a09a7eeb3e87",
+      "legacy_document_id": "huawei.s12700e.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "ce46d01ac56121757d1705bc6a1b35a8695581cef6a872fe721b197f07e09be6",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_a0f9c27ed9d5",
+      "legacy_document_id": "huawei.xh9000.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "cd4476e5e2f52f83c00e66f0720dae8b82bc06953b7051aa20d219c3a563c448",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_a3ef35e90c85",
+      "legacy_document_id": "huawei.s12700h.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "62e10f20676963f15eacdb4fe3c6908af67f3011f41b5e3f7a4eb861c1b694eb",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_a7432b4d75ca",
+      "legacy_document_id": "huawei.s6730-s-v2.cloudengine-s6730-s24x6q-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "5523477df787b9401b8884b6594b479d5283a377d2d9d00a48198153f353cda0",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_a8868fc3eea1",
+      "legacy_document_id": "huawei.s6750-s.cloudengine-s6750-s16x10y2cz.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "aef26d54bcd0ce3ae215cb3425db44a35d631aa62da2e8a48c78152c91da559b",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_a8d592143e20",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s24st4xe-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "94b19794545be76571e92fe5b313e9edb4b2fc39f9944c7ffdf2d86f8fa55c05",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_aa8206e1e61a",
+      "legacy_document_id": "huawei.cloudengine-8800.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "9f55d4838aae62fadc450f84b8a0d3cf1512057e017774a228e7cae343d9e27b",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_aa914ebf8bdb",
+      "legacy_document_id": "huawei.s5735-l-v2.cloudengine-s5735-l24p4xe-a-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "7aeb622e35813590e9d4de370756a5180905913fc0bf104af6f5d456cb3ca618",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_ad512c9e818a",
+      "legacy_document_id": "huawei.s6750-s.cloudengine-s6750-s24t16x8y2cz.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "d31a180f8a03dee1dc9f365a174a1f2b597b374398add120f18b64563aa40e70",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_b0c0bd4532d1",
+      "legacy_document_id": "huawei.s5732-h-v2.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "ce52a102a7204326cd4cc2b77d65ed61108890ade9466313242f165d5062915b",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_b12c30a3744e",
+      "legacy_document_id": "huawei.s5731i-l.cloudengine-s5731i-l16t2s2xn.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "db46f6f6a661cb5a7d37af40ac392eb310c5fdda3bc5f46b5600ea72a62fee8c",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_baeb4a1d547f",
+      "legacy_document_id": "huawei.cloudengine-9800.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "ede3abb207b7013939b99c5c7754baf7d73db92fcd33665d02ec4b8e4475b3b8",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_bdfea4dbc7a4",
+      "legacy_document_id": "huawei.s5735i-s-v2.cloudengine-s5735i-s8t4xn-t-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "0ccad5a2deb5d8dcbbd9201dfb02a454878e259dd7505f53b5fcfbe19d178760",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_c219e831f161",
+      "legacy_document_id": "huawei.s5755-s.cloudengine-s5755-s24t8y.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "aa891fcabc231cdac5192f9ec9054b1303d4aec86f6614298544b6273a6d867e",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_c3dbc452ad67",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s24u4xe-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "e583ca34c4392a881bbcc86dfb4cac55ecf55c6b2f2b655e70dc9cfcb7b0dc61",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_c4fddb342e16",
+      "legacy_document_id": "huawei.s5736-s.cloudengine-s5736-s48s4x-d.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "45b9613fd4a1261d96ebe4140a8c839d10c65edf2796c86ffd3420eebf7ea5c3",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_c76048e9a55a",
+      "legacy_document_id": "huawei.s5751-l.cloudengine-s5751-l4lp8un2x-rua.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "999d2d49256a3a5a1046a47c37923c1f53d75088463efccb688a2847c7f58485",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_c7677a36efa8",
+      "legacy_document_id": "huawei.s5735i-s-v2.cloudengine-s5735i-s24f2t2xn-spe-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "c38eaa05d57abb4270ed7d7d5f70c384abc4ad493c47949b00a1f5e1793a4637",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_cd018d3df74a",
+      "legacy_document_id": "huawei.s5735r-s-v2.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "629807fb5b2ac3a4be7bb8320b1774b822e27c9d470dedc6df21539784fed5f9",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_ced10a601c12",
+      "legacy_document_id": "huawei.s5755-s.cloudengine-s5755-s24t8j8yz.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "c5e1bf490e608fb002a4cfdc701c89bf2af795483d17543b1930d5156664854f",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_d39d3c98ad3d",
+      "legacy_document_id": "huawei.s5736-s.cloudengine-s5736-s24um4xc.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "d4c77e431b2c66ccf74fb22583df24ca809bdd1adf97ad90dc8979dc222f05ce",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_d7d77416d8b5",
+      "legacy_document_id": "huawei.s5736-s.cloudengine-s5736-s48s4xc.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "b5ab96fdc35ec65ea28c5849735295a2b549b7957651dcd11191b5b05dfc724f",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_dc211632c69f",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s24p4xez-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "ed44a8b900f2b2e10aa2065584224af37f7ec561e688baf5f4b5bfe75229e8a3",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_df42121897d0",
+      "legacy_document_id": "huawei.s5755-s.cloudengine-s5755-s24n8yz.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "844468226d01e8a4f758531e3c8ec66fcbda8644e0e94ee47ef75c7dc2e9518b",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_df596cd014ae",
+      "legacy_document_id": "huawei.s5751-l.cloudengine-s5751-l16lp4un2x-rua.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "0dc476aca102c1e70e1bd2db8593fbb8521ee3489f3100befd67ae3cbec9837c",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_dfff7e7cb7b4",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s24t4xe-q-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "e5dd6daddcea540f28af83694135bc6caf37a942027c376542f5dfd9f7e48afb",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_e14c51f791c5",
+      "legacy_document_id": "huawei.s5735r-l-v2.cloudengine-s5735r-l48p4x-a-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "f20d18918158a62c823ac9defab2d3350b8464e56f8d2660d364d558d8d2d808",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_e2e38fb4fd52",
+      "legacy_document_id": "huawei.s5731i-l.cloudengine-s5731i-l8t2s2xn.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "638d7ef4fb25785e6aaf05659aa13d79f5cf89df268d35860294b51d5207553d",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_e5ae0fb8e65f",
+      "legacy_document_id": "huawei.s5732-h-v2.cloudengine-s5732-h48um4y2cz-tv2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "027c2c9766f719a4929db6177e06d964465441fde1ad9ed7b0c5c87906edfeb4",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_e61058ca921e",
+      "legacy_document_id": "huawei.s5735r-a2.cloudengine-s5735r-24t4x-qa2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "e275fc252ab9743325e3699000441be68eec8967a2fd149379dcac6b8277aa23",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_e9731b40f2f4",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s24t4xez-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "5bb04a94d9dcc2438c4486306b506eebd2a0cd27ad3535caa1b510b4dbd7ab45",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_e99210082425",
+      "legacy_document_id": "huawei.s5755-s.cloudengine-s5755-s48t8yz.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "664277010ac25a575ba6641597e36aff43881f9dd4e4cb5ca3a428b54641e515",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_eb5d7be6f824",
+      "legacy_document_id": "huawei.s5735-l-v2.cloudengine-s5735-l48lp4s-a-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "708deeed6d4a9bbe491d05acf69de68db79c64ff5a2964c9b6c1b0f18d0a4098",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_ee57a59337bd",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s48j4xe-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "86e163eed4346c5bcb59c7d4040fcf400882094cd97dd167d66ff494904f73ca",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_efe840999ad3",
+      "legacy_document_id": "huawei.s5735i-h-v2.cloudengine-s5735i-h8t4s2xn-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "4231bf4a43705912f48060ea3238abe48dd598024eae95c3a913fe66823eb6aa",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_f05a5b4d2a3f",
+      "legacy_document_id": "huawei.s12700h.cloudengine-s12700h-8.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "f280e9a7162445577f87fd4c6f76140a8b455c6a9c7463b4ddf6791480b4952a",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_f402f83ff91c",
+      "legacy_document_id": "huawei.s5735-s-v2.cloudengine-s5735-s24j4xe-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "feb62c7fae6dfaff91707ddfacd739f2cdf8f9309ab0eb9c93cecd04903b7e67",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_f5b93a84d43f",
+      "legacy_document_id": "huawei.cloudengine-16800.xh16800-16.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "d0a1241ed6fffa34e731a13ada119a0ce72ed57bee9c9c32495a7f549b8b5afd",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_f9e599b642d9",
+      "legacy_document_id": "huawei.s5735-l-v2.cloudengine-s5735-l24t4s-a-v2.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "ddcf86b85a49b8b709a227cd13b40b71e53fa1ed8baa6537f67b5d669ced9dfc",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_fa9b108c0304",
+      "legacy_document_id": "huawei.s6735-s.cloudengine-s6735-s48x6c.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "70e248f6700df1a8b02d70029d3a894893a3fa6cd6330e0f1596a965400b4a81",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_fb2402356317",
+      "legacy_document_id": "huawei.s6780-h.product_registry.series",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "3c91d3f019426ac17c13efcfc071c2c5c0a7c4bcbec9016df47f82821c6228f4",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_fbb7af284976",
+      "legacy_document_id": "huawei.s5731-s.cloudengine-s5731-s48t4x.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "a779275fe2a304ecb21d8c314caf87ff3a5fd64605555c5fc118f964ddfc90ff",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    },
+    {
+      "legacy_id": "doc_fe0a11122f20",
+      "legacy_document_id": "huawei.s5751r-l.cloudengine-s5751r-l24t2j2x-qa.product_registry.model",
+      "tenant_id_hash": "7ec2aaabd75e6c4d3332186e854fb56b6bffb54491118f0e2722bdbe3fc67f95",
+      "grade": "needs_validation",
+      "metadata_hash": "445f500e2c2b47b3110bc683b85d75d8a247989ffc5681da13a2c9f7c5466a2c",
+      "parse_status": "parsed",
+      "reason_codes": [
+        "rag_priority_invalid"
+      ],
+      "action": "review_and_reconcile_before_migration"
+    }
+  ],
+  "counts": {
+    "legacy_documents": 156,
+    "trusted": 0,
+    "needs_validation": 156,
+    "unusable": 0,
+    "metadata_hashes": 156
+  },
+  "entry_digest": "089f17a896952f79185f0c8101d70d8caf96041980e716c459d91289aa259b51",
+  "redaction": {
+    "raw_metadata": "omitted",
+    "original_content": "omitted",
+    "normalized_content": "omitted",
+    "acl": "omitted",
+    "secrets": "omitted",
+    "database_url": "omitted"
+  },
+  "manifest_sha256": "58bde50cb5712fef259ec56f2873c8379f04fc6ecca5a27b3bd23a35703cfb8c"
+}

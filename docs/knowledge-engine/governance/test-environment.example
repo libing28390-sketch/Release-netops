@@ -1,0 +1,15 @@
+# Safe, non-production contract input for validate_knowledge_test_config.py.
+# Values are references/placeholders only; never replace them with production secrets.
+ENVIRONMENT=test
+DATABASE_URL=postgresql://knowledge_test:${TEST_DB_PASSWORD}@127.0.0.1:5432/nexora_knowledge_test
+REDIS_URL=redis://127.0.0.1:6379/11
+AI_GATEWAY_MODE=mock
+AI_ENABLED=false
+EXTERNAL_AI_ENABLED=false
+NETWORK_WRITE_ENABLED=false
+PRODUCTION_CREDENTIALS_ALLOWED=false
+DATA_CLASSIFICATION=synthetic
+DEVICE_CREDENTIAL_SOURCE=fixture
+SECRET_KEY=${TEST_SECRET_KEY}
+CREDENTIAL_ENCRYPTION_KEY=${TEST_CREDENTIAL_ENCRYPTION_KEY}
+POSTGRES_PASSWORD=${TEST_DB_PASSWORD}

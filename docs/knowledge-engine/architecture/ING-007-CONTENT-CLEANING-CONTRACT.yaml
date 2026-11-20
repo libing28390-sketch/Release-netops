@@ -1,0 +1,61 @@
+task_id: ING-007
+priority: P0
+owner: BE+AI
+milestone: M2
+status: frozen_for_implementation
+depends_on: [ING-006]
+decision:
+  choice: attribute_aware_fail_closed_html_cleaning_stage
+  summary: >-
+    Run one deterministic cleaning stage after the ING-006 parser and before
+    metadata extraction, prompt-injection checks or chunking. HTML cleaning
+    re-reads only the bounded original bytes so hidden attributes and region
+    selectors cannot be bypassed by a flattened block list.
+  invariants:
+    - script_style_template_noscript_iframe_object_embed_canvas_removed
+    - hidden_attribute_aria_hidden_and_hidden_css_removed
+    - navigation_header_footer_aside_form_and_menu_removed
+    - ad_sponsor_promo_cookie_social_and_boilerplate_markers_removed
+    - head_and_non_body_regions_removed_but_main_article_code_preserved
+    - comments_are_never_knowledge_text
+    - html_without_body_is_supported_as_a_fragment
+    - html_cleaning_requires_bounded_original_bytes_fail_closed
+    - removed_region_reason_tag_and_source_locator_are_auditable
+    - empty_after_cleaning_is_explicit_and_not_published
+    - non_html_formats_keep_one_cleaned_result_contract
+
+implementation:
+  canonical_service: backend/services/document_content_cleaning.py
+  ai_compatibility_export: backend/ai/services/document_content_cleaning.py
+  public_functions: [clean_document, parse_and_clean_document]
+  result: CleanedDocument
+  cleaner_identity: [nexora-content-cleaner, 1.0.0]
+
+region_rules:
+  executable: [script, style, template, noscript, iframe, object, embed, canvas]
+  non_body: [head, nav, header, footer, aside, form, menu, dialog]
+  hidden: [hidden_attribute, type_hidden, aria_hidden, display_none, visibility_hidden, opacity_zero]
+  marker_attributes: [id, class, role, data-role, data-component, data-testid, aria-label]
+  marker_families: [ad, advert, sponsor, promo, banner, cookie, consent, newsletter, subscribe, social, share, related, breadcrumb, pagination, sidebar, popup, modal]
+
+failure_contract:
+  codes: [CLEAN_PARSED_DOCUMENT_REQUIRED, CLEAN_HTML_RAW_REQUIRED, CLEAN_BYTES_REQUIRED, CLEAN_DOCUMENT_TOO_LARGE, CLEAN_ENCODING_INVALID, CLEAN_HTML_INVALID]
+  redaction: no_raw_body_no_dependency_exception_no_filesystem_path
+
+security_and_boundary:
+  max_bytes: 20000000
+  network: forbidden
+  raw_storage: not_written_or_logged
+  next_stages: [ING-008_prompt_injection, ING-010_metadata_validation, CHK-001_chunking]
+  audit: cleaner_name_cleaner_version_status_removed_region_reason_tag_locator
+  rollback: bypass_cleaner_only_to_explicit_quarantined_v1_path; never_publish_uncleaned_html
+  production_ddl: none
+
+acceptance:
+  focused_tests: backend/tests/ai/test_ing007_content_cleaning.py
+  required_checks:
+    - executable_hidden_navigation_footer_ad_and_non_body_removal
+    - main_article_code_and_bodyless_fragment_preservation
+    - raw_bytes_fail_closed_and_empty_after_cleaning_status
+    - non_html_contract_and_no_network_filesystem_imports
+    - AI_catalog_database_V1_compile_yaml_secret_diff_lint_build_gates

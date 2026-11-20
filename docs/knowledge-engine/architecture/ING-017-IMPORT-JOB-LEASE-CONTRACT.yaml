@@ -1,0 +1,75 @@
+task_id: ING-017
+priority: P0
+owner: BE+DBA
+milestone: M2
+status: implemented_release_gated_lease_adapter
+contract_version: v1.1
+authority: PostgreSQL
+depends_on: [ING-001, ING-016, DB-011, DB-022]
+
+goal: >-
+  Ensure one active worker owns an Import Job at a time, heartbeat and
+  recovery are fenced by an opaque token, and a stale or duplicate worker
+  cannot continue phase work.
+
+storage:
+  lock_table: scheduler_locks
+  reuse_reason: DB-022_existing_postgresql_authoritative_distributed_lock
+  lock_name: knowledge_import_colon_sha256_tenant_prefix_colon_job_id
+  owner_value: opaque_worker_token_in_scheduler_locks_owner_token_not_api_visible
+  timestamp_columns: locked_at_and_expires_at_timestamptz
+  new_production_ddl: m0229_scheduler_lock_owner_token_and_timestamptz_migration
+  future_durable_job: kb_import_job_lease_columns_remain_release_gated_by_DB011_MIG
+
+claim:
+  service: backend/services/ingestion_job_lease_service.py
+  operation: atomic_expiry_aware_upsert_then_state_machine_claim
+  duplicate_result: LEASE_HELD
+  tenant_predicate: required_before_lock_and_state_claim
+  failure_compensation: release_database_lock_if_state_claim_fails
+  expired_running_state: recover_worker_lost_then_claim_new_attempt
+
+heartbeat:
+  operation: compare_lock_name_owner_token_and_unexpired_row_then_extend_expiry
+  state_fence: compare_worker_id_and_ingestion_fencing_token
+  stale_result: STALE_LEASE
+  no_partial_success: database_heartbeat_must_succeed_before_state_heartbeat
+
+release:
+  operation: compare_lock_name_and_owner_token_delete
+  allowed_state: succeeded_or_failed_or_cancelled
+  stale_release: no_mutation_and_false_result
+  running_release: rejected_until_terminal_or_explicit_handoff
+
+recovery:
+  expired_lock: next claim may delete expired row and acquire a new token
+  expired_state: WORKER_LOST error then retry_wait_or_failed_by_budget
+  audit: claim_heartbeat_lease_expiry_and_recovery_events
+
+security:
+  tenant_scope: cross_tenant_job_is_not_found_before_lock_mutation
+  token_handling: opaque_tokens_only_internal_worker_memory_and_database_lock
+  api_output: lease_owner_and_fencing_token_removed_from_public_job_snapshot
+  forbidden: raw_credentials_raw_document_raw_device_output_and_network_write
+
+compatibility:
+  v1: ai_knowledge_reindex_job_and_generic_jobs_untouched
+  db022: scheduler_locks_atomic_owner_fenced_expiry_aware_lease_reused
+  m0229: owner_tokens_and_timestamps_are_stored_in_distinct_columns
+  process_local: ingestion_job_state_lock_serializes_same_process_claim_race
+
+rollback:
+  runtime: disable_coordinator_and_use_existing_ingestion_adapter_state_machine
+  locks: owner_token_and_expiry_survive_m0229; release_only_matching_owner_token
+  schema: m0229_has_a_reverse_text_conversion_for_coordinated_application_rollback
+
+verification:
+  tests:
+    - backend/tests/database/test_ing017_import_job_lease.py
+    - backend/tests/ai/test_ingestion_pipeline_state_machine.py
+    - backend/tests/ai/test_ingestion_job_control_surface.py
+  gates: [duplicate_worker, heartbeat_fence, stale_release, tenant_scope, redacted_public_snapshot, v1_baseline, lint, build]
+
+handoff:
+  next_task: ING-018
+  note: periodic source freshness validators may use the same lease coordinator without creating a second worker lock model.

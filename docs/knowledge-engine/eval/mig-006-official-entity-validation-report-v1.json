@@ -1,0 +1,37 @@
+{
+  "status": "PASS",
+  "task_id": "MIG-006",
+  "authority": "PostgreSQL",
+  "sqlite": "forbidden",
+  "duration_seconds": 0.223,
+  "manifest_version": "nexora-knowledge-engine-v2-official-entity-validation-manifest/v1",
+  "manifest_sha256": "b5d6a840bb6c1e1f0f1fc143f2e16a5f77a1b1dde1cb8ac439b612f1a11d13a4",
+  "entry_digest": "38ec2aab6c727fa426f0273111b0ae3965b5ddb5dbed65859041735b3a9cb227",
+  "counts": {
+    "legacy_documents": 156,
+    "verified": 0,
+    "needs_validation": 156,
+    "unusable": 0
+  },
+  "probe": {
+    "status": "PASS",
+    "database": "PostgreSQL",
+    "transaction_read_only": true,
+    "legacy_document_rows": 156,
+    "catalog_tables_present": [],
+    "source_registry_rows": 3,
+    "production_database_write": false,
+    "rollback": "read_only_transaction_rollback",
+    "sqlite": "forbidden"
+  },
+  "decision": {
+    "verified": "eligible_for_v2_migration",
+    "needs_validation": "review_or_source_revalidation",
+    "unusable": "quarantine_and_exclude"
+  },
+  "production_database_write": false,
+  "rollback": "retain_v1_metadata_and_disable_v2_migration_wave",
+  "report_redacted": true,
+  "contract_sha256": "fe08dbf121499a3f69bdeaa7b2517f83277376ab6137b6d19c9af8374bf05100",
+  "allowlist_sha256": "0f3b37db75248bcf10e8eadf7241f7913befd1ac46e17e0e5d2cf9f38eeb316f"
+}

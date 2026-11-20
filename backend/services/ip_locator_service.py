@@ -4877,24 +4877,47 @@ def _select_realtime_arp_hit(
     )
 
 
+def _load_prefix_gateway_device_ids() -> set[str]:
+    """Return device IDs explicitly designated as IPAM Prefix L3 gateways."""
+    try:
+        conn = get_db_connection()
+    except Exception:
+        return set()
+    try:
+        rows = conn.execute(
+            """SELECT DISTINCT gateway_device_id
+                 FROM prefixes
+                WHERE COALESCE(gateway_device_id, '') <> ''
+                  AND COALESCE(status, 'active') <> 'stale'"""
+        ).fetchall()
+        return {str(row['gateway_device_id']).strip() for row in rows if row['gateway_device_id']}
+    except Exception:
+        return set()
+    finally:
+        conn.close()
+
+
 def _load_arp_sweep_devices(
     run_id: str = '',
     device_ids: set[str] | None = None,
 ) -> tuple[list[dict], int, int]:
-    """Select explicitly classified access switches and APs for endpoint ARP."""
+    """Select edge switches/APs, configured L3 Prefix gateways, and explicit ARP opt-ins."""
     all_eligible = _load_eligible_devices(
         allow_snmp_only=True,
         include_snmp_unconfigured=True,
         include_snmp_table_platforms=True,
     )
-    # Terminal discovery is intentionally edge-only. Prefer the CMDB topology
-    # role when present; devices.role is the legacy fallback. Generic "switch"
-    # is not enough evidence to classify a device as an access switch.
+    gateway_device_ids = _load_prefix_gateway_device_ids()
+    edge_roles = {'access', 'access-layer-switch', '接入交换机', 'ap', 'wireless-ap', '无线ap', '无线接入点'}
     terminal_devices = []
     for device in all_eligible:
+        override = explicit_collector_override(device, 'arp')
+        if override is False:
+            continue
         role_value = device.get('physical_asset_device_role') or device.get('role')
         role = normalize_device_role(role_value)
-        if role in {'access', 'access-layer-switch', '接入交换机', 'ap', 'wireless-ap', '无线ap', '无线接入点'}:
+        dev_id = str(device.get('id') or '').strip()
+        if override is True or role in edge_roles or (dev_id and dev_id in gateway_device_ids):
             terminal_devices.append(device)
     all_eligible = terminal_devices
     if device_ids is not None:
@@ -9627,3 +9650,253 @@ def run_route_collector(
 
 async def run_route_collector_async():
     await asyncio.to_thread(run_route_collector)
+
+
+def _canonical_mac_for_locate(raw_mac: str) -> str:
+    """Normalize colon, hyphen, dotted, or bare hex MAC strings to aa:bb:cc:dd:ee:ff."""
+    hex_digits = ''.join(ch for ch in str(raw_mac or '').strip().lower() if ch in '0123456789abcdef')
+    if len(hex_digits) != 12:
+        raise ValueError(f'Invalid MAC address format: {raw_mac}')
+    return ':'.join(hex_digits[i:i + 2] for i in range(0, 12, 2))
+
+
+def locate_mac_path(
+    mac: str,
+    *,
+    site_id: str = '',
+    authorized_device_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Locate a MAC address across current FDB snapshots, topology uplinks, and reverse ARP/ND."""
+    t0 = time.time()
+    normalized_mac = _canonical_mac_for_locate(mac)
+    allowed_ids = {str(dev_id).strip() for dev_id in (authorized_device_ids or []) if str(dev_id).strip()}
+    enforce_device_filter = authorized_device_ids is not None
+    requested_site = str(site_id or '').strip()
+
+    from services.ipam_current_fdb_observation_service import list_current_fdb_observations
+    from services.ipam_current_endpoint_observation_service import list_current_endpoint_observations
+
+    conn = get_db_connection()
+    try:
+        fdb_rows: list[dict[str, Any]] = []
+        try:
+            for row in list_current_fdb_observations(conn):
+                dev_id = str(row.get('source_device_id') or '').strip()
+                if enforce_device_filter and dev_id not in allowed_ids:
+                    continue
+                if requested_site and str(row.get('site_id') or '').strip() != requested_site:
+                    continue
+                try:
+                    row_mac = _canonical_mac_for_locate(str(row.get('mac_address') or ''))
+                except ValueError:
+                    continue
+                if row_mac == normalized_mac:
+                    fdb_rows.append(row)
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+        arp_rows: list[dict[str, Any]] = []
+        for source in ('arp', 'ndp'):
+            try:
+                for row in list_current_endpoint_observations(conn, observation_source=source):
+                    dev_id = str(row.get('source_device_id') or '').strip()
+                    if enforce_device_filter and dev_id not in allowed_ids:
+                        continue
+                    if requested_site and str(row.get('site_id') or '').strip() != requested_site:
+                        continue
+                    try:
+                        row_mac = _canonical_mac_for_locate(str(row.get('mac_address') or ''))
+                    except ValueError:
+                        continue
+                    if row_mac == normalized_mac:
+                        arp_rows.append({**row, '_observation_source': source})
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
+        # Load topology links for uplink/next-hop detection
+        uplink_by_dev_port: dict[tuple[str, str], list[dict[str, str]]] = {}
+        try:
+            link_rows = conn.execute(
+                """SELECT tl.source_device_id, tl.source_port, tl.target_device_id, tl.target_port,
+                          ds.hostname AS source_hostname, dt.hostname AS target_hostname
+                     FROM topology_links tl
+                     LEFT JOIN devices ds ON ds.id = tl.source_device_id
+                     LEFT JOIN devices dt ON dt.id = tl.target_device_id"""
+            ).fetchall()
+            for link in link_rows:
+                src_dev = str(link['source_device_id'] or '').strip()
+                tgt_dev = str(link['target_device_id'] or '').strip()
+                src_port = normalize_interface_name(str(link['source_port'] or ''))
+                tgt_port = normalize_interface_name(str(link['target_port'] or ''))
+                if src_dev and src_port and tgt_dev:
+                    uplink_by_dev_port.setdefault((src_dev, src_port), []).append({
+                        'neighbor_device_id': tgt_dev,
+                        'neighbor_device_name': str(link['target_hostname'] or tgt_dev),
+                        'neighbor_port': str(link['target_port'] or ''),
+                    })
+                if tgt_dev and tgt_port and src_dev:
+                    uplink_by_dev_port.setdefault((tgt_dev, tgt_port), []).append({
+                        'neighbor_device_id': src_dev,
+                        'neighbor_device_name': str(link['source_hostname'] or src_dev),
+                        'neighbor_port': str(link['source_port'] or ''),
+                    })
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+        device_ip_map: dict[str, str] = {}
+        hit_device_ids = sorted({
+            str(r.get('source_device_id') or '').strip()
+            for r in [*fdb_rows, *arp_rows]
+            if r.get('source_device_id')
+        })
+        if hit_device_ids:
+            marks = ','.join('?' for _ in hit_device_ids)
+            for dev in conn.execute(
+                f'SELECT id, ip_address FROM devices WHERE id IN ({marks})',
+                tuple(hit_device_ids),
+            ).fetchall():
+                device_ip_map[str(dev['id'])] = str(dev['ip_address'] or '')
+    finally:
+        conn.close()
+
+    fdb_device_vlans = {
+        (str(r.get('source_device_id') or '').strip(), str(r.get('vlan_id') or ''))
+        for r in fdb_rows
+    }
+
+    locations: list[dict[str, Any]] = []
+    trace_steps: list[dict[str, Any]] = []
+    for row in fdb_rows:
+        dev_id = str(row.get('source_device_id') or '').strip()
+        dev_name = str(row.get('source_device_name') or dev_id)
+        port_name = str(row.get('interface_name') or '')
+        norm_port = str(row.get('normalized_interface_name') or normalize_interface_name(port_name))
+        vlan_str = str(row.get('vlan_id') or '')
+        neighbors = uplink_by_dev_port.get((dev_id, norm_port), [])
+        is_uplink = len(neighbors) > 0
+        stop_reason = ''
+        if is_uplink:
+            downstream_observed = any(
+                (n['neighbor_device_id'], vlan_str) in fdb_device_vlans
+                for n in neighbors
+            )
+            if len(neighbors) > 1:
+                stop_reason = 'multiple_uplink_neighbors'
+            elif not downstream_observed:
+                stop_reason = 'missing_downstream_fdb_snapshot'
+            else:
+                stop_reason = 'traced_to_downstream_switch'
+
+        observed_at = str(row.get('observed_at') or '')
+        location = {
+            'switch_id': dev_id,
+            'switch_name': dev_name,
+            'switch_ip': device_ip_map.get(dev_id, ''),
+            'site_id': str(row.get('site_id') or ''),
+            'site_name': str(row.get('site_name') or ''),
+            'port': port_name,
+            'vlan': vlan_str,
+            'mac_type': str(row.get('entry_type') or 'dynamic'),
+            'is_uplink': is_uplink,
+            'uplink_neighbors': neighbors,
+            'stop_reason': stop_reason,
+            'observed_at': observed_at,
+            'address_space_id': str(row.get('address_space_id') or ''),
+            'address_space_name': str(row.get('address_space_name') or ''),
+        }
+        locations.append(location)
+        trace_steps.append({
+            'step': 'fdb_lookup',
+            'device_id': dev_id,
+            'device_name': dev_name,
+            'port': port_name,
+            'vlan': vlan_str,
+            'is_uplink': is_uplink,
+            'neighbors': neighbors,
+            'stop_reason': stop_reason or 'access_port_candidate',
+            'observed_at': observed_at,
+        })
+
+    # Place confirmed access ports before uplink hops, then newest observation first.
+    locations.sort(key=lambda item: (1 if item['is_uplink'] else 0, item['switch_name'], item['port']))
+
+    related_ips: list[dict[str, Any]] = []
+    seen_ip_keys: set[tuple[str, str, str]] = set()
+    for row in arp_rows:
+        ip_val = str(row.get('ip_address') or '').strip()
+        if not ip_val:
+            continue
+        space_id = str(row.get('address_space_id') or '')
+        vlan_val = str(row.get('vlan_id') or '')
+        key = (ip_val, space_id, vlan_val)
+        if key in seen_ip_keys:
+            continue
+        seen_ip_keys.add(key)
+        related_ips.append({
+            'ip': ip_val,
+            'source': str(row.get('_observation_source') or 'arp'),
+            'device_id': str(row.get('source_device_id') or ''),
+            'device_name': str(row.get('source_device_name') or ''),
+            'interface_name': str(row.get('interface_name') or ''),
+            'vlan': vlan_val,
+            'site_id': str(row.get('site_id') or ''),
+            'site_name': str(row.get('site_name') or ''),
+            'address_space_id': space_id,
+            'address_space_name': str(row.get('address_space_name') or ''),
+            'observed_at': str(row.get('observed_at') or ''),
+        })
+
+    primary_arp = related_ips[0] if related_ips else None
+    found = len(locations) > 0 or len(related_ips) > 0
+    return {
+        'query_type': 'mac',
+        'target_ip': primary_arp['ip'] if primary_arp else normalized_mac.upper(),
+        'found': found,
+        'ip': primary_arp['ip'] if primary_arp else '',
+        'related_ips': related_ips,
+        'mac': normalized_mac,
+        'mac_display': normalized_mac.upper(),
+        'arp_source': {
+            'device_id': primary_arp['device_id'],
+            'device': primary_arp['device_name'],
+            'device_ip': device_ip_map.get(primary_arp['device_id'], ''),
+            'interface': primary_arp['interface_name'],
+            'vlan': primary_arp['vlan'],
+            'source': primary_arp['source'],
+            'observed_at': primary_arp['observed_at'],
+        } if primary_arp else None,
+        'locations': locations,
+        'searched_devices': {
+            'arp': sorted({item['device_name'] for item in related_ips if item.get('device_name')}),
+            'mac': sorted({item['switch_name'] for item in locations if item.get('switch_name')}),
+            'lldp': [],
+        },
+        'trace_steps': trace_steps,
+        'elapsed_ms': int((time.time() - t0) * 1000),
+        'message': (
+            '' if found else f'在当前授权范围的 MAC 表与 ARP/ND 快照中未找到 {normalized_mac.upper()}'
+        ),
+    }
+
+
+async def locate_mac_path_async(
+    mac: str,
+    *,
+    site_id: str = '',
+    authorized_device_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    return await asyncio.to_thread(
+        locate_mac_path,
+        mac,
+        site_id=site_id,
+        authorized_device_ids=authorized_device_ids,
+    )

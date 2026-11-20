@@ -165,6 +165,19 @@ function resolveSystemTheme(): 'light' | 'dark' {
   return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
+const GRAFANA_HEALTH_CACHE_TTL_MS = 60_000;
+let grafanaReadyCache: { token: string; verifiedAt: number } | null = null;
+
+function hasWarmGrafanaHealthCache(): boolean {
+  const token = localStorage.getItem('netops_token') || '';
+  return Boolean(
+    token
+    && grafanaReadyCache
+    && grafanaReadyCache.token === token
+    && Date.now() - grafanaReadyCache.verifiedAt < GRAFANA_HEALTH_CACHE_TTL_MS
+  );
+}
+
 const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language }) => {
   const zh = language === 'zh';
   const navigate = useNavigate();
@@ -187,7 +200,7 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
   const [selectedDashboard, setSelectedDashboard] = useState(dashboardContext.dashboard);
   const [frameKey, setFrameKey] = useState(0);
   const [loaded, setLoaded] = useState(false);
-  const [status, setStatus] = useState<GrafanaStatus>('checking');
+  const [status, setStatus] = useState<GrafanaStatus>(() => (hasWarmGrafanaHealthCache() ? 'ready' : 'checking'));
   const [theme, setTheme] = useState<'light' | 'dark'>(() => resolveSystemTheme());
   const [timeRangeOverride, setTimeRangeOverride] = useState<string | null>(null);
   const dashboardDefaultTimeRange = GRAFANA_DEFAULT_TIME_RANGES[selectedDashboard] || '6h';
@@ -230,47 +243,72 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
     }
   };
 
-  const checkGrafana = useCallback(async () => {
-    setStatus('checking');
-    setLoaded(false);
+  const checkGrafana = useCallback(async (options?: { silent?: boolean; forceReload?: boolean }) => {
+    const silent = Boolean(options?.silent);
+    const forceReload = Boolean(options?.forceReload);
+    if (!silent) {
+      setStatus('checking');
+      setLoaded(false);
+    }
     try {
       const token = localStorage.getItem('netops_token');
       if (!token) throw new Error('Nexora session is missing');
-      const bridgeResponse = await fetch('/api/grafana/session', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        credentials: 'same-origin',
-        cache: 'no-store',
-      });
-      if (!bridgeResponse.ok) throw new Error('Grafana session bridge failed');
 
-      const response = await fetch('/grafana/api/health?_=' + Date.now(), {
-        headers: { Accept: 'application/json' },
-        credentials: 'same-origin',
-        cache: 'no-store',
-      });
-      const contentType = response.headers.get('content-type') || '';
-      const payload = (await response.json().catch(() => null)) as {
-        database?: string;
-        version?: string;
-      } | null;
-      if (
-        !response.ok ||
-        !contentType.toLowerCase().includes('json') ||
-        !payload ||
-        (payload.database !== 'ok' && !payload.version)
-      ) {
+      const probeHealth = async () => {
+        const response = await fetch('/grafana/api/health?_=' + Date.now(), {
+          headers: { Accept: 'application/json' },
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        const contentType = response.headers.get('content-type') || '';
+        const payload = (await response.json().catch(() => null)) as {
+          database?: string;
+          version?: string;
+        } | null;
+        return {
+          ok:
+            response.ok
+            && contentType.toLowerCase().includes('json')
+            && Boolean(payload && (payload.database === 'ok' || payload.version)),
+          status: response.status,
+        };
+      };
+
+      const ensureBridge = async () => {
+        const bridgeResponse = await fetch('/api/grafana/session', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        if (!bridgeResponse.ok) throw new Error('Grafana session bridge failed');
+      };
+
+      // If the Grafana session cookie is already bridged (e.g. via useAuth on login),
+      // probe health directly in 1 RTT and only fall back to bridging on failure.
+      let health = await probeHealth();
+      if (!health.ok) {
+        await ensureBridge();
+        health = await probeHealth();
+      }
+      if (!health.ok) {
         throw new Error('Grafana health check failed');
       }
+
+      grafanaReadyCache = { token, verifiedAt: Date.now() };
       setStatus('ready');
-      setFrameKey(value => value + 1);
+      if (forceReload) {
+        setFrameKey(value => value + 1);
+      }
     } catch {
+      grafanaReadyCache = null;
       setStatus('unavailable');
     }
   }, []);
 
   useEffect(() => {
-    void checkGrafana();
+    const warm = hasWarmGrafanaHealthCache();
+    void checkGrafana({ silent: warm, forceReload: false });
   }, [checkGrafana]);
 
   // Construct iframe URL dynamically
@@ -361,7 +399,7 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
             </button>
             <button
               type="button"
-              onClick={() => void checkGrafana()}
+              onClick={() => void checkGrafana({ forceReload: true })}
               disabled={status === 'checking'}
               className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-zinc-200 shadow-sm hover:border-cyan-300 disabled:cursor-wait disabled:opacity-60 cursor-pointer"
             >
@@ -544,7 +582,7 @@ const GrafanaDashboardPage: React.FC<GrafanaDashboardPageProps> = ({ language })
                 )}
                 <button
                   type="button"
-                  onClick={() => void checkGrafana()}
+                  onClick={() => void checkGrafana({ forceReload: true })}
                   disabled={status === 'checking'}
                   className="mt-5 inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-cyan-700 disabled:opacity-60"
                 >

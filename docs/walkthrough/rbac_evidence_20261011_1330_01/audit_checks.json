@@ -1,0 +1,51 @@
+{
+  "test_files": [
+    "backend/tests/security/test_api_access_boundary.py",
+    "backend/tests/security/test_audit_regressions.py",
+    "backend/tests/security/test_user_tenant_assignment.py",
+    "backend/tests/platform_registry/test_playbook_versions.py"
+  ],
+  "database_isolation": "dedicated disposable source and shared per-test fixtures",
+  "command": ".venv/Scripts/python.exe -m pytest -q backend/tests/security/test_api_access_boundary.py backend/tests/security/test_audit_regressions.py backend/tests/security/test_user_tenant_assignment.py backend/tests/platform_registry/test_playbook_versions.py",
+  "pytest_exit_code": 0,
+  "policy_probes": [
+    {
+      "id": "R01",
+      "reproduced": true,
+      "behavior": "Operator gate admits a Platform Viewer profile while resource execute denies it",
+      "limit": "Dependency behavior only; no scheduled job was created"
+    },
+    {
+      "id": "R02",
+      "reproduced": true,
+      "behavior": "Change execution helper accepts approved status and an invalid start timestamp",
+      "limit": "Helper predicate only; no work order or device execution was started"
+    },
+    {
+      "id": "R03",
+      "reproduced": true,
+      "behavior": "Config approval candidate validation accepts requester as their own approver",
+      "limit": "Synthetic database rows; no notification or MFA factor was sent/used"
+    },
+    {
+      "id": "R04",
+      "reproduced": true,
+      "behavior": "Approval verify/consume requires requester and type but no job/config digest",
+      "limit": "Transient synthetic token; this proves missing binding inputs, not a launched replacement job"
+    },
+    {
+      "id": "R05",
+      "reproduced": true,
+      "behavior": "Published version marked high risk reaches approval pause without calling the change-order gate",
+      "limit": "Device scope/persistence mocked; phase approval held the engine; no network I/O"
+    },
+    {
+      "id": "R06",
+      "reproduced": true,
+      "behavior": "Approval resume passes approval actor as execution actor, replacing stored requester identity",
+      "limit": "Engine replaced with AsyncMock; no credentials were resolved"
+    }
+  ],
+  "dedicated_source_database_removed": true,
+  "pytest_passed": 76
+}

@@ -442,7 +442,10 @@ const MonitoringManagementPage: React.FC<MonitoringManagementPageProps> = ({ lan
 
   useEffect(() => {
     if (mode !== 'collectors') return;
-    const refreshTimer = window.setInterval(() => { void load({ silent: true }); }, 30_000);
+    const refreshTimer = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      void load({ silent: true });
+    }, 30_000);
     return () => window.clearInterval(refreshTimer);
   }, [load, mode]);
 

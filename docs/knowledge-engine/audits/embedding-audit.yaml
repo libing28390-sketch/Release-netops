@@ -1,0 +1,43 @@
+schema_version: 1
+task_id: AUD-007
+provider:
+  class: StableLocalEmbeddingProvider
+  module: backend/ai/providers/embedding.py
+  model_id: local-hybrid-feature-v2
+  version: v2
+  mode_default: local
+  mode_env: AI_EMBEDDING_MODE
+  dimensions_default: 1536
+  dimensions_env: AI_EMBEDDING_DIMENSIONS
+  remote_provider_configured: false
+algorithm:
+  tokenization: ascii_tokens_plus_chinese_1_2_3grams
+  hashing: SHA-256_feature_buckets
+  normalization: L2
+  rounding_decimals: 8
+  empty_text: zero_vector
+  disabled_mode: fail_closed_error
+contract:
+  persisted_fields: [embedding_model, embedding_dimensions, embedding_version, embedding_mode]
+  compatibility_guard: assert_embedding_compatible
+  query_path: RAGRetriever_to_embedding_provider_embed_text
+  document_path: KnowledgeService_to_embedding_provider_embed_text
+similarity:
+  implementation: RAGRetriever._cosine
+  formula: dot_over_l2_norms
+  empty_or_zero_norm: 0
+  clamp: [0, 1]
+  orthogonal_score: 0.0
+observed:
+  dimension: 1536
+  norm: 1.0
+  same_vector_score: 1.0
+  orthogonal_score: 0.0
+  mismatch_guard: expected_1536_got_2
+findings:
+  - id: AUD007-F01
+    severity: P1
+    description: Current provider is lexical-degraded local fallback, not a semantic embedding service.
+  - id: AUD007-F02
+    severity: P1
+    description: Changing dimension/model/version requires explicit re-embedding and compatibility release gate.

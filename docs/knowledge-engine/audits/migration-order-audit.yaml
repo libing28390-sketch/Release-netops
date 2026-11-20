@@ -1,0 +1,64 @@
+schema_version: 1
+task_id: AUD-004
+runner:
+  module: backend/database/migrations/__init__.py
+  discovery: mNNNN_name_modules
+  ordering: ascending_VERSION
+  tracking_table: schema_migrations
+  failure_behavior: rollback_current_and_stop_higher_versions
+sequence:
+  - version: 103
+    name: ai_platform_tables
+    prerequisites: [baseline_connection]
+    creates: [ai_provider, ai_model, ai_model_route, ai_prompt, ai_prompt_version, ai_request_log, ai_usage_daily, ai_tool, ai_agent, ai_agent_run, ai_agent_step, ai_knowledge_base, ai_document, ai_document_chunk]
+  - version: 104
+    name: ai_pgvector_rag
+    prerequisites: [103]
+    sqlite_behavior: skip_vector_extension
+  - version: 105
+    name: ai_security_operations_graph
+    prerequisites: [103]
+    creates: [ai_security_policies, ai_outbound_audits, ai_security_incidents, ai_kill_switch, ai_model_capabilities, ai_conversations, ai_messages, ai_tasks, ai_tool_calls, ai_evidence]
+  - version: 106
+    name: repair_post_105_compatibility
+    prerequisites: [105]
+  - version: 107
+    name: repair_pam_control_plane_tables
+    prerequisites: [previous_migrations]
+  - version: 108
+    name: repair_pam_transaction_metadata
+    prerequisites: [107]
+  - version: 109
+    name: pam_host_key_fingerprints
+    prerequisites: [108]
+  - version: 110
+    name: repair_ai_document_platforms
+    prerequisites: [106, 109]
+  - version: 111
+    name: ai_chunking_v2
+    prerequisites: [103, 110]
+  - version: 112
+    name: ai_knowledge_directories
+    prerequisites: [103]
+  - version: 113
+    name: rag_metadata_v2
+    prerequisites: [111, 112]
+    has_downgrade: true
+  - version: 114
+    name: rag_priority_text
+    prerequisites: [113]
+    has_downgrade: true
+checks:
+  fresh_ai_root: m0103
+  current_local_db_latest_version: 11
+  current_local_db_ai_tables: 0
+  pgvector_type_proof_required: true
+  postgres_and_sqlite_branches_required: true
+  automatic_full_down_available_through_114: false
+findings:
+  - id: AUD004-F01
+    severity: P0
+    description: Local runtime database is behind the AI migration chain.
+  - id: AUD004-F02
+    severity: P1
+    description: Most AI migrations have no downgrade and require backup/forward-fix rollback design.

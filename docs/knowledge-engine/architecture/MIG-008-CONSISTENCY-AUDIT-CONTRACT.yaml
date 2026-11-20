@@ -1,0 +1,87 @@
+task_id: MIG-008
+title: Migration document, hash, version, chunk and permission consistency audit
+priority: P0
+milestone: M2
+owner: QA+DBA
+status: implemented_pending_gate
+authority: PostgreSQL
+sqlite: forbidden_for_acceptance
+production_database_write: false
+
+purpose:
+  - Reconcile legacy document inventory with its declared source hashes, versions, derived chunks and inherited permissions.
+  - Detect orphan/duplicate/stale derived rows and identity-bearing chunk metadata before any V2 cutover.
+  - Produce counts and hash-only evidence without returning document bodies or ACL values.
+
+checks:
+  inventory:
+    - expected_document_count_matches_migration_manifest
+    - tenant_scoped_document_identity_is_present_and_unique
+    - every_chunk_references_one_document
+  hashes:
+    - normalized_content_sha256_matches_declared_content_hash
+    - missing_content_or_hash_is_unverifiable_not_trusted
+    - every_chunk_has_content_hash
+    - quarantined_or_non_retrieval_parent_missing_derived_facts_is_reported_but_not_blocking
+  versions:
+    - chunk_document_version_matches_parent
+    - chunk_index_version_matches_parent
+    - embedding_model_and_dimension_match_parent_when_present
+  chunks:
+    - duplicate_ordinals_are_rejected
+    - duplicate_content_hash_groups_are_reported_not_silently_deleted
+    - embedding_presence_and_contract_are_counted
+  permissions:
+    - every_document_has_tenant_scope
+    - acl_json_is_an_object
+    - chunk_metadata_must_not_carry_tenant_acl_identity_or_role_keys
+    - chunk_access_inherits_parent_document_tenant_and_acl
+
+outcomes:
+  pass: all_blocking_counters_zero
+  blocked: consistency_or_security_findings_require_reconciliation_before_cutover
+  fail: audit_cannot_read_postgresql_or_manifest
+
+blocking_findings:
+  - DOCUMENT_COUNT_MISMATCH
+  - DOCUMENT_TENANT_MISSING
+  - DOCUMENT_ID_DUPLICATE
+  - DOCUMENT_HASH_MISMATCH
+  - DOCUMENT_HASH_UNVERIFIABLE
+  - CHUNK_ORPHAN
+  - CHUNK_HASH_UNVERIFIABLE
+  - CHUNK_DOCUMENT_VERSION_MISMATCH
+  - CHUNK_INDEX_VERSION_MISMATCH
+  - CHUNK_EMBEDDING_CONTRACT_MISMATCH
+  - DOCUMENT_ACL_INVALID
+  - CHUNK_METADATA_IDENTITY_LEAK
+  - CHUNK_TENANT_INHERITANCE_MISMATCH
+
+exclusion_boundary:
+  lifecycle_statuses: [quarantined, disabled, archived, deleted]
+  retrieval_flag: exclude_from_rag=true
+  rule: >-
+    A document or its chunks remain in the inventory and are reported with
+    excluded_* counters, but missing hash/embedding facts do not block this
+    consistency gate when the parent is explicitly outside retrieval. Active
+    or ready rows never receive this exemption.
+
+security:
+  report_fields: [counts, reason_codes, digest, schema_presence]
+  forbidden_report_fields: [raw_content, normalized_content, original_content, source_url, acl_values, credentials, secrets, DSN, exception_text]
+  tenant_scope: exact_parent_tenant_required
+  no_data_repair_in_audit: true
+
+compatibility:
+  v1_tables_read_only: [ai_document, ai_document_chunk]
+  original_rows_preserved: true
+  rollback: discard_local_audit_and_keep_v1_projection
+  production_ddl: none
+
+acceptance:
+  - PostgreSQL_read_only_transaction_is_verified
+  - document_and_chunk_counts_are_reported
+  - hash_and_version_consistency_are_checked_without_body_output
+  - permission_inheritance_and_metadata_identity_leaks_are_checked
+  - known_findings_remain_blocked_and_are_not_hidden_as_pass
+  - V1_baseline_is_unchanged

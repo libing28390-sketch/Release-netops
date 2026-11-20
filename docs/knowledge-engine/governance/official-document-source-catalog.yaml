@@ -1,0 +1,993 @@
+schema_version: 1
+catalog_id: official-document-source-catalog-2026-08-28
+title: Nexora NetOps 官方厂商文档来源清单
+generated_at: "2026-08-28"
+catalog_owner: knowledge-governance
+purpose: >-
+  为华为、H3C、锐捷和 Cisco 配置文档及故障排查文档的后续采集、审核、入库提供
+  可审计的候选来源。此文件不是运行时白名单，不能据此绕过 CAT-001、CAT-002、CAT-003
+  和 CAT-004 的审核门禁。
+
+collection_policy:
+  collection_enabled_by_this_catalog: false
+  https_only: true
+  exact_host_and_path_review_required: true
+  redirect_target_must_be_revalidated: true
+  terms_and_robots_review_required: true
+  credentials_in_url_forbidden: true
+  private_or_loopback_target_forbidden: true
+  full_text_storage_requires_terms_approval: true
+  portal_pages_are_discovery_only: true
+  troubleshooting_taxonomy_note: >-
+    CAT-002 v1.1 已增加 troubleshooting_guide。故障排查页面仍必须通过精确路径、条款、
+    robots 和内容质量门禁，不能仅凭类型声明直接采集。
+
+  status_definitions:
+  active_valid_existing: 已存在于 PostgreSQL kb_source_registry，状态为 active/valid，不应重复创建。
+  discovery_only: 仅用于定位官方文档，不直接分块或向量化。
+  candidate_registry_review: 已落入现有精确白名单范围，但仍需来源注册、条款和内容审核。
+  candidate_allowlist_review: 官方候选来源，但主机或路径尚需 CAT-001 增量审核。
+  candidate_taxonomy_and_registry_review: 路径已在白名单范围内，但故障排查类型尚需 CAT-002 扩展。
+  candidate_taxonomy_and_allowlist_review: 同时需要 CAT-001 精确白名单和 CAT-002 类型扩展。
+  blocked_robots_policy: 已通过来源审核但 robots 策略拒绝自动采集，保持停用并等待人工或厂商授权复核。
+  blocked_robots_unavailable: 已通过来源审核但 robots 文件当前不可用，保持停用并等待站点恢复或厂商复核。
+  blocked_vendor_access: 官方站点在当前安全采集客户端下超时或拒绝访问，保持停用并等待替代官方页面或厂商访问复核。
+
+priority_definitions:
+  P0: 当前知识库明显缺失，优先补齐。
+  P1: 核心产品或高频协议，第二批补齐。
+  P2: 扩展覆盖或导航入口，按需收录。
+
+current_inventory_snapshot:
+  captured_at: "2026-08-28"
+  total_documents: 268
+  vendor_documents:
+    Huawei: 174
+    Cisco: 45
+    H3C: 41
+    Ruijie: 8
+  category_documents:
+    command: 4
+    configuration: 72
+    hardware: 181
+    troubleshooting: 11
+  implication: 首批官方清单已补齐 H3C、锐捷和 Cisco 的可采集配置/命令/排障文档；华为仍受官网访问策略限制，继续保持受控阻塞。
+
+official_catalog_build:
+  completed_at: "2026-08-28"
+  successful_catalog_sources: 18
+  successful_by_vendor:
+    H3C: 6
+    Ruijie: 8
+    Cisco: 4
+  blocked_catalog_sources: 9
+  blocked_reasons:
+    robots_policy: 4
+    robots_unavailable: 3
+    vendor_access_timeout_or_empty_content: 2
+  pg_schema_version: 188
+  v2_lifecycle_note: >-
+    已生成 V2 文档版本并保持 draft，等待知识库生命周期审批；现有 V1 投影已完成 active 发布，
+    可用于当前召回链路。
+
+online_spot_check:
+  checked_at: "2026-08-28"
+  scope: 代表性入口与排障页面抽查，不等同于 48 个来源的采集验收。
+  results:
+    - vendor: Huawei
+      url: "https://support.huawei.com/enterprise/zh/data-center-switches/ce16800-pid-252837173"
+      result: generic_fetcher_http_403
+      action: 保持 discovery_only；复核登录、Cookie、访问条款和允许的客户端方式。
+    - vendor: Huawei
+      url: "https://info.support.huawei.com/enterprise/zh/doc/EDOC1100305532/b79910c8"
+      result: generic_fetcher_timeout
+      action: 保持候选禁用；在注册前进行人工浏览器和安全 HTTP 客户端复核。
+    - vendor: H3C
+      url: "https://www.h3c.com/cn/Service/Document_Software/Document_Center/"
+      result: reachable
+    - vendor: H3C
+      url: "https://www.h3c.com/cn/d_202603/2776299_30005_0.htm"
+      result: reachable
+    - vendor: Ruijie
+      url: "https://www.ruijie.com.cn/fw/wd/"
+      result: reachable
+    - vendor: Ruijie
+      url: "https://www.ruijie.com.cn/fw/wt/93439/"
+      result: reachable
+    - vendor: Cisco
+      url: "https://www.cisco.com/c/zh_cn/support/switches/catalyst-9300-series-switches/products-tech-notes-list.html"
+      result: reachable
+    - vendor: Cisco
+      url: "https://www.cisco.com/c/en/us/td/docs/switches/datacenter/nexus9000/sw/92x/troubleshooting/guide/b-cisco-nexus-9000-nx-os-troubleshooting-guide-92x/b-cisco-nexus-9000-nx-os-troubleshooting-guide-92x_chapter_010.html"
+      result: reachable
+
+vendors:
+  - vendor: Huawei
+    vendor_key: huawei
+    official_hosts:
+      - support.huawei.com
+      - info.support.huawei.com
+    default_priority: P1
+    notes:
+      - 中文 zh 路径需要独立的精确路径审核，不能由现有英文 en 路径白名单推导放行。
+      - 产品页仅用于发现；具体章节页通过审核后才可采集。
+    sources:
+      - source_id: huawei-ce16800-product-center-zh
+        title: CE16800 产品支持与文档中心
+        canonical_url: "https://support.huawei.com/enterprise/zh/data-center-switches/ce16800-pid-252837173"
+        host: support.huawei.com
+        source_role: portal_discovery
+        source_type: product_page
+        desired_document_type: product_page
+        language: zh-CN
+        product_scope: CE16800
+        version_scope: multi-version
+        priority: P2
+        registry_status: not_registered
+        collection_status: discovery_only
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: huawei-s5700-s6700-ospf-en-existing
+        title: S5700/S6700 配置不同网络类型的 OSPF 属性
+        canonical_url: "https://support.huawei.com/enterprise/en/doc/EDOC1100459443/d770f3cd/configuring-ospf-attributes-on-different-types-of-networks"
+        host: support.huawei.com
+        source_role: configuration
+        source_type: configuration_guide
+        desired_document_type: configuration_guide
+        language: en-US
+        product_scope: S5700/S6700
+        version_scope: document-defined
+        priority: P1
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: true
+
+      - source_id: huawei-s5700-s6700-routing-en-existing
+        title: S5700/S6700 静态路由与动态路由
+        canonical_url: "https://support.huawei.com/enterprise/en/doc/EDOC1100333453/ac09508/static-routes-and-dynamic-routes"
+        host: support.huawei.com
+        source_role: configuration
+        source_type: configuration_guide
+        desired_document_type: configuration_guide
+        language: en-US
+        product_scope: S5700/S6700
+        version_scope: document-defined
+        priority: P1
+        registry_status: disabled
+        collection_status: blocked_vendor_access
+        taxonomy_status: supported
+        direct_ingestion: true
+
+      - source_id: huawei-ce6800-vxlan-bgp-evpn-en-existing
+        title: CE6800 分布式网关模式下建立 BGP EVPN VXLAN 隧道
+        canonical_url: "https://support.huawei.com/enterprise/en/doc/EDOC1100463796/5d103d4d/establishing-vxlan-tunnels-in-bgp-evpn-mode-distributed-vxlan-gateway"
+        host: support.huawei.com
+        source_role: configuration
+        source_type: configuration_guide
+        desired_document_type: configuration_guide
+        language: en-US
+        product_scope: CE6800
+        version_scope: document-defined
+        priority: P1
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: true
+
+      - source_id: huawei-s5700-s6700-ethernet-v200r024c10-zh
+        title: S5700/S6700 V200R024C10 以太网交换配置示例
+        canonical_url: "https://support.huawei.com/enterprise/zh/doc/EDOC1100459455/a3558870/example-for-configuring-mux-vlan-on-an-aggregation-device"
+        host: support.huawei.com
+        source_role: configuration
+        source_type: configuration_guide
+        desired_document_type: configuration_guide
+        language: zh-CN
+        product_scope: S5700/S6700
+        version_scope: V200R024C10
+        registry_version_scope:
+          primary: V200R024C10
+          compatibility: V200R023C00
+        platform_code: huawei_vrp
+        os_family: VRP
+        priority: P1
+        registry_status: disabled
+        collection_status: blocked_robots_policy
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: huawei-s5700-s6700-ospf-v600-zh
+        title: S5700/S6700 V600 OSPF 配置
+        canonical_url: "https://support.huawei.com/enterprise/zh/doc/EDOC1100278276/c3f6a316"
+        host: support.huawei.com
+        source_role: configuration
+        source_type: configuration_guide
+        desired_document_type: configuration_guide
+        language: zh-CN
+        product_scope: S5700/S6700
+        version_scope: V600
+        registry_version_scope:
+          primary: V600 exact-document-scope
+          compatibility: V600 exact-document-scope
+        platform_code: huawei_vrp
+        os_family: VRP
+        priority: P1
+        registry_status: disabled
+        collection_status: blocked_robots_policy
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: huawei-s5700-s6700-vrrp-v200-zh
+        title: S5700/S6700 V200 VRRP 可靠性配置
+        canonical_url: "https://info.support.huawei.com/enterprise/zh/doc/EDOC1100459453/99234d3a"
+        host: info.support.huawei.com
+        source_role: configuration
+        source_type: configuration_guide
+        desired_document_type: configuration_guide
+        language: zh-CN
+        product_scope: S5700/S6700
+        version_scope: V200
+        registry_version_scope:
+          primary: V200 exact-document-scope
+          compatibility: V200 exact-document-scope
+        platform_code: huawei_vrp
+        os_family: VRP
+        priority: P1
+        registry_status: disabled
+        collection_status: blocked_robots_unavailable
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: huawei-s5700-s6700-qinq-command-v200-zh
+        title: S5700/S6700 V200 QinQ 命令参考
+        canonical_url: "https://info.support.huawei.com/enterprise/zh/doc/EDOC1100459421/ddc3d496"
+        host: info.support.huawei.com
+        source_role: command_reference
+        source_type: command_reference
+        desired_document_type: command_reference
+        language: zh-CN
+        product_scope: S5700/S6700
+        version_scope: V200
+        registry_version_scope:
+          primary: V200 exact-document-scope
+          compatibility: V200 exact-document-scope
+        platform_code: huawei_vrp
+        os_family: VRP
+        priority: P1
+        registry_status: disabled
+        collection_status: blocked_robots_unavailable
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: huawei-ospf-network-flap-troubleshooting-zh
+        title: OSPF 网络频繁震荡故障排查
+        canonical_url: "https://info.support.huawei.com/enterprise/zh/doc/EDOC1100305532/b79910c8"
+        host: info.support.huawei.com
+        source_role: troubleshooting
+        source_type: official_url
+        desired_document_type: troubleshooting_guide
+        language: zh-CN
+        product_scope: enterprise-routing-and-switching
+        version_scope: document-defined
+        registry_version_scope:
+          primary: VRP V100/V200
+          compatibility: VRP V300
+        platform_code: huawei_vrp
+        os_family: VRP
+        priority: P0
+        registry_status: disabled
+        collection_status: blocked_robots_policy
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: huawei-bgp-traffic-interruption-troubleshooting-zh
+        title: BGP 公网流量中断故障排查
+        canonical_url: "https://info.support.huawei.com/enterprise/zh/doc/EDOC1000052631/25fd81d3"
+        host: info.support.huawei.com
+        source_role: troubleshooting
+        source_type: official_url
+        desired_document_type: troubleshooting_guide
+        language: zh-CN
+        product_scope: enterprise-routing-and-switching
+        version_scope: document-defined
+        registry_version_scope:
+          primary: VRP V100/V200
+          compatibility: VRP V300
+        platform_code: huawei_vrp
+        os_family: VRP
+        priority: P0
+        registry_status: disabled
+        collection_status: blocked_robots_policy
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: huawei-s-series-board-reset-troubleshooting-zh
+        title: S 系列交换机单板复位故障排查
+        canonical_url: "https://info.support.huawei.com/enterprise/zh/doc/EDOC1000075592/4079ef29"
+        host: info.support.huawei.com
+        source_role: troubleshooting
+        source_type: official_url
+        desired_document_type: troubleshooting_guide
+        language: zh-CN
+        product_scope: S-series
+        version_scope: document-defined
+        registry_version_scope:
+          primary: VRP V100/V200
+          compatibility: VRP V300
+        platform_code: huawei_vrp
+        os_family: VRP
+        priority: P1
+        registry_status: disabled
+        collection_status: blocked_robots_unavailable
+        taxonomy_status: supported
+        direct_ingestion: false
+
+  - vendor: H3C
+    vendor_key: h3c
+    official_hosts:
+      - www.h3c.com
+    default_priority: P0
+    registry_product_family: H3C Switches
+    registry_platform_code: h3c_comware
+    registry_os_family: Comware 7
+    registry_version_scope:
+      primary: Comware 7 2026 documentation
+      compatibility: CMW710
+    notes:
+      - 页面版权声明需要在批量保存正文前完成条款审核；审核前仅保存来源元数据和链接。
+      - 产品入口和文档目录仅用于发现，采集必须落到审核后的具体文档页。
+    sources:
+      - source_id: h3c-document-center-cn
+        title: H3C 文档中心
+        canonical_url: "https://www.h3c.com/cn/Service/Document_Software/Document_Center/"
+        host: www.h3c.com
+        source_role: portal_discovery
+        source_type: official_url
+        desired_document_type: official_url
+        language: zh-CN
+        product_scope: enterprise-networking
+        version_scope: multi-version
+        priority: P2
+        registry_status: not_registered
+        collection_status: discovery_only
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: h3c-comware7-ospf-en-existing
+        title: H3C Comware 7 OSPF 配置
+        canonical_url: "https://www.h3c.com/en/d_201903/1159013_294551_0.htm"
+        host: www.h3c.com
+        source_role: configuration
+        source_type: configuration_guide
+        desired_document_type: configuration_guide
+        language: en-US
+        product_scope: Comware 7
+        version_scope: document-defined
+        priority: P1
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: true
+
+      - source_id: h3c-s9825-s9855-ospf-en-existing
+        title: H3C S9825/S9855 OSPF 配置
+        canonical_url: "https://www.h3c.com/en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Configure___Deploy/Configuration_Guides/H3C_CG-19994/07/202410/2284787_294551_0.htm"
+        host: www.h3c.com
+        source_role: configuration
+        source_type: configuration_guide
+        desired_document_type: configuration_guide
+        language: en-US
+        product_scope: S9825/S9855
+        version_scope: document-defined
+        priority: P1
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: true
+
+      - source_id: h3c-s6800-s6860-evpn-vxlan-en-existing
+        title: H3C S6800/S6860 EVPN VXLAN 配置
+        canonical_url: "https://www.h3c.com/en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Configure___Deploy/Configuration_Guides/H3C_CG-18642/19/202404/2105879_294551_0.htm"
+        host: www.h3c.com
+        source_role: configuration
+        source_type: configuration_guide
+        desired_document_type: configuration_guide
+        language: en-US
+        product_scope: S6800/S6860
+        version_scope: document-defined
+        priority: P1
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: true
+
+      - source_id: h3c-box-switch-typical-config-examples-cn
+        title: H3C 盒式交换机典型配置举例
+        canonical_url: "https://www.h3c.com/cn/Service/Document_Software/Document_Center/Home/Switches/00-Public/Configure/Typical_Configuration_Example/H3C_CE_R6010Pxx_R8307Pxx-25482/00/"
+        host: www.h3c.com
+        source_role: configuration
+        source_type: configuration_guide
+        desired_document_type: configuration_guide
+        language: zh-CN
+        product_scope: box-switches
+        version_scope: R6010Pxx/R8307Pxx
+        priority: P0
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: h3c-config-file-management-command-cn
+        title: H3C 配置文件管理命令参考
+        canonical_url: "https://www.h3c.com/cn/d_202401/2035540_30005_0.htm"
+        host: www.h3c.com
+        source_role: command_reference
+        source_type: command_reference
+        desired_document_type: command_reference
+        language: zh-CN
+        product_scope: Comware
+        version_scope: document-defined
+        priority: P1
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: h3c-switch-general-troubleshooting-2025-cn
+        title: H3C 交换机通用故障排查宝典
+        canonical_url: "https://www.h3c.com/cn/Service/Document_Software/Document_Center/Home/Switches/00-Public/Maintenance/Maintenance_Treasure/H3C-WHBD-Long/02/"
+        host: www.h3c.com
+        source_role: troubleshooting
+        source_type: troubleshooting_guide
+        desired_document_type: troubleshooting_guide
+        language: zh-CN
+        product_scope: switches
+        version_scope: 2025-edition
+        priority: P0
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: h3c-feature-troubleshooting-2026-cn
+        title: H3C 特性故障排查手册（ARP/DHCP/OSPF/BGP 等）
+        canonical_url: "https://www.h3c.com/cn/d_202603/2776299_30005_0.htm"
+        host: www.h3c.com
+        source_role: troubleshooting
+        source_type: troubleshooting_guide
+        desired_document_type: troubleshooting_guide
+        language: zh-CN
+        product_scope: Comware-switches
+        version_scope: 2026-edition
+        priority: P0
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: h3c-s6300-troubleshooting-cn
+        title: H3C S6300 系列故障处理手册
+        canonical_url: "https://www.h3c.com/cn/Service/Document_Software/Document_Center/Switches/Catalog/S6300/S6300/Maintenance/Troubleshooting/H3C_S6300_TG-6W100/"
+        host: www.h3c.com
+        source_role: troubleshooting
+        source_type: troubleshooting_guide
+        desired_document_type: troubleshooting_guide
+        language: zh-CN
+        product_scope: S6300
+        version_scope: 6W100
+        priority: P0
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: h3c-s12500g-af-troubleshooting-cn
+        title: H3C S12500G-AF 系列故障处理手册
+        canonical_url: "https://www.h3c.com/cn/Service/Document_Software/Document_Center/Switches/Catalog/S12500/S12500G-AF/Maintenance/Troubleshooting/H3C_S12500G-AF_TG-R7595-6W100/"
+        host: www.h3c.com
+        source_role: troubleshooting
+        source_type: troubleshooting_guide
+        desired_document_type: troubleshooting_guide
+        language: zh-CN
+        product_scope: S12500G-AF
+        version_scope: R7595-6W100
+        priority: P1
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: false
+
+  - vendor: Ruijie
+    vendor_key: ruijie
+    official_hosts:
+      - www.ruijie.com.cn
+    default_priority: P0
+    registry_product_family: RGOS Switches
+    registry_platform_code: ruijie_rgos
+    registry_os_family: RGOS
+    registry_version_scope:
+      primary: RGOS public-current
+      compatibility: RGOS multi-version
+    notes:
+      - 当前 PostgreSQL 知识库中 Ruijie 文档数为 0，首批优先补齐 RGOS 交换机配置与高频排障。
+      - www-file.ruijie.com.cn 等下载主机不在本清单首批范围，必须另行审核后才能使用。
+    sources:
+      - source_id: ruijie-document-center-cn
+        title: 锐捷网络文档中心
+        canonical_url: "https://www.ruijie.com.cn/fw/wd/"
+        host: www.ruijie.com.cn
+        source_role: portal_discovery
+        source_type: official_url
+        desired_document_type: official_url
+        language: zh-CN
+        product_scope: enterprise-networking
+        version_scope: multi-version
+        priority: P0
+        registry_status: not_registered
+        collection_status: discovery_only
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: ruijie-support-faq-cn
+        title: 锐捷网络常见问题与故障排查中心
+        canonical_url: "https://www.ruijie.com.cn/fw/wt/"
+        host: www.ruijie.com.cn
+        source_role: portal_discovery
+        source_type: official_url
+        desired_document_type: official_url
+        language: zh-CN
+        product_scope: enterprise-networking
+        version_scope: multi-version
+        priority: P0
+        registry_status: not_registered
+        collection_status: discovery_only
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: ruijie-rg-s7600-doc-center-cn
+        title: RG-S7600 系列文档中心
+        canonical_url: "https://www.ruijie.com.cn/fw/wd-cp-7600/"
+        host: www.ruijie.com.cn
+        source_role: portal_discovery
+        source_type: product_page
+        desired_document_type: product_page
+        language: zh-CN
+        product_scope: RG-S7600
+        version_scope: multi-version
+        priority: P0
+        registry_status: not_registered
+        collection_status: discovery_only
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: ruijie-rg-s5600-doc-center-cn
+        title: RG-S5600 系列文档中心
+        canonical_url: "https://www.ruijie.com.cn/fw/wd-cp-s5600/"
+        host: www.ruijie.com.cn
+        source_role: portal_discovery
+        source_type: product_page
+        desired_document_type: product_page
+        language: zh-CN
+        product_scope: RG-S5600
+        version_scope: multi-version
+        priority: P0
+        registry_status: not_registered
+        collection_status: discovery_only
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: ruijie-rg-s6220-doc-center-cn
+        title: RG-S6220 系列文档中心
+        canonical_url: "https://www.ruijie.com.cn/fw/wd-cp-6220/"
+        host: www.ruijie.com.cn
+        source_role: portal_discovery
+        source_type: product_page
+        desired_document_type: product_page
+        language: zh-CN
+        product_scope: RG-S6220
+        version_scope: multi-version
+        priority: P0
+        registry_status: not_registered
+        collection_status: discovery_only
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: ruijie-rg-s4900-doc-center-cn
+        title: RG-S4900 系列文档中心
+        canonical_url: "https://www.ruijie.com.cn/fw/wd-cp-4900/"
+        host: www.ruijie.com.cn
+        source_role: portal_discovery
+        source_type: product_page
+        desired_document_type: product_page
+        language: zh-CN
+        product_scope: RG-S4900
+        version_scope: multi-version
+        priority: P1
+        registry_status: not_registered
+        collection_status: discovery_only
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: ruijie-internet-deployment-configuration-cn
+        title: 锐捷交换机互联网部署配置
+        canonical_url: "https://www.ruijie.com.cn/fw/wt/90122/"
+        host: www.ruijie.com.cn
+        source_role: configuration
+        source_type: configuration_guide
+        desired_document_type: configuration_guide
+        language: zh-CN
+        product_scope: RGOS-switches
+        version_scope: document-defined
+        priority: P0
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: ruijie-snmp-configuration-cn
+        title: 锐捷交换机 SNMP 配置
+        canonical_url: "https://www.ruijie.com.cn/fw/wt/90882/"
+        host: www.ruijie.com.cn
+        source_role: configuration
+        source_type: configuration_guide
+        desired_document_type: configuration_guide
+        language: zh-CN
+        product_scope: RGOS-switches
+        version_scope: document-defined
+        priority: P0
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: ruijie-command-reference-86075-cn
+        title: 锐捷 RGOS 命令参考候选文档 86075
+        canonical_url: "https://www.ruijie.com.cn/fw/wd/86075/"
+        host: www.ruijie.com.cn
+        source_role: command_reference
+        source_type: command_reference
+        desired_document_type: command_reference
+        language: zh-CN
+        product_scope: RGOS-switches
+        version_scope: document-defined
+        priority: P0
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: ruijie-command-reference-88538-cn
+        title: 锐捷 RGOS 命令参考候选文档 88538
+        canonical_url: "https://www.ruijie.com.cn/fw/wd/88538/"
+        host: www.ruijie.com.cn
+        source_role: command_reference
+        source_type: command_reference
+        desired_document_type: command_reference
+        language: zh-CN
+        product_scope: RGOS-switches
+        version_scope: document-defined
+        priority: P1
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: ruijie-mtu-large-packet-troubleshooting-cn
+        title: MTU 与大包 Ping 异常故障排查
+        canonical_url: "https://www.ruijie.com.cn/fw/wt/93440/"
+        host: www.ruijie.com.cn
+        source_role: troubleshooting
+        source_type: troubleshooting_guide
+        desired_document_type: troubleshooting_guide
+        language: zh-CN
+        product_scope: RGOS-switches
+        version_scope: document-defined
+        priority: P0
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: ruijie-layer2-connectivity-troubleshooting-cn
+        title: 二层直连不通故障排查
+        canonical_url: "https://www.ruijie.com.cn/fw/wt/93439/"
+        host: www.ruijie.com.cn
+        source_role: troubleshooting
+        source_type: troubleshooting_guide
+        desired_document_type: troubleshooting_guide
+        language: zh-CN
+        product_scope: RGOS-switches
+        version_scope: document-defined
+        priority: P0
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: ruijie-ospf-neighbor-attempt-troubleshooting-cn
+        title: OSPF 邻居停留 Attempt 状态故障排查
+        canonical_url: "https://www.ruijie.com.cn/fw/wt/32970/"
+        host: www.ruijie.com.cn
+        source_role: troubleshooting
+        source_type: troubleshooting_guide
+        desired_document_type: troubleshooting_guide
+        language: zh-CN
+        product_scope: RGOS-switches
+        version_scope: document-defined
+        priority: P0
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: ruijie-port-packet-drop-troubleshooting-cn
+        title: 交换机端口丢包故障排查
+        canonical_url: "https://www.ruijie.com.cn/fw/wt/18792"
+        host: www.ruijie.com.cn
+        source_role: troubleshooting
+        source_type: troubleshooting_guide
+        desired_document_type: troubleshooting_guide
+        language: zh-CN
+        product_scope: RGOS-switches
+        version_scope: document-defined
+        priority: P0
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: false
+
+  - vendor: Cisco
+    vendor_key: cisco
+    official_hosts:
+      - www.cisco.com
+    default_priority: P1
+    notes:
+      - 英文原始技术文档作为正文权威版本；中文支持页可用于导航和术语辅助。
+      - 中文机器翻译页面不应覆盖英文原文的命令、参数和版本事实。
+    sources:
+      - source_id: cisco-c9300-series-support-zh
+        title: Catalyst 9300 系列支持中心
+        canonical_url: "https://www.cisco.com/c/zh_cn/support/switches/catalyst-9300-series-switches/series.html"
+        host: www.cisco.com
+        source_role: portal_discovery
+        source_type: product_page
+        desired_document_type: product_page
+        language: zh-CN
+        product_scope: Catalyst 9300
+        version_scope: multi-version
+        priority: P2
+        registry_status: not_registered
+        collection_status: discovery_only
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: cisco-c9300-config-guide-index-zh
+        title: Catalyst 9300 安装与配置指南索引
+        canonical_url: "https://www.cisco.com/c/zh_cn/support/switches/catalyst-9300-series-switches/products-installation-and-configuration-guides-list.html"
+        host: www.cisco.com
+        source_role: portal_discovery
+        source_type: official_url
+        desired_document_type: official_url
+        language: zh-CN
+        product_scope: Catalyst 9300
+        version_scope: multi-version
+        priority: P1
+        registry_status: not_registered
+        collection_status: discovery_only
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: cisco-c9300-tech-notes-index-zh
+        title: Catalyst 9300 技术说明与故障排查索引
+        canonical_url: "https://www.cisco.com/c/zh_cn/support/switches/catalyst-9300-series-switches/products-tech-notes-list.html"
+        host: www.cisco.com
+        source_role: portal_discovery
+        source_type: official_url
+        desired_document_type: official_url
+        language: zh-CN
+        product_scope: Catalyst 9300
+        version_scope: multi-version
+        priority: P1
+        registry_status: not_registered
+        collection_status: discovery_only
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: cisco-c9300-ospf-17-13-en-existing
+        title: Catalyst 9300 IOS XE 17.13 OSPF 配置
+        canonical_url: "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-13/configuration_guide/rtng/b_1713_rtng_9300_cg/configuring_ospf.html"
+        host: www.cisco.com
+        source_role: configuration
+        source_type: configuration_guide
+        desired_document_type: configuration_guide
+        language: en-US
+        product_scope: Catalyst 9300
+        version_scope: IOS XE 17.13
+        priority: P1
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: true
+
+      - source_id: cisco-nexus3000-ospf-en-existing
+        title: Nexus 3000 NX-OS OSPF 配置
+        canonical_url: "https://www.cisco.com/c/en/us/td/docs/switches/datacenter/nexus3000/sw/unicast/602_u1_1/l3_nx-os/l3_ospf.html"
+        host: www.cisco.com
+        source_role: configuration
+        source_type: configuration_guide
+        desired_document_type: configuration_guide
+        language: en-US
+        product_scope: Nexus 3000
+        version_scope: NX-OS 6.0(2)U1(1)
+        priority: P1
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: true
+
+      - source_id: cisco-nexus9000-ospf-en-existing
+        title: Nexus 9000 NX-OS OSPF 配置
+        canonical_url: "https://www.cisco.com/c/en/us/td/docs/switches/datacenter/nexus9000/sw/6-x/unicast/configuration/guide/l3_cli_nxos/l3_ospf.html"
+        host: www.cisco.com
+        source_role: configuration
+        source_type: configuration_guide
+        desired_document_type: configuration_guide
+        language: en-US
+        product_scope: Nexus 9000
+        version_scope: NX-OS 6.x
+        priority: P1
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: true
+
+      - source_id: cisco-nexus9000-vxlan-9-2x-en-existing
+        title: Nexus 9000 NX-OS 9.2(x) VXLAN BGP EVPN 配置
+        canonical_url: "https://www.cisco.com/c/en/us/td/docs/switches/datacenter/nexus9000/sw/92x/vxlan-92x/configuration/guide/b-cisco-nexus-9000-series-nx-os-vxlan-configuration-guide-92x/b_Cisco_Nexus_9000_Series_NX-OS_VXLAN_Configuration_Guide_9x_chapter_0100.html"
+        host: www.cisco.com
+        source_role: configuration
+        source_type: configuration_guide
+        desired_document_type: configuration_guide
+        language: en-US
+        product_scope: Nexus 9000
+        version_scope: NX-OS 9.2(x)
+        priority: P1
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: true
+
+      - source_id: cisco-c9300-system-management-17-18-pdf-en
+        title: Catalyst 9300 IOS XE 17.18 系统管理配置指南
+        canonical_url: "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-18/configuration_guide/sys_mgmt/b_1718_sys_mgmt_9300_cg.pdf"
+        host: www.cisco.com
+        source_role: configuration
+        source_type: configuration_guide
+        desired_document_type: configuration_guide
+        language: en-US
+        product_scope: Catalyst 9300
+        version_scope: IOS XE 17.18
+        registry_version_scope:
+          primary: 17.18.x
+          compatibility: 17.13.x
+        platform_code: cisco_iosxe
+        os_family: IOS-XE
+        priority: P1
+        registry_status: disabled
+        collection_status: blocked_vendor_access
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: cisco-c9300-system-management-command-17-18-en
+        title: Catalyst 9300 IOS XE 17.18 系统管理命令参考
+        canonical_url: "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-18/command_reference/b_1718_9300_cr/system_management_commands.html"
+        host: www.cisco.com
+        source_role: command_reference
+        source_type: command_reference
+        desired_document_type: command_reference
+        language: en-US
+        product_scope: Catalyst 9300
+        version_scope: IOS XE 17.18
+        registry_version_scope:
+          primary: 17.18.x
+          compatibility: 17.13.x
+        platform_code: cisco_iosxe
+        os_family: IOS-XE
+        priority: P1
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: cisco-c9300-software-troubleshooting-17-13-en
+        title: Catalyst 9300 IOS XE 17.13 软件配置故障排查
+        canonical_url: "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-13/configuration_guide/sys_mgmt/b_1713_sys_mgmt_9300_cg/troubleshooting_the_software_configuration.html"
+        host: www.cisco.com
+        source_role: troubleshooting
+        source_type: official_url
+        desired_document_type: troubleshooting_guide
+        language: en-US
+        product_scope: Catalyst 9300
+        version_scope: IOS XE 17.13
+        registry_version_scope:
+          primary: IOS XE 17.13
+          compatibility: IOS XE 17.18
+        platform_code: cisco_iosxe
+        os_family: IOS-XE
+        priority: P0
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: cisco-catalyst9000-latency-packet-loss-zh
+        title: Catalyst 9000 网络延迟和丢包故障排查
+        canonical_url: "https://www.cisco.com/c/zh_cn/support/docs/switches/catalyst-9300-series-switches/225617-troubleshooting-network-latency-and.html"
+        host: www.cisco.com
+        source_role: troubleshooting
+        source_type: official_url
+        desired_document_type: troubleshooting_guide
+        language: zh-CN
+        product_scope: Catalyst 9000
+        version_scope: document-defined
+        registry_version_scope:
+          primary: IOS XE 17.x
+          compatibility: IOS XE 17.x
+        platform_code: cisco_iosxe
+        os_family: IOS-XE
+        priority: P0
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: cisco-nexus9000-troubleshooting-index-en
+        title: Nexus 9000 故障排查指南索引
+        canonical_url: "https://www.cisco.com/c/en/us/support/switches/nexus-9000-series-switches/products-troubleshooting-guides-list.html"
+        host: www.cisco.com
+        source_role: portal_discovery
+        source_type: official_url
+        desired_document_type: official_url
+        language: en-US
+        product_scope: Nexus 9000
+        version_scope: multi-version
+        priority: P1
+        registry_status: not_registered
+        collection_status: discovery_only
+        taxonomy_status: supported
+        direct_ingestion: false
+
+      - source_id: cisco-nexus9000-troubleshooting-9-2x-en
+        title: Nexus 9000 NX-OS 9.2(x) 故障排查指南
+        canonical_url: "https://www.cisco.com/c/en/us/td/docs/switches/datacenter/nexus9000/sw/92x/troubleshooting/guide/b-cisco-nexus-9000-nx-os-troubleshooting-guide-92x/b-cisco-nexus-9000-nx-os-troubleshooting-guide-92x_chapter_010.html"
+        host: www.cisco.com
+        source_role: troubleshooting
+        source_type: official_url
+        desired_document_type: troubleshooting_guide
+        language: en-US
+        product_scope: Nexus 9000
+        version_scope: NX-OS 9.2(x)
+        registry_version_scope:
+          primary: NX-OS 9.2(x)
+          compatibility: NX-OS 10.x
+        platform_code: cisco_nxos
+        os_family: NX-OS
+        priority: P0
+        registry_status: active_valid_existing
+        collection_status: active_valid_existing
+        taxonomy_status: supported
+        direct_ingestion: false
+
+review_requirements:
+  before_registration:
+    - 确认 canonical_url 仍由对应官方主机提供，且未跳转到未审核主机。
+    - 确认产品系列、网络操作系统和版本范围与元数据一致。
+    - 检查版权、robots、登录权限和自动化访问条款。
+    - 为具体 URL 或精确路径前缀完成 CAT-001 增量审核。
+    - 故障排查来源先完成 CAT-002 troubleshooting_guide 类型扩展。
+  before_collection:
+    - 使用安全出站 HTTP 客户端，阻止私网、回环、链路本地地址和未审核重定向。
+    - 计算正文哈希并按 canonical_url、document_id 和 content_hash 去重。
+    - 保留 vendor、product_scope、version_scope、language、source_url 和 retrieved_at 元数据。
+    - 先小批量采集并通过隔离区、清洗、分块、嵌入和召回验收，再扩大范围。

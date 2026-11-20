@@ -1,0 +1,59 @@
+task_id: EVAL-005
+title: retrieval and entity-resolution metric definitions
+priority: P0
+status: executable
+authority: offline_metric_library
+scope:
+  - define Recall@K, Precision@K, MRR, NDCG@K and Entity Resolution Accuracy
+  - provide deterministic pure-Python implementations reusable by later EVAL gates
+  - make no-match, duplicate-result and empty-input behavior explicit
+metrics:
+  recall_at_k:
+    formula: "|unique(topK) intersect Gold| / |Gold|"
+    no_match: 1_when_topK_empty_else_0
+  precision_at_k:
+    formula: "|unique(topK) intersect Gold| / K"
+    denominator: K_even_when_fewer_than_K_results_are_returned
+    no_match: 1_when_topK_empty_else_0
+  mrr:
+    formula: reciprocal_rank_of_first_unique_relevant_result
+    no_match: 1_when_no_result_is_returned_else_0
+  ndcg_at_k:
+    formula: binary_relevance_DCG_divided_by_ideal_DCG
+    gain: 1_for_relevant_unique_result_else_0
+    no_match: 1_when_topK_empty_else_0
+  entity_resolution_accuracy:
+    formula: "queries_with_all_expected_and_predicted_entity_fields_equal / queries"
+    normalization: Unicode_NFKC_casefold_trim_and_replace_dash_slash_underscore_with_space
+    unknown_prediction: a_predicted_value_for_an_unknown_expected_field_is_incorrect
+aggregation:
+  retrieval: macro_mean_per_query
+  entity_resolution: exact_query_match_macro_accuracy
+  empty_case_set: 0
+implementation:
+  module: backend/ai/services/evaluation_metrics.py
+  smoke_check: scripts/knowledge_engine_v2_eval_metrics_check.py
+  focused_test: tests/knowledge_engine_v2/test_eval005_metrics.py
+safety:
+  database: none
+  sqlite: not_used
+  external_network: forbidden
+  secrets: forbidden
+  production_writes: forbidden
+  persistence_note: database-backed callers may read PostgreSQL rows, but the metric module opens no database
+verification:
+  commands:
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_eval_metrics_check.py"
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe -m pytest tests/knowledge_engine_v2/test_eval005_metrics.py -q -p no:cacheprovider"
+    - ".venv\\Scripts\\python.exe -m py_compile backend/ai/services/evaluation_metrics.py scripts/knowledge_engine_v2_eval_metrics_check.py tests/knowledge_engine_v2/test_eval005_metrics.py"
+    - "git diff --check"
+  required_results:
+    - status: PASS
+    - metrics: [recall_at_k, precision_at_k, mrr, ndcg_at_k, entity_resolution_accuracy]
+    - database: none
+    - sqlite: not_used
+rollback:
+  runtime: remove metric module from evaluation selection and revert the documentation-only contract
+  data: delete the smoke report and test fixture; no production rows exist
+  database: none; no migration or schema change
+  compatibility: no V1 retrieval/API behavior changes

@@ -1,0 +1,23 @@
+{
+  "checkpoint_version": "nexora-knowledge-engine-v2-migration-checkpoint/v1",
+  "task_id": "MIG-004",
+  "manifest_sha256": "f9bfde17943cf3420a2b273e5d6f1d1dacb22f12fc7a6c9a6783c9c931aca551",
+  "batch_size": 25,
+  "next_offset": 156,
+  "committed_batches": 7,
+  "status": "dry_run_complete",
+  "counts": {
+    "planned": 156,
+    "processed": 156,
+    "inserted": 0,
+    "skipped_idempotent": 0,
+    "failed": 0
+  },
+  "last_error_code": "",
+  "redaction": {
+    "raw_content": "omitted",
+    "metadata": "omitted",
+    "acl": "omitted",
+    "secrets": "omitted"
+  }
+}

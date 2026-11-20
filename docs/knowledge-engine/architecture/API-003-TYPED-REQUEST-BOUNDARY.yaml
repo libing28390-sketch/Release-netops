@@ -1,0 +1,49 @@
+task_id: API-003
+title: Eliminate untyped Dict request bodies from stable AI contracts
+status: verified
+contract_version: nxa.kb.api.request-boundary.v2
+scope:
+  stable_ai_modules:
+    - backend/ai/api/assistant.py
+    - backend/ai/api/providers.py
+    - backend/ai/api/models.py
+    - backend/ai/api/security.py
+    - backend/ai/api/diagnostics.py
+  excluded_legacy_modules:
+    - backend/api/*
+    - backend/ai/api/usage.py
+  exclusion_reason: API-003 covers the V2/AI stable contract surface; unrelated legacy network endpoints are tracked by their own contracts.
+rules:
+  request_body:
+    - endpoint body parameters use Pydantic models, never bare dict or Dict[str, Any]
+    - nested context, plan, filter, security, and diagnostic objects are bounded and extra-forbid
+    - service-owned tenant and audit identity is not trusted from arbitrary request maps
+  security_gateway:
+    - policy, test-payload, kill-switch, tenant-kill-switch, incident, and attachment-check requests are typed
+    - diagnostic plans validate read_only=true and write_operations_enabled=false
+  compatibility:
+    - JSON field names and defaults remain compatible with the existing AI frontend
+    - API-001 V1/V2 path boundary is unchanged
+implementation:
+  shared_contract_module: backend/api/knowledge_v2_contracts.py
+  request_models:
+    - ChatHistoryMessage
+    - CopilotContext
+    - CopilotPlanItem
+    - SecurityPolicyUpdateRequest
+    - SecurityTestPayloadRequest
+    - SecurityKillSwitchRequest
+    - TenantSecurityKillSwitchRequest
+    - SecurityIncidentRequest
+    - AttachmentCheckRequest
+    - DiagnosticPlanPayload
+    - DiagnosticContext
+verification:
+  ast_audit: backend/tests/ai/test_api003_typed_requests.py::test_ai_api_has_no_untyped_stable_body_parameters
+  focused_tests: backend/tests/ai/test_api003_typed_requests.py
+  regression_tests:
+    - backend/tests/ai/test_sec_001_020_security_gateway.py
+    - backend/tests/ai/test_copilot_contract_v2.py
+    - backend/tests/vendor_audit/test_dia_001_019_diagnostic_orchestrator.py
+    - backend/tests/ai/test_api_v2_contracts.py
+  result: PASS

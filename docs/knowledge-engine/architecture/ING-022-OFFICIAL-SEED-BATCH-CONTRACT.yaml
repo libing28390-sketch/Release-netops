@@ -1,0 +1,76 @@
+task_id: ING-022
+title: "Small official Seed URL batch collection and rate limiting"
+status: implemented
+priority: P2
+depends_on: [ING-001, ING-002, CAT-001, CAT-003, CAT-004, DB-008]
+decision:
+  choice: "bounded synchronous batch adapter over the reviewed single-URL importer"
+  rationale:
+    - "CAT-001 URL allowlist, CAT-003 Source Registry and CAT-004 safe outbound remain the only authorities"
+    - "small batches are observable and retryable through existing Import Job records"
+    - "no duplicate network/security implementation is introduced"
+invariants:
+  - "batch contains 1..20 items"
+  - "every item is preflighted against the exact official allowlist before the first network call"
+  - "canonical duplicate URLs are rejected before any network call"
+  - "only GET/HEAD and existing source policy are used by the delegated importer"
+  - "requests are paced per tenant and canonical host with a server-bounded rate of 1..30 per minute"
+  - "runtime failure in one item is a bounded item result; raw exception/body never enters the response"
+  - "tenant and RBAC checks remain in the delegated source importer"
+  - "V1 single-URL endpoint and source/version facts remain unchanged"
+api:
+  endpoint: POST /api/knowledge-v2/ingestion/official-seed-batch
+  canonical_alias: /api/v2/kb/ingestion/official-seed-batch
+  permission: knowledge_source.create
+  request:
+    fields:
+      items: "1..20 strict OfficialUrlImportRequest objects"
+      rate_limit_per_minute: "1..30; default 6"
+      request_id: "optional bounded correlation ID"
+    unknown_fields: forbidden
+  response:
+    status: 202
+    data:
+      batch_id: string
+      tenant_id: server_owned
+      item_count: integer
+      succeeded_count: integer
+      failed_count: integer
+      rate_limit_per_minute: integer
+      elapsed_ms: integer
+      items: "bounded per-item job/source/version summary"
+preflight:
+  order:
+    - validate item shape and batch bounds
+    - canonicalize each URL and validate vendor/family/version/terms metadata
+    - reject unallowlisted, duplicate, malformed or unsafe URLs
+    - only then invoke the single-URL importer
+network:
+  authority: services.official_url_import_service.import_single_official_url
+  pacing: "concurrency-safe fixed-spacing tenant+host limiter"
+  body_policy: "delegated CAT-004 response body remains memory-only/hash-only"
+  retry_policy: "delegated per-source bounded retry and existing Import Job state"
+failure_codes:
+  - SEED_ITEMS_INVALID
+  - SEED_BATCH_SIZE_INVALID
+  - SEED_RATE_LIMIT_INVALID
+  - SEED_ITEM_INVALID
+  - SEED_PREFLIGHT_FAILED
+  - SEED_DUPLICATE_URL
+  - SEED_IMPORT_FAILED
+security:
+  no_ssrf_bypass: true
+  no_client_transport_injection: true
+  no_raw_response_or_exception: true
+  tenant_scope: "derived from authenticated principal; never accepted from request"
+  audit: "each delegated source import retains existing source/job audit; batch response is summary-only"
+rollback:
+  - "disable the additive batch route and remove the adapter; retain existing single-URL routes and immutable source facts"
+  - "no DDL or production data rewrite is required"
+known_limit:
+  - "limiter state is process-local; multi-worker deployments should place the route behind a single worker or move the limiter state to the existing shared control-plane before broad production crawling"
+acceptance:
+  - "preflight all items before first network call"
+  - "rate limit and batch bounds are enforced"
+  - "partial runtime errors are bounded and do not leak raw data"
+  - "tenant/RBAC and CAT-001/CAT-004 regressions pass"

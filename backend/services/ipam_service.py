@@ -375,7 +375,7 @@ def _ip_in_subnet(addr: str, network: str, prefix_len: int) -> bool:
 
 
 def _calculate_total_ips(prefix_str: str) -> int:
-    """Calculate usable IPs for a CIDR prefix string like '10.1.0.0/24'."""
+    """Calculate usable host capacity matching ``_prefix_host_bounds``."""
     try:
         net = ipaddress.ip_network(prefix_str, strict=False)
     except ValueError:
@@ -387,14 +387,15 @@ def _calculate_total_ips(prefix_str: str) -> int:
         if pl == 31:
             return 2
         return max(0, (2 ** (32 - pl)) - 2)
-    else:
-        pl = net.prefixlen
-        if pl == 128:
-            return 1
-        if pl == 127:
-            return 2
-        total = max(0, (2 ** (128 - pl)) - 2)
-        return min(total, 2**63)
+    pl = net.prefixlen
+    if pl == 128:
+        return 1
+    if pl == 127:
+        return 2
+    # IPv6 has no broadcast address; only subnet-router anycast (network_address)
+    # is excluded, matching _prefix_host_bounds().
+    total = max(0, (2 ** (128 - pl)) - 1)
+    return min(total, 2**63)
 
 
 def _capacity_exclusion_reason(prefix_str: str, status: str = '') -> str:
@@ -477,6 +478,179 @@ def _count_prefix_used_ips(conn, prefix: dict) -> int:
     if gateway:
         used.add(gateway)
     return len(used)
+
+
+def _container_child_coverage(
+    conn,
+    prefix: dict,
+    network: ipaddress._BaseNetwork,
+) -> tuple[int, int, float]:
+    """Compute merged address coverage of strict child Prefixes inside a container."""
+    space_id = str(prefix.get('address_space_id') or '').strip()
+    prefix_id = str(prefix.get('id') or '')
+    if space_id:
+        rows = conn.execute(
+            f'''SELECT id, prefix FROM prefixes
+                 WHERE address_space_id = {_PH} AND id <> {_PH}''',
+            (space_id, prefix_id),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            f'''SELECT id, prefix FROM prefixes
+                 WHERE address_space_id IS NULL
+                   AND COALESCE(tenant_id, 'tenant-default') = {_PH}
+                   AND COALESCE(vrf_id, '') = {_PH}
+                   AND COALESCE(site_id, '') = {_PH}
+                   AND id <> {_PH}''',
+            (
+                str(prefix.get('tenant_id') or 'tenant-default'),
+                str(prefix.get('vrf_id') or ''),
+                str(prefix.get('site_id') or ''),
+                prefix_id,
+            ),
+        ).fetchall()
+    child_ranges: list[tuple[int, int]] = []
+    for row in rows:
+        try:
+            child_net = ipaddress.ip_network(str(row['prefix'] or ''), strict=False)
+        except ValueError:
+            continue
+        if (
+            child_net.version == network.version
+            and child_net.prefixlen > network.prefixlen
+            and child_net.subnet_of(network)
+        ):
+            child_ranges.append((int(child_net.network_address), int(child_net.broadcast_address)))
+    merged = _merge_integer_ranges(child_ranges)
+    child_ips = min(sum(end - start + 1 for start, end in merged), 2**63)
+    container_total = min(int(network.num_addresses), 2**63)
+    utilization = round(child_ips / container_total * 100, 1) if container_total > 0 else 0.0
+    return child_ips, container_total, utilization
+
+
+def _calculate_prefix_capacity_metrics(conn, prefix: dict) -> dict:
+    """Compute unified registered, reserved, container, and allocatable metrics.
+
+    Shares ``_pool_allocation_intervals`` and ``_current_allocation_occupancy``
+    with ``get_next_available_ip_details`` / ``allocate_next_address`` so
+    reported allocatable counts stay strictly aligned with real allocation.
+    """
+    prefix_str = str(prefix.get('prefix') or '')
+    status = str(prefix.get('status') or '').strip().lower()
+    total_ips = _calculate_total_ips(prefix_str)
+    registered_ips = _count_prefix_used_ips(conn, prefix)
+    registered_utilization = round(registered_ips / total_ips * 100, 1) if total_ips > 0 else 0.0
+
+    try:
+        network = ipaddress.ip_network(prefix_str, strict=False)
+    except ValueError:
+        return {
+            'total_ips': 0,
+            'used_ips': registered_ips,
+            'registered_ips': registered_ips,
+            'registered_utilization': 0.0,
+            'reserved_ips': 0,
+            'occupied_in_allocatable_ips': 0,
+            'allocatable_capacity_ips': 0,
+            'allocatable_free_ips': 0,
+            'effective_used_ips': registered_ips,
+            'effective_utilization': 0.0,
+            'container_child_ips': 0,
+            'container_utilization': 0.0,
+            'utilization': 0.0,
+            'allocation_ready': False,
+            'allocation_blocked_reason': 'invalid_prefix',
+        }
+
+    if status == 'container':
+        child_ips, _container_total, container_util = _container_child_coverage(conn, prefix, network)
+        return {
+            'total_ips': total_ips,
+            'used_ips': registered_ips,
+            'registered_ips': registered_ips,
+            'registered_utilization': registered_utilization,
+            'reserved_ips': 0,
+            'occupied_in_allocatable_ips': 0,
+            'allocatable_capacity_ips': 0,
+            'allocatable_free_ips': 0,
+            'effective_used_ips': child_ips,
+            'effective_utilization': container_util,
+            'container_child_ips': child_ips,
+            'container_utilization': container_util,
+            'utilization': container_util,
+            'allocation_ready': False,
+            'allocation_blocked_reason': 'container_prefix',
+        }
+
+    space_id = str(prefix.get('address_space_id') or '').strip()
+    if not space_id:
+        return {
+            'total_ips': total_ips,
+            'used_ips': registered_ips,
+            'registered_ips': registered_ips,
+            'registered_utilization': registered_utilization,
+            'reserved_ips': 0,
+            'occupied_in_allocatable_ips': min(registered_ips, total_ips),
+            'allocatable_capacity_ips': 0,
+            'allocatable_free_ips': 0,
+            'effective_used_ips': registered_ips,
+            'effective_utilization': registered_utilization,
+            'container_child_ips': 0,
+            'container_utilization': 0.0,
+            'utilization': registered_utilization,
+            'allocation_ready': False,
+            'allocation_blocked_reason': 'scope_pending',
+        }
+
+    host_start, host_end = _prefix_host_bounds(network)
+    if host_start > host_end:
+        allowed_intervals: list[tuple[int, int]] = []
+    elif _table_exists(conn, 'ipam_pools'):
+        allowed_intervals = _pool_allocation_intervals(conn, prefix, network)
+    else:
+        allowed_intervals = [(host_start, host_end)]
+
+    allocatable_capacity_ips = min(
+        sum(end - start + 1 for start, end in allowed_intervals),
+        2**63,
+    )
+    reserved_ips = max(0, total_ips - allocatable_capacity_ips)
+
+    occupied_in_allocatable_ips = 0
+    if allowed_intervals:
+        occupied_set, _pending = _current_allocation_occupancy(conn, prefix, network)
+        for value in occupied_set:
+            try:
+                parsed = ipaddress.ip_address(value)
+            except ValueError:
+                continue
+            if parsed.version != network.version:
+                continue
+            addr_int = int(parsed)
+            if any(start <= addr_int <= end for start, end in allowed_intervals):
+                occupied_in_allocatable_ips += 1
+
+    allocatable_free_ips = max(0, allocatable_capacity_ips - occupied_in_allocatable_ips)
+    effective_used_ips = min(total_ips, reserved_ips + occupied_in_allocatable_ips)
+    effective_utilization = round(effective_used_ips / total_ips * 100, 1) if total_ips > 0 else 0.0
+
+    return {
+        'total_ips': total_ips,
+        'used_ips': registered_ips,
+        'registered_ips': registered_ips,
+        'registered_utilization': registered_utilization,
+        'reserved_ips': reserved_ips,
+        'occupied_in_allocatable_ips': occupied_in_allocatable_ips,
+        'allocatable_capacity_ips': allocatable_capacity_ips,
+        'allocatable_free_ips': allocatable_free_ips,
+        'effective_used_ips': effective_used_ips,
+        'effective_utilization': effective_utilization,
+        'container_child_ips': 0,
+        'container_utilization': 0.0,
+        'utilization': registered_utilization,
+        'allocation_ready': True,
+        'allocation_blocked_reason': '' if allocatable_free_ips > 0 else 'exhausted',
+    }
 
 
 def _mark_prefix_gateway_item(item: dict, prefix: dict, *, virtual: bool = False) -> dict:
@@ -982,6 +1156,104 @@ def _validate_address_conflicts(conn, subnet, address: str, *, exclude_id: str =
         raise ValueError(f'IP address {address} conflicts with an active VIP')
 
 
+def _validate_prefix_vlan(
+    conn,
+    *,
+    vlan_id: str | None,
+    tenant_id: str | None,
+    site_id: str | None,
+) -> str | None:
+    """Validate that an attached VLAN exists and matches the Prefix tenant/site scope."""
+    normalized_vlan_id = str(vlan_id or '').strip()
+    if not normalized_vlan_id:
+        return None
+    vlan = conn.execute(
+        f'SELECT id, tenant_id, site_id FROM vlans WHERE id = {_PH}',
+        (normalized_vlan_id,),
+    ).fetchone()
+    if not vlan:
+        raise ValueError(f'VLAN not found: {normalized_vlan_id}')
+    vlan_tenant = str(vlan['tenant_id'] or 'tenant-default').strip()
+    target_tenant = str(tenant_id or 'tenant-default').strip()
+    if vlan_tenant != target_tenant:
+        raise ValueError('Selected VLAN belongs to a different security tenant')
+    vlan_site = str(vlan['site_id'] or '').strip()
+    target_site = str(site_id or '').strip()
+    if vlan_site and not target_site:
+        raise ValueError('Site-scoped VLAN cannot be attached to a Prefix without a matching site')
+    if vlan_site and target_site and vlan_site != target_site:
+        raise ValueError('Selected VLAN belongs to a different site')
+    return normalized_vlan_id
+
+
+def _validate_prefix_cidr_contains_children(
+    conn,
+    prefix_id: str,
+    target_network: ipaddress._BaseNetwork,
+) -> None:
+    """Reject CIDR edits that would leave active child IPs, Pools, or VIPs outside the Prefix."""
+    ip_rows = conn.execute(
+        f"""SELECT id, address
+              FROM ip_addresses
+             WHERE subnet_id = {_PH}
+               AND COALESCE(status, 'active') NOT IN ('released', 'available')""",
+        (prefix_id,),
+    ).fetchall()
+    for row in ip_rows:
+        raw_addr = str(row['address'] or '').strip()
+        if not raw_addr:
+            continue
+        try:
+            addr = ipaddress.ip_address(raw_addr)
+        except ValueError:
+            continue
+        if addr.version != target_network.version or addr not in target_network:
+            raise ValueError(
+                f'Prefix {target_network} does not contain existing formal IP address {addr}'
+            )
+
+    if _table_exists(conn, 'ipam_pools'):
+        pool_rows = conn.execute(
+            f'SELECT id, name, start_ip, end_ip FROM ipam_pools WHERE prefix_id = {_PH}',
+            (prefix_id,),
+        ).fetchall()
+        for row in pool_rows:
+            for endpoint in (row['start_ip'], row['end_ip']):
+                raw_addr = str(endpoint or '').strip()
+                if not raw_addr:
+                    continue
+                try:
+                    addr = ipaddress.ip_address(raw_addr)
+                except ValueError:
+                    continue
+                if addr.version != target_network.version or addr not in target_network:
+                    pool_label = str(row['name'] or row['id'])
+                    raise ValueError(
+                        f'Prefix {target_network} does not contain existing IP pool {pool_label} ({addr})'
+                    )
+
+    if _table_exists(conn, 'ipam_vips'):
+        vip_rows = conn.execute(
+            f"""SELECT id, address_inet
+                  FROM ipam_vips
+                 WHERE prefix_id = {_PH}
+                   AND COALESCE(status, 'active') NOT IN ('released', 'deprecated', 'disabled')""",
+            (prefix_id,),
+        ).fetchall()
+        for row in vip_rows:
+            raw_addr = str(row['address_inet'] or '').strip().split('/', 1)[0]
+            if not raw_addr:
+                continue
+            try:
+                addr = ipaddress.ip_address(raw_addr)
+            except ValueError:
+                continue
+            if addr.version != target_network.version or addr not in target_network:
+                raise ValueError(
+                    f'Prefix {target_network} does not contain existing VIP {addr}'
+                )
+
+
 def _validate_prefix_overlap(conn, *, prefix: str, tenant_id: str | None = None,
                              vrf_id: str | None = None, site_id: str | None = None,
                              address_space_id: str | None = None,
@@ -1110,74 +1382,102 @@ def _ph(n: int = 1) -> str:
 # Prefix Hierarchy
 # ══════════════════════════════════════════════════════════
 
-def rebuild_prefixes_hierarchy(conn=None):
-    """Rebuild parent_prefix_id for all prefixes using CIDR containment rules.
+def _prefix_hierarchy_scope_key(row: dict) -> tuple:
+    address_space_id = str(row.get('address_space_id') or '').strip()
+    if address_space_id:
+        return ('space', address_space_id)
+    return (
+        'legacy',
+        str(row.get('tenant_id') or 'tenant-default'),
+        str(row.get('vrf_id') or ''),
+        str(row.get('site_id') or ''),
+    )
+
+
+def rebuild_prefixes_hierarchy(conn=None, *, scope_keys: set[tuple] | None = None, commit: bool = True):
+    """Rebuild parent_prefix_id for prefixes using CIDR containment rules.
     The most-specific (longest prefix) containing network becomes the parent.
-    Within each VRF, prefixes form a tree.
+    Within each address space (or legacy scope), prefixes form a tree.
+
+    When ``scope_keys`` is provided, only prefixes in the affected scopes are
+    loaded and recalculated. When ``commit`` is False, updates stay in the
+    caller's transaction so prefix writes and hierarchy updates commit atomically.
     """
     should_close = conn is None
     if conn is None:
         conn = get_db_connection()
     try:
-        rows = conn.execute(
-            'SELECT id, prefix, vrf_id, tenant_id, site_id, address_space_id FROM prefixes'
-        ).fetchall()
-        items = []
+        if scope_keys is not None:
+            normalized_scopes = set(scope_keys)
+            if not normalized_scopes:
+                return
+            space_ids = sorted({scope[1] for scope in normalized_scopes if scope[0] == 'space' and scope[1]})
+            has_legacy = any(scope[0] == 'legacy' for scope in normalized_scopes)
+            clauses = []
+            params: list = []
+            if space_ids:
+                placeholders = ', '.join(_PH for _ in space_ids)
+                clauses.append(f'address_space_id IN ({placeholders})')
+                params.extend(space_ids)
+            if has_legacy:
+                clauses.append('address_space_id IS NULL')
+            if not clauses:
+                return
+            rows = conn.execute(
+                f'''SELECT id, prefix, vrf_id, tenant_id, site_id, address_space_id, parent_prefix_id
+                      FROM prefixes
+                     WHERE {' OR '.join(clauses)}''',
+                tuple(params),
+            ).fetchall()
+        else:
+            normalized_scopes = None
+            rows = conn.execute(
+                'SELECT id, prefix, vrf_id, tenant_id, site_id, address_space_id, parent_prefix_id FROM prefixes'
+            ).fetchall()
+
+        items_by_scope: dict[tuple, list[dict]] = {}
         for r in rows:
+            scope_key = _prefix_hierarchy_scope_key(dict(r))
+            if normalized_scopes is not None and scope_key not in normalized_scopes:
+                continue
             try:
                 net = ipaddress.ip_network(r['prefix'], strict=False)
-                items.append({
+                items_by_scope.setdefault(scope_key, []).append({
                     'id': r['id'],
                     'prefix': r['prefix'],
-                    'vrf_id': r['vrf_id'] or '',
-                    'tenant_id': r['tenant_id'] or 'tenant-default',
-                    'site_id': r['site_id'] or '',
-                    'address_space_id': str(r['address_space_id'] or ''),
-                    'scope_key': (
-                        ('space', str(r['address_space_id']))
-                        if r['address_space_id']
-                        else ('legacy', str(r['tenant_id'] or 'tenant-default'),
-                              str(r['vrf_id'] or ''), str(r['site_id'] or ''))
-                    ),
+                    'current_parent_id': r['parent_prefix_id'],
                     'net': net,
                     'prefixlen': net.prefixlen,
                 })
             except ValueError:
                 continue
 
-        # Sort by prefix length ascending so we process broader nets first
-        items.sort(key=lambda x: x['prefixlen'])
-
-        # For each prefix, find the most specific (longest prefixlen) parent
-        id_to_parent = {}
-        for i, item in enumerate(items):
-            best_parent = None
-            best_len = -1
-            for j, candidate in enumerate(items):
-                if i == j:
-                    continue
-                if item['scope_key'] != candidate['scope_key']:
-                    continue
-                # IPv4 and IPv6 prefixes never nest within each other
-                if item['net'].version != candidate['net'].version:
-                    continue
-                # candidate must be a strict supernet
-                if candidate['prefixlen'] >= item['prefixlen']:
-                    continue
-                if item['net'].subnet_of(candidate['net']):
-                    if candidate['prefixlen'] > best_len:
-                        best_len = candidate['prefixlen']
-                        best_parent = candidate['id']
-            id_to_parent[item['id']] = best_parent
-
-        # Batch update
-        for prefix_id, parent_id in id_to_parent.items():
-            conn.execute(
-                f'UPDATE prefixes SET parent_prefix_id = {_PH} WHERE id = {_PH}',
-                (parent_id, prefix_id),
-            )
-        conn.commit()
-        logger.info("Rebuilt prefix hierarchy for %d prefixes.", len(items))
+        updated_count = 0
+        for scope_items in items_by_scope.values():
+            scope_items.sort(key=lambda x: x['prefixlen'])
+            for i, item in enumerate(scope_items):
+                best_parent = None
+                best_len = -1
+                for j, candidate in enumerate(scope_items):
+                    if i == j:
+                        continue
+                    if item['net'].version != candidate['net'].version:
+                        continue
+                    if candidate['prefixlen'] >= item['prefixlen']:
+                        continue
+                    if item['net'].subnet_of(candidate['net']):
+                        if candidate['prefixlen'] > best_len:
+                            best_len = candidate['prefixlen']
+                            best_parent = candidate['id']
+                if item['current_parent_id'] != best_parent:
+                    conn.execute(
+                        f'UPDATE prefixes SET parent_prefix_id = {_PH} WHERE id = {_PH}',
+                        (best_parent, item['id']),
+                    )
+                    updated_count += 1
+        if commit:
+            conn.commit()
+        logger.info("Rebuilt prefix hierarchy (%d parent updates).", updated_count)
     finally:
         if should_close:
             conn.close()
@@ -1243,14 +1543,8 @@ def list_subnets(
                 item['conflict_status'] = ''
                 item['conflict_json'] = '{}'
 
-            prefix_str = item.get('prefix', '')
-            total_ips = _calculate_total_ips(prefix_str)
-            item['total_ips'] = total_ips
-
-            # A configured gateway consumes an address even before an operator
-            # creates a separate IPAM address record for it.
-            used_ips = _count_prefix_used_ips(conn, item)
-            item['used_ips'] = used_ips
+            metrics = _calculate_prefix_capacity_metrics(conn, item)
+            item.update(metrics)
 
             # Count active endpoints from network_endpoints if table exists
             try:
@@ -1274,10 +1568,6 @@ def list_subnets(
                 except Exception:
                     pass
                 item['active_ips'] = 0
-
-            item['utilization'] = (
-                round(used_ips / total_ips * 100, 1) if total_ips > 0 else 0
-            )
 
             # Resolve VLAN info
             item['vlan_id'] = item.get('vlan_number') or item.get('vlan_id')
@@ -2841,6 +3131,12 @@ def create_subnet(
             site_id=site_id,
             address_space_id=space_id,
         )
+        vlan_id = _validate_prefix_vlan(
+            conn,
+            vlan_id=vlan_id,
+            tenant_id=tenant_id,
+            site_id=site_id,
+        )
 
         prefix_id = f"prefix-{uuid.uuid4().hex[:12]}"
         now = _utc_now()
@@ -2889,10 +3185,17 @@ def create_subnet(
             after=result,
             details={'address_space_id': space_id, 'site_id': site_id, 'network_type': network_type},
         )
+        rebuild_prefixes_hierarchy(
+            conn,
+            scope_keys={_prefix_hierarchy_scope_key({
+                'address_space_id': space_id,
+                'tenant_id': tenant_id,
+                'vrf_id': vrf_id,
+                'site_id': site_id,
+            })},
+            commit=False,
+        )
         conn.commit()
-
-        # Rebuild hierarchy after adding new prefix
-        rebuild_prefixes_hierarchy(conn)
 
         logger.info("Created prefix %s (%s)", prefix_id, prefix)
         return result
@@ -2953,8 +3256,18 @@ def update_subnet(subnet_id: str, *, audit_context: dict | None = None, **fields
                 address_space_id=target.get('address_space_id'),
                 exclude_id=subnet_id,
             )
+        if any(k in fields for k in ('vlan_id', 'site_id', 'tenant_id')):
+            validated_vlan_id = _validate_prefix_vlan(
+                conn,
+                vlan_id=target.get('vlan_id'),
+                tenant_id=target.get('tenant_id'),
+                site_id=target.get('site_id'),
+            )
+            if 'vlan_id' in fields and fields['vlan_id'] is not None:
+                fields['vlan_id'] = validated_vlan_id
 
         if 'prefix' in fields and fields['prefix'] is not None:
+            _validate_prefix_cidr_contains_children(conn, subnet_id, _net)
             fields['prefix_cidr'] = fields['prefix']
             fields['ip_version'] = _net.version
             fields['prefix_len'] = _net.prefixlen
@@ -3011,11 +3324,12 @@ def update_subnet(subnet_id: str, *, audit_context: dict | None = None, **fields
                 after=dict(after) if after else {},
                 details={key: value for key, value in fields.items() if key != 'expected_revision'},
             )
+            if prefix_changed or 'vrf_id' in fields or 'site_id' in fields:
+                affected_scopes = {_prefix_hierarchy_scope_key(dict(row))}
+                if after:
+                    affected_scopes.add(_prefix_hierarchy_scope_key(dict(after)))
+                rebuild_prefixes_hierarchy(conn, scope_keys=affected_scopes, commit=False)
             conn.commit()
-
-            # Rebuild hierarchy if prefix or VRF changed
-            if prefix_changed or 'vrf_id' in fields:
-                rebuild_prefixes_hierarchy(conn)
 
         return True
     finally:
@@ -3131,7 +3445,7 @@ def delete_subnet(
             f'SELECT id FROM ip_addresses WHERE subnet_id = {_PH} ORDER BY id FOR UPDATE',
             (subnet_id,),
         ).fetchall()
-        # Cascade delete IP addresses
+        # Only released/available tombstones can remain after dependency check
         conn.execute(f'DELETE FROM ip_addresses WHERE subnet_id = {_PH}', (subnet_id,))
         conn.execute(f'DELETE FROM prefixes WHERE id = {_PH}', (subnet_id,))
         _write_ipam_audit(
@@ -3145,13 +3459,218 @@ def delete_subnet(
             before=prefix,
             after={},
         )
+        rebuild_prefixes_hierarchy(
+            conn,
+            scope_keys={_prefix_hierarchy_scope_key(dict(prefix))},
+            commit=False,
+        )
         conn.commit()
-
-        # Rebuild hierarchy after deletion
-        rebuild_prefixes_hierarchy(conn)
 
         logger.info("Deleted prefix %s", subnet_id)
         return True
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def preview_delete_subnet(subnet_id: str) -> dict | None:
+    """Return dependency counts and blockers before deleting a Prefix."""
+    conn = get_db_connection()
+    try:
+        prefix = conn.execute(
+            f'SELECT id, prefix, name, status, revision FROM prefixes WHERE id = {_PH}',
+            (subnet_id,),
+        ).fetchone()
+        if not prefix:
+            return None
+        active_ip_row = conn.execute(
+            f'''SELECT COUNT(*) AS cnt FROM ip_addresses
+                 WHERE subnet_id = {_PH}
+                   AND COALESCE(status, 'active') NOT IN ('released', 'available')''',
+            (subnet_id,),
+        ).fetchone()
+        released_ip_row = conn.execute(
+            f'''SELECT COUNT(*) AS cnt FROM ip_addresses
+                 WHERE subnet_id = {_PH}
+                   AND COALESCE(status, 'active') IN ('released', 'available')''',
+            (subnet_id,),
+        ).fetchone()
+        active_ip_count = int(active_ip_row['cnt'] if active_ip_row else 0)
+        released_ip_count = int(released_ip_row['cnt'] if released_ip_row else 0)
+        pool_count = 0
+        if _table_exists(conn, 'ipam_pools'):
+            row = conn.execute(
+                f'SELECT COUNT(*) AS cnt FROM ipam_pools WHERE prefix_id = {_PH}',
+                (subnet_id,),
+            ).fetchone()
+            pool_count = int(row['cnt'] if row else 0)
+        vip_count = 0
+        if _table_exists(conn, 'ipam_vips'):
+            row = conn.execute(
+                f'SELECT COUNT(*) AS cnt FROM ipam_vips WHERE prefix_id = {_PH}',
+                (subnet_id,),
+            ).fetchone()
+            vip_count = int(row['cnt'] if row else 0)
+        lease_count = 0
+        if _table_exists(conn, 'ipam_dhcp_leases') and _table_exists(conn, 'ipam_pools'):
+            row = conn.execute(
+                f'''SELECT COUNT(*) AS cnt
+                      FROM ipam_dhcp_leases lease
+                      JOIN ipam_pools pool ON pool.id = lease.pool_id
+                     WHERE pool.prefix_id = {_PH}''',
+                (subnet_id,),
+            ).fetchone()
+            lease_count = int(row['cnt'] if row else 0)
+        child_prefix_row = conn.execute(
+            f'SELECT COUNT(*) AS cnt FROM prefixes WHERE parent_prefix_id = {_PH}',
+            (subnet_id,),
+        ).fetchone()
+        child_prefix_count = int(child_prefix_row['cnt'] if child_prefix_row else 0)
+
+        blockers: list[str] = []
+        if active_ip_count > 0:
+            blockers.append(f'Prefix has {active_ip_count} active formal IP address(es)')
+        if pool_count > 0:
+            blockers.append(f'Prefix has {pool_count} IP pool(s)')
+        if vip_count > 0:
+            blockers.append(f'Prefix has {vip_count} assigned VIP record(s)')
+        if lease_count > 0:
+            blockers.append(f'Prefix has {lease_count} Pool-linked DHCP lease(s)')
+
+        return {
+            'prefix_id': str(prefix['id']),
+            'prefix': str(prefix['prefix']),
+            'name': str(prefix['name'] or ''),
+            'status': str(prefix['status'] or ''),
+            'revision': int(prefix['revision'] or 1),
+            'active_ip_count': active_ip_count,
+            'released_ip_count': released_ip_count,
+            'pool_count': pool_count,
+            'vip_count': vip_count,
+            'lease_count': lease_count,
+            'child_prefix_count': child_prefix_count,
+            'can_delete': len(blockers) == 0,
+            'blockers': blockers,
+        }
+    finally:
+        conn.close()
+
+
+def audit_ipam_scope_integrity(allowed_prefix_ids: list[str] | None = None) -> dict:
+    """Read-only integrity audit for Prefix/child scope drift and unmapped legacy rows."""
+    conn = get_db_connection()
+    try:
+        visible_sql, visible_ids = _allowed_prefix_filter(allowed_prefix_ids)
+        ip_mismatches = [
+            dict(row)
+            for row in conn.execute(
+                f'''SELECT ip.id AS ip_id, ip.address, ip.subnet_id AS prefix_id,
+                           p.prefix, p.address_space_id AS prefix_address_space_id,
+                           ip.address_space_id AS ip_address_space_id,
+                           p.tenant_id AS prefix_tenant_id, ip.tenant_id AS ip_tenant_id,
+                           p.vrf_id AS prefix_vrf_id, ip.vrf_id AS ip_vrf_id
+                      FROM ip_addresses ip
+                      JOIN prefixes p ON p.id = ip.subnet_id
+                     WHERE 1=1{visible_sql}
+                       AND (
+                           COALESCE(ip.address_space_id, '') <> COALESCE(p.address_space_id, '')
+                           OR COALESCE(ip.tenant_id, 'tenant-default') <> COALESCE(p.tenant_id, 'tenant-default')
+                           OR COALESCE(ip.vrf_id, '') <> COALESCE(p.vrf_id, '')
+                       )
+                     ORDER BY p.prefix, ip.address''',
+                visible_ids,
+            ).fetchall()
+        ]
+        pool_mismatches: list[dict] = []
+        if _table_exists(conn, 'ipam_pools'):
+            pool_mismatches = [
+                dict(row)
+                for row in conn.execute(
+                    f'''SELECT pool.id AS pool_id, pool.name AS pool_name, pool.prefix_id,
+                               p.prefix, p.address_space_id AS prefix_address_space_id,
+                               pool.address_space_id AS pool_address_space_id,
+                               p.tenant_id AS prefix_tenant_id, pool.tenant_id AS pool_tenant_id
+                          FROM ipam_pools pool
+                          JOIN prefixes p ON p.id = pool.prefix_id
+                         WHERE 1=1{visible_sql}
+                           AND (
+                               COALESCE(pool.address_space_id, '') <> COALESCE(p.address_space_id, '')
+                               OR COALESCE(pool.tenant_id, 'tenant-default') <> COALESCE(p.tenant_id, 'tenant-default')
+                           )
+                         ORDER BY p.prefix, pool.name''',
+                    visible_ids,
+                ).fetchall()
+            ]
+        vip_mismatches: list[dict] = []
+        if _table_exists(conn, 'ipam_vips'):
+            vip_mismatches = [
+                dict(row)
+                for row in conn.execute(
+                    f'''SELECT vip.id AS vip_id, host(vip.address_inet) AS address, vip.prefix_id,
+                               p.prefix, p.address_space_id AS prefix_address_space_id,
+                               vip.address_space_id AS vip_address_space_id,
+                               p.tenant_id AS prefix_tenant_id, vip.tenant_id AS vip_tenant_id
+                          FROM ipam_vips vip
+                          JOIN prefixes p ON p.id = vip.prefix_id
+                         WHERE 1=1{visible_sql}
+                           AND (
+                               COALESCE(vip.address_space_id, '') <> COALESCE(p.address_space_id, '')
+                               OR COALESCE(vip.tenant_id, 'tenant-default') <> COALESCE(p.tenant_id, 'tenant-default')
+                           )
+                         ORDER BY p.prefix, vip.id''',
+                    visible_ids,
+                ).fetchall()
+            ]
+        unmapped_prefixes = [
+            dict(row)
+            for row in conn.execute(
+                f'''SELECT p.id AS prefix_id, p.prefix, p.name, p.tenant_id, p.site_id, p.vrf_id, p.status
+                      FROM prefixes p
+                     WHERE p.address_space_id IS NULL{visible_sql}
+                     ORDER BY p.prefix, p.id''',
+                visible_ids,
+            ).fetchall()
+        ]
+        duplicate_legacy_groups: dict[tuple[str, str, str], list[dict]] = {}
+        for row in unmapped_prefixes:
+            key = (
+                str(row.get('tenant_id') or 'tenant-default'),
+                str(row.get('vrf_id') or ''),
+                str(row.get('prefix') or ''),
+            )
+            duplicate_legacy_groups.setdefault(key, []).append(row)
+        duplicate_legacy_cidrs = [
+            {
+                'tenant_id': tenant_id,
+                'vrf_id': vrf_id,
+                'prefix': cidr,
+                'prefix_ids': [str(item['prefix_id']) for item in group],
+                'count': len(group),
+            }
+            for (tenant_id, vrf_id, cidr), group in sorted(duplicate_legacy_groups.items())
+            if len(group) > 1
+        ]
+        return {
+            'summary': {
+                'prefix_ip_space_mismatch_count': len(ip_mismatches),
+                'prefix_pool_space_mismatch_count': len(pool_mismatches),
+                'prefix_vip_space_mismatch_count': len(vip_mismatches),
+                'unmapped_legacy_prefix_count': len(unmapped_prefixes),
+                'duplicate_legacy_cidr_count': len(duplicate_legacy_cidrs),
+                'healthy': (
+                    len(ip_mismatches) == 0
+                    and len(pool_mismatches) == 0
+                    and len(vip_mismatches) == 0
+                ),
+            },
+            'prefix_ip_space_mismatches': ip_mismatches,
+            'prefix_pool_space_mismatches': pool_mismatches,
+            'prefix_vip_space_mismatches': vip_mismatches,
+            'unmapped_legacy_prefixes': unmapped_prefixes,
+            'duplicate_legacy_cidrs': duplicate_legacy_cidrs,
+        }
     finally:
         conn.close()
 
@@ -3161,6 +3680,24 @@ def _ensure_prefixes_have_no_vip_or_lease_dependencies(conn, prefix_ids: list[st
     if not normalized_ids:
         return
     placeholders = ', '.join(_PH for _ in normalized_ids)
+    active_ip = conn.execute(
+        f'''SELECT id FROM ip_addresses
+             WHERE subnet_id IN ({placeholders})
+               AND COALESCE(status, 'active') NOT IN ('released', 'available')
+             ORDER BY id LIMIT 1''',
+        tuple(normalized_ids),
+    ).fetchone()
+    if active_ip:
+        raise ValueError('Prefix has active formal IP addresses; release, move, or delete them before deleting the Prefix')
+    if _table_exists(conn, 'ipam_pools'):
+        pool = conn.execute(
+            f'''SELECT id FROM ipam_pools
+                 WHERE prefix_id IN ({placeholders})
+                 ORDER BY id LIMIT 1''',
+            tuple(normalized_ids),
+        ).fetchone()
+        if pool:
+            raise ValueError('Prefix has IP pools; delete them before deleting the Prefix')
     vip = conn.execute(
         f'''SELECT id FROM ipam_vips
              WHERE prefix_id IN ({placeholders})
@@ -3234,7 +3771,12 @@ def delete_subnets(
                 before=locked_prefixes[prefix_id],
                 after={},
             )
-        rebuild_prefixes_hierarchy(conn)
+        affected_scopes = {
+            _prefix_hierarchy_scope_key(dict(locked_prefixes[prefix_id]))
+            for prefix_id in normalized_ids
+        }
+        rebuild_prefixes_hierarchy(conn, scope_keys=affected_scopes, commit=False)
+        conn.commit()
         return {'deleted': len(normalized_ids), 'ids': sorted(normalized_ids)}
     except Exception:
         conn.rollback()
@@ -4870,6 +5412,8 @@ def allocate_next_address(subnet_id: str, *, hostname: str = '', device_id: str 
         subnet = _select_prefix_for_update(conn, subnet_id)
         if not subnet:
             raise ValueError('Subnet not found')
+        if str(subnet.get('status') or '').strip().lower() == 'container':
+            raise ValueError('Container prefixes cannot allocate host IP addresses directly; allocate from a child prefix')
         space_id = str(subnet['address_space_id'] or '').strip()
         if not space_id:
             raise ValueError('Resolve the Prefix address space before automatic allocation')
@@ -4937,6 +5481,12 @@ def allocate_next_address(subnet_id: str, *, hostname: str = '', device_id: str 
             requested_by=requested_by,
             expires_at=expires_at,
         )
+        addr = {
+            **addr,
+            'subnet_id': subnet_id,
+            'address_space_id': space_id,
+            'pool_id': pool_id or None,
+        }
         _write_ipam_audit(
             conn,
             audit_context,
@@ -5099,14 +5649,23 @@ def ipam_summary(allowed_prefix_ids: list[str] | None = None) -> dict:
 
         # Calculate total capacity dynamically
         all_prefixes = conn.execute(
-            f'SELECT id, prefix, status, gateway, tenant_id FROM prefixes p{subnet_where}',
+            f'SELECT id, prefix, status, gateway, tenant_id, vrf_id, site_id, address_space_id FROM prefixes p{subnet_where}',
             subnet_params,
         ).fetchall()
         capacity_prefixes = [
             row for row in all_prefixes
             if _is_capacity_prefix(row['prefix'], row['status'])
         ]
-        total_capacity = sum(_calculate_total_ips(r['prefix']) for r in capacity_prefixes)
+        total_capacity = 0
+        total_reserved = 0
+        total_allocatable_free = 0
+        total_effective_used = 0
+        for row in capacity_prefixes:
+            metrics = _calculate_prefix_capacity_metrics(conn, dict(row))
+            total_capacity += metrics['total_ips']
+            total_reserved += metrics['reserved_ips']
+            total_allocatable_free += metrics['allocatable_free_ips']
+            total_effective_used += metrics['effective_used_ips']
 
         total_used = sum(_count_prefix_used_ips(conn, dict(prefix_row)) for prefix_row in all_prefixes)
 
@@ -5115,6 +5674,9 @@ def ipam_summary(allowed_prefix_ids: list[str] | None = None) -> dict:
             'total_addresses': addresses['cnt'] if addresses else 0,
             'total_capacity': total_capacity,
             'total_used': total_used,
+            'total_reserved': total_reserved,
+            'total_allocatable_free': total_allocatable_free,
+            'total_effective_used': total_effective_used,
             'capacity_prefixes_count': len(capacity_prefixes),
             'excluded_prefixes_count': len(all_prefixes) - len(capacity_prefixes),
             'high_utilization_subnets': [],
@@ -5144,7 +5706,7 @@ def get_utilization_analytics(
         # ── Per-prefix utilization ──────────────────────────
         rows = conn.execute(
             '''SELECT p.id, p.prefix, p.name, p.status, p.site_id, p.gateway, p.tenant_id,
-                      p.network_type,
+                      p.vrf_id, p.address_space_id, p.network_type,
                       s.site_name, s.site_code
                FROM prefixes p
                LEFT JOIN sites s ON p.site_id = s.id
@@ -5169,19 +5731,32 @@ def get_utilization_analytics(
         per_prefix = []
         total_ips_sum = 0
         used_ips_sum = 0
+        reserved_ips_sum = 0
+        allocatable_free_ips_sum = 0
+        effective_used_ips_sum = 0
+        free_ips_sum = 0
         capacity_prefixes_count = 0
         excluded_prefixes_count = 0
         site_agg: dict[str, dict] = {}
 
         for r in scoped_rows:
-            total = _calculate_total_ips(r['prefix'])
+            row_dict = dict(r)
+            metrics = _calculate_prefix_capacity_metrics(conn, row_dict)
+            total = metrics['total_ips']
             exclusion_reason = _capacity_exclusion_reason(r['prefix'], r['status'])
             capacity_eligible = not exclusion_reason
-            used_count = _count_prefix_used_ips(conn, dict(r))
+            used_count = metrics['used_ips']
 
             if capacity_eligible:
                 total_ips_sum += total
                 used_ips_sum += used_count
+                reserved_ips_sum += metrics['reserved_ips']
+                allocatable_free_ips_sum += metrics['allocatable_free_ips']
+                effective_used_ips_sum += metrics['effective_used_ips']
+                if metrics['allocation_ready']:
+                    free_ips_sum += metrics['allocatable_free_ips']
+                else:
+                    free_ips_sum += max(0, total - used_count)
                 capacity_prefixes_count += 1
             else:
                 excluded_prefixes_count += 1
@@ -5192,9 +5767,7 @@ def get_utilization_analytics(
                 'name': r['name'],
                 'status': r['status'],
                 'network_type': r['network_type'] or 'unclassified',
-                'total_ips': total,
-                'used_ips': used_count,
-                'utilization': round(used_count / total * 100, 1) if total > 0 else 0,
+                **metrics,
                 'capacity_eligible': capacity_eligible,
                 'capacity_excluded_reason': exclusion_reason,
             })
@@ -5274,6 +5847,8 @@ def get_utilization_analytics(
         vips_count = _count('ipam_vips')
         leases_count = _count('ipam_dhcp_leases')
 
+        registered_rate = round(used_ips_sum / total_ips_sum * 100, 1) if total_ips_sum > 0 else 0
+        effective_rate = round(effective_used_ips_sum / total_ips_sum * 100, 1) if total_ips_sum > 0 else 0
         overview = {
             'prefixes_count': prefixes_count,
             'ips_count': ips_count,
@@ -5282,8 +5857,14 @@ def get_utilization_analytics(
             'leases_count': leases_count,
             'total_ips': total_ips_sum,
             'used_ips': used_ips_sum,
-            'free_ips': max(0, total_ips_sum - used_ips_sum),
-            'utilization_rate': round(used_ips_sum / total_ips_sum * 100, 1) if total_ips_sum > 0 else 0,
+            'registered_ips': used_ips_sum,
+            'reserved_ips': reserved_ips_sum,
+            'effective_used_ips': effective_used_ips_sum,
+            'allocatable_free_ips': allocatable_free_ips_sum,
+            'free_ips': free_ips_sum,
+            'utilization_rate': registered_rate,
+            'registered_utilization_rate': registered_rate,
+            'effective_utilization_rate': effective_rate,
             'capacity_prefixes_count': capacity_prefixes_count,
             'excluded_prefixes_count': excluded_prefixes_count,
             'scope_excluded_prefixes_count': scope_excluded_prefixes_count,
@@ -5364,11 +5945,7 @@ def get_subnets_tree(allowed_prefix_ids: list[str] | None = None) -> list[dict]:
         nodes = {}
         for r in rows:
             item = dict(r)
-            total_ips = _calculate_total_ips(item.get('prefix', ''))
-            item['total_ips'] = total_ips
-            used_ips = _count_prefix_used_ips(conn, item)
-            item['used_ips'] = used_ips
-            item['utilization'] = round(used_ips / total_ips * 100, 1) if total_ips > 0 else 0
+            item.update(_calculate_prefix_capacity_metrics(conn, item))
             item['vlan_id'] = item.get('vlan_number') or item.get('vlan_id')
             item['children'] = []
             nodes[item['id']] = item
@@ -6563,6 +7140,41 @@ def _lock_external_dhcp_pool_for_lease(
     pool['tenant_id'] = prefix_tenant
     return pool
 
+def _parse_lease_timestamp(value: str | None) -> datetime | None:
+    text = str(value or '').strip()
+    if not text:
+        return None
+    normalized = text.replace('Z', '+00:00')
+    if ' ' in normalized and 'T' not in normalized:
+        normalized = normalized.replace(' ', 'T', 1)
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _annotate_lease_effective_state(item: dict, now: datetime | None = None) -> dict:
+    current = now or datetime.now(timezone.utc)
+    source_state = str(item.get('lease_state') or 'active').strip().lower() or 'active'
+    lease_end_dt = _parse_lease_timestamp(item.get('lease_end'))
+    is_expired = lease_end_dt is not None and lease_end_dt <= current
+    if source_state in ('expired', 'released', 'revoked', 'inactive'):
+        effective_state = source_state
+    elif is_expired:
+        effective_state = 'expired'
+    else:
+        effective_state = source_state
+    item['source_lease_state'] = source_state
+    item['effective_state'] = effective_state
+    item['is_expired'] = is_expired or effective_state == 'expired'
+    item['scope_pending'] = not bool(item.get('address_space_id') and item.get('pool_id'))
+    item['blocks_local_allocation'] = bool(item.get('pool_id') and item.get('address_space_id'))
+    return item
+
+
 def list_leases(
     *,
     q: str = '',
@@ -6582,9 +7194,7 @@ def list_leases(
             clauses.append("(LOWER(lease.address) LIKE ? OR LOWER(COALESCE(lease.mac_address, '')) LIKE ? OR LOWER(COALESCE(lease.hostname, '')) LIKE ? OR LOWER(COALESCE(lease.dhcp_server, '')) LIKE ?)")
             fuzzy = f"%{q.strip().lower()}%"
             params.extend([fuzzy] * 4)
-        if state and state.lower() != 'all':
-            clauses.append("LOWER(COALESCE(lease.lease_state, '')) = ?")
-            params.append(state.lower())
+        requested_state = str(state or '').strip().lower()
         if allowed_pool_ids is not None:
             normalized_pool_ids = sorted({str(value or '').strip() for value in allowed_pool_ids if str(value or '').strip()})
             scope_clauses: list[str] = []
@@ -6612,14 +7222,6 @@ def list_leases(
             clauses.append("COALESCE(lease.tenant_id, 'tenant-default') = ?")
             params.append(str(tenant_id))
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ''
-        count_row = conn.execute(
-            f'SELECT COUNT(*) AS total FROM ipam_dhcp_leases lease{where}', tuple(params)
-        ).fetchone()
-        total = int(count_row['total'] or 0) if count_row else 0
-        safe_page = max(int(page or 1), 1)
-        safe_page_size = min(max(int(page_size or 20), 1), 100)
-        page_clause = '' if page is None else ' LIMIT ? OFFSET ?'
-        page_params = [] if page is None else [safe_page_size, (safe_page - 1) * safe_page_size]
         rows = conn.execute(f'''SELECT lease.*, pool.name AS pool_name,
                                        spaces.name AS address_space_name,
                                        prefix.prefix AS pool_prefix
@@ -6628,14 +7230,20 @@ def list_leases(
                                   LEFT JOIN ipam_address_spaces spaces ON spaces.id = lease.address_space_id
                                   LEFT JOIN prefixes prefix ON prefix.id = pool.prefix_id
                                   {where}
-                                 ORDER BY lease.address{page_clause}''',
-                            tuple(params + page_params)).fetchall()
-        items = [dict(row) for row in rows]
-        for item in items:
-            item['scope_pending'] = not bool(item.get('address_space_id') and item.get('pool_id'))
+                                 ORDER BY lease.address''',
+                            tuple(params)).fetchall()
+        now = datetime.now(timezone.utc)
+        items = [_annotate_lease_effective_state(dict(row), now) for row in rows]
+        if requested_state and requested_state != 'all':
+            items = [item for item in items if item['effective_state'] == requested_state]
+        total = len(items)
         if page is None:
             return items
-        return {'items': items, 'total': total, 'page': safe_page, 'page_size': safe_page_size, 'total_pages': max(1, (total + safe_page_size - 1) // safe_page_size)}
+        safe_page = max(int(page or 1), 1)
+        safe_page_size = min(max(int(page_size or 20), 1), 100)
+        start = (safe_page - 1) * safe_page_size
+        paged_items = items[start:start + safe_page_size]
+        return {'items': paged_items, 'total': total, 'page': safe_page, 'page_size': safe_page_size, 'total_pages': max(1, (total + safe_page_size - 1) // safe_page_size)}
     finally:
         conn.close()
 
@@ -6653,7 +7261,7 @@ def _lease_response(conn, lease_id: str) -> dict:
         (lease_id,),
     ).fetchone()
     result = dict(row) if row else {'id': lease_id}
-    result['scope_pending'] = not bool(result.get('address_space_id') and result.get('pool_id'))
+    _annotate_lease_effective_state(result)
     result['scope_status'] = str(
         result.get('scope_status') or ('scope_pending' if result['scope_pending'] else 'scope_resolved')
     )
@@ -6943,11 +7551,14 @@ def get_next_available_ip_details(subnet_id: str, *, pool_id: str | None = None)
     conn = get_db_connection()
     try:
         subnet = conn.execute(
-            f'''SELECT prefix, gateway, tenant_id, vrf_id, site_id, address_space_id
+            f'''SELECT id, prefix, status, gateway, tenant_id, vrf_id, site_id, address_space_id
                   FROM prefixes WHERE id = {_PH}''',
             (subnet_id,),
         ).fetchone()
         if not subnet:
+            return {'next_available_ip': None, 'pending_discovery_count': 0}
+
+        if str(subnet['status'] or '').strip().lower() == 'container':
             return {'next_available_ip': None, 'pending_discovery_count': 0}
 
         space_id = str(subnet['address_space_id'] or '').strip()

@@ -5,8 +5,10 @@ import { ActionButton, ActionIconButton, ActionIconGroup } from '../../component
 import { apiRequest, ApiError } from '../../api/http';
 import {
   createRoutingContextMapping,
+  listRoutingContextCandidates,
   listRoutingContextMappings,
   updateRoutingContextMapping,
+  type RoutingContextCandidate,
   type RoutingContextMapping,
   type RoutingContextSource,
   type RoutingContextStatus,
@@ -133,6 +135,9 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
   const [lookupsLoading, setLookupsLoading] = useState(true);
   const [lookupsError, setLookupsError] = useState('');
   const [mappings, setMappings] = useState<RoutingContextMapping[]>([]);
+  const [candidates, setCandidates] = useState<RoutingContextCandidate[]>([]);
+  const [candidateSpaceSelection, setCandidateSpaceSelection] = useState<Record<string, string>>({});
+  const [confirmingCandidateKey, setConfirmingCandidateKey] = useState('');
   const [mappingsLoading, setMappingsLoading] = useState(false);
   const [mappingsError, setMappingsError] = useState('');
   const [mutationError, setMutationError] = useState('');
@@ -207,6 +212,10 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
         .filter((space) => Boolean(space.id) && (space.kind === 'vrf' || space.kind === 'global'));
       setDevices(nextDevices);
       setAddressSpaces(nextAddressSpaces);
+      const urlDeviceId = new URLSearchParams(window.location.search).get('device_id')?.trim() || '';
+      if (urlDeviceId && nextDevices.some((device) => device.id === urlDeviceId)) {
+        setSelectedDeviceId((current) => current || urlDeviceId);
+      }
     } catch (error) {
       setDevices([]);
       setAddressSpaces([]);
@@ -225,6 +234,7 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
     const requestId = ++mappingRequestId.current;
     if (!deviceId) {
       setMappings([]);
+      setCandidates([]);
       setMappingsError('');
       setMappingsLoading(false);
       return;
@@ -232,13 +242,18 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
     setMappingsLoading(true);
     setMappingsError('');
     try {
-      const payload = await listRoutingContextMappings(deviceId);
+      const [payload, candidatePayload] = await Promise.all([
+        listRoutingContextMappings(deviceId),
+        listRoutingContextCandidates(deviceId).catch(() => ({ items: [] as RoutingContextCandidate[] })),
+      ]);
       if (requestId !== mappingRequestId.current) return;
       if (!Array.isArray(payload.items)) throw new Error('Invalid routing-context mapping response.');
       setMappings(payload.items);
+      setCandidates(Array.isArray(candidatePayload?.items) ? candidatePayload.items : []);
     } catch (error) {
       if (requestId !== mappingRequestId.current) return;
       setMappings([]);
+      setCandidates([]);
       if (error instanceof ApiError && error.status === 403) setWriteDenied(true);
       setMappingsError(displayError(
         error,
@@ -351,6 +366,40 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
       if (error instanceof ApiError && error.status === 409) void loadMappings(selectedDeviceId);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const candidateRowKey = (candidate: RoutingContextCandidate) => (
+    `${candidate.context_source}:${candidate.context_type}:${candidate.local_context_key}`
+  );
+
+  const handleConfirmCandidate = async (candidate: RoutingContextCandidate) => {
+    if (!selectedDeviceId || !candidate.can_confirm || candidate.context_type === 'unknown') return;
+    const key = candidateRowKey(candidate);
+    const selectedSpaceId = candidateSpaceSelection[key] || '';
+    if (!selectedSpaceId) {
+      setMutationError(zh ? '请先为该候选选择目标地址空间。' : 'Select a target address space for this candidate first.');
+      return;
+    }
+    setMutationError('');
+    setConfirmingCandidateKey(key);
+    try {
+      await createRoutingContextMapping({
+        device_id: selectedDeviceId,
+        context_source: candidate.context_source,
+        context_type: candidate.context_type,
+        local_context_key: candidate.local_context_key,
+        local_context_name: candidate.local_context_name || candidate.local_context_key,
+        address_space_id: selectedSpaceId,
+      });
+      await loadMappings(selectedDeviceId);
+    } catch (error) {
+      setMutationError(showMutationError(
+        error,
+        zh ? '确认上下文归属失败，请重试。' : 'Failed to confirm context ownership. Please retry.',
+      ));
+    } finally {
+      setConfirmingCandidateKey('');
     }
   };
 
@@ -499,6 +548,119 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
         {!lookupsError && mappingsError && renderError(mappingsError, () => void loadMappings(selectedDeviceId))}
         {mutationError && (
           <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{mutationError}</div>
+        )}
+
+        {selectedDeviceId && !mappingsLoading && !mappingsError && candidates.length > 0 && (
+          <section
+            className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
+            aria-label={zh ? '已采集路由上下文候选' : 'Discovered routing context candidates'}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/70 px-5 py-3">
+              <div>
+                <h2 className="text-sm font-bold text-slate-800">
+                  {zh ? '已采集到的路由上下文候选' : 'Discovered Routing Contexts'}
+                </h2>
+                <p className="text-xs text-slate-500">
+                  {zh
+                    ? '来自最新成功快照；只需选择目标地址空间即可确认归属，未识别上下文保持待确认。'
+                    : 'From latest successful snapshots. Pick a target address space to confirm; unknown contexts stay pending.'}
+                </p>
+              </div>
+              <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
+                {candidates.length}
+              </span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="nx-data-table min-w-[920px] text-left">
+                <thead>
+                  <tr className="border-b border-slate-100 bg-slate-50/50 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    <th className="px-5 py-2.5">{zh ? '已发现路由上下文' : 'Discovered Context'}</th>
+                    <th className="px-4 py-2.5">{zh ? '协议 / 来源' : 'Protocol / Sources'}</th>
+                    <th className="px-4 py-2.5">{zh ? '样本 / 最近采集' : 'Samples / Last Seen'}</th>
+                    <th className="px-4 py-2.5">{zh ? '归属状态' : 'Ownership Status'}</th>
+                    <th className="px-4 py-2.5 text-right">{zh ? '确认目标地址空间' : 'Confirm Address Space'}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {candidates.map((candidate) => {
+                    const key = candidateRowKey(candidate);
+                    const matchingSpaces = candidate.context_type === 'unknown'
+                      ? []
+                      : addressSpaces.filter((space) => space.kind === candidate.context_type);
+                    const selectedSpace = candidateSpaceSelection[key] || '';
+                    const isConfirming = confirmingCandidateKey === key;
+                    return (
+                      <tr key={key} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
+                        <td className="px-5 py-3">
+                          <div className="text-sm font-semibold text-slate-800">
+                            {candidate.context_type === 'global'
+                              ? (zh ? '默认路由表 (Global)' : 'Default Routing Table (Global)')
+                              : candidate.context_type === 'vrf'
+                                ? candidate.local_context_name || candidate.local_context_key
+                                : (zh ? '未识别上下文' : 'Unknown Context')}
+                          </div>
+                          <code className="mt-0.5 block text-xs text-slate-500">
+                            {candidate.local_context_key || '—'}
+                          </code>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-slate-600">
+                          <span className="font-semibold uppercase">{candidate.context_source}</span>
+                          <span className="ml-1.5 text-slate-400">({candidate.sources.join(', ')})</span>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-slate-600">
+                          <div className="font-semibold tabular-nums">{candidate.observation_count}</div>
+                          <div className="text-[11px] text-slate-400">{formatTimestamp(candidate.last_observed_at, zh)}</div>
+                        </td>
+                        <td className="px-4 py-3">
+                          {candidate.mapping_status === 'mapped' ? (
+                            <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[10px] font-bold text-emerald-700">
+                              {zh ? `已归属 · ${candidate.address_space_name || candidate.address_space_id}` : `Mapped · ${candidate.address_space_name || candidate.address_space_id}`}
+                            </span>
+                          ) : candidate.mapping_status === 'unknown_context' ? (
+                            <span className="inline-flex rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-[10px] font-bold text-slate-600">
+                              {zh ? '缺少可靠上下文（待确认）' : 'Unreliable context (pending)'}
+                            </span>
+                          ) : (
+                            <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-800">
+                              {zh ? '待确认归属' : 'Pending confirmation'}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {candidate.mapping_status === 'pending' && candidate.can_confirm ? (
+                            <div className="inline-flex items-center justify-end gap-2">
+                              <select
+                                aria-label={`${zh ? '目标地址空间' : 'Target address space'} ${candidate.local_context_key}`}
+                                value={selectedSpace}
+                                onChange={(event) => setCandidateSpaceSelection((prev) => ({ ...prev, [key]: event.target.value }))}
+                                disabled={isConfirming || writeDenied}
+                                className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none focus:border-blue-400"
+                              >
+                                <option value="">{zh ? '选择目标地址空间…' : 'Select address space…'}</option>
+                                {matchingSpaces.map((space) => (
+                                  <option key={space.id} value={space.id}>{addressSpaceLabel(space, zh)}</option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                disabled={!selectedSpace || isConfirming || writeDenied}
+                                onClick={() => void handleConfirmCandidate(candidate)}
+                                className="h-8 rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {isConfirming ? (zh ? '确认中…' : 'Confirming…') : (zh ? '确认归属' : 'Confirm')}
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-400">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
         )}
 
         <section className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label={zh ? '设备上下文映射列表' : 'Device context mappings'}>

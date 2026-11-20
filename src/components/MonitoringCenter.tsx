@@ -96,6 +96,30 @@ export const MonitoringOverviewStatus: React.FC<{
 
 /* ─── sub-components ─── */
 
+// Isolated 1-second clock so the 2,000-line MonitoringCenter tree does not
+// re-render every second just to update the header timestamp.
+const NocClock = React.memo<{ language: 'zh' | 'en' }>(({ language }) => {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      setNow(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return (
+    <span className="text-[11px] text-gray-500 dark:text-zinc-400 font-mono font-medium">
+      {now.toLocaleTimeString(language === 'zh' ? 'zh-CN' : 'en-US', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })}
+    </span>
+  );
+});
+NocClock.displayName = 'NocClock';
+
 const StatusCard: React.FC<{
   label: string; value: string | number; sub?: string;
   tone?: 'default' | 'green' | 'red' | 'amber' | 'blue';
@@ -335,7 +359,6 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
   const [hostResourceRange, setHostResourceRange] = useState<1 | 24 | 168>(24);
   const [hostResourceHistory, setHostResourceHistory] = useState<HostResourceHistoryPayload | null>(null);
   const [hostResourceHistoryLoading, setHostResourceHistoryLoading] = useState(false);
-  const [nocClock, setNocClock] = useState(() => new Date());
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [impactedShowAll, setImpactedShowAll] = useState(false);
   const [selectedIncident, setSelectedIncident] = useState<MonitoringIncident | null>(null);
@@ -1112,6 +1135,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
       return;
     }
     autoRefreshRef.current = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       fetchMonitoringOverview();
       fetchMonitoringAlerts();
       fetchHostResources();
@@ -1122,11 +1146,6 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
     }, 30000);
     return () => { if (autoRefreshRef.current) clearInterval(autoRefreshRef.current); };
   }, [autoRefresh, monitorPageVisible, hostResourceRange, fetchMonitoringOverview, fetchMonitoringAlerts, fetchHostResources, fetchHostResourceHistory, monitorSelectedDevice, fetchMonitoringRealtime, setMonitorRealtime]);
-
-  useEffect(() => {
-    const timer = setInterval(() => setNocClock(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   useEffect(() => {
     if (monitorSelectedDevice?.id) {
@@ -1174,7 +1193,6 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
   const majorAlertCount = alertSeverityCounts.major ?? defaultOpenAlerts.filter((a: any) => String(a.severity || '').toLowerCase() === 'major').length;
   const warningAlertCount = alertSeverityCounts.warning ?? defaultOpenAlerts.filter((a: any) => !['critical', 'major'].includes(String(a.severity || '').toLowerCase())).length;
 
-  const nocTimeStr = nocClock.toLocaleTimeString(language === 'zh' ? 'zh-CN' : 'en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
   return (
     <div className="monitoring-center flex flex-col h-full overflow-hidden bg-[#fafafa] dark:bg-[#18181b]">
@@ -1187,9 +1205,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
           <div className="flex items-center gap-2.5 flex-wrap">
             {/* Refresh & Polling Micro-Capsule */}
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white dark:bg-zinc-800 border border-gray-200/70 dark:border-zinc-700/60 shadow-2xs">
-              <span className="text-[11px] text-gray-500 dark:text-zinc-400 font-mono font-medium">
-                {nocTimeStr}
-              </span>
+              <NocClock language={language} />
               <span className="text-gray-200 dark:text-zinc-700">|</span>
               <button 
                 type="button"

@@ -1,0 +1,89 @@
+schema_version: 1
+project: Nexora Knowledge Engine V2
+contract: isolated-environments
+resource_prefix: nexora-kb-v2
+allowed_environment_values:
+  - development
+  - test
+  - shadow
+  - preprod
+common:
+  v1_compatibility_required: true
+  database_authority: postgresql
+  secrets_source: runtime_secret_store_or_untracked_env
+  production_credentials_allowed: false
+  network_write_allowed: false
+  required_health_paths:
+    - /api/health/live
+    - /api/health/ready
+  required_metadata:
+    - environment
+    - deployment_id
+    - application_version
+    - migration_version
+    - api_version
+    - knowledge_schema_version
+    - chunking_version
+    - embedding_version
+    - provider
+    - model
+    - model_version
+environments:
+  development:
+    purpose: local_development
+    resource_suffix: dev
+    database_name: nexora_kb_v2_dev
+    redis_db: 10
+    node_env: development
+    v2_enabled_default: false
+    shadow_read: false
+    rollout_percent: 0
+    write_enabled: false
+    external_ai: mock_only
+    data: synthetic_or_minimal_fixture
+  test:
+    purpose: ci_regression_and_failure_injection
+    resource_suffix: test-${CI_RUN_ID}
+    database_name: nexora_kb_v2_test_${CI_RUN_ID}
+    redis_db: 11
+    node_env: test
+    v2_enabled_default: false
+    shadow_read: false
+    rollout_percent: 0
+    write_enabled: false
+    external_ai: mock_only
+    data: ephemeral_sanitized_fixture
+  shadow:
+    purpose: production_shaped_read_only_comparison
+    resource_suffix: shadow
+    database_name: nexora_kb_v2_shadow
+    redis_db: 12
+    node_env: production
+    v2_enabled_default: false
+    shadow_read: true
+    rollout_percent: 0
+    write_enabled: false
+    external_ai: gateway_sandbox_or_offline_cache
+    data: sanitized_read_only_snapshot
+  preprod:
+    purpose: release_candidate_and_rollback_rehearsal
+    resource_suffix: preprod
+    database_name: nexora_kb_v2_preprod
+    redis_db: 13
+    node_env: production
+    v2_enabled_default: false
+    shadow_read: true
+    rollout_percent: 0
+    write_enabled: false
+    external_ai: gateway_sandbox
+    data: sanitized_production_shaped_fixture
+required_gates:
+  - configuration_schema
+  - resource_isolation
+  - database_fresh_upgrade_retry
+  - health_and_readiness
+  - security_gateway_and_rbac
+  - v1_regression
+  - v2_shadow_or_canary
+  - backup_restore_or_forward_fix
+  - rollback_evidence

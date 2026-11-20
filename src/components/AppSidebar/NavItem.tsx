@@ -29,6 +29,8 @@ interface NavItemProps {
   onToggleOpen?: (e: React.MouseEvent) => void;
   /** Click handler */
   onClick: () => void;
+  /** Optional route chunk prefetch on hover/focus */
+  onPrefetch?: () => void;
 }
 
 /**
@@ -58,6 +60,7 @@ const NavItem: React.FC<NavItemProps> = ({
   isOpen = false,
   onToggleOpen,
   onClick,
+  onPrefetch,
 }) => {
   const ACCENT = '#0078d4';
 
@@ -66,6 +69,8 @@ const NavItem: React.FC<NavItemProps> = ({
       <div className="relative group/navitem flex justify-center">
         <button
           onClick={onClick}
+          onMouseEnter={onPrefetch}
+          onFocus={onPrefetch}
           className={cn(
             'relative flex items-center justify-center w-10 h-10 rounded-lg transition-all duration-150',
             active
@@ -104,6 +109,8 @@ const NavItem: React.FC<NavItemProps> = ({
   return (
     <button
       onClick={onClick}
+      onMouseEnter={onPrefetch}
+      onFocus={onPrefetch}
       className={cn(
         'w-full flex items-center gap-2.5 transition-all duration-150 border-l-[3px]',
         nested ? 'pl-12 pr-3 py-[6px]' : indent ? 'pl-9 pr-3 py-[7px]' : 'pl-3 pr-3 py-2',

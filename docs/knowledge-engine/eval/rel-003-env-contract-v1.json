@@ -1,0 +1,32 @@
+{
+  "task_id": "REL-003",
+  "status": "PASS",
+  "reason_codes": [],
+  "checks": {
+    "required_keys": true,
+    "safe_disabled_defaults": true,
+    "provider_allowlist": true,
+    "forbidden_key_names_absent": true,
+    "suspicious_values_absent": true,
+    "placeholder_secrets": true,
+    "tracked_secret_scan": true,
+    "settings_provider_security": true,
+    "embedding_env_consumed": true,
+    "retrieval_flags_consumed": true
+  },
+  "details": {
+    "missing_keys": [],
+    "zero_violations": [],
+    "forbidden_keys": [],
+    "suspicious_values": [],
+    "placeholder_failures": [],
+    "tracked_secret_scan": {
+      "status": "PASS",
+      "files_scanned": 5,
+      "matches": []
+    },
+    "database": "none",
+    "production_database_write": false,
+    "sqlite": "forbidden_for_acceptance"
+  }
+}

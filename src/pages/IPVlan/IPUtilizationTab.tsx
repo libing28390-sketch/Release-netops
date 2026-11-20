@@ -20,8 +20,14 @@ interface AnalyticsData {
     leases_count: number;
     total_ips: number;
     used_ips: number;
+    registered_ips?: number;
+    reserved_ips?: number;
+    effective_used_ips?: number;
+    allocatable_free_ips?: number;
     free_ips: number;
     utilization_rate: number;
+    registered_utilization_rate?: number;
+    effective_utilization_rate?: number;
     capacity_prefixes_count: number;
     excluded_prefixes_count: number;
     scope_excluded_prefixes_count: number;
@@ -36,6 +42,10 @@ interface AnalyticsData {
     network_type: string;
     total_ips: number;
     used_ips: number;
+    reserved_ips?: number;
+    allocatable_free_ips?: number;
+    effective_used_ips?: number;
+    effective_utilization?: number;
     utilization: number;
   }>;
   site_breakdown: Array<{
@@ -369,10 +379,15 @@ const IPUtilizationTab: React.FC<IPUtilizationTabProps> = ({ language, t }) => {
               <Activity size={22} />
             </div>
             <div className="min-w-0">
-              <p className="truncate text-[10px] font-bold text-gray-400 uppercase tracking-wider">{zh ? '已分配 IP 数' : 'Allocated IPs'}</p>
+              <p className="truncate text-[10px] font-bold text-gray-400 uppercase tracking-wider">{zh ? '正式登记 IP 数' : 'Registered IPs'}</p>
               <h3 className="text-xl font-extrabold text-gray-900 mt-0.5">
                 {overview.used_ips} <span className="text-xs font-semibold text-gray-400">/ {overview.total_ips}</span>
               </h3>
+              {(overview.reserved_ips ?? 0) > 0 && (
+                <p className="text-[10px] font-medium text-amber-600 mt-0.5">
+                  {zh ? `策略保留/不可分配 ${overview.reserved_ips}` : `${overview.reserved_ips} reserved / non-allocatable`}
+                </p>
+              )}
             </div>
           </div>
 
@@ -386,17 +401,27 @@ const IPUtilizationTab: React.FC<IPUtilizationTabProps> = ({ language, t }) => {
               <h3 className="text-xl font-extrabold text-gray-900 mt-0.5">
                 {overview.free_ips}
               </h3>
+              {typeof overview.allocatable_free_ips === 'number' && overview.allocatable_free_ips !== overview.free_ips && (
+                <p className="text-[10px] font-medium text-slate-500 mt-0.5">
+                  {zh ? `已映射空间可自动分配 ${overview.allocatable_free_ips}` : `${overview.allocatable_free_ips} auto-allocatable`}
+                </p>
+              )}
             </div>
           </div>
 
           {/* Global Utilization */}
           <div className="min-w-0 rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm transition-shadow hover:shadow-md sm:p-5 flex items-center gap-4">
-            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center border ${getUtilColor(overview.utilization_rate)}`}>
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center border ${getUtilColor(overview.effective_utilization_rate ?? overview.utilization_rate)}`}>
               <TrendingUp size={22} />
             </div>
             <div className="min-w-0">
               <p className="truncate text-[10px] font-bold text-gray-400 uppercase tracking-wider">{zh ? '所选范围利用率' : 'Selected Scope Utilization'}</p>
               <h3 className="text-xl font-extrabold text-gray-900 mt-0.5">{overview.utilization_rate}%</h3>
+              {typeof overview.effective_utilization_rate === 'number' && overview.effective_utilization_rate !== overview.utilization_rate && (
+                <p className="text-[10px] font-medium text-slate-500 mt-0.5">
+                  {zh ? `实际占用率 ${overview.effective_utilization_rate}%` : `Effective ${overview.effective_utilization_rate}%`}
+                </p>
+              )}
             </div>
           </div>
         </div>

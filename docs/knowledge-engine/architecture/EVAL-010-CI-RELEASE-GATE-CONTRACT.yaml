@@ -1,0 +1,53 @@
+task_id: EVAL-010
+title: PostgreSQL-only CI small fixed set and full release evaluation gate
+priority: P0
+status: executable
+authority: PostgreSQL
+scope:
+  small_ci:
+    trigger: pull_request_or_main_push
+    profile: small
+    components: [EVAL-001, EVAL-003, EVAL-005, EVAL-007]
+    command: python scripts/knowledge_engine_v2_eval_offline.py --profile small --strict
+    focused_tests:
+      - tests/knowledge_engine_v2/test_eval001_query_dataset.py
+      - tests/knowledge_engine_v2/test_eval003_query_type_coverage.py
+      - tests/knowledge_engine_v2/test_eval005_metrics.py
+      - tests/knowledge_engine_v2/test_eval007_security_metrics.py
+      - tests/knowledge_engine_v2/test_eval010_ci_gate.py
+  full_release:
+    trigger: release_ubuntu_job_before_sanitization
+    profile: full
+    components: [EVAL-001, EVAL-002, EVAL-003, EVAL-004, EVAL-005, EVAL-006, EVAL-007, EVAL-008]
+    command: python scripts/knowledge_engine_v2_eval_offline.py --profile full --strict
+database_policy:
+  service: PostgreSQL 16 CI service
+  database_url_scheme: postgresql
+  transaction_policy: no_production_writes
+  sqlite: forbidden
+  sqlite_acceptance_evidence: forbidden
+  offline_runner_database_connection: none
+  offline_runner_network: forbidden
+  offline_runner_secrets: forbidden
+invariants:
+  - a missing or failing component makes strict mode non-zero
+  - small and full component order is deterministic
+  - reports contain no raw source text, credentials, prompts or SQL
+  - V1 routes, data and production database are unchanged
+verification:
+  contract_validator: scripts/knowledge_engine_v2_eval_ci_gate_check.py
+  focused_test: tests/knowledge_engine_v2/test_eval010_ci_gate.py
+  local_commands:
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_eval_ci_gate_check.py"
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_eval_offline.py --profile small --strict --output $env:TEMP\\eval-offline-small-report-v1.json"
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_eval_offline.py --profile full --strict --output $env:TEMP\\eval-offline-full-report-v1.json"
+    - ".venv\\Scripts\\python.exe -m pytest tests/knowledge_engine_v2/test_eval001_query_dataset.py tests/knowledge_engine_v2/test_eval003_query_type_coverage.py tests/knowledge_engine_v2/test_eval005_metrics.py tests/knowledge_engine_v2/test_eval007_security_metrics.py tests/knowledge_engine_v2/test_eval009_offline_evaluation.py tests/knowledge_engine_v2/test_eval010_ci_gate.py -q -p no:cacheprovider"
+    - ".venv\\Scripts\\python.exe -m py_compile scripts/knowledge_engine_v2_eval_offline.py scripts/knowledge_engine_v2_eval_ci_gate_check.py tests/knowledge_engine_v2/test_eval010_ci_gate.py"
+    - "git diff --check"
+rollback:
+  runtime: remove EVAL-010 workflow steps and profile selection; keep EVAL-009 offline runner available
+  data: delete generated EVAL-010 reports and manifests
+  database: no migration and no production write; remove only temporary PostgreSQL CI service
+compatibility:
+  v1_preserved: true
+  existing_full_profile_default: true

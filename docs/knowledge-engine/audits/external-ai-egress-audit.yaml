@@ -1,0 +1,102 @@
+task_id: AUD-015
+milestone: M0
+priority: P0
+scope: external_ai_egress_provider_sdk_embedding_proxy
+sources:
+  backend:
+    - backend/ai/providers/base.py
+    - backend/ai/providers/openai_compatible.py
+    - backend/ai/providers/deepseek.py
+    - backend/ai/providers/embedding.py
+    - backend/ai/gateway/llm_gateway.py
+    - backend/ai/security/gateway.py
+    - backend/ai/api/providers.py
+    - backend/ai/api/security.py
+    - backend/ai/schemas/provider.py
+    - backend/core/config.py
+    - backend/database/migrations/m0103_ai_platform_tables.py
+  frontend:
+    - src/api/ai.ts
+    - src/pages/ai/Providers/ProviderManagementTab.tsx
+    - src/pages/ai/Copilot/AssistantTab.tsx
+scan_targets:
+  imports:
+    - httpx
+    - requests
+    - aiohttp
+    - openai
+    - deepseek_sdk
+    - urllib.request
+  concepts:
+    - Provider SDK
+    - Embedding URL
+    - proxy_url
+    - base_url
+    - redirect
+    - external AI data exit
+transport_inventory:
+  ai_http_client:
+    file: backend/ai/providers/openai_compatible.py
+    library: httpx
+    non_stream_calls: 1
+    stream_calls: 1
+    redirect_following: false
+    endpoint_validation: https_or_loopback_http
+    proxy_source: ai_provider.proxy_url
+  ai_provider_sdk: none
+  embedding_remote_url: none
+  embedding_provider:
+    module: backend/ai/providers/embedding.py
+    mode: local
+    model: local-hybrid-feature-v2
+    dimensions: 1536
+  frontend_vendor_direct_call: false
+gateway_controls:
+  chat_before_provider_protect: true
+  stream_before_provider_protect: true
+  provider_test_uses_llm_gateway: true
+  external_ai_default: false
+  kill_switch: true
+  default_allowed_provider_types:
+    - deepseek
+  deepseek_endpoint_pinned: true
+  deepseek_supported_models:
+    - deepseek-v4-flash
+    - deepseek-v4-pro
+findings:
+  - id: AUD015-F01
+    severity: P0
+    status: OPEN
+    summary: proxy_url is plaintext persisted and returned, with no credential masking or URL allowlist
+  - id: AUD015-F02
+    severity: P1
+    status: OPEN
+    summary: generic OpenAI-compatible provider accepts arbitrary HTTPS base_url behind a DeepSeek-only API policy
+  - id: AUD015-F03
+    severity: P1
+    status: OPEN
+    summary: AI_OUTBOUND_PROXY_URL and AI_PROVIDER_ALLOWLIST are declared but not consumed by runtime Gateway
+  - id: AUD015-F04
+    severity: P2
+    status: OPEN
+    summary: remote embedding dispatch and embedding-specific egress audit do not exist yet
+non_ai_network_calls_classified:
+  paths:
+    - backend/api/templates.py
+    - backend/api/system.py
+    - backend/services/background_monitor_service.py
+    - backend/services/notification_service.py
+    - backend/services/outbound_probe_service.py
+    - scripts/nexora_handler.py
+  classification: non_ai_out_of_scope
+verification:
+  ast_transport_import_assertions: PASS
+  provider_contract_tests: PASS
+  security_gateway_tests: PASS
+  rag_embedding_contract_tests: PASS
+  external_vendor_called: false
+  production_database_changed: false
+conclusion:
+  audit_status: PASS
+  ai_egress_release_ready: false
+  p0_blockers: 1

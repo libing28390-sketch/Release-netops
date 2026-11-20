@@ -1,0 +1,61 @@
+task_id: REL-002
+priority: P0
+milestone: M2
+status: contract_and_gate_implementation
+authority: PostgreSQL
+sqlite: forbidden_for_acceptance
+production_database_write: false
+
+objective: >-
+  Make the PostgreSQL extension prerequisite, ordered migration history, and
+  service-start failure behavior explicit and fail closed.
+
+extension_gate:
+  required: [vector, pg_trgm]
+  inspection: [pg_extension, pg_available_extensions]
+  installation: allowlist_only_and_idempotent
+  failure_codes:
+    inspection: POSTGRES_EXTENSION_INSPECTION_FAILED
+    missing: POSTGRES_EXTENSION_MISSING
+    install: POSTGRES_EXTENSION_INSTALL_FAILED
+  redaction: [no_dsn, no_password, no_api_key, no_raw_driver_payload]
+
+migration_gate:
+  discovery: backend.database.migrations.discover_migrations
+  order: numeric_VERSION_ascending
+  tracking: schema_migrations_version_name_applied_at
+  strict_history: [unknown_applied_version, name_drift, missing_baseline_marker]
+  pending: startup_must_fail_closed_until_empty
+  execution: one_module_transaction_then_tracking_row
+  failure: rollback_current_module_halt_higher_versions_retry_untracked_version
+  repair: restore_matching_module_or_approved_manual_ADR; never_rewrite_history
+
+startup_gate:
+  entrypoint: backend.database.schema.init_db
+  required_calls:
+    - run_migrations_strict_history_true
+    - build_migration_plan_after_runner
+    - reject_unsafe_history
+    - reject_pending_versions
+  v1_behavior: preserve_existing_V1_tables_and_runtime_defaults
+  fallback: V1_or_local_lexical_only_when_V2_extension_gate_is_explicitly_disabled
+
+verification:
+  runner: scripts/knowledge_engine_v2_rel002_postgres_gate.py
+  tests: tests/knowledge_engine_v2/test_rel002_postgres_gate.py
+  required: [postgres_read_only, extensions_present, history_safe, pending_empty, startup_fail_closed, redacted_report]
+  live_database_mutation: forbidden
+
+exit_criteria:
+  - required_extensions_are_installed
+  - no_unknown_or_name_drift_history
+  - no_pending_migrations
+  - startup_source_contains_strict_fail_closed_checks
+  - focused_test_and_py_compile_pass
+  - evidence_and_state_updated
+
+blockers:
+  - code_or_database_migration_name_drift
+  - unknown_applied_migration_version
+  - pending_migration
+  - missing_required_extension

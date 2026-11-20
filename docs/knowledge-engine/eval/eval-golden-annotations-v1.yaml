@@ -1,0 +1,154 @@
+schema_version: 1
+annotation_set_id: nexora-kb-eval-golden-v1-20260817
+status: frozen
+workflow_version: 1
+parent_dataset_id: nexora-kb-eval-v1-20260817
+minimum_reviewer_count: 1
+source_policy:
+  database: none
+  sqlite: not_used
+  external_network: forbidden
+  secrets: forbidden
+label_rules:
+  answer:
+    golden_answer_required: true
+    applicability_required: true
+    citations_required: true
+    citation_must_be_official: true
+  clarify:
+    golden_answer_required: true
+    applicability_required: true
+    citations_required: false
+    candidate_document_ids_allowed: true
+  no_match:
+    golden_answer_required: true
+    applicability_required: true
+    citations_required: false
+    fail_closed: true
+workflow:
+  stages: [draft, peer_review, adjudication, frozen]
+  primary_annotator_must_differ_from_reviewer: true
+  required_review_fields: [vendor, product, os, version_relation, answer_claims, citations]
+  citation_fields: [document_id, source_version, locator, claim_ids, official]
+  change_rule: frozen_annotations_require_new_annotation_set_id
+annotations:
+  - annotation_id: GOLD-001
+    case_id: EVAL-Q001
+    vendor: Huawei
+    intent: vlan
+    golden_answer: "在 CloudEngine CE6885-48YS8CQ（VRP V300）上，按官方 VLAN 配置章节执行 VLAN 创建、端口归属与验证。"
+    applicability: {vendor: Huawei, product_model: CE6885-48YS8CQ, os_family: VRP, software_train: V300, release_relation: unspecified, release: null}
+    citations: [{document_id: fixture-huawei-vlan, source_version: V300, locator: "fixture/huawei/vlan/configuration", claim_ids: [answer-1], official: true}]
+    annotator: netops-annotator-01
+    reviewer: netops-reviewer-01
+    status: frozen
+  - annotation_id: GOLD-002
+    case_id: EVAL-Q011
+    vendor: Cisco
+    intent: vlan
+    golden_answer: "在 Catalyst C9300-48P（IOS XE 17）上，按官方 VLAN 与 switchport 配置章节执行 VLAN 创建、端口归属与验证。"
+    applicability: {vendor: Cisco, product_model: C9300-48P, os_family: "IOS XE", software_train: 17, release_relation: unspecified, release: null}
+    citations: [{document_id: fixture-cisco-vlan, source_version: 17, locator: "fixture/cisco/vlan/configuration", claim_ids: [answer-1], official: true}]
+    annotator: netops-annotator-01
+    reviewer: netops-reviewer-01
+    status: frozen
+  - annotation_id: GOLD-003
+    case_id: EVAL-Q021
+    vendor: Huawei
+    intent: interface
+    golden_answer: "在 CloudEngine CE6885-48YS8CQ（VRP V300）上，按官方接口状态与上联配置章节检查接口并应用配置。"
+    applicability: {vendor: Huawei, product_model: CE6885-48YS8CQ, os_family: VRP, software_train: V300, release_relation: unspecified, release: null}
+    citations: [{document_id: fixture-huawei-interface, source_version: V300, locator: "fixture/huawei/interface/configuration", claim_ids: [answer-1], official: true}]
+    annotator: netops-annotator-01
+    reviewer: netops-reviewer-01
+    status: frozen
+  - annotation_id: GOLD-004
+    case_id: EVAL-Q031
+    vendor: Cisco
+    intent: interface
+    golden_answer: "在 Catalyst C9300-48P（IOS XE 17）上，按官方接口状态与上联配置章节检查接口并应用配置。"
+    applicability: {vendor: Cisco, product_model: C9300-48P, os_family: "IOS XE", software_train: 17, release_relation: unspecified, release: null}
+    citations: [{document_id: fixture-cisco-interface, source_version: 17, locator: "fixture/cisco/interface/configuration", claim_ids: [answer-1], official: true}]
+    annotator: netops-annotator-01
+    reviewer: netops-reviewer-01
+    status: frozen
+  - annotation_id: GOLD-005
+    case_id: EVAL-Q041
+    vendor: Huawei
+    intent: ospf
+    golden_answer: "在 CloudEngine CE6885-48YS8CQ（VRP V300）上，按官方 OSPF 邻居与路由配置章节检查邻居和路由状态。"
+    applicability: {vendor: Huawei, product_model: CE6885-48YS8CQ, os_family: VRP, software_train: V300, release_relation: unspecified, release: null}
+    citations: [{document_id: fixture-huawei-ospf, source_version: V300, locator: "fixture/huawei/ospf/configuration", claim_ids: [answer-1], official: true}]
+    annotator: netops-annotator-01
+    reviewer: netops-reviewer-01
+    status: frozen
+  - annotation_id: GOLD-006
+    case_id: EVAL-Q051
+    vendor: Cisco
+    intent: ospf
+    golden_answer: "在 Catalyst C9300-48P（IOS XE 17）上，按官方 OSPF 邻居与路由配置章节检查邻居和路由状态。"
+    applicability: {vendor: Cisco, product_model: C9300-48P, os_family: "IOS XE", software_train: 17, release_relation: unspecified, release: null}
+    citations: [{document_id: fixture-cisco-ospf, source_version: 17, locator: "fixture/cisco/ospf/configuration", claim_ids: [answer-1], official: true}]
+    annotator: netops-annotator-01
+    reviewer: netops-reviewer-01
+    status: frozen
+  - annotation_id: GOLD-007
+    case_id: EVAL-Q061
+    vendor: Huawei
+    intent: ssh
+    golden_answer: "在 CloudEngine CE6885-48YS8CQ（VRP V300）上，按官方 SSH/可管理访问章节启用并验证安全远程管理。"
+    applicability: {vendor: Huawei, product_model: CE6885-48YS8CQ, os_family: VRP, software_train: V300, release_relation: unspecified, release: null}
+    citations: [{document_id: fixture-huawei-ssh, source_version: V300, locator: "fixture/huawei/ssh/configuration", claim_ids: [answer-1], official: true}]
+    annotator: netops-annotator-01
+    reviewer: netops-reviewer-01
+    status: frozen
+  - annotation_id: GOLD-008
+    case_id: EVAL-Q071
+    vendor: Cisco
+    intent: ssh
+    golden_answer: "在 Catalyst C9300-48P（IOS XE 17）上，按官方 SSH 与 VTY 访问章节启用并验证安全远程管理。"
+    applicability: {vendor: Cisco, product_model: C9300-48P, os_family: "IOS XE", software_train: 17, release_relation: unspecified, release: null}
+    citations: [{document_id: fixture-cisco-ssh, source_version: 17, locator: "fixture/cisco/ssh/configuration", claim_ids: [answer-1], official: true}]
+    annotator: netops-annotator-01
+    reviewer: netops-reviewer-01
+    status: frozen
+  - annotation_id: GOLD-009
+    case_id: EVAL-Q081
+    vendor: Huawei
+    intent: ntp
+    golden_answer: "在 CloudEngine CE6885-48YS8CQ（VRP V300）上，按官方 NTP 服务章节配置时间同步并验证状态。"
+    applicability: {vendor: Huawei, product_model: CE6885-48YS8CQ, os_family: VRP, software_train: V300, release_relation: unspecified, release: null}
+    citations: [{document_id: fixture-huawei-ntp, source_version: V300, locator: "fixture/huawei/ntp/configuration", claim_ids: [answer-1], official: true}]
+    annotator: netops-annotator-01
+    reviewer: netops-reviewer-01
+    status: frozen
+  - annotation_id: GOLD-010
+    case_id: EVAL-Q091
+    vendor: Cisco
+    intent: ntp
+    golden_answer: "在 Catalyst C9300-48P（IOS XE 17）上，按官方 NTP 服务章节配置时间同步并验证状态。"
+    applicability: {vendor: Cisco, product_model: C9300-48P, os_family: "IOS XE", software_train: 17, release_relation: unspecified, release: null}
+    citations: [{document_id: fixture-cisco-ntp, source_version: 17, locator: "fixture/cisco/ntp/configuration", claim_ids: [answer-1], official: true}]
+    annotator: netops-annotator-01
+    reviewer: netops-reviewer-01
+    status: frozen
+  - annotation_id: GOLD-011
+    case_id: EVAL-Q101
+    vendor: Huawei
+    intent: route
+    golden_answer: "在 CloudEngine CE6885-48YS8CQ（VRP V300）上，按官方路由表与静态路由章节检查和配置路由。"
+    applicability: {vendor: Huawei, product_model: CE6885-48YS8CQ, os_family: VRP, software_train: V300, release_relation: unspecified, release: null}
+    citations: [{document_id: fixture-huawei-route, source_version: V300, locator: "fixture/huawei/route/configuration", claim_ids: [answer-1], official: true}]
+    annotator: netops-annotator-01
+    reviewer: netops-reviewer-01
+    status: frozen
+  - annotation_id: GOLD-012
+    case_id: EVAL-Q111
+    vendor: Cisco
+    intent: route
+    golden_answer: "在 Catalyst C9300-48P（IOS XE 17）上，按官方路由表与静态路由章节检查和配置路由。"
+    applicability: {vendor: Cisco, product_model: C9300-48P, os_family: "IOS XE", software_train: 17, release_relation: unspecified, release: null}
+    citations: [{document_id: fixture-cisco-route, source_version: 17, locator: "fixture/cisco/route/configuration", claim_ids: [answer-1], official: true}]
+    annotator: netops-annotator-01
+    reviewer: netops-reviewer-01
+    status: frozen
