@@ -368,10 +368,88 @@ function formatRelativeTime(isoStr: string, zhLang: boolean): string {
     const m = Math.floor(diffSec / 60);
     if (m < 60) return zhLang ? `${m} 分钟前` : `${m}m ago`;
     const h = Math.floor(m / 60);
-    return zhLang ? `${h} 小时前` : `${h}h ago`;
+    if (h < 48) return zhLang ? `${h} 小时前` : `${h}h ago`;
+    const d = Math.floor(h / 24);
+    return zhLang ? `${d} 天前` : `${d}d ago`;
   } catch {
     return isoStr;
   }
+}
+
+function isPrivateIpv4(ip: string): boolean {
+  const parts = String(ip || '').trim().split('.').map(Number);
+  if (parts.length !== 4 || parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return false;
+  return (
+    parts[0] === 10 ||
+    (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+    (parts[0] === 192 && parts[1] === 168) ||
+    (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127)
+  );
+}
+
+function formatLocatorAddressRole(typeVal: string, ip: string, zhLang: boolean): string {
+  const clean = String(typeVal || '').trim().toLowerCase();
+  if (!clean || clean === 'unknown' || clean === 'unclassified') {
+    const priv = isPrivateIpv4(ip);
+    if (zhLang) return priv ? '未登记（私网地址）' : '未登记';
+    return priv ? 'Unregistered (Private)' : 'Unregistered';
+  }
+  return formatAddressType(typeVal, zhLang);
+}
+
+function formatLocatorVlanLabel(vlan: string, vlanName?: string): string {
+  const v = String(vlan || '').trim();
+  if (!v) return '';
+  const name = String(vlanName || '').trim();
+  const isDefaultName = !name || new RegExp(`^vlan[\\s_-]*0*${v}$`, 'i').test(name);
+  return isDefaultName ? `VLAN ${v}` : `VLAN ${v} · ${name}`;
+}
+
+function formatPortStateAndMode(admin?: string, oper?: string, mode?: string): string {
+  const states = [admin, oper]
+    .map((v) => String(v || '').trim())
+    .filter((v) => v && v.toLowerCase() !== 'unknown' && v !== '-' && v !== '--')
+    .map((v) => v.toUpperCase());
+  const cleanMode = String(mode || '').trim();
+  const modeLabel =
+    cleanMode && cleanMode.toLowerCase() !== 'unknown' && cleanMode !== '-' && cleanMode !== '--'
+      ? cleanMode.charAt(0).toUpperCase() + cleanMode.slice(1).toLowerCase()
+      : '';
+  const statePart = states.join('/');
+  if (statePart && modeLabel) return `${statePart} · ${modeLabel}`;
+  return statePart || modeLabel;
+}
+
+function formatLocatorVrfLabel(vrf?: string): string {
+  const clean = String(vrf || '').trim();
+  if (!clean) return '';
+  if (clean.toLowerCase() === 'default' || clean.toLowerCase() === 'global') {
+    return 'Global (default)';
+  }
+  return clean;
+}
+
+function formatLocatorNextHopLabel(nextHop: string, zhLang: boolean): string {
+  const clean = String(nextHop || '').trim();
+  if (!clean) return '';
+  if (clean.toLowerCase() === 'directly connected') {
+    return zhLang ? '直连 (Directly Connected)' : 'Directly Connected';
+  }
+  return clean;
+}
+
+function formatLocatorRouteProtocol(proto: string, zhLang: boolean): string {
+  const clean = String(proto || '').trim();
+  if (!clean) return '';
+  const lower = clean.toLowerCase();
+  if (lower === 'connected' || lower === 'direct' || lower === 'local') {
+    return zhLang ? 'Direct (直连)' : 'Direct';
+  }
+  if (lower === 'static') return zhLang ? 'Static (静态)' : 'Static';
+  if (lower === 'bgp' || lower === 'ospf' || lower === 'isis' || lower === 'rip' || lower === 'eigrp') {
+    return lower.toUpperCase();
+  }
+  return clean;
 }
 
 const generateSequenceEvents = (result: any, lanes?: any[]) => {
@@ -1668,7 +1746,7 @@ ${rep.repair_commands}
             <div className="rounded-2xl border border-black/5 dark:border-white/10 bg-slate-50/70 dark:bg-white/[0.025] p-4 space-y-4">
               <div className="flex items-center gap-2">
                 <Network size={15} className="text-[#0891b2]" />
-                <p className="text-sm font-semibold text-[#164e63] dark:text-[var(--app-text)]">{zh ? '定位上下文' : 'Locator Context'}</p>
+                <p className="text-sm font-semibold text-[#164e63] dark:text-[var(--app-text)]">{zh ? '定位详情' : 'Location Details'}</p>
                 <span className="text-[10px] text-black/35 dark:text-white/35 ml-auto">
                   {zh ? '查询时间' : 'Query time'} · {formatExactTime(locatorContext.freshness.collected_at, zh)}
                 </span>
@@ -1677,55 +1755,74 @@ ${rep.repair_commands}
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                 <LocatorContextCard title={zh ? '基础信息' : 'Address'} icon={Globe}>
                   <LocatorContextField label="IP" value={locatorContext.address.ip} mono />
-                   <LocatorContextField label={zh ? '地址类型' : 'Type'} value={formatAddressType(locatorContext.address.type || locatorContext.address.network_type, zh)} />
+                  <LocatorContextField
+                    label={zh ? '地址归属' : 'Address Role'}
+                    value={formatLocatorAddressRole(locatorContext.address.type || locatorContext.address.network_type, locatorContext.address.ip, zh)}
+                  />
                   <LocatorContextField label={zh ? '所属网段' : 'Prefix'} value={locatorContext.address.prefix} mono />
                   <LocatorContextField label={zh ? '掩码' : 'Netmask'} value={locatorContext.address.netmask} mono />
                   <LocatorContextField label={zh ? '网段用途' : 'Purpose'} value={locatorContext.address.purpose || locatorContext.address.network_type} />
-                  <LocatorContextField label={zh ? '状态' : 'Status'} value={locatorContext.address.status} tone={locatorContext.address.status === 'active' ? 'text-emerald-600' : undefined} />
+                  <LocatorContextField
+                    label={zh ? '台账状态' : 'IPAM Status'}
+                    value={locatorContext.address.status || (zh ? '未入库' : 'Not in IPAM')}
+                    tone={locatorContext.address.status === 'active' ? 'text-emerald-600' : undefined}
+                  />
                 </LocatorContextCard>
 
                 <LocatorContextCard title={zh ? '二层定位' : 'Layer 2'} icon={Cable}>
                   <LocatorContextField label="MAC" value={formatMacAddress(locatorContext.l2.mac || result.mac_display)} mono />
-                  <LocatorContextField label="VLAN" value={locatorContext.l2.vlan ? `${locatorContext.l2.vlan}${locatorContext.l2.vlan_name ? ` · ${locatorContext.l2.vlan_name}` : ''}` : ''} mono />
+                  <LocatorContextField label="VLAN" value={formatLocatorVlanLabel(locatorContext.l2.vlan, locatorContext.l2.vlan_name)} mono />
                   <LocatorContextField label={zh ? 'VLAN 来源' : 'VLAN Source'} value={formatLocatorVlanSource(locatorContext.l2.vlan_source, zh)} />
                   <LocatorContextField label={locatorContext.l2.port_confidence === 'device_interface' ? (zh ? 'MAC 所在设备' : 'MAC Device') : (zh ? '接入设备' : 'Access Device')} value={['confirmed', 'device_interface'].includes(locatorContext.l2.port_confidence || '') ? locatorContext.l2.switch_name : ''} />
                   <LocatorContextField label={locatorContext.l2.port_confidence === 'device_interface' ? (zh ? 'MAC 所在接口' : 'MAC Interface') : (zh ? '接入接口' : 'Access Port')} value={['confirmed', 'device_interface'].includes(locatorContext.l2.port_confidence || '') ? locatorContext.l2.port : ''} mono />
-                  <LocatorContextField label={zh ? 'ARP 来源设备' : 'ARP Source Device'} value={locatorContext.l2.arp_device} />
-                  <LocatorContextField label={zh ? 'ARP 来源接口' : 'ARP Source Interface'} value={locatorContext.l2.arp_interface} mono />
+                  <LocatorContextField label={zh ? 'ARP 学习设备' : 'ARP Gateway Device'} value={locatorContext.l2.arp_device} />
+                  <LocatorContextField label={zh ? 'ARP 三层口 (SVI)' : 'ARP L3 Interface'} value={locatorContext.l2.arp_interface} mono />
+                  {locatorContext.l2.port_confidence !== 'confirmed' && (
+                    <LocatorContextField
+                      label={zh ? 'VLAN 成员接口候选' : 'VLAN Member Port Candidates'}
+                      value={locatorContext.l2.vlan_member_candidates?.map((item) =>
+                        `${item.interface_name}${item.description ? ` · ${item.description}` : ''}${item.mac_match ? (zh ? ' · MAC 命中' : ' · MAC hit') : ''}${item.access_confirmed ? (zh ? ' · 接入已确认' : ' · access confirmed') : ''}`
+                      ).join('；')}
+                    />
+                  )}
                   <LocatorContextField
-                    label={zh ? 'VLAN 成员接口候选' : 'VLAN Member Port Candidates'}
-                    value={locatorContext.l2.vlan_member_candidates?.map((item) =>
-                      `${item.interface_name}${item.description ? ` · ${item.description}` : ''}${item.mac_match ? (zh ? ' · MAC 命中' : ' · MAC hit') : ''}${item.access_confirmed ? (zh ? ' · 接入已确认' : ' · access confirmed') : ''}`
-                    ).join('；')}
-                  />
-                  <LocatorContextField
-                    label={zh ? 'MAC 表查询' : 'MAC Lookup'}
+                    label={zh ? 'MAC 学习状态' : 'MAC Lookup'}
                     value={macLookup && macLookup.status !== 'not_attempted' ? macLookupStatusLabel(macLookup.status, zh) : ''}
                   />
                   <LocatorContextField label={zh ? '接口描述' : 'Description'} value={locatorContext.l2.description} />
-                  <LocatorContextField label={zh ? '状态 / 模式' : 'State / Mode'} value={[locatorContext.l2.admin_status, locatorContext.l2.oper_status, locatorContext.l2.mode].filter((v) => Boolean(v) && String(v).trim().toLowerCase() !== 'unknown').join(' / ')} />
+                  <LocatorContextField
+                    label={zh ? '端口状态 / 模式' : 'Port State / Mode'}
+                    value={formatPortStateAndMode(locatorContext.l2.admin_status, locatorContext.l2.oper_status, locatorContext.l2.mode)}
+                  />
                 </LocatorContextCard>
 
                 <LocatorContextCard title={zh ? '三层定位' : 'Layer 3'} icon={Router}>
                   <LocatorContextField label={zh ? '默认网关' : 'Gateway'} value={locatorContext.l3.gateway} mono />
                   <LocatorContextField label={zh ? '网关设备' : 'Gateway Device'} value={locatorContext.l3.gateway_device} />
                   <LocatorContextField label={zh ? '三层接口' : 'L3 Interface'} value={locatorContext.l3.gateway_interface || locatorContext.l3.route_interface} mono />
-                  <LocatorContextField label="VRF" value={locatorContext.l3.vrf} />
-                  <LocatorContextField label={zh ? '路由下一跳' : 'Next Hop'} value={locatorContext.l3.next_hop} mono />
-                  <LocatorContextField label={zh ? '路由来源' : 'Route Source'} value={locatorContext.l3.route_source} />
+                  <LocatorContextField label={zh ? '路由实例 (VRF)' : 'Routing Instance (VRF)'} value={formatLocatorVrfLabel(locatorContext.l3.vrf)} />
+                  <LocatorContextField label={zh ? '下一跳' : 'Next Hop'} value={formatLocatorNextHopLabel(locatorContext.l3.next_hop, zh)} mono />
+                  <LocatorContextField label={zh ? '路由协议' : 'Route Protocol'} value={formatLocatorRouteProtocol(locatorContext.l3.route_source, zh)} />
                   <LocatorContextField label={zh ? '路由更新时间' : 'Route Updated'} value={locatorContext.l3.route_last_updated ? formatRelativeTime(locatorContext.l3.route_last_updated, zh) : ''} />
                   <LocatorContextField
                     label={zh ? '上联设备' : 'Upstream Devices'}
                     value={locatorContext.l3.upstream_devices?.map(item => `${item.device}${item.port ? ` (${item.port}${item.peer_port ? ` ↔ ${item.peer_port}` : ''})` : ''}`).join(', ')}
                   />
-                   <LocatorContextField
-                     label={zh ? '下联设备' : 'Downstream Devices'}
-                     value={locatorContext.l3.downstream_devices?.map(item => `${item.device}${item.port ? ` (${item.port}${item.peer_port ? ` ↔ ${item.peer_port}` : ''})` : ''}`).join(', ') || (zh ? '未发现可信下联' : 'No verified downstream')}
-                   />
-                   <LocatorContextField
-                     label={zh ? '邻接设备（方向未判定）' : 'Adjacent Devices (direction unknown)'}
-                     value={locatorContext.l3.adjacent_devices?.map(item => `${item.device}${item.port ? ` (${item.port}${item.peer_port ? ` ↔ ${item.peer_port}` : ''})` : ''}`).join(', ')}
-                   />
+                  <LocatorContextField
+                    label={zh ? '下联网络设备' : 'Downstream Devices'}
+                    value={
+                      locatorContext.l3.downstream_devices?.map(item => `${item.device}${item.port ? ` (${item.port}${item.peer_port ? ` ↔ ${item.peer_port}` : ''})` : ''}`).join(', ')
+                      || (locatorContext.l2.port_confidence === 'confirmed'
+                        ? (zh ? '无（末端接入）' : 'None (edge access)')
+                        : (zh ? '未发现下联网络设备' : 'No downstream network device'))
+                    }
+                  />
+                  {locatorContext.l3.adjacent_devices && locatorContext.l3.adjacent_devices.length > 0 && (
+                    <LocatorContextField
+                      label={zh ? 'LLDP 邻接设备' : 'LLDP Neighbors'}
+                      value={locatorContext.l3.adjacent_devices.map(item => `${item.device}${item.port ? ` (${item.port}${item.peer_port ? ` ↔ ${item.peer_port}` : ''})` : ''}`).join(', ')}
+                    />
+                  )}
                 </LocatorContextCard>
 
                 <LocatorContextCard title={zh ? '业务关联' : 'Business'} icon={Users}>
