@@ -45,7 +45,7 @@ const IPAMManagementTab: React.FC<IPAMManagementTabProps> = ({ language, t, ipam
   );
   const selectedPrefix = prefixes.find((prefix) => prefix.id === prefixId) || null;
   const isAddressSpace = ['prefixes', 'ips', 'pools'].includes(ipamPage);
-  const showsAddressData = ['ips', 'pools'].includes(ipamPage);
+  const showsPrefixContextBar = ipamPage === 'pools';
 
   useEffect(() => {
     if (!isAddressSpace) return;
@@ -68,34 +68,26 @@ const IPAMManagementTab: React.FC<IPAMManagementTabProps> = ({ language, t, ipam
   };
 
   return (
-    <div className="flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden">
-      {isAddressSpace && showsAddressData && (
-        <div className="flex flex-shrink-0 flex-col gap-3 border-b border-slate-200/70 bg-white/70 px-6 py-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden bg-slate-50/60 dark:bg-zinc-950">
+      {showsPrefixContextBar && (
+        <div className="flex flex-shrink-0 flex-col gap-3 border-b border-slate-200/70 dark:border-zinc-800 bg-white/85 dark:bg-zinc-900/85 px-6 py-3 backdrop-blur-xs sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="whitespace-nowrap text-[11px] font-bold uppercase tracking-wider text-slate-400">
+            <span className="whitespace-nowrap text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500">
               {zh ? '当前网段' : 'Current Prefix'}
             </span>
-            {ipamPage === 'ips' ? (
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-slate-800">
-                  {selectedPrefix ? `${selectedPrefix.prefix}${selectedPrefix.name ? ` · ${selectedPrefix.name}` : ''}` : (zh ? '全部网段' : 'All prefixes')}
-                </div>
-              </div>
-            ) : (
-              <select
-                aria-label={zh ? '当前工作网段' : 'Current working prefix'}
-                value={prefixId}
-                onChange={(event) => changePrefixContext(event.target.value)}
-                className="min-w-0 max-w-[min(70vw,34rem)] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 outline-none transition focus:border-blue-400"
-              >
-                <option value="">{zh ? '全部网段' : 'All prefixes'}</option>
-                {prefixes.map((prefix) => (
-                  <option key={prefix.id} value={prefix.id}>
-                    {prefix.prefix}{prefix.name ? ` · ${prefix.name}` : ''}
-                  </option>
-                ))}
-              </select>
-            )}
+            <select
+              aria-label={zh ? '当前工作网段' : 'Current working prefix'}
+              value={prefixId}
+              onChange={(event) => changePrefixContext(event.target.value)}
+              className="min-w-0 max-w-[min(70vw,34rem)] rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-zinc-200 outline-none transition focus:border-cyan-500"
+            >
+              <option value="">{zh ? '全部网段' : 'All prefixes'}</option>
+              {prefixes.map((prefix) => (
+                <option key={prefix.id} value={prefix.id}>
+                  {prefix.prefix}{prefix.name ? ` · ${prefix.name}` : ''}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       )}
