@@ -78,6 +78,31 @@ export interface UpdateRoutingContextMappingInput {
   status: RoutingContextStatus;
 }
 
+export interface RoutingContextCandidate {
+  device_id: string;
+  device_name: string;
+  context_source: RoutingContextSource;
+  context_type: RoutingContextType | 'unknown';
+  local_context_key: string;
+  local_context_name: string;
+  sources: string[];
+  observation_count: number;
+  last_observed_at: string | null;
+  coverage_status: string;
+  can_confirm: boolean;
+  mapping_status: 'mapped' | 'disabled' | 'pending' | 'unknown_context';
+  mapping_id: string | null;
+  mapping_revision: number | null;
+  address_space_id: string | null;
+  address_space_name: string | null;
+  address_space_kind: RoutingContextType | null;
+}
+
+export const listRoutingContextCandidates = (deviceId: string) => {
+  const params = new URLSearchParams({ device_id: deviceId });
+  return apiRequest<{ items: RoutingContextCandidate[] }>(`/api/ipam/routing-contexts/candidates?${params.toString()}`);
+};
+
 export const listRoutingContextMappings = (deviceId: string) => {
   const params = new URLSearchParams({ device_id: deviceId });
   return apiRequest<{ items: RoutingContextMapping[] }>(`/api/ipam/routing-contexts?${params.toString()}`);

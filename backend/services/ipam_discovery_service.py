@@ -1089,7 +1089,7 @@ def _supersede_older_endpoint_context_observations(items: list[dict[str, Any]]) 
     remain visible beside the newer one. Keep both only when the latest sample
     is tied across contexts; that case needs explicit scope review.
     """
-    groups: dict[tuple[str, ...], list[tuple[int, datetime, tuple[str, ...]]]] = {}
+    groups: dict[tuple[str, ...], list[tuple[int, datetime, tuple[str, ...], str, str]]] = {}
     for index, item in enumerate(items):
         if str(item.get("source_type") or "") not in {"arp", "ndp"}:
             continue
@@ -1098,6 +1098,8 @@ def _supersede_older_endpoint_context_observations(items: list[dict[str, Any]]) 
         observed_at, timestamp_status = _parse_time(item.get("observed_at"))
         if timestamp_status != "valid" or observed_at is None:
             continue
+        address_space_id = str(item.get("address_space_id") or "").strip()
+        source_device_id = str(item.get("source_device_id") or "").strip()
         identity = (
             str(item.get("source_type") or ""),
             str(item.get("tenant_id") or ""),
@@ -1108,31 +1110,51 @@ def _supersede_older_endpoint_context_observations(items: list[dict[str, Any]]) 
         )
         context = (
             str(item.get("scope_status") or ""),
-            str(item.get("address_space_id") or ""),
+            address_space_id,
             str(item.get("vrf_id") or ""),
-            str(item.get("source_device_id") or ""),
+            source_device_id,
             str(item.get("context_source") or ""),
             str(item.get("context_type") or ""),
             str(item.get("local_context_key") or ""),
         )
-        groups.setdefault(identity, []).append((index, observed_at, context))
+        groups.setdefault(identity, []).append(
+            (index, observed_at, context, address_space_id, source_device_id)
+        )
+
+    def _can_supersede(
+        old_space: str,
+        old_device: str,
+        new_space: str,
+        new_device: str,
+    ) -> bool:
+        # Distinct explicit address spaces are separate routing domains and
+        # must never fold into each other even when IP/MAC/VLAN match.
+        if old_space:
+            return bool(new_space) and old_space == new_space
+        # Unresolved observations are isolated by source device and may only
+        # be superseded by a newer observation from the same device.
+        return old_device == new_device
 
     superseded_indices: set[int] = set()
     for group in groups.values():
-        contexts = {context for _index, _observed_at, context in group}
-        if len(contexts) < 2:
+        if len(group) < 2:
             continue
-        latest_at = max(observed_at for _index, observed_at, _context in group)
-        latest_contexts = {
-            context for _index, observed_at, context in group if observed_at == latest_at
-        }
-        if len(latest_contexts) != 1:
-            continue
-        latest_context = next(iter(latest_contexts))
-        superseded_indices.update(
-            index for index, observed_at, context in group
-            if observed_at < latest_at and context != latest_context
-        )
+        for index, observed_at, context, old_space, old_device in group:
+            newer_compatible = [
+                (other_at, other_ctx)
+                for _other_idx, other_at, other_ctx, new_space, new_device in group
+                if other_at > observed_at
+                and other_ctx != context
+                and _can_supersede(old_space, old_device, new_space, new_device)
+            ]
+            if not newer_compatible:
+                continue
+            latest_at = max(other_at for other_at, _other_ctx in newer_compatible)
+            latest_contexts = {
+                other_ctx for other_at, other_ctx in newer_compatible if other_at == latest_at
+            }
+            if len(latest_contexts) == 1:
+                superseded_indices.add(index)
 
     return [item for index, item in enumerate(items) if index not in superseded_indices]
 

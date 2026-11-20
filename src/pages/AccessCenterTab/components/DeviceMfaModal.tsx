@@ -1,6 +1,6 @@
 import React from 'react';
 import { KeyRound, ShieldCheck, Smartphone, X } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { motion } from 'motion/react';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 import { useFocusTrap } from '../../../hooks/useFocusTrap';
 import { PasswordInputField } from '../../../components/ui/PasswordInputField';

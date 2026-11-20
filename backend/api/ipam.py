@@ -68,6 +68,8 @@ from services.ipam_service import (
     generate_interface_prefixes,
     get_prefix_gateway_candidates,
     rebuild_prefixes_hierarchy,
+    preview_delete_subnet,
+    audit_ipam_scope_integrity,
 )
 from services.ipam_address_space_service import (
     create_address_space,
@@ -83,6 +85,7 @@ from services.ipam_routing_context_service import (
     create_device_routing_context,
     get_routing_context_device_scope,
     get_routing_context_scope,
+    list_device_routing_context_candidates,
     list_device_routing_contexts,
     update_device_routing_context,
 )
@@ -587,6 +590,27 @@ def _routing_context_response(item: dict) -> dict:
     }
 
 
+@router.get('/ipam/routing-contexts/candidates')
+def api_list_routing_context_candidates(
+    device_id: str = Query(..., min_length=1),
+    user=require_permission('prefix', 'view'),
+):
+    normalized_device_id = device_id.strip()
+    device_scope = get_routing_context_device_scope(normalized_device_id)
+    user_tenant = tenant_scope_for_user(user)
+    if not device_scope or (user_tenant is not None and device_scope['tenant_id'] != user_tenant):
+        raise HTTPException(status_code=404, detail='Device not found in this security tenant')
+    enforce_resource_scope(
+        user, 'prefix', 'view',
+        tenant_id=device_scope['tenant_id'], site_id=device_scope['site_id'],
+    )
+    items = list_device_routing_context_candidates(
+        device_id=normalized_device_id,
+        security_tenant_id=user_tenant,
+    )
+    return {'items': items}
+
+
 @router.get('/ipam/routing-contexts')
 def api_list_routing_contexts(
     device_id: str | None = Query(None),
@@ -1024,8 +1048,16 @@ def api_preview_prefix_address_space_batch(
     user=require_permission('prefix', 'view'),
 ):
     first_scope = _prefix_scope(body.ids[0])
+    batch_tenants: set[str] = set()
     for prefix_id in body.ids:
-        enforce_resource_scope(user, 'prefix', 'view', **_prefix_scope(prefix_id))
+        item_scope = _prefix_scope(prefix_id)
+        enforce_resource_scope(user, 'prefix', 'view', **item_scope)
+        batch_tenants.add(str(item_scope.get('tenant_id') or 'tenant-default'))
+    if len(batch_tenants) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail='All Prefixes in a batch must belong to the same security tenant',
+        )
     _enforce_address_space_scope(
         user, body.address_space_id, str(first_scope.get('tenant_id') or ''), 'view',
     )
@@ -1045,8 +1077,16 @@ def api_resolve_prefix_address_space_batch(
     user=require_permission('prefix', 'update'),
 ):
     first_scope = _prefix_scope(body.items[0].prefix_id)
+    batch_tenants: set[str] = set()
     for item in body.items:
-        enforce_resource_scope(user, 'prefix', 'update', **_prefix_scope(item.prefix_id))
+        item_scope = _prefix_scope(item.prefix_id)
+        enforce_resource_scope(user, 'prefix', 'update', **item_scope)
+        batch_tenants.add(str(item_scope.get('tenant_id') or 'tenant-default'))
+    if len(batch_tenants) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail='All Prefixes in a batch must belong to the same security tenant',
+        )
     _enforce_address_space_scope(
         user, body.address_space_id, str(first_scope.get('tenant_id') or ''), 'update',
     )
@@ -1068,9 +1108,18 @@ def api_resolve_prefix_address_space_batch(
 
 @router.put('/ipam/subnets/{subnet_id}')
 def api_update_subnet(subnet_id: str, body: PrefixUpdate, user=require_permission('prefix', 'update')):
-    enforce_resource_scope(user, 'prefix', 'update', **_prefix_scope(subnet_id))
+    current_scope = _prefix_scope(subnet_id)
+    enforce_resource_scope(user, 'prefix', 'update', **current_scope)
     fields = body.model_dump(exclude_none=True)
     fields.pop('tenant_id', None)
+    if 'site_id' in fields and str(fields['site_id'] or '') != str(current_scope.get('site_id') or ''):
+        enforce_resource_scope(
+            user,
+            'prefix',
+            'update',
+            tenant_id=current_scope.get('tenant_id'),
+            site_id=fields['site_id'],
+        )
     audit_context = _ipam_audit_context(user)
     try:
         if not update_subnet(subnet_id, **fields, audit_context=audit_context):
@@ -1079,6 +1128,26 @@ def api_update_subnet(subnet_id: str, body: PrefixUpdate, user=require_permissio
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return {'ok': True}
+
+
+@router.get('/ipam/subnets/{subnet_id}/delete-preview')
+def api_preview_delete_subnet(
+    subnet_id: str,
+    user=require_permission('prefix', 'view'),
+):
+    enforce_resource_scope(user, 'prefix', 'view', **_prefix_scope(subnet_id))
+    preview = preview_delete_subnet(subnet_id)
+    if not preview:
+        raise HTTPException(status_code=404, detail='Prefix not found')
+    return preview
+
+
+@router.get('/ipam/audit/scope-integrity')
+def api_audit_ipam_scope_integrity(
+    user=require_permission('prefix', 'view'),
+):
+    allowed_prefix_ids = _authorized_ipam_prefix_ids(user, 'view') if isinstance(user, dict) else None
+    return audit_ipam_scope_integrity(allowed_prefix_ids=allowed_prefix_ids)
 
 
 @router.delete('/ipam/subnets/{subnet_id}')
@@ -2360,3 +2429,284 @@ def api_list_current_fhrp_group_observations(
             'last_error_code': str(state.get('last_error_code') or ''),
         })
     return {'items': items, 'collection_states': collection_states}
+
+
+# ── NetBox-Aligned Native IPAM Objects (VLAN Groups, Route Targets, RIR/Aggregate/ASN) ──
+
+class VLANGroupCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128)
+    scope_type: str = Field(default='', max_length=32)
+    scope_id: str = Field(default='', max_length=128)
+    min_vid: int = Field(default=1, ge=1, le=4094)
+    max_vid: int = Field(default=4094, ge=1, le=4094)
+    description: str = Field(default='', max_length=500)
+
+
+class RouteTargetCreate(BaseModel):
+    name: str = Field(..., min_length=3, max_length=64)
+    description: str = Field(default='', max_length=500)
+
+
+class VRFRouteTargetsUpdate(BaseModel):
+    import_target_ids: list[str] = Field(default_factory=list)
+    export_target_ids: list[str] = Field(default_factory=list)
+
+
+class RIRCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128)
+    is_private: bool = False
+    description: str = Field(default='', max_length=500)
+
+
+class AggregateCreate(BaseModel):
+    prefix: str = Field(..., min_length=3, max_length=64)
+    rir_id: str = Field(..., min_length=1, max_length=128)
+    date_added: str = Field(default='', max_length=32)
+    description: str = Field(default='', max_length=500)
+
+
+class ASNCreate(BaseModel):
+    asn: int = Field(..., ge=1, le=4294967295)
+    rir_id: str = Field(..., min_length=1, max_length=128)
+    site_id: str | None = None
+    description: str = Field(default='', max_length=500)
+
+
+@router.get('/ipam/vlan-groups')
+def api_list_vlan_groups(
+    scope_id: str = Query(default=''),
+    user=require_permission('prefix', 'view'),
+):
+    from services.ipam_native_models_service import list_vlan_groups
+    return {'items': list_vlan_groups(tenant_id=tenant_scope_for_user(user), scope_id=scope_id)}
+
+
+@router.post('/ipam/vlan-groups', status_code=201)
+def api_create_vlan_group(
+    body: VLANGroupCreate,
+    user=require_permission('prefix', 'create'),
+):
+    from services.ipam_native_models_service import create_vlan_group
+    tenant_id = tenant_id_for_write(user=user)
+    if body.scope_type == 'site' and body.scope_id:
+        enforce_resource_scope(user, 'prefix', 'create', tenant_id=tenant_id, site_id=body.scope_id)
+    try:
+        return create_vlan_group(
+            name=body.name,
+            scope_type=body.scope_type,
+            scope_id=body.scope_id,
+            min_vid=body.min_vid,
+            max_vid=body.max_vid,
+            description=body.description,
+            tenant_id=tenant_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post('/ipam/vlan-groups/{group_id}/vlans/{vlan_pk}')
+def api_assign_vlan_to_group(
+    group_id: str,
+    vlan_pk: str,
+    user=require_permission('prefix', 'update'),
+):
+    from services.ipam_native_models_service import assign_vlan_to_group
+    tenant_id = tenant_id_for_write(user=user)
+    try:
+        return assign_vlan_to_group(vlan_pk, group_id, tenant_id=tenant_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.delete('/ipam/vlan-groups/{group_id}')
+def api_delete_vlan_group(
+    group_id: str,
+    user=require_permission('prefix', 'delete'),
+):
+    from services.ipam_native_models_service import delete_vlan_group
+    if not delete_vlan_group(group_id, tenant_id=tenant_id_for_write(user=user)):
+        raise HTTPException(status_code=404, detail='VLAN Group not found')
+    return {'ok': True}
+
+
+@router.get('/ipam/route-targets')
+def api_list_route_targets(user=require_permission('prefix', 'view')):
+    from services.ipam_native_models_service import list_route_targets
+    return {'items': list_route_targets(tenant_id=tenant_scope_for_user(user))}
+
+
+@router.post('/ipam/route-targets', status_code=201)
+def api_create_route_target(
+    body: RouteTargetCreate,
+    user=require_permission('prefix', 'create'),
+):
+    from services.ipam_native_models_service import create_route_target
+    try:
+        return create_route_target(
+            name=body.name,
+            description=body.description,
+            tenant_id=tenant_id_for_write(user=user),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.delete('/ipam/route-targets/{rt_id}')
+def api_delete_route_target(
+    rt_id: str,
+    user=require_permission('prefix', 'delete'),
+):
+    from services.ipam_native_models_service import delete_route_target
+    if not delete_route_target(rt_id, tenant_id=tenant_id_for_write(user=user)):
+        raise HTTPException(status_code=404, detail='Route Target not found')
+    return {'ok': True}
+
+
+@router.get('/ipam/vrfs/{vrf_id}/route-targets')
+def api_get_vrf_route_targets(
+    vrf_id: str,
+    user=require_permission('prefix', 'view'),
+):
+    from services.ipam_native_models_service import get_vrf_route_targets
+    try:
+        return get_vrf_route_targets(vrf_id, tenant_id=tenant_scope_for_user(user))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.put('/ipam/vrfs/{vrf_id}/route-targets')
+def api_set_vrf_route_targets(
+    vrf_id: str,
+    body: VRFRouteTargetsUpdate,
+    user=require_permission('prefix', 'update'),
+):
+    from services.ipam_native_models_service import set_vrf_route_targets
+    try:
+        return set_vrf_route_targets(
+            vrf_id,
+            import_target_ids=body.import_target_ids,
+            export_target_ids=body.export_target_ids,
+            tenant_id=tenant_id_for_write(user=user),
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get('/ipam/rirs')
+def api_list_rirs(user=require_permission('prefix', 'view')):
+    from services.ipam_native_models_service import list_rirs
+    return {'items': list_rirs(tenant_id=tenant_scope_for_user(user))}
+
+
+@router.post('/ipam/rirs', status_code=201)
+def api_create_rir(
+    body: RIRCreate,
+    user=require_permission('prefix', 'create'),
+):
+    from services.ipam_native_models_service import create_rir
+    try:
+        return create_rir(
+            name=body.name,
+            is_private=body.is_private,
+            description=body.description,
+            tenant_id=tenant_id_for_write(user=user),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.delete('/ipam/rirs/{rir_id}')
+def api_delete_rir(
+    rir_id: str,
+    user=require_permission('prefix', 'delete'),
+):
+    from services.ipam_native_models_service import delete_rir
+    try:
+        if not delete_rir(rir_id, tenant_id=tenant_id_for_write(user=user)):
+            raise HTTPException(status_code=404, detail='RIR not found')
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {'ok': True}
+
+
+@router.get('/ipam/aggregates')
+def api_list_aggregates(
+    rir_id: str = Query(default=''),
+    user=require_permission('prefix', 'view'),
+):
+    from services.ipam_native_models_service import list_aggregates
+    return {'items': list_aggregates(tenant_id=tenant_scope_for_user(user), rir_id=rir_id)}
+
+
+@router.post('/ipam/aggregates', status_code=201)
+def api_create_aggregate(
+    body: AggregateCreate,
+    user=require_permission('prefix', 'create'),
+):
+    from services.ipam_native_models_service import create_aggregate
+    try:
+        return create_aggregate(
+            prefix=body.prefix,
+            rir_id=body.rir_id,
+            date_added=body.date_added,
+            description=body.description,
+            tenant_id=tenant_id_for_write(user=user),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.delete('/ipam/aggregates/{aggregate_id}')
+def api_delete_aggregate(
+    aggregate_id: str,
+    user=require_permission('prefix', 'delete'),
+):
+    from services.ipam_native_models_service import delete_aggregate
+    if not delete_aggregate(aggregate_id, tenant_id=tenant_id_for_write(user=user)):
+        raise HTTPException(status_code=404, detail='Aggregate not found')
+    return {'ok': True}
+
+
+@router.get('/ipam/asns')
+def api_list_asns(
+    rir_id: str = Query(default=''),
+    user=require_permission('prefix', 'view'),
+):
+    from services.ipam_native_models_service import list_asns
+    return {'items': list_asns(tenant_id=tenant_scope_for_user(user), rir_id=rir_id)}
+
+
+@router.post('/ipam/asns', status_code=201)
+def api_create_asn(
+    body: ASNCreate,
+    user=require_permission('prefix', 'create'),
+):
+    from services.ipam_native_models_service import create_asn
+    tenant_id = tenant_id_for_write(user=user)
+    if body.site_id:
+        enforce_resource_scope(user, 'prefix', 'create', tenant_id=tenant_id, site_id=body.site_id)
+    try:
+        return create_asn(
+            asn=body.asn,
+            rir_id=body.rir_id,
+            site_id=body.site_id,
+            description=body.description,
+            tenant_id=tenant_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.delete('/ipam/asns/{asn_id}')
+def api_delete_asn(
+    asn_id: str,
+    user=require_permission('prefix', 'delete'),
+):
+    from services.ipam_native_models_service import delete_asn
+    if not delete_asn(asn_id, tenant_id=tenant_id_for_write(user=user)):
+        raise HTTPException(status_code=404, detail='ASN not found')
+    return {'ok': True}

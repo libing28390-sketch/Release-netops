@@ -51,6 +51,9 @@ const wirelessMainWidth = (width: number): number => (
   width - (width >= 700 ? Math.min(320, Math.max(240, width * 0.24)) : width * 0.42)
 );
 
+export const TOPOLOGY_WIRELESS_CONTROL_HALF_WIDTH = 118;
+export const TOPOLOGY_SITE_SIDE_PADDING = 88;
+
 /**
  * Use only explicit device roles for visual hierarchy. Link structure does
  * not create user-facing hierarchy rows.
@@ -533,6 +536,12 @@ export const buildTopologyRoleLayeredPositions = (
       ));
     }
     const mainPositions = buildTopologyRoleLayeredPositions(mainDevices, mainWidth, height, links, rowCapacityCeiling) || fallbackPositions;
+    const wiredRight = Math.max(...Object.values(mainPositions).map((point) => point.x));
+    // Match the left site padding when placing the control band beside a sparse wired layout.
+    const controllerX = Math.min(
+      mainWidth + (width - mainWidth) / 2,
+      wiredRight + TOPOLOGY_SITE_SIDE_PADDING + TOPOLOGY_WIRELESS_CONTROL_HALF_WIDTH,
+    );
     const edges = collectPhysicalLayoutEdges(links);
     const positions = { ...mainPositions };
     const occupied: number[] = [];
@@ -545,7 +554,7 @@ export const buildTopologyRoleLayeredPositions = (
         : Math.min(...Object.values(mainPositions).map((point) => point.y));
       while (occupied.some((otherY) => Math.abs(otherY - y) < MIN_TOPOLOGY_SUBROW_GAP)) y += MIN_TOPOLOGY_SUBROW_GAP;
       occupied.push(y);
-      positions[controller.id] = { x: mainWidth + (width - mainWidth) / 2, y };
+      positions[controller.id] = { x: controllerX, y };
     }
     return positions;
   }

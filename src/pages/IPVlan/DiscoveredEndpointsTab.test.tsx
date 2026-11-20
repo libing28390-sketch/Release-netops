@@ -425,7 +425,7 @@ describe('DiscoveredEndpointsTab', () => {
     renderPage('en');
 
     const endpointRow = await screen.findByRole('row', { name: /10\.10\.1\.21/ });
-    expect(screen.getByRole('columnheader', { name: 'Source' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Collection source' })).toBeTruthy();
     expect(within(endpointRow).getByText('IPv6 neighbor table (ND)')).toBeTruthy();
     fireEvent.click(within(endpointRow).getByRole('button', { name: 'View details' }));
     const dialog = await screen.findByRole('dialog', { name: 'Endpoint details' });
@@ -532,7 +532,7 @@ describe('DiscoveredEndpointsTab', () => {
     await screen.findByRole('row', { name: /10\.10\.1\.1\b/ });
     expect(vi.mocked(fetch).mock.calls.some(([input]) => {
       const query = new URL(String(input), 'http://localhost').searchParams;
-      return query.get('site_id') === 'site-1' && query.get('endpoint_class') === 'all';
+      return query.get('site_id') === 'site-1' && (!query.get('endpoint_class') || query.get('endpoint_class') === 'all');
     })).toBe(true);
     expect(screen.queryByText('“所属网络待确认”在哪里处理？')).toBeNull();
   });
@@ -544,5 +544,77 @@ describe('DiscoveredEndpointsTab', () => {
     renderPage();
     expect((await screen.findByRole('alert')).textContent).toContain('当前账号没有权限查看发现终端');
     expect(screen.queryByText('没有符合条件的记录，请调整筛选或重置。')).toBeNull();
+  });
+
+  it('preserves suggested_subnet_id and vrf_context_status when opening registration dialog', async () => {
+    const resolvedGlobalItem = {
+      ...item,
+      id: 'obs-global-1',
+      vrf_id: null,
+      vrf_name: '全局/默认',
+      address_space_id: 'space-global-1',
+      address_space_name: 'Global-Default',
+      address_space_kind: 'global',
+      vrf_context_status: 'explicit_global',
+      scope_status: 'resolved',
+      suggested_subnet_id: 'prefix-10-10-1',
+      suggested_subnet_prefix: '10.10.1.0/24',
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith('/api/ipam/endpoints?')) {
+        return response({
+          items: [resolvedGlobalItem], total: 1, page: 1, page_size: 20, has_more: false,
+          sites: [{ id: 'site-1', name: 'WH-DC-01' }], vrfs: [], devices: [{ id: 'switch-1', name: 'SW-01' }],
+        });
+      }
+      if (url === '/api/ipam/subnets') {
+        return response({
+          items: [{
+            id: 'prefix-10-10-1',
+            prefix: '10.10.1.0/24',
+            name: 'Office-VLAN20',
+            tenant_id: 'tenant-1',
+            site_id: 'site-1',
+            site_name: 'WH-DC-01',
+            vrf_id: null,
+            vrf_name: '',
+            address_space_id: 'space-global-1',
+            address_space_name: 'Global-Default',
+            address_space_kind: 'global',
+            is_active: 1,
+            status: 'active',
+          }],
+        });
+      }
+      if (url === '/api/ipam/reconciliation/register' && init?.method === 'POST') {
+        return response({ ok: true });
+      }
+      return response({});
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderPage();
+    const row = await screen.findByRole('row', { name: /10\.10\.1\.21/ });
+    fireEvent.click(within(row).getByRole('button', { name: '登记到 IPAM' }));
+    const dialog = await screen.findByRole('dialog', { name: '登记到 IPAM' });
+    await waitFor(() => {
+      expect(within(dialog).getByRole('button', { name: '确认登记' }).hasAttribute('disabled')).toBe(false);
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: '确认登记' }));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/ipam/reconciliation/register',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            observation_id: 'obs-global-1',
+            subnet_id: 'prefix-10-10-1',
+            expected_observed_at: resolvedGlobalItem.observed_at,
+            confirmed_scope: true,
+          }),
+        }),
+      );
+    });
   });
 });

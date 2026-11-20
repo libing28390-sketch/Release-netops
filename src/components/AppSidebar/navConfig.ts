@@ -120,13 +120,14 @@ export const navConfig: NavGroup[] = [
         label: '地址空间',
         labelEn: 'Address Space',
         path: '/ipam/prefixes',
-        activeMatch: '/ipam/prefixes,/ipam/pools,/ipam/vips,/ipam/routing-contexts,/ipam/fhrp',
+        activeMatch: '/ipam/prefixes,/ipam/pools,/ipam/vips,/ipam/routing-contexts,/ipam/fhrp,/ipam/resources',
         icon: 'Globe',
         children: [
           { id: 'ipam-prefixes', label: '网段', labelEn: 'Prefixes', path: '/ipam/prefixes', icon: 'Globe' },
           { id: 'ipam-vips', label: 'VIP', labelEn: 'VIPs', path: '/ipam/vips', icon: 'ShieldCheck' },
           { id: 'ipam-fhrp', label: 'FHRP 与 Anycast', labelEn: 'FHRP & Anycast', path: '/ipam/fhrp', icon: 'ShieldCheck' },
           { id: 'ipam-routing-contexts', label: '设备上下文映射', labelEn: 'Device Context Mappings', path: '/ipam/routing-contexts', icon: 'Network' },
+          { id: 'ipam-resources', label: '扩展台账', labelEn: 'Extended Models', path: '/ipam/resources', icon: 'Layers' },
         ],
       },
     ]

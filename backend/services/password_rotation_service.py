@@ -207,35 +207,305 @@ _SAVE_COMMANDS: dict[str, str] = {
 }
 
 
-# ── 核心功能 ──────────────────────────────────────
+# ── 策略持久化与核心功能 ──────────────────────────────────────
 
-def check_expiring(days_ahead: int | None = None) -> list[dict[str, Any]]:
-    """
-    扫描即将过期或已过期的设备密码。
-    返回: [{ id, hostname, ip_address, password_expires_at, days_remaining }]
-    """
-    if days_ahead is None:
-        days_ahead = settings.PASSWORD_ROTATION_NOTIFY_DAYS
+_VALID_ROTATION_ROLES = ('normal', 'admin', 'enable')
+
+
+def _normalize_included_roles(roles: Any) -> list[str]:
+    if not roles:
+        return ['admin']
+    normalized: list[str] = []
+    for item in roles:
+        role = str(item or '').strip().lower()
+        if role in _VALID_ROTATION_ROLES and role not in normalized:
+            normalized.append(role)
+    return normalized or ['admin']
+
+
+def _compute_next_scheduled_run_at(hour: int, minute: int) -> str:
     now = datetime.now(timezone.utc)
-    cutoff = (now + timedelta(days=days_ahead)).isoformat()
+    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate <= now:
+        candidate = candidate + timedelta(days=1)
+    return candidate.isoformat()
+
+
+def _ensure_rotation_policy_row(conn) -> dict[str, Any]:
+    import json as _json
+
+    row = conn.execute(
+        "SELECT * FROM password_rotation_policy WHERE id = 'default'"
+    ).fetchone()
+    if row:
+        return dict(row)
+    now_str = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    default_enabled = bool(settings.PASSWORD_ROTATION_ENABLED)
+    default_interval = max(1, int(settings.PASSWORD_ROTATION_INTERVAL_DAYS or 90))
+    default_notify = max(1, int(settings.PASSWORD_ROTATION_NOTIFY_DAYS or 14))
+    conn.execute(
+        """INSERT INTO password_rotation_policy
+           (id, auto_rotate_enabled, interval_days, notify_days, schedule_hour, schedule_minute,
+            included_roles_json, updated_by, updated_at)
+           VALUES ('default', ?, ?, ?, 2, 0, '["admin"]', 'system', ?)
+           ON CONFLICT (id) DO NOTHING""",
+        (default_enabled, default_interval, default_notify, now_str),
+    )
+    conn.commit()
+    created = conn.execute(
+        "SELECT * FROM password_rotation_policy WHERE id = 'default'"
+    ).fetchone()
+    if created:
+        return dict(created)
+    return {
+        'id': 'default',
+        'auto_rotate_enabled': default_enabled,
+        'interval_days': default_interval,
+        'notify_days': default_notify,
+        'schedule_hour': 2,
+        'schedule_minute': 0,
+        'included_roles_json': _json.dumps(['admin']),
+        'updated_by': 'system',
+        'updated_at': now_str,
+    }
+
+
+def get_rotation_policy() -> dict[str, Any]:
+    """Return the effective persisted password rotation policy."""
+    import json as _json
+
+    conn = get_db_connection()
+    try:
+        try:
+            row = _ensure_rotation_policy_row(conn)
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            row = {
+                'auto_rotate_enabled': bool(settings.PASSWORD_ROTATION_ENABLED),
+                'interval_days': max(1, int(settings.PASSWORD_ROTATION_INTERVAL_DAYS or 90)),
+                'notify_days': max(1, int(settings.PASSWORD_ROTATION_NOTIFY_DAYS or 14)),
+                'schedule_hour': 2,
+                'schedule_minute': 0,
+                'included_roles_json': '["admin"]',
+                'updated_by': 'system',
+                'updated_at': None,
+            }
+    finally:
+        conn.close()
+
+    try:
+        roles = _normalize_included_roles(_json.loads(row.get('included_roles_json') or '["admin"]'))
+    except Exception:
+        roles = ['admin']
+    enabled = bool(row.get('auto_rotate_enabled'))
+    hour = int(row.get('schedule_hour') if row.get('schedule_hour') is not None else 2)
+    minute = int(row.get('schedule_minute') if row.get('schedule_minute') is not None else 0)
+    return {
+        'auto_rotate_enabled': enabled,
+        'interval_days': int(row.get('interval_days') or 90),
+        'notify_days': int(row.get('notify_days') or 14),
+        'schedule_hour': hour,
+        'schedule_minute': minute,
+        'included_roles': roles,
+        'updated_by': str(row.get('updated_by') or ''),
+        'updated_at': str(row['updated_at']) if row.get('updated_at') else None,
+        'next_scheduled_run_at': _compute_next_scheduled_run_at(hour, minute) if enabled else None,
+        'deployment_defaults': {
+            'auto_rotate_enabled': bool(settings.PASSWORD_ROTATION_ENABLED),
+            'interval_days': int(settings.PASSWORD_ROTATION_INTERVAL_DAYS or 90),
+            'notify_days': int(settings.PASSWORD_ROTATION_NOTIFY_DAYS or 14),
+        },
+    }
+
+
+def update_rotation_policy(
+    *,
+    auto_rotate_enabled: bool | None = None,
+    interval_days: int | None = None,
+    notify_days: int | None = None,
+    included_roles: list[str] | None = None,
+    updated_by: str = '',
+) -> dict[str, Any]:
+    """Persist updated password rotation policy and return before/after for audit."""
+    import json as _json
+
+    before = get_rotation_policy()
+    next_enabled = before['auto_rotate_enabled'] if auto_rotate_enabled is None else bool(auto_rotate_enabled)
+    next_interval = before['interval_days'] if interval_days is None else int(interval_days)
+    next_notify = before['notify_days'] if notify_days is None else int(notify_days)
+    next_roles = before['included_roles'] if included_roles is None else _normalize_included_roles(included_roles)
+
+    if not (1 <= next_interval <= 3650):
+        raise ValueError('interval_days must be between 1 and 3650')
+    if not (1 <= next_notify <= 365):
+        raise ValueError('notify_days must be between 1 and 365')
+    if included_roles is not None:
+        invalid = [str(r) for r in included_roles if str(r or '').strip().lower() not in _VALID_ROTATION_ROLES]
+        if invalid:
+            raise ValueError(f'Unsupported rotation role(s): {", ".join(invalid)}')
+        if not next_roles:
+            raise ValueError('included_roles must contain at least one role')
+
+    now_str = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    conn = get_db_connection()
+    try:
+        _ensure_rotation_policy_row(conn)
+        conn.execute(
+            """UPDATE password_rotation_policy
+                  SET auto_rotate_enabled = ?, interval_days = ?, notify_days = ?,
+                      included_roles_json = ?, updated_by = ?, updated_at = ?
+                WHERE id = 'default'""",
+            (
+                next_enabled,
+                next_interval,
+                next_notify,
+                _json.dumps(next_roles),
+                str(updated_by or ''),
+                now_str,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    after = get_rotation_policy()
+    return {'before': before, 'after': after}
+
+
+def preview_rotation_policy_impact(*, included_roles: list[str] | None = None) -> dict[str, Any]:
+    """Summarize devices and accounts affected if automatic rotation is enabled."""
+    policy = get_rotation_policy()
+    target_roles = _normalize_included_roles(included_roles) if included_roles is not None else policy['included_roles']
+    expiring_all = check_expiring(days_ahead=policy['notify_days'], roles=target_roles)
+    expired = [item for item in expiring_all if item['is_expired']]
+    expiring_soon = [item for item in expiring_all if not item['is_expired']]
 
     conn = get_db_connection()
     try:
         rows = conn.execute(
-            "SELECT id, hostname, ip_address, password_expires_at FROM devices "
-            "WHERE password_expires_at != '' AND password_expires_at <= ?",
-            (cutoff,)
+            """SELECT id, normal_password_expires_at, admin_password_expires_at,
+                      enable_password_expires_at, password_expires_at
+                 FROM devices
+                WHERE COALESCE(status, 'online') <> 'decommissioned'"""
+        ).fetchall()
+    finally:
+        conn.close()
+
+    unconfigured_count = 0
+    for row in rows:
+        for role in target_roles:
+            expiry = _resolve_role_expiry(dict(row), role)
+            if not expiry:
+                unconfigured_count += 1
+
+    return {
+        'total_devices': len(rows),
+        'included_roles': target_roles,
+        'expired_accounts_count': len(expired),
+        'expiring_soon_accounts_count': len(expiring_soon),
+        'unconfigured_accounts_count': unconfigured_count,
+        'schedule_window': f"{policy['schedule_hour']:02d}:{policy['schedule_minute']:02d} UTC",
+    }
+
+
+def _resolve_role_expiry(device: dict[str, Any], role: str) -> str:
+    if role == 'normal':
+        return str(device.get('normal_password_expires_at') or '').strip()
+    if role == 'enable':
+        return str(device.get('enable_password_expires_at') or '').strip()
+    return (
+        str(device.get('admin_password_expires_at') or '').strip()
+        or str(device.get('password_expires_at') or '').strip()
+    )
+
+
+def _record_rotation_notification_if_new(
+    dedup_key: str,
+    *,
+    device_id: str,
+    role: str,
+    event_type: str,
+    message: str = '',
+) -> bool:
+    """Record a deduplicated rotation notification; returns True only on first emission."""
+    now_str = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute(
+            """INSERT INTO password_rotation_notification_log
+               (dedup_key, device_id, role, event_type, message, notified_at)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT (dedup_key) DO NOTHING""",
+            (dedup_key, device_id, role, event_type, message, now_str),
+        )
+        conn.commit()
+        return int(getattr(cursor, 'rowcount', 0) or 0) == 1
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+
+def check_expiring(
+    days_ahead: int | None = None,
+    *,
+    roles: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """
+    扫描即将过期或已过期的设备账号密码（按分角色到期列，兼顾旧列回退）。
+    返回: [{ id, device_id, hostname, ip_address, role, password_expires_at, days_remaining, is_expired }]
+    """
+    policy = get_rotation_policy()
+    if days_ahead is None:
+        days_ahead = policy['notify_days']
+    target_roles = _normalize_included_roles(roles) if roles is not None else policy['included_roles']
+    now = datetime.now(timezone.utc)
+    cutoff = now + timedelta(days=int(days_ahead))
+
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """SELECT id, hostname, ip_address,
+                      normal_password_expires_at,
+                      admin_password_expires_at,
+                      enable_password_expires_at,
+                      password_expires_at
+                 FROM devices
+                WHERE COALESCE(status, 'online') <> 'decommissioned'"""
         ).fetchall()
         result = []
         for r in rows:
-            d = dict(r)
-            try:
-                exp = datetime.fromisoformat(d['password_expires_at'].replace('Z', '+00:00'))
-                d['days_remaining'] = (exp - now).days
-            except Exception:
-                d['days_remaining'] = -1
-            result.append(d)
-        return sorted(result, key=lambda x: x.get('days_remaining', 9999))
+            dev = dict(r)
+            for role in target_roles:
+                expiry_raw = _resolve_role_expiry(dev, role)
+                if not expiry_raw:
+                    continue
+                try:
+                    exp = datetime.fromisoformat(expiry_raw.replace('Z', '+00:00'))
+                    if exp.tzinfo is None:
+                        exp = exp.replace(tzinfo=timezone.utc)
+                except Exception:
+                    continue
+                if exp <= cutoff:
+                    days_remaining = (exp - now).days
+                    result.append({
+                        'id': dev['id'],
+                        'device_id': dev['id'],
+                        'hostname': dev.get('hostname') or '',
+                        'ip_address': dev.get('ip_address') or '',
+                        'role': role,
+                        'password_expires_at': expiry_raw,
+                        'days_remaining': days_remaining,
+                        'is_expired': exp <= now,
+                    })
+        return sorted(result, key=lambda x: (x.get('days_remaining', 9999), x.get('hostname', ''), x.get('role', '')))
     finally:
         conn.close()
 
@@ -750,9 +1020,10 @@ def rotate_password(
         if verify_attempt:
             verify_attempt.__exit__(None, None, None)
 
-    # Update DB
+    # Update DB using the effective rotation policy interval
+    policy = get_rotation_policy()
     now_str = datetime.now(timezone.utc).isoformat()
-    expires_str = (datetime.now(timezone.utc) + timedelta(days=settings.PASSWORD_ROTATION_INTERVAL_DAYS)).isoformat()
+    expires_str = (datetime.now(timezone.utc) + timedelta(days=int(policy['interval_days']))).isoformat()
     enc_new = encrypt_credential(new_password)
 
     conn2 = get_db_connection()
@@ -764,8 +1035,9 @@ def rotate_password(
             )
         elif role == 'admin':
             conn2.execute(
-                'UPDATE devices SET admin_password = ?, admin_password_last_rotated = ?, admin_password_expires_at = ?, username = ?, password = ? WHERE id = ?',
-                (enc_new, now_str, expires_str, target_username, enc_new, device_id)
+                'UPDATE devices SET admin_password = ?, admin_password_last_rotated = ?, admin_password_expires_at = ?, '
+                'password_last_rotated = ?, password_expires_at = ?, username = ?, password = ? WHERE id = ?',
+                (enc_new, now_str, expires_str, now_str, expires_str, target_username, enc_new, device_id)
             )
         else:
             conn2.execute(
@@ -942,25 +1214,143 @@ def list_credential_bound_devices(
         conn.close()
 
 
-def run_rotation_sweep():
+def _dispatch_rotation_notification(
+    *,
+    device_id: str,
+    hostname: str,
+    ip_address: str,
+    role: str,
+    event_type: str,
+    expires_at: str,
+    message: str,
+    auto_rotate_enabled: bool,
+) -> None:
+    """Dispatch a deduplicated credential rotation alert through configured channels."""
+    try:
+        from services.notification_service import (
+            automatic_notifications_enabled,
+            dispatch_to_all_users,
+        )
+        if not automatic_notifications_enabled():
+            return
+        severity = 'critical' if event_type == 'failed' else ('major' if event_type == 'expired' else 'warning')
+        title_map = {
+            'expiring': '凭据即将过期提醒',
+            'expired': '凭据已过期提醒',
+            'failed': '自动凭据轮换失败告警',
+        }
+        action_hint = (
+            '自动轮换已开启，将在每日调度窗口自动处理；失败项请前往 /management/credentials 人工核查。'
+            if auto_rotate_enabled
+            else '当前已关闭自动轮换，请前往 /management/credentials 执行手动轮换。'
+        )
+        alert = {
+            'title': f"{title_map.get(event_type, '凭据轮换提醒')} - {hostname or device_id}",
+            'severity': severity,
+            'device_id': device_id,
+            'hostname': hostname or device_id,
+            'ip_address': ip_address,
+            'metric': f'password_rotation.{role}',
+            'message': f"{message} | 账号类型: {role} | 到期时间: {expires_at or '-'} | {action_hint}",
+            'status': 'open',
+            'source': 'password_rotation',
+            'link': '/management/credentials',
+        }
+        dispatch_to_all_users(alert, raise_on_error=False)
+    except Exception as exc:
+        logger.debug("[PasswordRotation] Notification channel dispatch skipped: %s", exc)
+
+
+def run_rotation_sweep() -> dict[str, Any]:
     """
-    定时调度入口：扫描到期设备并自动轮换。
+    定时调度入口：读取持久化生效策略，发送去重到期提醒并在开启自动轮换时处理到期账号。
     由 APScheduler 调用。
     """
-    if not settings.PASSWORD_ROTATION_ENABLED:
-        return
+    policy = get_rotation_policy()
+    included_roles = policy['included_roles']
+    expiring_entries = check_expiring(days_ahead=policy['notify_days'], roles=included_roles)
 
-    logger.info("[PasswordRotation] Starting rotation sweep...")
-    expiring = check_expiring(days_ahead=0)  # 只处理已过期的
+    reminders_sent = 0
+    for item in expiring_entries:
+        event_type = 'expired' if item['is_expired'] else 'expiring'
+        dedup_key = f"{item['device_id']}:{item['role']}:{event_type}:{item['password_expires_at']}"
+        msg = (
+            f"Device {item.get('hostname') or item['device_id']} ({item['role']}) "
+            f"password {event_type} (expires_at={item['password_expires_at']})"
+        )
+        if _record_rotation_notification_if_new(
+            dedup_key,
+            device_id=item['device_id'],
+            role=item['role'],
+            event_type=event_type,
+            message=msg,
+        ):
+            reminders_sent += 1
+            _dispatch_rotation_notification(
+                device_id=item['device_id'],
+                hostname=str(item.get('hostname') or ''),
+                ip_address=str(item.get('ip_address') or ''),
+                role=item['role'],
+                event_type=event_type,
+                expires_at=str(item.get('password_expires_at') or ''),
+                message=msg,
+                auto_rotate_enabled=bool(policy['auto_rotate_enabled']),
+            )
+
+    if not policy['auto_rotate_enabled']:
+        logger.info(
+            "[PasswordRotation] Auto-rotation disabled by effective policy; reminders_sent=%d",
+            reminders_sent,
+        )
+        return {
+            'auto_rotate_enabled': False,
+            'reminders_sent': reminders_sent,
+            'rotated': 0,
+            'failed': 0,
+        }
+
+    logger.info("[PasswordRotation] Starting rotation sweep (roles=%s)...", included_roles)
+    due = [item for item in expiring_entries if item['is_expired']]
     rotated, failed = 0, 0
-    for dev in expiring:
-        result = rotate_password(dev['id'])
+    for item in due:
+        result = rotate_password(item['device_id'], role=item['role'])
         if result['success']:
             rotated += 1
         else:
             failed += 1
-            logger.warning("[PasswordRotation] Failed for %s: %s", dev.get('hostname'), result['message'])
-    logger.info("[PasswordRotation] Sweep complete: %d rotated, %d failed", rotated, failed)
+            fail_key = f"{item['device_id']}:{item['role']}:failed:{item['password_expires_at']}"
+            fail_msg = str(result.get('message') or 'Rotation failed')
+            if _record_rotation_notification_if_new(
+                fail_key,
+                device_id=item['device_id'],
+                role=item['role'],
+                event_type='failed',
+                message=fail_msg,
+            ):
+                _dispatch_rotation_notification(
+                    device_id=item['device_id'],
+                    hostname=str(item.get('hostname') or ''),
+                    ip_address=str(item.get('ip_address') or ''),
+                    role=item['role'],
+                    event_type='failed',
+                    expires_at=str(item.get('password_expires_at') or ''),
+                    message=fail_msg,
+                    auto_rotate_enabled=True,
+                )
+            logger.warning(
+                "[PasswordRotation] Failed for %s (%s): %s",
+                item.get('hostname'), item['role'], result.get('message'),
+            )
+    logger.info(
+        "[PasswordRotation] Sweep complete: %d rotated, %d failed, %d reminders",
+        rotated, failed, reminders_sent,
+    )
+    return {
+        'auto_rotate_enabled': True,
+        'reminders_sent': reminders_sent,
+        'rotated': rotated,
+        'failed': failed,
+    }
 
 
 # ──────────────────────────────────────────────────────────────────

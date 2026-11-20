@@ -94,12 +94,17 @@ function normalizeEndpoint(value: unknown): DiscoveredEndpointRow | null {
     site_name: nullableText('site_name'),
     vrf_id: nullableText('vrf_id'),
     address_space_id: nullableText('address_space_id'),
+    address_space_name: nullableText('address_space_name'),
+    address_space_kind: nullableText('address_space_kind') || undefined,
     vrf_name: nullableText('vrf_name'),
+    vrf_context_status: nullableText('vrf_context_status') || undefined,
     vrf_context_inferred: row.vrf_context_inferred === true,
     scope_status: typeof row.scope_status === 'string' ? row.scope_status : undefined,
     registration_status: typeof row.registration_status === 'string' ? row.registration_status : undefined,
     subnet_id: nullableText('subnet_id'),
     subnet_prefix: nullableText('subnet_prefix'),
+    suggested_subnet_id: nullableText('suggested_subnet_id'),
+    suggested_subnet_prefix: nullableText('suggested_subnet_prefix'),
     source_device_id: nullableText('source_device_id'),
     source_device_name: nullableText('source_device_name'),
     switch_id: nullableText('switch_id'),
@@ -470,7 +475,8 @@ const DiscoveredEndpointsTab: React.FC<DiscoveredEndpointsTabProps> = ({ languag
                       {item.site_name && <div>{item.site_name}</div>}
                       <div className="text-[var(--ui-text-label)] text-[var(--ui-fg-muted)]">
                         {!item.vrf_context_inferred && item.vrf_name && <span>{item.vrf_name}</span>}
-                        {item.vlan && <span>{!item.vrf_context_inferred && item.vrf_name ? ' · ' : ''}VLAN {item.vlan}</span>}
+                        {!item.vrf_context_inferred && item.vrf_name && item.vlan && <span> · </span>}
+                        {item.vlan && <span>VLAN {item.vlan}</span>}
                       </div>
                     </td>
                     <td>
@@ -479,7 +485,17 @@ const DiscoveredEndpointsTab: React.FC<DiscoveredEndpointsTabProps> = ({ languag
                     </td>
                     <td>
                       {item.registration_status && item.registration_status !== 'scope_pending' && <div>{getDiscoveryRegistrationLabel(item.registration_status, zh)}</div>}
-                      {item.scope_status === 'scope_pending' && <div className="text-[var(--ui-text-caption)] text-amber-700">{zh ? '网络待确认' : 'Network pending'} <Link className="text-[var(--ui-accent)] hover:underline" to="/ipam/routing-contexts">{zh ? '确认' : 'Review'}</Link></div>}
+                      {item.scope_status === 'scope_pending' && (
+                        <div className="text-[var(--ui-text-caption)] text-amber-700">
+                          {zh ? '网络待确认' : 'Network pending'}{' '}
+                          <Link
+                            className="text-[var(--ui-accent)] hover:underline"
+                            to={item.source_device_id ? `/ipam/routing-contexts?device_id=${encodeURIComponent(item.source_device_id)}` : '/ipam/routing-contexts'}
+                          >
+                            {zh ? '确认' : 'Review'}
+                          </Link>
+                        </div>
+                      )}
                       {item.hostname?.trim() && <div className="text-[var(--ui-text-label)] text-[var(--ui-fg-muted)]">{item.hostname.trim()}</div>}
                       {item.subnet_prefix && <div className="font-mono text-[var(--ui-text-caption)] text-[var(--ui-fg-muted)]">{item.subnet_prefix}</div>}
                     </td>

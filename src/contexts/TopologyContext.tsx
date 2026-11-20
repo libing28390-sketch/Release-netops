@@ -1,6 +1,6 @@
 import React, { createContext, useContext, ReactNode } from 'react';
 import type { Device, TagDefinition } from '../types';
-import type { TagFilterConfig } from '../components/TagConditionPicker';
+import type { TagFilterConfig } from '../types/tagFilter';
 
 type TopologyGraphView = 'all' | 'physical' | 'l2' | 'l3' | 'logical' | 'site' | 'external' | 'oob';
 

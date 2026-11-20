@@ -41,7 +41,7 @@ const physicalLink = (
 });
 
 describe('TopologyUplinkGroups', () => {
-  it('groups access switches by their deterministic physical parent combination', () => {
+  it('shows a single access device directly while retaining both physical uplinks', () => {
     const devices = [
       device('dist-b', 'distribution', '汇聚二'),
       device('access-1', 'access', '接入一'),
@@ -59,11 +59,29 @@ describe('TopologyUplinkGroups', () => {
     expect(grouping.accessGroups[0].parents.map((parent) => parent.id)).toEqual(['dist-a', 'dist-b']);
     expect(grouping.accessGroups[0].devices.map((item) => item.id)).toEqual(['access-1']);
 
-    render(<TopologyUplinkGroups devices={devices} links={links} language="zh" onNodeClick={vi.fn()} />);
-    const group = screen.getByRole('button', { name: /汇聚一 \+ 汇聚二/ });
+    const onNodeClick = vi.fn();
+    const { container } = render(<TopologyUplinkGroups devices={devices} links={links} language="zh" onNodeClick={onNodeClick} />);
+    const group = container.querySelector<HTMLElement>('[data-uplink-group]')!;
     expect(group.textContent).toContain('2 路上联');
+    expect(group.textContent).not.toMatch(/汇聚一|汇聚二/);
+    expect(group.querySelector('[aria-expanded]')).toBeNull();
+    fireEvent.click(within(group).getByRole('button', { name: '接入一' }));
+    expect(onNodeClick).toHaveBeenCalledWith(devices[1]);
+  });
+
+  it('expands a multi-device access group by its member count', () => {
+    const devices = [
+      device('dist-a', 'distribution', '汇聚一'),
+      device('access-1', 'access', '接入一'),
+      device('access-2', 'access', '接入二'),
+    ];
+    const links = [physicalLink('dist-a', 'access-1'), physicalLink('dist-a', 'access-2')];
+    render(<TopologyUplinkGroups devices={devices} links={links} language="zh" selectedNodeId="dist-a" onNodeClick={vi.fn()} />);
+    const group = screen.getByRole('button', { name: '2 台接入设备' });
+    expect(group.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(group);
-    expect(screen.getByRole('button', { name: /接入一/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '接入一' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '接入二' })).toBeTruthy();
   });
 
   it('keeps inferred-only relationships under uplink pending and lists APs by wired parent', () => {
@@ -82,14 +100,18 @@ describe('TopologyUplinkGroups', () => {
     const grouping = buildTopologyUplinkGrouping(devices, links);
     expect(grouping.inferredLinkCount).toBe(1);
     expect(grouping.accessGroups.find((group) => group.parents.length === 0)?.devices).toHaveLength(2);
+    expect(grouping.upstreams.get('ap-1')?.map((parent) => parent.device.hostname)).toEqual(['接入一']);
 
     render(<TopologyUplinkGroups devices={devices} links={links} language="zh" onNodeClick={vi.fn()} />);
 
     expect(screen.getAllByText('上联待确认').length).toBeGreaterThan(0);
     expect(screen.getByRole('region', { name: '无线控制器' }).textContent).toContain('控制器一');
-    const apGroup = screen.getByRole('button', { name: /接入一 · 1 AP/ });
+    const apGroup = screen.getByRole('button', { name: '接入组无线 AP · 1 AP' });
+    expect(apGroup.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button', { name: 'AP 一' })).toBeTruthy();
     fireEvent.click(apGroup);
-    expect(screen.getByRole('button', { name: /AP 一/ })).toBeTruthy();
+    expect(apGroup.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('button', { name: 'AP 一' })).toBeNull();
     const pending = grouping.accessGroups.find((group) => group.parents.length === 0);
     expect(pending?.devices.map((item) => item.id)).toEqual(['access-1', 'access-2']);
   });
@@ -109,9 +131,9 @@ describe('TopologyUplinkGroups', () => {
       />,
     );
 
-    expect(screen.getByRole('region', { name: '选中设备上联详情' }).textContent).toContain('GigabitEthernet0/0/8 ↔ Ten-GigabitEthernet1/0/1');
-    const selectedParent = screen.getByRole('region', { name: '选中设备上联详情' });
-    const parentButton = within(selectedParent).getByRole('button', { name: /接入一/ });
+    expect(screen.getByRole('complementary', { name: '设备详情' }).textContent).toContain('Ten-GigabitEthernet1/0/1 ↔ GigabitEthernet0/0/8');
+    const topologyCanvas = screen.getByRole('region', { name: '上联分组拓扑画布' });
+    const parentButton = within(topologyCanvas).getByRole('button', { name: '接入一' });
     expect(parentButton.getAttribute('data-uplink-parent')).toBe('true');
     fireEvent.click(parentButton);
     expect(onNodeClick).toHaveBeenCalledWith(switchDevice);

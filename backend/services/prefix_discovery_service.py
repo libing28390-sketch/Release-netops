@@ -347,15 +347,14 @@ def _upsert_candidate(
             if len(legacy_rows) > 1:
                 return None, 'scope_pending', 'Multiple unmapped legacy Prefix rows share this tenant/VRF/CIDR'
             if len(legacy_rows) == 1:
-                existing = legacy_rows[0]
-                conn.execute(
-                    """UPDATE prefixes SET address_space_id = ?, updated_at = ?
-                         WHERE id = ? AND address_space_id IS NULL""",
-                    (address_space_id, now, existing['id']),
+                # Never silently stamp address_space_id on a legacy Prefix during
+                # discovery: child ip_addresses / ipam_pools must be validated
+                # and mapped atomically by the explicit address-space service.
+                return (
+                    None,
+                    'scope_pending',
+                    'Unmapped legacy Prefix requires explicit address-space confirmation before automatic mapping',
                 )
-                # A Prefix's physical site is operator data. Reusing the same
-                # routed network from another site must not rewrite that value.
-                action = 'updated'
     elif tenant_id:
         existing_rows = conn.execute(
             """SELECT * FROM prefixes
