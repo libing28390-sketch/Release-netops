@@ -1482,7 +1482,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                 aria-label={zh ? '按类型筛选 IP 地址' : 'Filter IP addresses by role type'}
                 value={typeFilter}
                 onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }}
-                className="w-full min-w-0 rounded-xl border border-black/5 bg-white px-3 py-2 text-xs font-semibold text-gray-600 outline-none transition-all"
+                className="w-full min-w-0 rounded-xl border border-slate-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-zinc-200 outline-none transition-all focus:border-cyan-500"
               >
                 <option value="all">{zh ? '所有类型' : 'All Types'}</option>
                 {ROLE_OPTIONS.map((o) => (
@@ -1494,7 +1494,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                 aria-label={zh ? '按用途筛选 IP 地址' : 'Filter IP addresses by purpose'}
                 value={purposeFilter}
                 onChange={(e) => { setPurposeFilter(e.target.value); setPage(1); }}
-                className="w-full min-w-0 rounded-xl border border-black/5 bg-white px-3 py-2 text-xs font-semibold text-gray-600 outline-none transition-all"
+                className="w-full min-w-0 rounded-xl border border-slate-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-zinc-200 outline-none transition-all focus:border-cyan-500"
               >
                 <option value="all">{zh ? '所有用途' : 'All Purposes'}</option>
                 {IP_PURPOSE_OPTIONS.map((o) => (
@@ -1504,25 +1504,25 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
 
               {/* Search Input */}
               <div className="relative min-w-0">
-                <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   type="search"
                   value={search}
                   onChange={(e) => { setSearch(e.target.value); setPage(1); }}
                   aria-label={zh ? '搜索 IP、主机名、接口' : 'Search IP, hostname, or interface'}
                   placeholder={zh ? '搜索 IP、主机名、接口...' : 'Search IP, hostname...'}
-                  className="w-full min-w-0 rounded-xl border border-black/5 bg-gray-50/50 py-2 pl-10 pr-4 text-xs font-medium outline-none transition-all focus:border-cyan-400 focus:bg-white"
+                  className="w-full min-w-0 rounded-xl border border-slate-200/80 dark:border-zinc-700 bg-slate-50/70 dark:bg-zinc-800/80 py-2 pl-10 pr-4 text-xs font-medium text-slate-800 dark:text-zinc-100 placeholder:text-slate-400 outline-none transition-all focus:border-cyan-500 focus:bg-white dark:focus:bg-zinc-800"
                 />
               </div>
 
               {/* View Switcher Toggle */}
-              <div className="flex w-fit items-center justify-self-start rounded-xl border border-black/5 bg-gray-50 p-0.5 sm:col-span-2 xl:col-span-1 xl:justify-self-end">
+              <div className="flex w-fit items-center justify-self-start rounded-xl border border-slate-200/80 dark:border-zinc-700 bg-slate-100/80 dark:bg-zinc-800 p-0.5 sm:col-span-2 xl:col-span-1 xl:justify-self-end">
                 <button
                   onClick={() => { setPage(1); setIsMatrixView(false); }}
-                  className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${
+                  className={`px-3 py-1 text-[11px] font-bold rounded-lg transition-all cursor-pointer ${
                     !isMatrixView
-                      ? 'bg-white shadow-sm text-cyan-600'
-                      : 'text-[var(--ui-fg-muted)] hover:text-[var(--ui-fg)]'
+                      ? 'bg-white dark:bg-zinc-700 shadow-xs text-cyan-600 dark:text-cyan-300'
+                      : 'text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200'
                   }`}
                 >
                   {zh ? '列表' : 'List'}
@@ -1531,12 +1531,12 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                   disabled={!matrixPrefixCandidate}
                   onClick={handleMatrixClick}
                   title={!matrixPrefixCandidate ? (zh ? '当前站点没有可用的 IPv4 /24 - /30 网段' : 'No IPv4 /24-/30 prefix is available for the current site') : (zh ? '矩阵按单个网段展示' : 'Matrix view is scoped to one prefix')}
-                  className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${
+                  className={`px-3 py-1 text-[11px] font-bold rounded-lg transition-all ${
                     isMatrixView
-                      ? 'bg-white shadow-sm text-cyan-600'
+                      ? 'bg-white dark:bg-zinc-700 shadow-xs text-cyan-600 dark:text-cyan-300 cursor-pointer'
                       : !matrixPrefixCandidate
-                      ? 'text-gray-250 cursor-not-allowed opacity-50'
-                      : 'text-[var(--ui-fg-muted)] hover:text-[var(--ui-fg)]'
+                      ? 'text-slate-300 dark:text-zinc-600 cursor-not-allowed opacity-50'
+                      : 'text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200 cursor-pointer'
                   }`}
                 >
                   {zh ? '矩阵' : 'Matrix'}
@@ -1548,55 +1548,55 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       />
 
       {inventoryError && (
-        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700">
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/40 px-4 py-2 text-xs font-semibold text-rose-700 dark:text-rose-300">
           <span>{inventoryError}</span>
-          <button type="button" onClick={loadData} className="rounded-lg bg-white px-3 py-1.5 text-rose-700 shadow-sm hover:bg-rose-100">
+          <button type="button" onClick={loadData} className="rounded-lg bg-white dark:bg-zinc-800 px-3 py-1.5 text-rose-700 dark:text-rose-300 shadow-2xs hover:bg-rose-100 dark:hover:bg-zinc-700 cursor-pointer">
             {zh ? '重试' : 'Retry'}
           </button>
         </div>
       )}
 
       {isLoadingRegisteredAddress && (
-        <div role="status" className="rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-2 text-xs font-semibold text-cyan-800">
+        <div role="status" className="rounded-xl border border-cyan-200 dark:border-cyan-900/60 bg-cyan-50 dark:bg-cyan-950/40 px-4 py-2 text-xs font-semibold text-cyan-800 dark:text-cyan-300">
           {zh ? '正在读取正式 IP 登记记录…' : 'Loading the registered IP record…'}
         </div>
       )}
       {registeredAddressEditError && (
-        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700">
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/40 px-4 py-2 text-xs font-semibold text-rose-700 dark:text-rose-300">
           <span>{registeredAddressEditError}</span>
-          <button type="button" onClick={() => setRegisteredAddressEditError('')} className="rounded-lg bg-white px-3 py-1.5 text-rose-700 shadow-sm hover:bg-rose-100">
+          <button type="button" onClick={() => setRegisteredAddressEditError('')} className="rounded-lg bg-white dark:bg-zinc-800 px-3 py-1.5 text-rose-700 dark:text-rose-300 shadow-2xs hover:bg-rose-100 dark:hover:bg-zinc-700 cursor-pointer">
             {zh ? '关闭' : 'Dismiss'}
           </button>
         </div>
       )}
 
-      <section role="note" aria-label={zh ? 'IPAM 地址台账说明' : 'IPAM address ledger scope'} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-2.5 text-[11px] leading-4 text-slate-600">
-        <p>
+      <section role="note" aria-label={zh ? 'IPAM 地址台账说明' : 'IPAM address ledger scope'} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/80 dark:border-zinc-800 bg-white/90 dark:bg-zinc-900/80 px-4 py-2.5 text-[11px] leading-4 text-slate-600 dark:text-zinc-300 shadow-2xs">
+        <p className="min-w-0 flex-1">
           {!includeObservations && !isMatrixView
             ? (zh ? `当前正式台账共 ${loading ? '—' : totalItems} 条。选择网段后可登记 IP；采集到的终端可从“发现终端”登记。` : `${loading ? '—' : totalItems} registered records. Select a prefix to register an IP, or register a collected endpoint from Discovered Endpoints.`)
             : zh
             ? `当前筛选共 ${loading ? '—' : totalItems} 条记录；已登记 ${loading ? '—' : inventorySummary.manual}，含接口观察 ${loading ? '—' : inventorySummary.interface_observed}，终端发现 ${loading ? '—' : inventorySummary.discovered}。当前站点共 ${siteScopedPrefixes.length} 个网段。观察数量可与登记重叠，采集记录不代表当前在线。`
             : `${loading ? '—' : totalItems} records: ${loading ? '—' : inventorySummary.manual} registered, ${loading ? '—' : inventorySummary.interface_observed} with interface observations, ${loading ? '—' : inventorySummary.discovered} discovered endpoints, across ${siteScopedPrefixes.length} prefixes. Observation counts may overlap registrations and do not prove current availability.`}
         </p>
-        <button type="button" onClick={() => navigate('/ipam/endpoints')} className="shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-cyan-700 hover:border-cyan-300">
+        <button type="button" onClick={() => navigate('/ipam/endpoints')} className="shrink-0 rounded-xl border border-cyan-200/80 dark:border-cyan-900/60 bg-cyan-50/70 dark:bg-cyan-950/40 px-3 py-1.5 text-[11px] font-semibold text-cyan-700 dark:text-cyan-300 hover:bg-cyan-100/80 dark:hover:bg-cyan-900/50 transition-colors cursor-pointer">
           {zh ? '查看发现终端' : 'View discovered endpoints'}
         </button>
       </section>
 
       {/* Main Table Card */}
-      <div className="flex-1 min-h-0 min-w-0 bg-white rounded-[28px] border border-black/5 shadow-[0_16px_36px_rgba(11,35,64,0.06)] overflow-hidden flex flex-col">
+      <div className="flex-1 min-h-0 min-w-0 bg-white dark:bg-zinc-900/95 rounded-2xl border border-slate-200/80 dark:border-zinc-800 shadow-xs overflow-hidden flex flex-col">
         <div className="flex-1 min-h-0 min-w-0 overflow-auto">
           {loading ? (
-            <div className="h-full flex items-center justify-center text-xs text-gray-400 font-semibold">
+            <div className="h-full flex items-center justify-center text-xs text-slate-400 font-semibold">
               {zh ? '加载中...' : 'Loading IP allocations...'}
             </div>
           ) : isMatrixView && canUseMatrix ? (
             /* Render Grid Matrix View */
             <div className="p-6 overflow-auto">
-              <div className="mb-4.5 flex flex-wrap items-center justify-between gap-4 text-xs text-gray-500 border-b border-gray-100 pb-3">
-                <div className="flex items-center gap-4">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-4 text-xs text-slate-500 dark:text-zinc-400 border-b border-slate-100 dark:border-zinc-800 pb-3">
+                <div className="flex flex-wrap items-center gap-4">
                   <div className="flex items-center gap-1.5">
-                    <span className="w-3.5 h-3.5 rounded-lg bg-gray-50 border border-gray-150" />
+                    <span className="w-3.5 h-3.5 rounded-lg bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700" />
                     <span>{zh ? '空闲 (Available)' : 'Available'}</span>
                   </div>
                   <div className="flex items-center gap-1.5">
@@ -1604,7 +1604,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                     <span>{zh ? '使用中 (Active)' : 'Active'}</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className="rounded border border-amber-300 px-1 text-[9px] font-bold text-amber-700">GW</span>
+                    <span className="rounded border border-amber-300 px-1 text-[9px] font-bold text-amber-700 dark:text-amber-300">GW</span>
                     <span>{zh ? '前缀网关' : 'Prefix gateway'}</span>
                   </div>
                   <div className="flex items-center gap-1.5">
@@ -1616,26 +1616,26 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                     <span>{zh ? '已弃用 (Deprecated)' : 'Deprecated'}</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className="w-3.5 h-3.5 rounded-lg bg-slate-200 border border-slate-300" />
+                    <span className="w-3.5 h-3.5 rounded-lg bg-slate-200 dark:bg-zinc-700 border border-slate-300 dark:border-zinc-600" />
                     <span>{zh ? '系统保留 (不可分配)' : 'System reserved'}</span>
                   </div>
                 </div>
-                <div className="font-semibold text-gray-400">
+                <div className="font-semibold text-slate-400 dark:text-zinc-500">
                   {zh ? '点击已使用 IP 查看定位详情，点击空闲地址进行分配' : 'Click an occupied IP to view locator details, or an available address to allocate it'}
                 </div>
               </div>
               
               <div className="flex flex-wrap gap-2">
                 {matrixData.map((cell) => {
-                  let bgClass = "bg-gray-50 hover:bg-cyan-50 text-gray-400 border-gray-150";
+                  let bgClass = "bg-slate-50 dark:bg-zinc-800/70 hover:bg-cyan-50 dark:hover:bg-cyan-950/50 text-slate-500 dark:text-zinc-400 border-slate-200 dark:border-zinc-700";
                   if (cell.status === 'system') {
-                    bgClass = "bg-slate-200 text-slate-400 border-slate-300 cursor-not-allowed";
+                    bgClass = "bg-slate-200 dark:bg-zinc-700 text-slate-400 dark:text-zinc-500 border-slate-300 dark:border-zinc-600 cursor-not-allowed";
                   } else if (cell.status === 'active') {
-                    bgClass = "bg-emerald-500 text-white hover:bg-emerald-600 border-emerald-600 shadow-sm";
+                    bgClass = "bg-emerald-500 text-white hover:bg-emerald-600 border-emerald-600 shadow-xs";
                   } else if (cell.status === 'reserved') {
-                    bgClass = "bg-amber-500 text-white hover:bg-amber-600 border-amber-600 shadow-sm";
+                    bgClass = "bg-amber-500 text-white hover:bg-amber-600 border-amber-600 shadow-xs";
                   } else if (cell.status === 'deprecated') {
-                    bgClass = "bg-rose-505 text-white hover:bg-rose-600 border-rose-600 shadow-sm";
+                    bgClass = "bg-rose-500 text-white hover:bg-rose-600 border-rose-600 shadow-xs";
                   }
                   
                   const lastOctet = cell.ip.split('.').pop() || '';
