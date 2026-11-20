@@ -1703,7 +1703,7 @@ ${rep.repair_commands}
                     value={macLookup && macLookup.status !== 'not_attempted' ? macLookupStatusLabel(macLookup.status, zh) : ''}
                   />
                   <LocatorContextField label={zh ? '接口描述' : 'Description'} value={locatorContext.l2.description} />
-                  <LocatorContextField label={zh ? '状态 / 模式' : 'State / Mode'} value={[locatorContext.l2.admin_status, locatorContext.l2.oper_status, locatorContext.l2.mode].filter(Boolean).join(' / ')} />
+                  <LocatorContextField label={zh ? '状态 / 模式' : 'State / Mode'} value={[locatorContext.l2.admin_status, locatorContext.l2.oper_status, locatorContext.l2.mode].filter((v) => Boolean(v) && String(v).trim().toLowerCase() !== 'unknown').join(' / ')} />
                 </LocatorContextCard>
 
                 <LocatorContextCard title={zh ? '三层定位' : 'Layer 3'} icon={Router}>

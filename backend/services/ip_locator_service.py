@@ -2358,7 +2358,7 @@ def _load_trace_port_identity(
         rows = [dict(row) for row in conn.execute(
             '''SELECT id, device_id, interface_name, interface_type,
                       parent_interface_id, channel_group, switchport_mode,
-                      access_vlan
+                      access_vlan, last_seen
                FROM interfaces WHERE device_id = ?''',
             (device_id,),
         ).fetchall()]
@@ -2394,14 +2394,14 @@ def _load_trace_port_identity(
                     AND vlan_snapshot.successful_generation = p.generation
                    LEFT JOIN cmdb_device_interface_observations i
                      ON i.device_id = p.device_id
-                    AND i.normalized_interface_name = p.normalized_interface_name
+                    AND LOWER(i.normalized_interface_name) = LOWER(p.normalized_interface_name)
                    LEFT JOIN cmdb_collection_snapshots interface_snapshot
                      ON interface_snapshot.device_id = i.device_id
                     AND interface_snapshot.domain = 'interface_inventory'
                     AND interface_snapshot.successful_generation = i.generation
                    WHERE p.device_id = ?
                      AND p.vlan_id = ?
-                     AND p.normalized_interface_name = ?
+                     AND LOWER(p.normalized_interface_name) = ?
                      AND (i.device_id IS NULL OR interface_snapshot.successful_generation IS NOT NULL)
                    ORDER BY p.observed_at DESC
                    LIMIT 1''',
@@ -2515,6 +2515,14 @@ def _load_trace_port_identity(
                 str(current_interface_observation.get('interface_type') or '').strip().lower()
                 in _TRACE_PHYSICAL_TYPES
             )
+        elif current_vlan_mode == 'access' and any(
+            str(r.get('interface_type') or '').strip().lower() in _TRACE_PHYSICAL_TYPES
+            and not _trace_interface_is_aggregation(r)
+            for r in direct_rows
+        ):
+            identity['is_physical'] = True
+            identity['is_access'] = True
+            access_evidence.add('cmdb_vlan_access')
     for row in direct_rows:
         interface_type = str(row.get('interface_type') or '').strip().lower()
         if interface_type not in _TRACE_PHYSICAL_TYPES or _trace_interface_is_aggregation(row):
@@ -3531,6 +3539,39 @@ def _get_ip_locator_context(
                     set_if_empty(context['l3'], 'vrf', interface_data.get('vrf_name'))
                     context['freshness']['interface_last_seen'] = interface_data.get('last_seen') or ''
 
+                # Fill missing/unknown description or admin/oper status from the
+                # latest successful CMDB interface inventory snapshot (e.g. CLI
+                # `display interface brief` / `display interface description`).
+                if (
+                    not str(l2.get('description') or '').strip()
+                    or str(l2.get('admin_status') or '').strip().lower() in {'', 'unknown', '-', '--'}
+                    or str(l2.get('oper_status') or '').strip().lower() in {'', 'unknown', '-', '--'}
+                ):
+                    try:
+                        obs_row = conn.execute(
+                            '''SELECT i.description, i.admin_status, i.oper_status, i.observed_at
+                               FROM cmdb_device_interface_observations i
+                               JOIN cmdb_collection_snapshots s
+                                 ON s.device_id = i.device_id
+                                AND s.domain = 'interface_inventory'
+                                AND s.successful_generation = i.generation
+                               WHERE i.device_id = ?
+                                 AND LOWER(i.normalized_interface_name) = ?
+                               ORDER BY i.observed_at DESC
+                               LIMIT 1''',
+                            (switch_id, port_key),
+                        ).fetchone()
+                        if obs_row:
+                            if not str(l2.get('description') or '').strip() and str(obs_row['description'] or '').strip():
+                                l2['description'] = str(obs_row['description']).strip()
+                            for status_field in ('admin_status', 'oper_status'):
+                                current_val = str(l2.get(status_field) or '').strip().lower()
+                                obs_val = str(obs_row[status_field] or '').strip()
+                                if current_val in {'', 'unknown', '-', '--'} and obs_val.lower() not in {'', 'unknown', '-', '--'}:
+                                    l2[status_field] = obs_val
+                    except Exception:
+                        pass
+
                 # VLAN discovery can create an access-port row before the
                 # interface-status collector has a CLI/IP snapshot for that
                 # port, leaving admin/oper status as ``unknown``.  The
@@ -3698,13 +3739,65 @@ def _get_ip_locator_context(
                    WHERE COALESCE(rt.active, 1) = 1
                    ORDER BY rt.last_updated DESC LIMIT 1000'''
             ).fetchall()
+            # Prefer live trace direct-gateway evidence (connected L3 hop /
+            # gateway_candidates) over stale or upstream BGP entries in route_table.
+            trace_gateways = [
+                item for item in (result.get('gateway_candidates') or [])
+                if isinstance(item, dict)
+            ]
+            trace_l3_paths = [
+                item for item in (result.get('l3_paths') or [])
+                if isinstance(item, dict)
+            ]
+            connected_hop = next(
+                (
+                    hop for hop in trace_l3_paths
+                    if str(hop.get('protocol') or '').strip().lower() in {'connected', 'direct', 'local'}
+                ),
+                None,
+            )
+            primary_gw = trace_gateways[0] if trace_gateways else None
+            observed_prefix = (
+                str((primary_gw or {}).get('prefix') or '').strip()
+                or str((connected_hop or {}).get('prefix') or '').strip()
+                or str((arp_source.get('route_prefix') if isinstance(arp_source, dict) else '') or '').strip()
+            )
+            if observed_prefix:
+                set_if_empty(context['address'], 'prefix', observed_prefix)
+                try:
+                    net_obj = ipaddress.ip_network(observed_prefix, strict=False)
+                    set_if_empty(context['address'], 'netmask', str(net_obj.netmask))
+                except ValueError:
+                    pass
+
+            if primary_gw or connected_hop:
+                gw_dev_name = str((primary_gw or {}).get('device') or (connected_hop or {}).get('device') or '').strip()
+                gw_dev_id = str((primary_gw or {}).get('device_id') or (connected_hop or {}).get('device_id') or '').strip()
+                gw_iface = str((primary_gw or {}).get('interface') or (connected_hop or {}).get('interface') or '').strip()
+                gw_vrf = str((primary_gw or {}).get('vrf') or (connected_hop or {}).get('vrf') or '').strip()
+                set_if_empty(context['l3'], 'gateway_device', gw_dev_name)
+                set_if_empty(context['l3'], 'gateway_device_id', gw_dev_id)
+                set_if_empty(context['l3'], 'gateway_interface', gw_iface)
+                set_if_empty(context['l3'], 'vrf', gw_vrf)
+                if connected_hop:
+                    context['l3'].update({
+                        'next_hop': connected_hop.get('next_hop') or 'directly connected',
+                        'route_source': connected_hop.get('protocol') or 'connected',
+                        'route_interface': gw_iface or connected_hop.get('interface') or '',
+                        'route_last_updated': connected_hop.get('collected_at') or '',
+                    })
+
             best_route = _select_best_route(
                 route_rows,
                 ip_obj,
-                gateway_device_id=str(best_prefix['gateway_device_id'] or '') if best_prefix else '',
+                gateway_device_id=str(
+                    (best_prefix['gateway_device_id'] if best_prefix else '')
+                    or context['l3'].get('gateway_device_id')
+                    or ''
+                ),
                 access_device_id=str(l2.get('switch_id') or ''),
             )
-            if best_route:
+            if best_route and not connected_hop:
                 context['l3'].update({
                     'next_hop': best_route['next_hop'] or '',
                     'route_source': best_route['protocol'] or '',
