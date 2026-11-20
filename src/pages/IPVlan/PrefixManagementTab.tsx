@@ -18,7 +18,8 @@ import {
   ChevronRight,
   MoreHorizontal,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
 import { ActionButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
@@ -75,6 +76,13 @@ interface Prefix {
   description: string;
   total_ips: number;
   used_ips: number;
+  registered_ips?: number;
+  reserved_ips?: number;
+  allocatable_free_ips?: number;
+  effective_used_ips?: number;
+  effective_utilization?: number;
+  container_child_ips?: number;
+  container_utilization?: number;
   active_ips: number;
   utilization: number;
   network_type: string;
@@ -532,6 +540,7 @@ function gatewayCandidateStatusMessage(
 
 const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }) => {
   const treeTableRef = useRef<HTMLTableElement>(null);
+  const tableScrollContainerRef = useRef<HTMLDivElement>(null);
   const prefixTableRef = useRef<HTMLTableElement>(null);
   const hasLoadedPrefixDataRef = useRef(false);
   const pendingCreateRequest = useRef<PendingCreateRequest | null>(null);
@@ -568,6 +577,20 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const [showAddEdit, setShowAddEdit] = useState(false);
   const [editingPrefix, setEditingPrefix] = useState<Prefix | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+  const [deletePreview, setDeletePreview] = useState<{
+    prefix_id: string;
+    prefix: string;
+    active_ip_count: number;
+    released_ip_count: number;
+    pool_count: number;
+    vip_count: number;
+    lease_count: number;
+    child_prefix_count: number;
+    can_delete: boolean;
+    blockers: string[];
+  } | null>(null);
+  const [deletePreviewLoading, setDeletePreviewLoading] = useState(false);
+  const [deletePreviewError, setDeletePreviewError] = useState('');
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
   const [showBatchNetworkTypeModal, setShowBatchNetworkTypeModal] = useState(false);
   const [showBatchAddressSpaceModal, setShowBatchAddressSpaceModal] = useState(false);
@@ -587,6 +610,45 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const [poolManagerPrefix, setPoolManagerPrefix] = useState<Prefix | null>(null);
   useEscapeClose(showAddEdit, () => { setShowAddEdit(false); setEditingPrefix(null); });
   useEscapeClose(Boolean(showDeleteConfirm), () => setShowDeleteConfirm(null));
+
+  useEffect(() => {
+    if (!showDeleteConfirm) {
+      setDeletePreview(null);
+      setDeletePreviewLoading(false);
+      setDeletePreviewError('');
+      return;
+    }
+    const controller = new AbortController();
+    setDeletePreview(null);
+    setDeletePreviewLoading(true);
+    setDeletePreviewError('');
+    const token = localStorage.getItem('netops_token');
+    fetch(`/api/ipam/subnets/${encodeURIComponent(showDeleteConfirm)}/delete-preview`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      signal: controller.signal,
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((payload) => {
+        if (!controller.signal.aborted && payload && typeof payload.can_delete === 'boolean') {
+          setDeletePreview({
+            ...payload,
+            blockers: Array.isArray(payload.blockers) ? payload.blockers : [],
+          });
+        }
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted) {
+          setDeletePreviewError(err instanceof Error ? err.message : String(err));
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setDeletePreviewLoading(false);
+      });
+    return () => controller.abort();
+  }, [showDeleteConfirm]);
   useEscapeClose(showBatchDeleteConfirm, () => setShowBatchDeleteConfirm(false));
   useEscapeClose(showBatchNetworkTypeModal && !batchNetworkTypeUpdating, () => setShowBatchNetworkTypeModal(false));
   useEscapeClose(showInterfaceGeneration, () => setShowInterfaceGeneration(false));
@@ -2056,9 +2118,12 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       { header: zh ? '创建时间' : 'Created At', value: (prefix) => formatPrefixTimestamp(prefix.created_at, language) },
       { header: zh ? '网段状态' : 'Status', value: (prefix) => prefixStatusLabel(prefix.status, zh) },
       { header: zh ? '已分配IP数' : 'Allocated IPs', value: (prefix) => prefix.used_ips ?? 0 },
+      { header: zh ? '保留/不可分配IP数' : 'Reserved / Blocked IPs', value: (prefix) => prefix.reserved_ips ?? 0 },
+      { header: zh ? '实际可分配IP数' : 'Allocatable Free IPs', value: (prefix) => prefix.allocatable_free_ips ?? Math.max(0, (prefix.total_ips ?? 0) - (prefix.used_ips ?? 0)) },
       { header: zh ? '活跃发现IP数' : 'Active Discovery IPs', value: (prefix) => prefix.active_ips ?? 0 },
       { header: zh ? '可用容量' : 'Usable Capacity', value: (prefix) => prefix.total_ips ?? 0 },
       { header: zh ? '利用率' : 'Utilization', value: (prefix) => `${prefix.utilization ?? 0}%` },
+      { header: zh ? '实际占用率' : 'Effective Utilization', value: (prefix) => `${prefix.effective_utilization ?? prefix.utilization ?? 0}%` },
     ], allPrefixes);
   }, [viewMode, treeData, matchFamily, search, siteFilter, statusFilter, familyFilter, classificationFilter, pageSize, zh, language]);
 
@@ -2081,11 +2146,34 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     setViewMode('table');
   };
 
-  // Recursive tree renderer
-  const renderTreeNode = (node: Prefix, depth = 0) => {
+  const flattenedTreeRows = useMemo(() => {
+    const rows: Array<{ node: Prefix; depth: number }> = [];
+    const visit = (node: Prefix, depth: number) => {
+      rows.push({ node, depth });
+      if (node.children && node.children.length > 0) {
+        for (const child of node.children) {
+          visit(child, depth + 1);
+        }
+      }
+    };
+    for (const root of treeData.filter(matchFamily)) {
+      visit(root, 0);
+    }
+    return rows;
+  }, [treeData, matchFamily]);
+
+  const shouldVirtualizeTree = viewMode === 'tree' && flattenedTreeRows.length > 80;
+  const treeRowVirtualizer = useVirtualizer({
+    count: shouldVirtualizeTree ? flattenedTreeRows.length : 0,
+    getScrollElement: () => tableScrollContainerRef.current,
+    estimateSize: () => 56,
+    overscan: 12,
+  });
+
+  // Single tree row renderer (flattened for optional @tanstack/react-virtual virtualization)
+  const renderTreeRow = (node: Prefix, depth = 0) => {
     return (
-      <React.Fragment key={node.id}>
-        <tr className="hover:bg-gray-50/50 transition-colors border-b border-gray-100 group">
+        <tr key={node.id} className="hover:bg-gray-50/50 transition-colors border-b border-gray-100 group">
           <td className="pl-6 py-4">
             <div className="flex items-center gap-2" style={{ paddingLeft: `${depth * 24}px` }}>
               <GitBranch size={14} className="text-gray-300 flex-shrink-0" />
@@ -2148,7 +2236,20 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
           <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.used_ips}</td>
           <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.active_ips || 0}</td>
           <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.total_ips}</td>
-          <td className="px-4 py-4 text-xs font-semibold text-gray-600 tabular-nums">{node.utilization}%</td>
+          <td className="px-4 py-4 text-xs font-semibold text-gray-600 tabular-nums">
+            <div>{node.utilization}%</div>
+            {node.status === 'container' ? (
+              <div className="text-[10px] font-normal text-indigo-600">
+                {zh ? '容器子网占比' : 'Child prefix space'}
+              </div>
+            ) : (node.reserved_ips ?? 0) > 0 ? (
+              <div className="text-[10px] font-normal text-amber-700">
+                {zh
+                  ? `保留 ${node.reserved_ips} · 可分配 ${node.allocatable_free_ips ?? 0}`
+                  : `Blocked ${node.reserved_ips} · Free ${node.allocatable_free_ips ?? 0}`}
+              </div>
+            ) : null}
+          </td>
           <td className="pr-6 py-4 text-right">
             <ActionIconGroup label={zh ? '前缀操作' : 'Prefix actions'}>
               <PrefixRowActions
@@ -2163,8 +2264,6 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
             </ActionIconGroup>
           </td>
         </tr>
-        {node.children && node.children.map((child) => renderTreeNode(child, depth + 1))}
-      </React.Fragment>
     );
   };
 
@@ -2457,7 +2556,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
 
       {/* Main Table Card */}
       <div className="flex-1 min-h-0 min-w-0 w-full bg-white rounded-[28px] border border-black/5 shadow-[0_16px_36px_rgba(11,35,64,0.06)] overflow-hidden flex flex-col">
-        <div className="min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain">
+        <div ref={tableScrollContainerRef} className="min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain">
           {loading ? (
             <div className="h-full flex items-center justify-center text-xs text-gray-400 font-semibold">
               {zh ? '加载中...' : 'Loading prefixes data...'}
@@ -2485,8 +2584,34 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                 </tr>
               </thead>
               <tbody>
-                {treeData.length > 0 ? (
-                  treeData.filter(matchFamily).map((node) => renderTreeNode(node, 0))
+                {flattenedTreeRows.length > 0 ? (
+                  shouldVirtualizeTree ? (() => {
+                    const virtualItems = treeRowVirtualizer.getVirtualItems();
+                    const paddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
+                    const paddingBottom = virtualItems.length > 0
+                      ? Math.max(0, treeRowVirtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end)
+                      : 0;
+                    return (
+                      <>
+                        {paddingTop > 0 && (
+                          <tr aria-hidden="true">
+                            <td colSpan={15} style={{ height: `${paddingTop}px`, padding: 0, border: 0 }} />
+                          </tr>
+                        )}
+                        {virtualItems.map((vItem) => {
+                          const row = flattenedTreeRows[vItem.index];
+                          return row ? renderTreeRow(row.node, row.depth) : null;
+                        })}
+                        {paddingBottom > 0 && (
+                          <tr aria-hidden="true">
+                            <td colSpan={15} style={{ height: `${paddingBottom}px`, padding: 0, border: 0 }} />
+                          </tr>
+                        )}
+                      </>
+                    );
+                  })() : (
+                    flattenedTreeRows.map(({ node, depth }) => renderTreeRow(node, depth))
+                  )
                 ) : (
                   <tr>
                     <td colSpan={15} className="py-12 text-center text-xs text-gray-400 font-medium">
@@ -2649,7 +2774,20 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                         <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.used_ips}</td>
                         <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.active_ips || 0}</td>
                         <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.total_ips}</td>
-                        <td className="px-4 py-4 text-xs font-semibold text-gray-600 tabular-nums">{node.utilization}%</td>
+                        <td className="px-4 py-4 text-xs font-semibold text-gray-600 tabular-nums">
+                          <div>{node.utilization}%</div>
+                          {node.status === 'container' ? (
+                            <div className="text-[10px] font-normal text-indigo-600">
+                              {zh ? '容器子网占比' : 'Child prefix space'}
+                            </div>
+                          ) : (node.reserved_ips ?? 0) > 0 ? (
+                            <div className="text-[10px] font-normal text-amber-700">
+                              {zh
+                                ? `保留 ${node.reserved_ips} · 可分配 ${node.allocatable_free_ips ?? 0}`
+                                : `Blocked ${node.reserved_ips} · Free ${node.allocatable_free_ips ?? 0}`}
+                            </div>
+                          ) : null}
+                        </td>
                         <TableActionCell className="pr-6 py-4 text-right" label={zh ? '前缀操作' : 'Prefix actions'}>
                           <PrefixRowActions
                             prefix={node}
@@ -4032,17 +4170,51 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               exit={{ scale: 0.95, opacity: 0 }}
               className="bg-white w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border border-black/5"
             >
-              <div className="p-6">
-                <h3 className="text-base font-bold text-gray-900 mb-2">{zh ? '确认删除网段？' : 'Delete Prefix?'}</h3>
+              <div className="p-6 space-y-3">
+                <h3 className="text-base font-bold text-gray-900">{zh ? '确认删除网段？' : 'Delete Prefix?'}</h3>
                 <p className="text-xs text-gray-500 leading-relaxed">
-                  {zh ? '警告：删除此Prefix前缀网段将同时永久删除该网段下登记的所有IP地址数据！此操作无法恢复，请问是否继续？' : 'Warning: Deleting this prefix will also cascade delete all registered IP addresses allocated under this block! This cannot be undone.'}
+                  {zh
+                    ? '删除前会先核查该网段下是否仍有活跃正式 IP、地址池、VIP 或 DHCP 租约依赖；存在台账依赖时将默认阻止删除。'
+                    : 'Deletion checks for active formal IPs, pools, VIPs, and DHCP leases first. Prefixes with active ledger dependencies are protected.'}
                 </p>
+                {deletePreviewLoading && (
+                  <div className="text-xs text-slate-500">{zh ? '正在检查删除影响…' : 'Checking deletion impact…'}</div>
+                )}
+                {deletePreviewError && (
+                  <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    {zh ? `影响预览加载失败（${deletePreviewError}），后端仍会在提交时校验依赖。` : `Impact preview unavailable (${deletePreviewError}); server-side checks still apply.`}
+                  </div>
+                )}
+                {deletePreview && (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+                      <div>{zh ? '活跃正式 IP' : 'Active formal IPs'}: <strong className="tabular-nums">{deletePreview.active_ip_count}</strong></div>
+                      <div>{zh ? '地址池' : 'IP Pools'}: <strong className="tabular-nums">{deletePreview.pool_count}</strong></div>
+                      <div>{zh ? 'VIP 记录' : 'VIPs'}: <strong className="tabular-nums">{deletePreview.vip_count}</strong></div>
+                      <div>{zh ? '关联 DHCP 租约' : 'DHCP Leases'}: <strong className="tabular-nums">{deletePreview.lease_count}</strong></div>
+                      <div>{zh ? '下级子网段' : 'Child Prefixes'}: <strong className="tabular-nums">{deletePreview.child_prefix_count}</strong></div>
+                      <div>{zh ? '已释放历史 IP' : 'Released IPs'}: <strong className="tabular-nums">{deletePreview.released_ip_count}</strong></div>
+                    </div>
+                    {!deletePreview.can_delete && (
+                      <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 space-y-1">
+                        <div className="font-bold">{zh ? '存在以下依赖，无法直接删除：' : 'Cannot delete due to active dependencies:'}</div>
+                        <ul className="list-disc pl-4 space-y-0.5">
+                          {(deletePreview.blockers || []).map((blocker, idx) => <li key={idx}>{blocker}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               <div className="px-6 py-4 bg-gray-50 flex items-center justify-end gap-3 border-t border-gray-100">
                 <button onClick={() => setShowDeleteConfirm(null)} className="px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100 rounded-lg font-semibold transition-colors">
                   {zh ? '取消' : 'Cancel'}
                 </button>
-                <button onClick={() => handleDelete(showDeleteConfirm)} className="px-4 py-1.5 text-xs bg-rose-500 hover:bg-rose-600 text-white rounded-lg font-bold transition-colors">
+                <button
+                  disabled={deletePreviewLoading || (deletePreview !== null && !deletePreview.can_delete)}
+                  onClick={() => handleDelete(showDeleteConfirm)}
+                  className="px-4 py-1.5 text-xs bg-rose-500 hover:bg-rose-600 text-white rounded-lg font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
                   {zh ? '确认删除' : 'Delete'}
                 </button>
               </div>

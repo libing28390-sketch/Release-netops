@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks, Request, HTTPException, Depends
 from core.api_security import enforce_api_access
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from core.config import settings, validate_production_security
 from core.textfsm import configure_ntc_templates
@@ -128,7 +129,7 @@ logger = logging.getLogger(__name__)
 
 # ── Startup ──
 
-async def _bg_init():
+async def _bg_init(run_scheduler: bool = True):
     """
     Background initialization to avoid blocking startup.
     """
@@ -139,11 +140,12 @@ async def _bg_init():
         # before the PostgreSQL test fixture has initialized them.
         from services.background_monitor_service import _init_telemetry_state
         _init_telemetry_state()
-        # Sync dynamic scheduled jobs from database
-        sync_scheduler_jobs(scheduler)
-        # Start status monitor loops (A/B Loops)
-        telemetry_orch = get_telemetry_orchestrator()
-        telemetry_orch.start_loops()
+        if run_scheduler:
+            # Sync dynamic scheduled jobs from database
+            sync_scheduler_jobs(scheduler)
+            # Start status monitor loops (A/B Loops)
+            telemetry_orch = get_telemetry_orchestrator()
+            telemetry_orch.start_loops()
         # Auto-sync monitoring collector targets from CMDB on startup
         if os.environ.get("ENVIRONMENT") != "test" and "PYTEST_CURRENT_TEST" not in os.environ and "pytest" not in sys.modules:
             try:
@@ -259,18 +261,55 @@ async def lifespan(app: FastAPI):
 
 
 
-    # Start core components immediately
-    schedule_cfg = _get_schedule_from_db()
-    scheduler.start()
+    # Start scheduler unless explicitly delegated to a dedicated worker (RUN_SCHEDULER=0)
+    run_scheduler = os.environ.get("RUN_SCHEDULER", "1").strip().lower() not in ("0", "false", "no", "off")
+    if run_scheduler:
+        schedule_cfg = _get_schedule_from_db()
+        scheduler.start()
+    else:
+        schedule_cfg = {}
+        logger.info("[Scheduler] RUN_SCHEDULER=0 — skipping APScheduler in this web worker")
 
-    # Register periodic jobs
+    # Register periodic jobs only when scheduler is enabled in this process
+    if run_scheduler:
+        _register_periodic_scheduler_jobs(schedule_cfg)
+
+    # Launch background tasks
+    asyncio.create_task(_bg_init(run_scheduler=run_scheduler))
+    if run_scheduler:
+        logger.info("[Scheduler] APScheduler started (background init pending)")
+
+    yield
+    # ── shutdown ──
+    if run_scheduler:
+        try:
+            from engine.orchestrator import get_telemetry_orchestrator
+            telemetry_orch = get_telemetry_orchestrator()
+            telemetry_orch.stop_loops()
+            logger.info("[Background] Telemetry loops stopped")
+        except Exception as e:
+            logger.warning(f"[Background] Failed to stop telemetry loops: {e}")
+
+    try:
+        from services.ip_locator_session_pool import close_ip_locator_sessions
+
+        close_ip_locator_sessions()
+        logger.info("[IPLocator] Retained SSH sessions closed")
+    except Exception as e:
+        logger.warning(f"[IPLocator] Failed to close retained SSH sessions: {type(e).__name__}")
+
+    if run_scheduler:
+        scheduler.shutdown(wait=False)
+        logger.info("[Scheduler] APScheduler stopped")
+
+
+def _register_periodic_scheduler_jobs(schedule_cfg: dict) -> None:
     from services.ip_locator_invalidation_service import process_pending_locator_invalidations
     from services.ip_locator_run_worker_service import process_pending_locator_runs
     from services.ip_locator_task_service import cleanup_locator_tasks
     from services.pam_recording_storage import retry_pending_pam_recordings
     from services.pam_remote_desktop import recover_expired_remote_desktop_sessions
     from services.config_snapshot_storage import retry_pending_config_snapshots
-
     storage_retry_seconds = max(10, int(getattr(settings, 'STORAGE_RETRY_INTERVAL_SECONDS', 60)))
     scheduler.add_job(
         synchronized_scheduler_job('pam_recording_storage_retry', expire_seconds=max(30, storage_retry_seconds * 2))(
@@ -538,42 +577,15 @@ async def lifespan(app: FastAPI):
         inspection_trigger, id='inspection_scheduler', replace_existing=True
     )
 
-    # Do not register a daily no-op when credential rotation is disabled. This
-    # keeps the scheduler registry aligned with the features actually enabled
-    # for the deployment while preserving the job when the feature is on.
-    if settings.PASSWORD_ROTATION_ENABLED:
-        from services.password_rotation_service import run_rotation_sweep
-        scheduler.add_job(
-            synchronized_scheduler_job('password_rotation_sweep', expire_seconds=3600)(run_rotation_sweep),
-            CronTrigger(hour=2, minute=0), id='password_rotation_sweep', replace_existing=True
-        )
-    else:
-        logger.info("[Scheduler] Password rotation sweep disabled by configuration")
-
-    # Launch background tasks
-    asyncio.create_task(_bg_init())
-    logger.info("[Scheduler] APScheduler started (background init pending)")
-
-    yield
-    # ── shutdown ──
-    try:
-        from engine.orchestrator import get_telemetry_orchestrator
-        telemetry_orch = get_telemetry_orchestrator()
-        telemetry_orch.stop_loops()
-        logger.info("[Background] Telemetry loops stopped")
-    except Exception as e:
-        logger.warning(f"[Background] Failed to stop telemetry loops: {e}")
-
-    try:
-        from services.ip_locator_session_pool import close_ip_locator_sessions
-
-        close_ip_locator_sessions()
-        logger.info("[IPLocator] Retained SSH sessions closed")
-    except Exception as e:
-        logger.warning(f"[IPLocator] Failed to close retained SSH sessions: {type(e).__name__}")
-
-    scheduler.shutdown(wait=False)
-    logger.info("[Scheduler] APScheduler stopped")
+    # Always register the daily rotation/reminder sweep job so administrators
+    # can toggle automatic rotation from the UI without restarting the service.
+    # When auto_rotate_enabled is False in the effective persisted policy, the
+    # sweep only emits expiry reminders and skips modifying device passwords.
+    from services.password_rotation_service import run_rotation_sweep
+    scheduler.add_job(
+        synchronized_scheduler_job('password_rotation_sweep', expire_seconds=3600)(run_rotation_sweep),
+        CronTrigger(hour=2, minute=0), id='password_rotation_sweep', replace_existing=True
+    )
 
 from core.context import request_id_var, resolve_request_id, user_var, route_var
 from core.metrics import metrics_registry
@@ -586,9 +598,51 @@ from fastapi.responses import RedirectResponse
 # session validation on a small, independent pool so unreachable devices cannot
 # queue browser/API authentication behind probe timeouts.
 _SESSION_AUTH_EXECUTOR = ThreadPoolExecutor(
-    max_workers=4,
+    max_workers=16,
     thread_name_prefix="nexora-session-auth",
 )
+
+_STATIC_FASTPATH_EXTENSIONS = (
+    ".js", ".css", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp",
+    ".ico", ".woff", ".woff2", ".ttf", ".eot", ".glb", ".gltf", ".ktx2", ".basis", ".map",
+)
+
+
+def _is_static_asset_path(path: str) -> bool:
+    if not path or path.startswith("/api/"):
+        return False
+    if path.startswith("/static/"):
+        return True
+    lower = path.lower()
+    return lower.endswith(_STATIC_FASTPATH_EXTENSIONS)
+
+
+_SSE_BYPASS_PREFIXES = (
+    "/api/ai/assistant/chat-stream",
+    "/api/v1/ai/chat-stream",
+)
+
+
+class SelectiveGZipMiddleware:
+    """Compress JSON/HTML/JS/CSS responses >=1KB while leaving SSE streams unbuffered."""
+
+    def __init__(self, app, minimum_size: int = 1024, compresslevel: int = 5):
+        self.app = app
+        self.gzip_app = GZipMiddleware(app, minimum_size=minimum_size, compresslevel=compresslevel)
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path") or ""
+        if any(path.startswith(prefix) for prefix in _SSE_BYPASS_PREFIXES):
+            await self.app(scope, receive, send)
+            return
+        for header_name, header_val in scope.get("headers") or ():
+            if header_name.lower() == b"accept" and b"text/event-stream" in header_val.lower():
+                await self.app(scope, receive, send)
+                return
+        await self.gzip_app(scope, receive, send)
 
 app = FastAPI(
     dependencies=[Depends(enforce_api_access)],
@@ -656,6 +710,8 @@ async def enforce_request_body_limit(request: Request, call_next):
 
 @app.middleware("http")
 async def add_request_id_and_log(request: Request, call_next):
+    if _is_static_asset_path(request.url.path):
+        return await call_next(request)
     start_time = time.perf_counter()
     request_id = resolve_request_id(request.headers.get("X-Request-ID"), prefix="req")
     req_token = request_id_var.set(request_id)
@@ -670,12 +726,14 @@ async def add_request_id_and_log(request: Request, call_next):
         token = auth.replace('Bearer ', '')
         if token:
             try:
-                from api.users import validate_session_token
-                user = await asyncio.get_running_loop().run_in_executor(
-                    _SESSION_AUTH_EXECUTOR,
-                    validate_session_token,
-                    token,
-                )
+                from api.users import get_cached_session_fast, validate_session_token
+                user = get_cached_session_fast(token)
+                if user is None:
+                    user = await asyncio.get_running_loop().run_in_executor(
+                        _SESSION_AUTH_EXECUTOR,
+                        validate_session_token,
+                        token,
+                    )
                 request.state.nexora_session_auth_checked = True
                 request.state.nexora_session_auth_user = user
                 if user and user.get('username'):
@@ -825,6 +883,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept"],
 )
+app.add_middleware(SelectiveGZipMiddleware, minimum_size=1024, compresslevel=5)
 
 # 注册路由
 # ── 无需 License 的基础路由 ──
@@ -950,6 +1009,18 @@ class SPAStaticFiles(StaticFiles):
     or a request for a file with a static asset extension (e.g. .js, .css, .ico, .png),
     it falls back to serving 'index.html'.
     """
+    @staticmethod
+    def _apply_cache_headers(response, norm_path: str, is_html_fallback: bool = False):
+        if getattr(response, "status_code", 200) != 200:
+            return response
+        if is_html_fallback or not norm_path or norm_path == "index.html" or norm_path.endswith(".html"):
+            response.headers["Cache-Control"] = "no-cache"
+        elif norm_path.startswith("assets/") and "." in os.path.basename(norm_path):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            response.headers.setdefault("Cache-Control", "public, max-age=3600")
+        return response
+
     async def get_response(self, path: str, scope):
         norm_path = path.replace("\\", "/").lstrip("/")
         try:
@@ -959,15 +1030,17 @@ class SPAStaticFiles(StaticFiles):
                     filename = os.path.basename(norm_path)
                     has_extension = "." in filename and not filename.endswith(".html")
                     if not has_extension:
-                        return await super().get_response("index.html", scope)
-            return response
+                        fallback = await super().get_response("index.html", scope)
+                        return self._apply_cache_headers(fallback, "index.html", is_html_fallback=True)
+            return self._apply_cache_headers(response, norm_path)
         except (HTTPException, StarletteHTTPException) as exc:
             if exc.status_code == 404:
                 if not norm_path.startswith("api/") and not norm_path.startswith("static/"):
                     filename = os.path.basename(norm_path)
                     has_extension = "." in filename and not filename.endswith(".html")
                     if not has_extension:
-                        return await super().get_response("index.html", scope)
+                        fallback = await super().get_response("index.html", scope)
+                        return self._apply_cache_headers(fallback, "index.html", is_html_fallback=True)
             raise exc
 
 

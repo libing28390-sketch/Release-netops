@@ -97,7 +97,8 @@ const AppMainContent: React.FC = () => {
   const assetsPlatformError = useInventoryStore(state => state.assetsPlatformError);
   const fetchAssetsTotal = useInventoryStore(state => state.fetchAssetsTotal);
   const resetAssetsTotal = useInventoryStore(state => state.resetAssetsTotal);
-  const { monitorOverview, setMonitorSelectedDevice } = useMonitoringStore();
+  const monitorOverview = useMonitoringStore(state => state.monitorOverview);
+  const setMonitorSelectedDevice = useMonitoringStore(state => state.setMonitorSelectedDevice);
   
   const {
     activeTab,
@@ -1527,4 +1528,4 @@ const AppMainContent: React.FC = () => {
   );
 };
 
-export default AppMainContent;
+export default React.memo(AppMainContent);

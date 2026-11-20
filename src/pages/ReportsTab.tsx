@@ -6,7 +6,6 @@ import {
   ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts';
 import { ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
-import * as XLSX from 'xlsx';
 import { motion } from 'motion/react';
 import type { Device, Job, ComplianceOverview } from '../types';
 import { useChartTheme } from '../hooks/useChartTheme';
@@ -274,7 +273,8 @@ const ReportsTab: React.FC<ReportsTabProps> = ({
   }, [reportData, language]);
 
   // ── Export ──
-  const handleExportReport = () => {
+  const handleExportReport = async () => {
+    const XLSX = await import('xlsx');
     const wb = XLSX.utils.book_new();
     const kpiSheet = XLSX.utils.json_to_sheet([
       { Metric: zh ? '网络健康度' : 'Health Score', Value: healthScore },

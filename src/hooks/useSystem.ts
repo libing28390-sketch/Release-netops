@@ -18,29 +18,102 @@ export interface SystemInfo {
   };
 }
 
-export function useSystem() {
-  const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
-  const [loading, setLoading] = useState(true);
+const SYSTEM_INFO_CACHE_TTL_MS = 300_000;
 
-  const fetchSystemInfo = useCallback(async () => {
+let cachedSystemInfo: SystemInfo | null = null;
+let cachedSystemInfoAt = 0;
+let cachedSystemInfoToken = '';
+let inFlightSystemInfoPromise: Promise<SystemInfo | null> | null = null;
+const systemInfoListeners = new Set<(info: SystemInfo | null) => void>();
+
+const notifySystemInfoListeners = (info: SystemInfo | null) => {
+  systemInfoListeners.forEach((listener) => listener(info));
+};
+
+export function resetSystemInfoCache(): void {
+  cachedSystemInfo = null;
+  cachedSystemInfoAt = 0;
+  cachedSystemInfoToken = '';
+  inFlightSystemInfoPromise = null;
+  notifySystemInfoListeners(null);
+}
+
+async function fetchSharedSystemInfo(force = false): Promise<SystemInfo | null> {
+  const token = typeof localStorage !== 'undefined' ? (localStorage.getItem('netops_token') || '') : '';
+  const cacheFresh = cachedSystemInfo !== null
+    && cachedSystemInfoToken === token
+    && (Date.now() - cachedSystemInfoAt) < SYSTEM_INFO_CACHE_TTL_MS;
+
+  if (!force && cacheFresh) {
+    return cachedSystemInfo;
+  }
+  if (!force && inFlightSystemInfoPromise && cachedSystemInfoToken === token) {
+    return inFlightSystemInfoPromise;
+  }
+
+  cachedSystemInfoToken = token;
+  const request = (async (): Promise<SystemInfo | null> => {
     try {
-      const token = localStorage.getItem('netops_token');
       const resp = await fetch('/api/system/info', {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (resp.ok) {
-        setSystemInfo(await resp.json());
-      }
+      if (!resp.ok) return cachedSystemInfo;
+      const data: SystemInfo = await resp.json();
+      cachedSystemInfo = data;
+      cachedSystemInfoAt = Date.now();
+      notifySystemInfoListeners(data);
+      return data;
     } catch (err) {
       console.error('Failed to fetch system info:', err);
+      return cachedSystemInfo;
     } finally {
-      setLoading(false);
+      if (inFlightSystemInfoPromise === request) {
+        inFlightSystemInfoPromise = null;
+      }
     }
+  })();
+
+  inFlightSystemInfoPromise = request;
+  return request;
+}
+
+export function useSystem() {
+  const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(() => cachedSystemInfo);
+  const [loading, setLoading] = useState<boolean>(() => cachedSystemInfo === null);
+
+  const fetchSystemInfo = useCallback(async (force = false) => {
+    const info = await fetchSharedSystemInfo(force);
+    setSystemInfo(info);
+    setLoading(false);
+    return info;
   }, []);
 
   useEffect(() => {
-    fetchSystemInfo();
-  }, [fetchSystemInfo]);
+    let active = true;
+    const listener = (next: SystemInfo | null) => {
+      if (active) {
+        setSystemInfo(next);
+        setLoading(false);
+      }
+    };
+    systemInfoListeners.add(listener);
+
+    if (cachedSystemInfo === null || (Date.now() - cachedSystemInfoAt) >= SYSTEM_INFO_CACHE_TTL_MS) {
+      void fetchSharedSystemInfo(false).then((info) => {
+        if (!active) return;
+        setSystemInfo(info);
+        setLoading(false);
+      });
+    } else {
+      setSystemInfo(cachedSystemInfo);
+      setLoading(false);
+    }
+
+    return () => {
+      active = false;
+      systemInfoListeners.delete(listener);
+    };
+  }, []);
 
   const isFeatureEnabled = useCallback((feature: string) => {
     if (!systemInfo) return true; // Default to true until info loaded
@@ -58,11 +131,11 @@ export function useSystem() {
     }
   }, [systemInfo]);
 
-  return { 
-    systemInfo, 
-    loading, 
+  return {
+    systemInfo,
+    loading,
     fetchSystemInfo,
     isFeatureEnabled,
-    edition: systemInfo?.edition || 'Standard'
+    edition: systemInfo?.edition || 'Standard',
   };
 }

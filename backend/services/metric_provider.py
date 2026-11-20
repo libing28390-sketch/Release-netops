@@ -6,14 +6,69 @@ import json
 import logging
 import os
 import re
+import threading
+import time
 import uuid
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import quote, urlencode, urlparse, urlunparse
 from urllib.request import Request, ProxyHandler, build_opener
 
+try:
+    import httpx
+except ImportError:  # pragma: no cover - fallback when httpx is absent
+    httpx = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
+
+_VM_CLIENT_LOCK = threading.Lock()
+_VM_HTTP_CLIENTS: dict[tuple[str, float], Any] = {}
+_VM_CIRCUIT_LOCK = threading.Lock()
+_VM_UNREACHABLE_UNTIL: dict[str, float] = {}
+_VM_QUERY_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="vm-query")
+
+
+def _vm_cooldown_seconds() -> float:
+    raw = os.environ.get("VICTORIAMETRICS_UNREACHABLE_COOLDOWN_SECONDS", "15")
+    try:
+        return max(0.0, min(120.0, float(raw)))
+    except (TypeError, ValueError):
+        return 15.0
+
+
+def reset_vm_circuit_breaker(base_url: str | None = None) -> None:
+    """Clear VictoriaMetrics unreachable cooldown state (used by tests/recovery)."""
+    with _VM_CIRCUIT_LOCK:
+        if base_url:
+            _VM_UNREACHABLE_UNTIL.pop(base_url, None)
+        else:
+            _VM_UNREACHABLE_UNTIL.clear()
+
+
+def _get_vm_http_client(base_url: str, timeout_seconds: float) -> Any:
+    if httpx is None:
+        return None
+    key = (base_url, float(timeout_seconds))
+    with _VM_CLIENT_LOCK:
+        client = _VM_HTTP_CLIENTS.get(key)
+        if client is None or getattr(client, "is_closed", False):
+            # trust_env=False mirrors ProxyHandler({}) so ambient HTTP(S)_PROXY
+            # never intercepts internal Docker/localhost VictoriaMetrics calls.
+            client = httpx.Client(
+                base_url=base_url,
+                timeout=httpx.Timeout(timeout_seconds, connect=min(2.5, timeout_seconds)),
+                limits=httpx.Limits(
+                    max_connections=32,
+                    max_keepalive_connections=16,
+                    keepalive_expiry=30.0,
+                ),
+                headers={"Accept": "application/json", "User-Agent": "nexora-monitoring/1"},
+                trust_env=False,
+            )
+            _VM_HTTP_CLIENTS[key] = client
+        return client
 
 
 def _default_connection_factory():
@@ -170,6 +225,33 @@ class MetricProvider(ABC):
     def latest(self, *, asset_id: str, metric_key: str) -> dict[str, Any]:
         return self.instant(query=metric_key, asset_id=asset_id, metric_key=metric_key)
 
+    def batch_instant(
+        self,
+        items: Sequence[tuple[str, str | None, str | None]],
+    ) -> list[dict[str, Any]]:
+        """Execute multiple instant queries; providers may run them concurrently."""
+        return [
+            self.instant(query=query, asset_id=asset_id, metric_key=metric_key)
+            for query, asset_id, metric_key in items
+        ]
+
+    def batch_range(
+        self,
+        items: Sequence[tuple[str, datetime, datetime, int, str | None, str | None]],
+    ) -> list[dict[str, Any]]:
+        """Execute multiple range queries; providers may run them concurrently."""
+        return [
+            self.range(
+                query=query,
+                start=start,
+                end=end,
+                step_seconds=step_seconds,
+                asset_id=asset_id,
+                metric_key=metric_key,
+            )
+            for query, start, end, step_seconds, asset_id, metric_key in items
+        ]
+
     def availability(self, *, asset_id: str, metric_key: str, window_seconds: int = 300) -> dict[str, Any]:
         end = datetime.now(timezone.utc)
         response = self.range(
@@ -318,12 +400,72 @@ class VictoriaMetricsMetricProvider(MetricProvider):
             raise ValueError("VICTORIAMETRICS_URL must use port 8428")
         self.base_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", "", ""))
         self.timeout_seconds = timeout_seconds
+        self._custom_opener = opener is not None
         # Bypass ambient HTTP(S)_PROXY variables.  VM is an internal service;
         # only the explicitly allowlisted host and port above are reachable.
         self.opener = opener or build_opener(ProxyHandler({})).open
 
+    def _is_circuit_open(self) -> bool:
+        if self._custom_opener:
+            return False
+        cooldown = _vm_cooldown_seconds()
+        if cooldown <= 0:
+            return False
+        with _VM_CIRCUIT_LOCK:
+            deadline = _VM_UNREACHABLE_UNTIL.get(self.base_url, 0.0)
+            if deadline > time.monotonic():
+                return True
+            if deadline:
+                _VM_UNREACHABLE_UNTIL.pop(self.base_url, None)
+            return False
+
+    def _record_unreachable(self) -> None:
+        if self._custom_opener:
+            return
+        cooldown = _vm_cooldown_seconds()
+        if cooldown <= 0:
+            return
+        with _VM_CIRCUIT_LOCK:
+            _VM_UNREACHABLE_UNTIL[self.base_url] = time.monotonic() + cooldown
+
+    def _record_success(self) -> None:
+        if self._custom_opener:
+            return
+        with _VM_CIRCUIT_LOCK:
+            _VM_UNREACHABLE_UNTIL.pop(self.base_url, None)
+
     def _request(self, path: str, params: Mapping[str, Any]) -> dict[str, Any]:
-        url = f"{self.base_url}{path}?{urlencode({k: v for k, v in params.items() if v is not None})}"
+        if self._is_circuit_open():
+            return {
+                "status": "error",
+                "errorType": "CircuitOpen",
+                "error": "VictoriaMetrics temporarily unreachable (cooldown)",
+                "data": [],
+            }
+
+        clean_params = {k: v for k, v in params.items() if v is not None}
+        if not self._custom_opener:
+            client = _get_vm_http_client(self.base_url, self.timeout_seconds)
+            if client is not None:
+                try:
+                    response = client.get(path, params=clean_params)
+                    response.raise_for_status()
+                    payload = response.json()
+                    if not isinstance(payload, dict):
+                        raise ValueError("VictoriaMetrics returned a non-object response")
+                    self._record_success()
+                    return payload
+                except Exception as exc:
+                    if httpx is not None and isinstance(
+                        exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.PoolTimeout)
+                    ):
+                        self._record_unreachable()
+                    elif isinstance(exc, (TimeoutError, OSError)):
+                        self._record_unreachable()
+                    logger.warning("VictoriaMetrics query failed: %s", exc)
+                    return {"status": "error", "errorType": type(exc).__name__, "error": str(exc), "data": []}
+
+        url = f"{self.base_url}{path}?{urlencode(clean_params)}"
         request = Request(url, headers={"Accept": "application/json", "User-Agent": "nexora-monitoring/1"}, method="GET")
         try:
             with self.opener(request, timeout=self.timeout_seconds) as response:
@@ -331,8 +473,11 @@ class VictoriaMetricsMetricProvider(MetricProvider):
             payload = json.loads(body.decode("utf-8"))
             if not isinstance(payload, dict):
                 raise ValueError("VictoriaMetrics returned a non-object response")
+            self._record_success()
             return payload
         except Exception as exc:
+            if isinstance(exc, (TimeoutError, OSError)):
+                self._record_unreachable()
             logger.warning("VictoriaMetrics query failed: %s", exc)
             return {"status": "error", "errorType": type(exc).__name__, "error": str(exc), "data": []}
 
@@ -431,6 +576,38 @@ class VictoriaMetricsMetricProvider(MetricProvider):
         selector = self._selector(query, asset_id)
         payload = self._request("/api/v1/query_range", {"query": selector, "start": _utc(start).timestamp(), "end": _utc(end).timestamp(), "step": int(step_seconds)})
         return {"provider": self.name, "metric_key": metric_key or query, "data": payload.get("data", {}).get("result", []) if isinstance(payload.get("data"), dict) else [], "status": payload.get("status", "error"), "error": payload.get("error")}
+
+    def batch_instant(
+        self,
+        items: Sequence[tuple[str, str | None, str | None]],
+    ) -> list[dict[str, Any]]:
+        if len(items) <= 1 or self._is_circuit_open():
+            return super().batch_instant(items)
+        futures = [
+            _VM_QUERY_EXECUTOR.submit(self.instant, query=query, asset_id=asset_id, metric_key=metric_key)
+            for query, asset_id, metric_key in items
+        ]
+        return [fut.result() for fut in futures]
+
+    def batch_range(
+        self,
+        items: Sequence[tuple[str, datetime, datetime, int, str | None, str | None]],
+    ) -> list[dict[str, Any]]:
+        if len(items) <= 1 or self._is_circuit_open():
+            return super().batch_range(items)
+        futures = [
+            _VM_QUERY_EXECUTOR.submit(
+                self.range,
+                query=query,
+                start=start,
+                end=end,
+                step_seconds=step_seconds,
+                asset_id=asset_id,
+                metric_key=metric_key,
+            )
+            for query, start, end, step_seconds, asset_id, metric_key in items
+        ]
+        return [fut.result() for fut in futures]
 
 
 class ShadowMetricProvider(MetricProvider):

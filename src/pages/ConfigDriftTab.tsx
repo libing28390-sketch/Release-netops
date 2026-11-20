@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, ShieldAlert, ShieldCheck, GitCompare, RotateCcw, Download, ChevronDown, ChevronRight, AlertTriangle, TrendingUp } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import PageHero from '../components/PageHero';
 import { ActionButton } from '../components/ui/ActionIconButton';
 import { authHeaders } from '../api/http';
@@ -122,8 +121,9 @@ const ConfigDriftTab: React.FC<ConfigDriftTabProps> = ({ language, t }) => {
     });
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (items.length === 0) return;
+    const XLSX = await import('xlsx');
     const data = items.map(i => ({
       Hostname: i.hostname,
       IP: i.ip_address,

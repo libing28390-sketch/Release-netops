@@ -2,12 +2,16 @@ import { useCallback, useState } from 'react';
 import type { Device } from '../types';
 import { authHeaders } from '../api/http';
 import { useInventoryStore } from '../store/inventoryStore';
-import { normalizeImportedPlatform, SSH_ALGORITHM_PROFILE_VALUES } from '../pages/AssetManagement/constants';
 import { getPlatformBindingErrorMessage } from '../utils/platformBindingErrors';
 
-const normalizeSshAlgorithmProfile = (value: unknown): Device['ssh_algorithm_profile'] => {
+const FALLBACK_SSH_ALGORITHM_PROFILES = ['auto', 'modern', 'compatible', 'legacy'] as const;
+
+const normalizeSshAlgorithmProfile = (
+  value: unknown,
+  allowedValues: readonly string[] = FALLBACK_SSH_ALGORITHM_PROFILES,
+): Device['ssh_algorithm_profile'] => {
   const normalized = String(value || 'auto').trim().toLowerCase().replace(/-/g, '_');
-  return SSH_ALGORITHM_PROFILE_VALUES.includes(normalized as typeof SSH_ALGORITHM_PROFILE_VALUES[number])
+  return allowedValues.includes(normalized)
     ? normalized as Device['ssh_algorithm_profile']
     : 'auto';
 };
@@ -38,10 +42,11 @@ export const useDeviceFormActions = ({ setDevices, showToast }: UseDeviceFormAct
       return;
     }
     try {
+      const { normalizeImportedPlatform, SSH_ALGORITHM_PROFILE_VALUES } = await import('../pages/AssetManagement/constants');
       const payload = {
         ...editForm,
         platform: editForm.platform ? normalizeImportedPlatform(editForm.platform) : editForm.platform,
-        ssh_algorithm_profile: normalizeSshAlgorithmProfile(editForm.ssh_algorithm_profile),
+        ssh_algorithm_profile: normalizeSshAlgorithmProfile(editForm.ssh_algorithm_profile, SSH_ALGORITHM_PROFILE_VALUES),
       };
       const response = await fetch(`/api/devices/${editingDevice.id}`, {
         method: 'PUT',

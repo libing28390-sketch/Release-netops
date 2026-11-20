@@ -24,7 +24,6 @@ import {
   FileSpreadsheet,
   FileJson,
 } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import type { Device } from '../../types';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
@@ -577,8 +576,9 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
   }, []);
 
   /** Export parsed records to a real .xlsx file */
-  const downloadExcel = useCallback((records: Record<string, any>[], fields: string[], filename: string) => {
+  const downloadExcel = useCallback(async (records: Record<string, any>[], fields: string[], filename: string) => {
     if (!records || records.length === 0) return;
+    const XLSX = await import('xlsx');
     const data = records.map(r => {
       const row: Record<string, any> = {};
       for (const f of fields) row[f] = r[f] ?? '';
@@ -619,6 +619,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
     if (!execution) return;
 
     const execId = execution.id;
+    const XLSX = await import('xlsx');
     const wb = XLSX.utils.book_new();
 
     // ── Sheet 1: 概览 ──

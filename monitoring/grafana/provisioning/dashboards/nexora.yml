@@ -6,7 +6,7 @@ providers:
     folder: Nexora
     type: file
     disableDeletion: false
-    updateIntervalSeconds: 10
+    updateIntervalSeconds: 120
     allowUiUpdates: true
     options:
       path: /var/lib/grafana/dashboards

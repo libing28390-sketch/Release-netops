@@ -13,6 +13,25 @@ export type DeviceFetchMode =
   | 'all-network-topology';
 
 const ALL_DEVICE_PAGE_SIZE = 200;
+const DEVICE_CACHE_FRESH_MS = 15_000;
+const DEVICE_CACHE_STALE_MS = 45_000;
+
+interface CachedDeviceEntry {
+  devices: Device[];
+  fetchedAt: number;
+}
+
+const deviceRouteCache = new Map<string, CachedDeviceEntry>();
+
+export function resetInventoryDeviceCache(): void {
+  deviceRouteCache.clear();
+}
+
+const buildDeviceCacheKey = (mode: DeviceFetchMode, assetType: string): string => {
+  const token = typeof localStorage !== 'undefined' ? (localStorage.getItem('netops_token') || '') : '';
+  const tokenTag = token ? `${token.slice(0, 6)}:${token.length}` : 'anon';
+  return `${tokenTag}|${mode}|${assetType}`;
+};
 
 export const useInventory = (deviceFetchMode: DeviceFetchMode = 'full') => {
   const [devices, setDevices] = useState<Device[]>([]);
@@ -98,7 +117,18 @@ export const useInventory = (deviceFetchMode: DeviceFetchMode = 'full') => {
 
   const lastFetchId = useRef(0);
 
-  const fetchDevicesData = useCallback(async (assetType: string = 'all') => {
+  const fetchDevicesData = useCallback(async (assetType: string = 'all', options?: { force?: boolean }) => {
+    const cacheKey = buildDeviceCacheKey(deviceFetchMode, assetType);
+    const cached = deviceRouteCache.get(cacheKey);
+    const now = Date.now();
+    if (!options?.force && cached && (now - cached.fetchedAt) < DEVICE_CACHE_STALE_MS) {
+      setDevices(cached.devices);
+      setDevicesLastUpdatedAt(cached.fetchedAt);
+      if ((now - cached.fetchedAt) < DEVICE_CACHE_FRESH_MS) {
+        return;
+      }
+    }
+
     const fetchId = ++lastFetchId.current;
     setDevicesError(null);
     try {
@@ -157,20 +187,28 @@ export const useInventory = (deviceFetchMode: DeviceFetchMode = 'full') => {
 
         devs = [...firstPage.items];
         const totalPages = Math.ceil(total / ALL_DEVICE_PAGE_SIZE);
+        const remainingPages: number[] = [];
         for (let page = 2; page <= totalPages; page += 1) {
+          remainingPages.push(page);
+        }
+        const PAGE_FETCH_CONCURRENCY = 3;
+        for (let offset = 0; offset < remainingPages.length; offset += PAGE_FETCH_CONCURRENCY) {
           if (fetchId !== lastFetchId.current) return;
-          const nextPage = await fetchDevicePage(page);
+          const batchPages = remainingPages.slice(offset, offset + PAGE_FETCH_CONCURRENCY);
+          const batchResponses = await Promise.all(batchPages.map((page) => fetchDevicePage(page)));
           if (fetchId !== lastFetchId.current) return;
-          if (!Array.isArray(nextPage?.items)) {
-            throw new Error('设备列表分页响应无效');
+          for (const nextPage of batchResponses) {
+            if (!Array.isArray(nextPage?.items)) {
+              throw new Error('设备列表分页响应无效');
+            }
+            if (nextPage.total !== total) {
+              throw new Error('设备列表在加载期间发生变化，请刷新重试');
+            }
+            if (nextPage.items.length === 0) {
+              throw new Error('设备列表分页响应不完整，请刷新重试');
+            }
+            devs.push(...nextPage.items);
           }
-          if (nextPage.total !== total) {
-            throw new Error('设备列表在加载期间发生变化，请刷新重试');
-          }
-          if (nextPage.items.length === 0) {
-            throw new Error('设备列表分页响应不完整，请刷新重试');
-          }
-          devs.push(...nextPage.items);
         }
 
         const deviceIds = new Set(devs.map((device) => String(device?.id || '')));
@@ -195,10 +233,13 @@ export const useInventory = (deviceFetchMode: DeviceFetchMode = 'full') => {
         }
         return normalized;
       });
-      setDevices(isNetworkOnlyMode
+      const finalDevices = isNetworkOnlyMode
         ? excludeServerTopologyDevices(normalizedDevices).devices
-        : normalizedDevices);
-      setDevicesLastUpdatedAt(Date.now());
+        : normalizedDevices;
+      const updatedAt = Date.now();
+      deviceRouteCache.set(cacheKey, { devices: finalDevices, fetchedAt: updatedAt });
+      setDevices(finalDevices);
+      setDevicesLastUpdatedAt(updatedAt);
     } catch (error) {
       if (fetchId === lastFetchId.current) {
         setDevicesError(error instanceof Error ? error.message : '加载网络设备失败');

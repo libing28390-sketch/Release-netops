@@ -1,4 +1,3 @@
-import * as XLSX from 'xlsx';
 import type { ScheduledJob } from './types';
 
 /* ═══════════════════════════════════════════════════════ */
@@ -335,8 +334,9 @@ export const splitOutputByCommand = (output: string, commands: string[]): Array<
 /* ═══════════════════════════════════════════════════════ */
 
 /** Export parsed records to .xlsx */
-export const downloadInspExcel = (records: Record<string, any>[], fields: string[], filename: string) => {
+export const downloadInspExcel = async (records: Record<string, any>[], fields: string[], filename: string) => {
   if (!records?.length) return;
+  const XLSX = await import('xlsx');
   const data = records.map(r => {
     const row: Record<string, any> = {};
     for (const f of fields) row[f] = r[f] ?? '';

@@ -61,7 +61,13 @@ export const getTopologyDeviceIconType = (device: IconDevice): TopologyIconType 
   return 'generic';
 };
 
-const assets = import.meta.glob('../assets/topology/devices/**/*.svg', { eager: true, import: 'default', query: '?url' }) as Record<string, string>;
+const assets = import.meta.glob([
+  '../assets/topology/devices/switches/switch.svg',
+  '../assets/topology/devices/routers/router.svg',
+  '../assets/topology/devices/firewalls/firewall.svg',
+  '../assets/topology/devices/servers/server.svg',
+  '../assets/topology/devices/wireless/wireless.svg',
+], { eager: true, import: 'default', query: '?url' }) as Record<string, string>;
 
 const assetCategories = {
   switch: 'switches', firewall: 'firewalls', router: 'routers', load_balancer: 'firewalls', waf: 'firewalls',

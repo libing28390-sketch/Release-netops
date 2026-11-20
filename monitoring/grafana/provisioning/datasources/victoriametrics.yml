@@ -11,3 +11,4 @@ datasources:
     jsonData:
       httpMethod: POST
       timeInterval: 60s
+      queryTimeout: 30s

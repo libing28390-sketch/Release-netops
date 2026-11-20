@@ -24,7 +24,6 @@ import {
   FileText,
   Upload
 } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import { AssetReadonlyDetailInner, normalizeAssetApiRow } from '../../components/AssetReadonlyDetail';
 import PageHero from '../../components/PageHero';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
@@ -542,7 +541,8 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     'Remarks': 'remarks'
   };
 
-  const handleDownloadTemplate = () => {
+  const handleDownloadTemplate = async () => {
+    const XLSX = await import('xlsx');
     const wb = XLSX.utils.book_new();
     const headers = zh
       ? ['机柜名称*', '站点', '机房', '列', '总U位', '最大功率(W)', '散热区域', '备注']
@@ -571,6 +571,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     const reader = new FileReader();
     reader.onload = async (ev) => {
       try {
+        const XLSX = await import('xlsx');
         const data = new Uint8Array(ev.target?.result as ArrayBuffer);
         const wb = XLSX.read(data, { type: 'array' });
         const mapped: any[] = [];

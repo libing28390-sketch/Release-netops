@@ -6,7 +6,80 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "全网总览",
+      "tooltip": "切换到 全网总览",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-overview/nexora-network-overview"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "单设备详情",
+      "tooltip": "切换到 单设备详情",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-device/nexora-network-device"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "接口全景",
+      "tooltip": "切换到 接口全景",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-interface/nexora-network-interface"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "无线专网",
+      "tooltip": "切换到 无线专网",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-wireless/nexora-network-wireless"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "出口质量",
+      "tooltip": "切换到 出口质量",
+      "type": "link",
+      "url": "/grafana/d/nexora-outbound-probe-quality/nexora-outbound-probe-quality"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": true,
+      "title": "返回 Nexora 监控",
+      "tooltip": "在新标签页打开 Nexora 网络监控页面",
+      "type": "link",
+      "url": "/monitor/network"
+    }
+  ],
   "panels": [
     {
       "id": 900,
@@ -77,7 +150,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -88,7 +161,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -158,7 +235,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -169,7 +246,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -235,7 +316,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -246,7 +327,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -320,7 +405,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -331,7 +416,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -377,10 +466,10 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
+            "fillOpacity": 18,
+            "gradientMode": "opacity",
             "showPoints": "never"
           }
         },
@@ -389,7 +478,7 @@
       "options": {
         "legend": {
           "displayMode": "list",
-          "placement": "right",
+          "placement": "bottom",
           "showLegend": true,
           "calcs": []
         },
@@ -429,10 +518,10 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
+            "fillOpacity": 18,
+            "gradientMode": "opacity",
             "showPoints": "never"
           }
         },
@@ -441,7 +530,7 @@
       "options": {
         "legend": {
           "displayMode": "list",
-          "placement": "right",
+          "placement": "bottom",
           "showLegend": true,
           "calcs": []
         },
@@ -760,5 +849,5 @@
   "timezone": "browser",
   "title": "05 SNMP 采集健康 (SNMP Scrape Health)",
   "uid": "nexora-monitoring-health",
-  "version": 30
+  "version": 33
 }

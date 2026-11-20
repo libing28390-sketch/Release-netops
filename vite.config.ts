@@ -1,6 +1,8 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import fs from 'fs';
 import path from 'path';
+import zlib from 'zlib';
 import { defineConfig, loadEnv } from 'vite';
 
 function buildProgressPlugin() {
@@ -42,8 +44,37 @@ export default defineConfig(({ mode }) => {
   const frontendPort = Number(env.VITE_PORT || process.env.VITE_PORT || '5400');
   const backendPort = process.env.BACKEND_PORT || (process.platform === 'win32' ? '15310' : '5310');
   const apiTarget = process.env.VITE_API_TARGET || `http://127.0.0.1:${backendPort}`;
+  function gzipPrecompressPlugin() {
+    let outDir = 'dist';
+    return {
+      name: 'nexora-gzip-precompress',
+      apply: 'build' as const,
+      configResolved(config: { build: { outDir: string } }) {
+        outDir = config.build.outDir || 'dist';
+      },
+      closeBundle() {
+        const assetsDir = path.resolve(__dirname, outDir, 'assets');
+        if (!fs.existsSync(assetsDir)) return;
+        let compressedCount = 0;
+        for (const entry of fs.readdirSync(assetsDir)) {
+          if (!/\.(js|css|svg)$/i.test(entry)) continue;
+          const filePath = path.join(assetsDir, entry);
+          const stat = fs.statSync(filePath);
+          if (!stat.isFile() || stat.size < 1024) continue;
+          const raw = fs.readFileSync(filePath);
+          const gz = zlib.gzipSync(raw, { level: 9 });
+          if (gz.length < raw.length) {
+            fs.writeFileSync(`${filePath}.gz`, gz);
+            compressedCount += 1;
+          }
+        }
+        console.log(`[frontend-build] Precompressed ${compressedCount} static assets (.gz)`);
+      },
+    };
+  }
+
   return {
-    plugins: [react(), tailwindcss(), buildProgressPlugin()],
+    plugins: [react(), tailwindcss(), buildProgressPlugin(), gzipPrecompressPlugin()],
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
     },

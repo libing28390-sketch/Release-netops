@@ -156,6 +156,11 @@ def setup_change_password(
             (row["id"], user["token"]),
         )
         conn.commit()
+        try:
+            from api.users import invalidate_session_cache
+            invalidate_session_cache(user_id=str(row["id"]))
+        except Exception:
+            pass
         logger.info("Password changed via setup wizard for user %s", user["username"])
         return {"success": True}
     finally:

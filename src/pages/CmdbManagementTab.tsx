@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Pencil, Trash2, RefreshCw, X, KeyRound, Building2, Network, Layers, Users as UsersIcon, Server, Search, Check, ShieldAlert, Eye, EyeOff, Copy, ChevronDown, ChevronUp, ChevronRight, FolderTree, Download, Upload, FileSpreadsheet, Radio, ShieldCheck, Route, Sparkles } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import PageHero from '../components/PageHero';
 import Pagination from '../components/Pagination';
 import CmdbInterfaceCollectionProgress from '../components/CmdbInterfaceCollectionProgress';
@@ -2480,7 +2479,8 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     }
   };
 
-  const downloadSiteImportTemplate = useCallback(() => {
+  const downloadSiteImportTemplate = useCallback(async () => {
+    const XLSX = await import('xlsx');
     const headers = SITE_IMPORT_COLUMNS.map(column => column.header);
     const sample = SITE_IMPORT_COLUMNS.map(column => column.sample);
     const worksheet = XLSX.utils.aoa_to_sheet([headers, sample]);
@@ -2553,6 +2553,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     setSiteImportRows([]);
     setSiteImportErrors([]);
     try {
+      const XLSX = await import('xlsx');
       const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
       if (!firstSheet) throw new Error('导入文件没有可读取的工作表');
@@ -2639,11 +2640,12 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     }
   }, [credentialTemplateDownloading]);
 
-  const exportCredentialInventory = useCallback(() => {
+  const exportCredentialInventory = useCallback(async () => {
     if (credentialExporting) return;
     setCredentialExporting(true);
     setError('');
     try {
+      const XLSX = await import('xlsx');
       const workbook = XLSX.utils.book_new();
       CREDENTIAL_SHEET_DEFS.forEach(sheet => {
         const sheetRows = rows.filter(row => {
@@ -2748,6 +2750,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     setCredentialImportRows([]);
     setCredentialImportErrors([]);
     try {
+      const XLSX = await import('xlsx');
       const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const sheetInputs = workbook.SheetNames.map(name => ({
         name,

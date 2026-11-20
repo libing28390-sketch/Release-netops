@@ -384,12 +384,13 @@ def stat_panel(
             "overrides": []
         },
         "options": {
-            "colorMode": "value",
+            "colorMode": "background",
             "graphMode": graph_mode,
             "justifyMode": "center",
             "orientation": "auto",
             "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False},
-            "textMode": "auto"
+            "textMode": "auto",
+            "text": {"titleSize": 13, "valueSize": 28},
         },
         # Stat cards represent current state or a rolling aggregate's current
         # sample; a range query plus lastNotNull can retain a stale value after
@@ -431,6 +432,9 @@ def gauge_panel(pid, title, expr, x, y, w=6, h=5, unit="percent", thresholds=Non
             "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False},
             "showThresholdLabels": False,
             "showThresholdMarkers": True,
+            "sizing": "auto",
+            "minVizWidth": 75,
+            "minVizHeight": 75,
         },
         "targets": [{"expr": expr, "instant": True, "refId": "A"}],
     }
@@ -456,10 +460,10 @@ def timeseries_panel(
     unit="",
     color_overrides=None,
     legend_display_mode="table",
-    legend_placement="right",
+    legend_placement="bottom",
     legend_calcs=None,
     description=None,
-    line_interpolation="linear",
+    line_interpolation="smooth",
 ):
     panel = {
         "id": pid,
@@ -476,8 +480,8 @@ def timeseries_panel(
                     "drawStyle": "line",
                     "lineInterpolation": line_interpolation,
                     "lineWidth": 2,
-                    "fillOpacity": 10,
-                    "gradientMode": "none",
+                    "fillOpacity": 18,
+                    "gradientMode": "opacity",
                     "showPoints": "never",
                 }
             },
@@ -832,6 +836,11 @@ def bar_gauge_panel(
         "options": {
             "displayMode": "gradient",
             "orientation": "horizontal",
+            "valueMode": "color",
+            "namePlacement": "auto",
+            "showUnfilled": True,
+            "minVizWidth": 8,
+            "minVizHeight": 16,
             "reduceOptions": {"calcs": ["lastNotNull"], "values": false}
         },
         "targets": [{
@@ -4485,6 +4494,139 @@ def validate_dashboard(source_name, dashboard):
                 occupied[(cell_x, cell_y)] = panel.get("id")
 
 
+
+
+NOC_COLLAPSED_ROW_TITLES = {
+    "nexora-network-overview": {"近期链路状态变动"},
+    "nexora-network-device": {"硬件部件当前读数", "接口诊断"},
+    "nexora-network-interface": {"链路质量", "状态与抖动"},
+    "nexora-interface-detail": {"接口状态", "CMDB 利用率阈值判断", "光模块功率（SNMP DOM）"},
+    "nexora-network-wireless": {"Radio 热点", "SSID / BSS 客户端明细", "无线专网流量"},
+    "nexora-network-outbound": {"链路质量与异常排行"},
+    "nexora-outbound-probe-quality": {"WAN 接口健康与流量"},
+    "nexora-linux-metrics": {"磁盘空间、网络与会话"},
+    "nexora-windows-metrics": {"网络与非运行关键服务", "关键服务运行清单"},
+    "nexora-platform-health": {"容器资源与观测"},
+    "nexora-postgres-performance": {"统计重置说明"},
+    "nexora-alert-operations": {"告警处置效率"},
+}
+
+NOC_QUICK_NAV_DASHBOARDS = (
+    ("nexora-network-overview", "全网总览"),
+    ("nexora-network-device", "单设备详情"),
+    ("nexora-network-interface", "接口全景"),
+    ("nexora-network-wireless", "无线专网"),
+    ("nexora-outbound-probe-quality", "出口质量"),
+    ("nexora-monitoring-health", "采集健康"),
+)
+
+
+def _collapse_secondary_rows(panels, collapsed_titles):
+    """Fold secondary deep-dive rows into collapsed Grafana rows so initial load
+    skips their PromQL queries and keeps the first two screens clean."""
+    if not collapsed_titles:
+        return panels
+
+    ordered = sorted(
+        panels,
+        key=lambda item: (
+            int((item.get("gridPos") or {}).get("y", 0)),
+            int((item.get("gridPos") or {}).get("x", 0)),
+        ),
+    )
+    row_indices = [idx for idx, item in enumerate(ordered) if item.get("type") == "row"]
+    if not row_indices:
+        return panels
+
+    # Group panels under their preceding row
+    result = []
+    prefix_end = row_indices[0]
+    result.extend(ordered[:prefix_end])
+
+    current_y = 0
+    if result:
+        current_y = max(
+            int((p.get("gridPos") or {}).get("y", 0)) + int((p.get("gridPos") or {}).get("h", 0))
+            for p in result
+        )
+
+    for pos, row_idx in enumerate(row_indices):
+        row = deepcopy(ordered[row_idx])
+        next_row_idx = row_indices[pos + 1] if pos + 1 < len(row_indices) else len(ordered)
+        section_children = [deepcopy(p) for p in ordered[row_idx + 1 : next_row_idx]]
+        old_row_y = int((row.get("gridPos") or {}).get("y", 0))
+        row_h = int((row.get("gridPos") or {}).get("h", 1))
+        row["gridPos"]["y"] = current_y
+        if row.get("title") in collapsed_titles and section_children:
+            row["collapsed"] = True
+            # Keep relative child y offsets cleanly normalized under the row
+            for child in section_children:
+                child_y = int((child.get("gridPos") or {}).get("y", old_row_y + 1))
+                child["gridPos"]["y"] = max(0, child_y - old_row_y)
+            row["panels"] = section_children
+            result.append(row)
+            current_y += row_h
+        else:
+            row["collapsed"] = False
+            row["panels"] = []
+            result.append(row)
+            delta_y = current_y - old_row_y
+            section_bottom = current_y + row_h
+            for child in section_children:
+                child_y = int((child.get("gridPos") or {}).get("y", old_row_y + 1)) + delta_y
+                child["gridPos"]["y"] = child_y
+                section_bottom = max(section_bottom, child_y + int((child.get("gridPos") or {}).get("h", 1)))
+                result.append(child)
+            current_y = section_bottom
+
+    return result
+
+
+def _build_noc_quick_links(current_uid):
+    links = []
+    for target_uid, title in NOC_QUICK_NAV_DASHBOARDS:
+        if target_uid == current_uid:
+            continue
+        links.append({
+            "asDropdown": False,
+            "icon": "dashboard",
+            "includeVars": False,
+            "keepTime": True,
+            "tags": [],
+            "targetBlank": False,
+            "title": title,
+            "tooltip": f"切换到 {title}",
+            "type": "link",
+            "url": f"/grafana/d/{target_uid}/{target_uid}",
+        })
+    links.append({
+        "asDropdown": False,
+        "icon": "external link",
+        "includeVars": False,
+        "keepTime": False,
+        "tags": [],
+        "targetBlank": True,
+        "title": "返回 Nexora 监控",
+        "tooltip": "在新标签页打开 Nexora 网络监控页面",
+        "type": "link",
+        "url": "/monitor/network",
+    })
+    return links
+
+
+def apply_noc_v3_polish(dashboards):
+    """Apply NOC V3 usability polish (collapsible deep-dive rows + quick nav links)
+    while preserving every panel ID, query, and V2 fieldConfig contract."""
+    for _, dashboard in dashboards:
+        uid = str(dashboard.get("uid") or "")
+        collapsed_titles = NOC_COLLAPSED_ROW_TITLES.get(uid)
+        if collapsed_titles:
+            dashboard["panels"] = _collapse_secondary_rows(dashboard.get("panels") or [], collapsed_titles)
+        if not dashboard.get("links"):
+            dashboard["links"] = _build_noc_quick_links(uid)
+        dashboard["graphTooltip"] = 1
+
+
 def build_dashboard_catalog():
     dashboards = [
         ("nexora-network-overview.json", build_overview_dashboard()),
@@ -4505,6 +4647,7 @@ def build_dashboard_catalog():
     uids = [data.get("uid") for _, data in dashboards]
     assert len(uids) == len(set(uids)), "dashboard catalog contains duplicate UIDs"
     apply_v2_presentation(dashboards)
+    apply_noc_v3_polish(dashboards)
     return dashboards
 
 
