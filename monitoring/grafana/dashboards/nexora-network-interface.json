@@ -69,6 +69,18 @@
     },
     {
       "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Telemetry 实时",
+      "tooltip": "切换到 Telemetry 实时",
+      "type": "link",
+      "url": "/grafana/d/nexora-telemetry-realtime/nexora-telemetry-realtime"
+    },
+    {
+      "asDropdown": false,
       "icon": "external link",
       "includeVars": false,
       "keepTime": false,
@@ -150,9 +162,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -165,7 +177,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -231,9 +244,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -246,7 +259,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -321,9 +335,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -336,7 +350,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -411,9 +426,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -426,7 +441,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -461,9 +477,10 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -494,6 +511,10 @@
                   "mode": "fixed",
                   "fixedColor": "#3B82F6"
                 }
+              },
+              {
+                "id": "custom.transform",
+                "value": "negative-Y"
               }
             ]
           }
@@ -501,13 +522,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
           "calcs": [
             "lastNotNull",
-            "max"
-          ]
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -1284,19 +1306,21 @@
         "overrides": []
       },
       "options": {
-        "displayMode": "gradient",
+        "displayMode": "lcd",
         "orientation": "horizontal",
-        "valueMode": "color",
-        "namePlacement": "auto",
-        "showUnfilled": true,
-        "minVizWidth": 8,
-        "minVizHeight": 16,
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
           ],
+          "fields": "",
           "values": false
-        }
+        },
+        "showUnfilled": true,
+        "valueMode": "color",
+        "namePlacement": "auto",
+        "minVizWidth": 8,
+        "minVizHeight": 16,
+        "sizing": "auto"
       },
       "targets": [
         {
@@ -1334,19 +1358,21 @@
         "overrides": []
       },
       "options": {
-        "displayMode": "gradient",
+        "displayMode": "lcd",
         "orientation": "horizontal",
-        "valueMode": "color",
-        "namePlacement": "auto",
-        "showUnfilled": true,
-        "minVizWidth": 8,
-        "minVizHeight": 16,
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
           ],
+          "fields": "",
           "values": false
-        }
+        },
+        "showUnfilled": true,
+        "valueMode": "color",
+        "namePlacement": "auto",
+        "minVizWidth": 8,
+        "minVizHeight": 16,
+        "sizing": "auto"
       },
       "targets": [
         {
@@ -1616,12 +1642,17 @@
                 "mode": "palette-classic"
               },
               "custom": {
-                "drawStyle": "line",
+                "drawStyle": "bars",
                 "lineInterpolation": "smooth",
-                "lineWidth": 2,
-                "fillOpacity": 18,
+                "lineWidth": 1,
+                "fillOpacity": 82,
                 "gradientMode": "opacity",
-                "showPoints": "never"
+                "showPoints": "never",
+                "barAlignment": 0,
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                }
               }
             },
             "overrides": [
@@ -1659,14 +1690,14 @@
           },
           "options": {
             "legend": {
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true,
               "calcs": [
                 "lastNotNull",
                 "max",
                 "mean"
-              ]
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
             },
             "tooltip": {
               "mode": "multi",
@@ -1711,9 +1742,10 @@
                 "drawStyle": "line",
                 "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 18,
+                "fillOpacity": 24,
                 "gradientMode": "opacity",
-                "showPoints": "never"
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -1796,14 +1828,14 @@
           },
           "options": {
             "legend": {
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true,
               "calcs": [
                 "lastNotNull",
                 "max",
                 "mean"
-              ]
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
             },
             "tooltip": {
               "mode": "multi",
@@ -2417,7 +2449,7 @@
               }
             }
           ],
-          "description": "仅将管理启用且运行 Down 的接口列为异常候选。"
+          "description": "展示端口管理状态与运行状态；默认聚焦已启用但运行 Down 的异常端口，可通过顶部筛选查看停用端口。"
         }
       ]
     }
@@ -2614,7 +2646,7 @@
   },
   "timezone": "browser",
   "title": "04 接口流量与健康（Interface Traffic & Health）",
-  "description": "流量与利用率只统计管理状态启用且运行状态 UP 的接口。健康表默认隐藏管理停用接口，运行 DOWN 的接口作为异常候选；管理停用接口可通过“接口范围”切换显示。接口用途显示“用途待确认”表示 CMDB 尚未配置该端口的用途，不代表接口异常。",
+  "description": "全网接口流量与链路健康全景：实时追踪聚合吞吐、双向速率 Top10、端口利用率与错包/丢包波动；点击接口名称可下钻单端口详情。",
   "uid": "nexora-network-interface",
   "version": 33
 }

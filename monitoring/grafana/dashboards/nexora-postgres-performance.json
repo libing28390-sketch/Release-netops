@@ -81,6 +81,18 @@
     },
     {
       "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Telemetry 实时",
+      "tooltip": "切换到 Telemetry 实时",
+      "type": "link",
+      "url": "/grafana/d/nexora-telemetry-realtime/nexora-telemetry-realtime"
+    },
+    {
+      "asDropdown": false,
       "icon": "external link",
       "includeVars": false,
       "keepTime": false,
@@ -183,9 +195,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
+        "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "center",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -198,7 +210,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -207,7 +220,7 @@
           "instant": true
         }
       ],
-      "description": "1 表示 exporter 可抓取，0 表示抓取失败；无样本表示采集状态未知。"
+      "description": "数据库监控采集器（Exporter）当前在线连通状态。"
     },
     {
       "id": 2,
@@ -286,9 +299,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
+        "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "center",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -301,7 +314,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -310,7 +324,7 @@
           "instant": true
         }
       ],
-      "description": "取 exporter 对 stat_statements collector 的抓取状态；无样本表示未知。"
+      "description": "慢查询与语句统计模块（pg_stat_statements）的指标采集状态。"
     },
     {
       "id": 3,
@@ -368,9 +382,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -383,7 +397,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -392,7 +407,7 @@
           "instant": true
         }
       ],
-      "description": "所选数据库和用户的调用速率，按 5 分钟窗口计算。"
+      "description": "所选数据库近 5 分钟每秒 SQL 执行次数（QPS），反映数据库整体访问热度。"
     },
     {
       "id": 4,
@@ -450,9 +465,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -465,7 +480,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -474,7 +490,7 @@
           "instant": true
         }
       ],
-      "description": "pg_stat_statements 累计执行秒数的 5 分钟速率；并发执行时该值可以大于 1。"
+      "description": "单位时间内消耗的 SQL 累计执行秒数；高并发场景下该值可能大于 1。"
     },
     {
       "id": 5,
@@ -532,9 +548,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -547,7 +563,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -556,7 +573,7 @@
           "instant": true
         }
       ],
-      "description": "累计执行耗时速率除以调用速率，得到按调用数加权的平均毫秒数。"
+      "description": "单次 SQL 执行的加权平均耗时（毫秒），突增通常意味着出现锁等待或慢查询。"
     },
     {
       "id": 6,
@@ -614,9 +631,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -629,7 +646,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -638,12 +656,12 @@
           "instant": true
         }
       ],
-      "description": "SQL 返回或影响的行数速率；它不表示扫描行数。"
+      "description": "每秒 SQL 返回或影响的记录行数，用于衡量批量读写压力。"
     },
     {
       "id": 7,
       "title": "数据库 Shared Buffer 命中率",
-      "type": "stat",
+      "type": "gauge",
       "datasource": {
         "type": "prometheus",
         "uid": "victoriametrics"
@@ -691,14 +709,13 @@
                 }
               }
             }
-          ]
+          ],
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -707,11 +724,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto",
-        "text": {
-          "titleSize": 13,
-          "valueSize": 28
-        }
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "minVizWidth": 75,
+        "minVizHeight": 75
       },
       "targets": [
         {
@@ -720,7 +737,7 @@
           "instant": true
         }
       ],
-      "description": "按所选数据库统计 shared buffer 命中率；该指标不属于单条 SQL。"
+      "description": "数据库级 Shared Buffer 内存缓存命中率（通常建议 >95%）；该指标反映库级整体缓存效率，不属于单条 SQL。"
     },
     {
       "id": 901,
@@ -760,9 +777,10 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -785,13 +803,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
           "calcs": [
             "lastNotNull",
-            "max"
-          ]
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -831,9 +850,10 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -856,13 +876,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
           "calcs": [
             "lastNotNull",
-            "max"
-          ]
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -958,7 +979,7 @@
           }
         }
       ],
-      "description": "按数据库、用户和 Query ID 汇总 Top 10，不读取 SQL 文本。"
+      "description": "按累计耗时速率排名的 Top10 热点 Query ID（已脱敏，不展示原始 SQL 文本）。"
     },
     {
       "id": 11,
@@ -1041,7 +1062,7 @@
           }
         }
       ],
-      "description": "最多显示 10 个 Query ID，按每次调用的加权平均执行时间排序。"
+      "description": "按平均单次执行耗时排名的 Top10 最慢 Query ID，建议优先针对性优化索引。"
     },
     {
       "id": 903,
@@ -1067,7 +1088,7 @@
           },
           "options": {
             "mode": "markdown",
-            "content": "面板使用 `rate()` 计算 5 分钟速率，Prometheus 会处理可观测到的计数器下降。\n\n执行 `pg_stat_statements_reset()` 等统计重置会重置累计值；postgres_exporter v0.20.1 的 stat_statements 指标不包含该扩展的重置时间，因此本页无法显示具体重置时点。"
+            "content": "**统计口径提示**：本页速率指标基于 5 分钟滚动窗口自动计算，可平滑处理常规计数器归零。\n\n若管理员手动执行过 `pg_stat_statements_reset()` 重置统计信息，累计数据将重新归零；由于当前采集器暂未暴露扩展重置时间戳，本页无法显示具体重置时点。"
           }
         }
       ]
@@ -1139,7 +1160,7 @@
   },
   "timezone": "browser",
   "title": "13 PostgreSQL 数据库性能（PostgreSQL Database Performance）",
-  "description": "展示 postgres_exporter 的 pg_stat_statements counters 与数据库级 shared buffer 命中率。Top SQL 按 Query ID 识别，不使用或展示 SQL 文本。",
+  "description": "PostgreSQL 数据库核心性能透视：聚焦 SQL 调用速率、执行耗时、Shared Buffer 缓存命中率及慢查询 Query ID Top10 排行。",
   "uid": "nexora-postgres-performance",
   "version": 33
 }

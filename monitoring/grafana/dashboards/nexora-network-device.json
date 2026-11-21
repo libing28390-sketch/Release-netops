@@ -69,6 +69,18 @@
     },
     {
       "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Telemetry 实时",
+      "tooltip": "切换到 Telemetry 实时",
+      "type": "link",
+      "url": "/grafana/d/nexora-telemetry-realtime/nexora-telemetry-realtime"
+    },
+    {
+      "asDropdown": false,
       "icon": "external link",
       "includeVars": false,
       "keepTime": false,
@@ -204,7 +216,7 @@
           }
         }
       ],
-      "description": "仅显示所选设备；SNMP 不可达与指标缺失分开呈现。"
+      "description": "展示当前选中设备的基础身份信息与 SNMP 连通状态，便于快速确认设备可达性。"
     },
     {
       "id": 2,
@@ -262,9 +274,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -277,7 +289,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -331,6 +344,7 @@
         "overrides": []
       },
       "options": {
+        "orientation": "auto",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -397,6 +411,7 @@
         "overrides": []
       },
       "options": {
+        "orientation": "auto",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -475,9 +490,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -490,7 +505,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -561,9 +577,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -576,7 +592,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -585,7 +602,7 @@
           "instant": true
         }
       ],
-      "description": "无异常时显示 0；没有状态数据时显示 —。"
+      "description": "当前检测到告警或故障的硬件部件总数；一切正常时显示 0。"
     },
     {
       "id": 7,
@@ -647,9 +664,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -662,7 +679,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -671,7 +689,7 @@
           "instant": true
         }
       ],
-      "description": "没有未知状态时显示 0；没有状态数据时显示 —。"
+      "description": "暂无法判定健康状态的硬件部件数；全部识别正常时显示 0。"
     },
     {
       "id": 901,
@@ -711,9 +729,10 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": []
@@ -798,9 +817,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -813,7 +832,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -848,9 +868,10 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": []
@@ -900,9 +921,10 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": []
@@ -952,9 +974,10 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": []
@@ -1004,9 +1027,10 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": []
@@ -1056,9 +1080,10 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -1439,7 +1464,7 @@
               }
             }
           ],
-          "description": "分别显示各内存池的已用容量、总容量和使用率。"
+          "description": "分内存池展示已用空间、总容量与实时使用率，便于排查单板内存泄漏。"
         },
         {
           "id": 15,
@@ -1827,7 +1852,7 @@
               }
             }
           ],
-          "description": "未识别的状态显示原始值，不作健康判断。"
+          "description": "汇总风扇、电源等关键硬件的实时运行状态；特殊厂商状态码会保留原值以供核对。"
         },
         {
           "id": 18,
@@ -1927,7 +1952,7 @@
               }
             }
           ],
-          "description": "功率读数不代表电源状态。"
+          "description": "展示各电源模块当前实时输出功率（瓦特），辅助评估机框负载与冗余余量。"
         }
       ]
     },
@@ -2161,9 +2186,10 @@
                 "drawStyle": "line",
                 "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 18,
+                "fillOpacity": 24,
                 "gradientMode": "opacity",
-                "showPoints": "never"
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -2194,6 +2220,10 @@
                       "mode": "fixed",
                       "fixedColor": "#3B82F6"
                     }
+                  },
+                  {
+                    "id": "custom.transform",
+                    "value": "negative-Y"
                   }
                 ]
               }
@@ -2201,14 +2231,14 @@
           },
           "options": {
             "legend": {
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true,
               "calcs": [
                 "lastNotNull",
                 "max",
                 "mean"
-              ]
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
             },
             "tooltip": {
               "mode": "multi",
@@ -2536,5 +2566,6 @@
   "timezone": "browser",
   "title": "02 网络设备详情 (Network Device Detail)",
   "uid": "nexora-network-device",
-  "version": 33
+  "version": 33,
+  "description": "单台网络设备深度体检视图：集中呈现设备在线状态、CPU/内存仪表盘、单板温度、风扇电源、光模块光功率及端口实时流量。"
 }

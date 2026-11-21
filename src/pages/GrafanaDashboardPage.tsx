@@ -123,6 +123,14 @@ export const GRAFANA_DASHBOARDS = [
     descEn: 'pg_stat_statements collection, Top SQL call rate/execution time/rows and database-level shared buffer hit rate; identified by Query ID without SQL text',
     icon: HardDrive,
   },
+  {
+    uid: 'nexora-telemetry-realtime',
+    titleZh: '14 Telemetry 实时遥测大盘',
+    titleEn: '14 Telemetry Real-time Streaming',
+    descZh: '华为 VRP / 华三 Comware V7 秒级 gRPC 遥测：CPU/内存、接口实时吞吐与错包丢包、光模块 DDM、单板温度、QoS 缓存与 PFC',
+    descEn: 'Huawei VRP / H3C Comware V7 gRPC dial-out telemetry: CPU/Memory, interface traffic/errors, optical DDM, hardware temp, QoS buffer & PFC',
+    icon: Activity,
+  },
 ];
 
 const TIME_RANGES = [
@@ -143,6 +151,7 @@ const GRAFANA_DEFAULT_TIME_RANGES: Record<string, string> = {
   'nexora-linux-metrics': '6h',
   'nexora-windows-metrics': '6h',
   'nexora-platform-health': '1h',
+  'nexora-telemetry-realtime': '15m',
   'nexora-outbound-probe-quality': '24h',
   'nexora-alert-operations': '24h',
   'nexora-postgres-performance': '1h',
