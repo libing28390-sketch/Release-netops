@@ -122,6 +122,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const [approverUsername, setApproverUsername] = useState('');
   const [approvalMethod, setApprovalMethod] = useState<ApprovalVerificationMethod>('mfa');
   const [approvalToken, setApprovalToken] = useState('');
+  const [approvalSeq, setApprovalSeq] = useState('');
   const [approvalCode, setApprovalCode] = useState('');
   const [approvalStatus, setApprovalStatus] = useState<'idle' | 'sending' | 'sent' | 'verifying' | 'verified'>('idle');
   const [approvalCountdown, setApprovalCountdown] = useState(0);
@@ -166,7 +167,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const [enablingJobId, setEnablingJobId] = useState<string | null>(null);
 
   // Script selection
-  const [availableScripts, setAvailableScripts] = useState<{ id: string; name: string; status: string; category: string; platform?: string }[]>([]);
+  const [availableScripts, setAvailableScripts] = useState<{ id: string; name: string; status: string; category: string; platform?: string; version?: string; parent_script_id?: string; script_type?: string }[]>([]);
   const [scriptSearch, setScriptSearch] = useState('');
   const [showScriptDropdown, setShowScriptDropdown] = useState(false);
 
@@ -423,6 +424,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   /* === MODAL HELPERS === */
   const resetApprovalFlow = () => {
     setApprovalToken('');
+    setApprovalSeq('');
     setApprovalCode('');
     setApprovalStatus('idle');
     setApprovalCountdown(0);
@@ -465,16 +467,70 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     resetDeleteApprovalFlow();
   };
 
+  const defaultValidUntilIso = () => {
+    const d = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+    d.setSeconds(0, 0);
+    return d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+  };
+
+  const pickDefaultApprover = (preferred?: string | null) => {
+    const match = preferred ? approvers.find(item => item.username === preferred) : undefined;
+    const chosen = match || approvers[0];
+    if (chosen) {
+      setApproverUsername(chosen.username);
+      const methods = chosen.verification_methods || [];
+      setApprovalMethod(methods[0] || 'email');
+    } else {
+      setApproverUsername(preferred || '');
+      setApprovalMethod('email');
+    }
+  };
+
+  const hydrateLatestTicketDefault = () => {
+    void fetch('/api/tickets?page=1&page_size=5', { headers: authHeaders })
+      .then(r => (r.ok ? r.json() : null))
+      .then(payload => {
+        const items = payload?.data?.items || payload?.items || (Array.isArray(payload) ? payload : []);
+        const first = Array.isArray(items) ? items[0] : null;
+        if (!first) return;
+        const srcType = first.source_type === 'service_request' || first.type === 'service_request' ? 'service_request' : 'incident';
+        const srcId = String(first.source_id || first.service_request_id || first.id || '').trim();
+        if (!srcId) return;
+        setForm(prev => (
+          prev.authorization_grant.ticket_id
+            ? prev
+            : {
+                ...prev,
+                authorization_grant: {
+                  ...prev.authorization_grant,
+                  ticket_source_type: srcType,
+                  ticket_id: srcId,
+                },
+              }
+        ));
+      })
+      .catch(() => {});
+  };
+
   const resetFormState = () => {
-    setForm({ ...INITIAL_FORM });
+    setForm({
+      ...INITIAL_FORM,
+      authorization_grant: {
+        ...INITIAL_FORM.authorization_grant,
+        valid_until: defaultValidUntilIso(),
+        max_runs: '0',
+        max_targets: '0',
+        ticket_source_type: 'service_request',
+      },
+    });
     setTagFilter({ ...EMPTY_TAG_FILTER });
     setIpDevices([]);
     setIpInput('');
     setScriptSearch('');
     setShowScriptDropdown(false);
-    setApproverUsername('');
-    setApprovalMethod('mfa');
+    pickDefaultApprover();
     resetApprovalFlow();
+    hydrateLatestTicketDefault();
   };
 
   const toggleAddJob = () => {
@@ -510,9 +566,9 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       major_type: (job.action_type === 'backup' || job.action_type === 'nsot' || job.action_type === 'inspection' || job.action_type === 'bgp_neighbors' || job.action_type === 'ospf_neighbors') ? 'collection' : 'change',
       enabled: Number(job.enabled) === 1 || job.status === 'reauthorization_required',
       authorization_grant: {
-        valid_until: job.authorization_grant?.valid_until || '',
-        max_runs: job.authorization_grant?.max_runs ? String(job.authorization_grant.max_runs) : '',
-        max_targets: job.authorization_grant?.max_targets ? String(job.authorization_grant.max_targets) : '',
+        valid_until: job.authorization_grant?.valid_until || defaultValidUntilIso(),
+        max_runs: '0',
+        max_targets: '0',
         ticket_source_type: job.authorization_grant?.ticket_source_type === 'service_request' ? 'service_request' : 'incident',
         ticket_id: job.authorization_grant?.ticket_id || '',
         change_order_id: job.authorization_grant?.change_order_id || '',
@@ -550,10 +606,42 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       setIpDevices([]);
     }
     setIpInput('');
-    setApproverUsername('');
-    setApprovalMethod('mfa');
+    if (job.script_id) {
+      const boundScript = availableScripts.find(s => s.id === job.script_id);
+      setScriptSearch(boundScript?.name || job.script_id);
+    } else {
+      setScriptSearch('');
+    }
+    pickDefaultApprover(job.approved_by);
     resetApprovalFlow();
     setShowAddJob(true);
+
+    // Hydrate full authorization_grant (list endpoint omits grant fields)
+    const detailController = new AbortController();
+    void fetchScheduledJobDetail(job.id, detailController.signal)
+      .then(fullJob => {
+        if (!fullJob?.authorization_grant) {
+          hydrateLatestTicketDefault();
+          return;
+        }
+        const g = fullJob.authorization_grant;
+        setEditingJob(prev => (prev && prev.id === fullJob.id ? { ...prev, ...fullJob } : prev));
+        setForm(prev => ({
+          ...prev,
+          authorization_grant: {
+            valid_until: g.valid_until || prev.authorization_grant.valid_until || defaultValidUntilIso(),
+            max_runs: '0',
+            max_targets: '0',
+            ticket_source_type: g.ticket_source_type === 'service_request' ? 'service_request' : 'incident',
+            ticket_id: g.ticket_id || prev.authorization_grant.ticket_id || '',
+            change_order_id: g.change_order_id || prev.authorization_grant.change_order_id || '',
+          },
+        }));
+        if (fullJob.approved_by) pickDefaultApprover(fullJob.approved_by);
+      })
+      .catch(() => {
+        hydrateLatestTicketDefault();
+      });
   };
 
   useEffect(() => {
@@ -639,6 +727,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
           approval_type: approvalType,
           verification_method: approvalMethod,
           operation_manifest: operationManifest,
+          ...(operationManifest.authorization_grant ? { authorization_grant: operationManifest.authorization_grant } : {}),
           extra_fields: {
             action_type: zh ? (actionLabel?.labelZh || operationManifest.action) : (actionLabel?.labelEn || operationManifest.action),
             schedule_desc: describeCron(operationManifest.cron_expr, zh),
@@ -656,16 +745,19 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       });
       const j = await r.json();
       if (r.ok && j.success) {
+        const seq = String(j.approval_seq || '').trim();
         setApprovalToken(j.approval_token);
+        setApprovalSeq(seq);
         setApprovalManifest(operationManifest);
         setApprovalStatus('sent');
         setApprovalCountdown(300);
         setApprovalDeadline(Date.now() + 300_000);
+        const seqTag = seq ? (zh ? `（序号 #${seq}）` : ` (#${seq})`) : '';
         const message = approvalMethod === 'mfa'
           ? (zh ? '请输入审批人 MFA 验证器中的动态码' : 'Enter the approver’s authenticator code')
           : approvalMethod === 'email'
-          ? (zh ? '邮箱验证码已发送至审批人' : 'Email code sent to approver')
-          : (zh ? '飞书验证码已发送至审批人' : 'Feishu code sent to approver');
+          ? (zh ? `邮箱验证码已发送至审批人${seqTag}` : `Email code sent to approver${seqTag}`)
+          : (zh ? `飞书验证码已发送至审批人${seqTag}` : `Feishu code sent to approver${seqTag}`);
         showToast(message, 'success');
       } else {
         setApprovalStatus('idle');
@@ -689,7 +781,13 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       const r = await fetch('/api/config-approval/verify', {
         method: 'POST',
         headers: authHeaders,
-        body: JSON.stringify({ approval_token: approvalToken, code, approval_type: approvalType, operation_manifest: approvalManifest }),
+        body: JSON.stringify({
+          approval_token: approvalToken,
+          code,
+          approval_type: approvalType,
+          operation_manifest: approvalManifest,
+          ...(approvalManifest.authorization_grant ? { authorization_grant: approvalManifest.authorization_grant } : {}),
+        }),
       });
       const j = await r.json();
       if (r.ok && j.success) {
@@ -740,11 +838,13 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         setDeleteStatus('sent');
         setDeleteCountdown(300);
         setDeleteDeadline(Date.now() + 300_000);
+        const seq = String(j.approval_seq || '').trim();
+        const seqSuffix = seq ? (zh ? ` [序号 #${seq}]` : ` [Seq #${seq}]`) : '';
         const message = deleteApprovalMethod === 'mfa'
           ? (zh ? '请输入审批人 MFA 验证器中的动态码' : 'Enter the approver’s authenticator code')
           : deleteApprovalMethod === 'email'
-          ? (zh ? '删除审批邮箱验证码已发送' : 'Delete approval email sent')
-          : (zh ? '删除审批飞书验证码已发送' : 'Delete approval code sent to Feishu');
+          ? `${zh ? '删除审批邮箱验证码已发送' : 'Delete approval email sent'}${seqSuffix}`
+          : `${zh ? '删除审批飞书验证码已发送' : 'Delete approval code sent to Feishu'}${seqSuffix}`;
         showToast(message, 'success');
       } else {
         setDeleteStatus('idle');
@@ -1008,7 +1108,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       use_admin_creds: Number(job.use_admin_creds) === 1 ? 1 : 0,
       enabled: operation === 'ENABLE' ? true : operation === 'DISABLE' ? false : Number(job.enabled) === 1,
       config_reason: String(job.config_reason || ''),
-      ...(job.authorization_grant ? {
+      ...(job.authorization_grant?.valid_until && job.authorization_grant?.ticket_id ? {
         authorization_grant: {
           valid_until: job.authorization_grant.valid_until,
           max_runs: Number(job.authorization_grant.max_runs),
@@ -1084,8 +1184,6 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
     const grantExpiry = new Date(grant.valid_until);
     if (!grant.valid_until || Number.isNaN(grantExpiry.getTime())) return zh ? '请设置有效的授权到期时间' : 'Enter a valid authorization expiry time';
     if (grantExpiry.getTime() <= Date.now()) return zh ? '授权到期时间必须晚于当前时间' : 'Authorization expiry must be in the future';
-    if (!Number.isInteger(Number(grant.max_runs)) || Number(grant.max_runs) < 1) return zh ? '最大执行次数必须是正整数' : 'Maximum runs must be a positive integer';
-    if (!Number.isInteger(Number(grant.max_targets)) || Number(grant.max_targets) < 1) return zh ? '最大目标数必须是正整数' : 'Maximum targets must be a positive integer';
     if (!grant.ticket_id.trim()) return zh ? '请关联工单' : 'Link a ticket';
 
     // Cron 表达式必须是 5 段且每段非空
@@ -1162,6 +1260,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         fetchJobs();
         showToast(zh ? '定时作业已创建' : 'Scheduled job created', 'success');
       } else {
+        if (r.status === 403) resetApprovalFlow();
         showToast(j.detail || j.message || 'Failed', 'error');
       }
     } catch {
@@ -1205,6 +1304,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
           is_config: operationManifest.is_config,
           config_reason: operationManifest.config_reason,
           use_admin_creds: operationManifest.use_admin_creds,
+          enabled: operationManifest.enabled,
           authorization_grant: operationManifest.authorization_grant,
           approval_token: approvalToken,
           approval_code: approvalCode,
@@ -1217,6 +1317,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
         fetchJobs();
         showToast(zh ? '作业已更新' : 'Job updated', 'success');
       } else {
+        if (r.status === 403) resetApprovalFlow();
         showToast(j.detail || j.message || 'Failed', 'error');
       }
     } catch {
@@ -1445,6 +1546,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                 <ColumnSettingsButton
                   columns={[
                     { key: 'name', label: zh ? '作业名称' : 'Job name' },
+                    { key: 'script', label: zh ? '关联脚本' : 'Script' },
                     { key: 'target', label: zh ? '任务对象' : 'Target' },
                     { key: 'schedule', label: zh ? '执行周期' : 'Schedule' },
                     { key: 'status', label: zh ? '状态' : 'Status' },
@@ -1611,6 +1713,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                     <thead className="sticky top-0 z-10 bg-slate-50 text-[11px] font-bold text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.08)]">
                       <tr>
                         {visibleJobColumnSet.has('name') && <th className="px-4 py-3">{zh ? '作业名称' : 'Job Name'}</th>}
+                        {visibleJobColumnSet.has('script') && <th className="px-4 py-3">{zh ? '关联脚本' : 'Script'}</th>}
                         {visibleJobColumnSet.has('target') && <th className="px-4 py-3">{zh ? '任务对象' : 'Target'}</th>}
                         {visibleJobColumnSet.has('schedule') && <th className="px-4 py-3">{zh ? '执行周期（Crontab）' : 'Schedule (Crontab)'}</th>}
                         {visibleJobColumnSet.has('status') && <th className="px-4 py-3"><span className="inline-flex items-center">{zh ? '状态' : 'Status'}<TableHeaderMultiSelectFilter label={zh ? '状态' : 'Status'} language={language} options={[{ value: 'enabled', label: zh ? '已启用' : 'Enabled' }, { value: 'disabled', label: zh ? '已停用' : 'Disabled' }]} selectedValues={jobStatusFilters} onApply={(values) => { setPage(1); setJobStatusFilters(values); }} /></span></th>}
@@ -1650,6 +1753,18 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                           >
                             {visibleJobColumnSet.has('name') && <td className="max-w-[220px] px-4 py-3.5 font-semibold text-slate-800">
                               <span className="block truncate" title={job.name}>{job.name || '—'}</span>
+                            </td>}
+                            {visibleJobColumnSet.has('script') && <td className="max-w-[240px] px-4 py-3.5 text-slate-600">
+                              {job.script_id ? (
+                                <span
+                                  className="inline-block max-w-full truncate rounded-md border border-blue-100 bg-blue-50/70 px-2 py-0.5 text-[11px] font-medium text-blue-700"
+                                  title={availableScripts.find(s => s.id === job.script_id)?.name || job.script_id}
+                                >
+                                  {availableScripts.find(s => s.id === job.script_id)?.name || job.script_id}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400">—</span>
+                              )}
                             </td>}
                             {visibleJobColumnSet.has('target') && <td className="max-w-[230px] px-4 py-3.5 text-slate-600">
                               <span className="block truncate" title={scopeDesc}>{scopeDesc}</span>
@@ -1795,6 +1910,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
           approvalDeadline={approvalDeadline}
           onApprovalCountdownExpire={expireApprovalCountdown}
           approvalCode={approvalCode}
+        approvalSeq={approvalSeq}
           setApprovalCode={setApprovalCode}
           approvalError={approvalError}
           setApprovalError={setApprovalError}

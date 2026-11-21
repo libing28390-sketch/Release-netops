@@ -1268,10 +1268,12 @@ def _generate_playbook_excel_body(workbook: Any, run_info: Dict[str, Any], resul
 
     # Sheet 2: 设备执行详情总表
     ws2 = workbook.add_worksheet('设备执行详情总表')
-    headers2 = ['设备名称', '管理 IP 地址', '硬件平台', '设备角色', '状态', '异常说明']
+    headers2 = ['设备名称', '管理 IP 地址', '硬件平台', '设备角色', '状态', '核心指标摘要', '耗时 (ms)', '异常说明']
     ws2.set_column('A:D', 20)
     ws2.set_column('E:E', 14)
-    ws2.set_column('F:F', 72)
+    ws2.set_column('F:F', 44)
+    ws2.set_column('G:G', 14)
+    ws2.set_column('H:H', 56)
     for col, h in enumerate(headers2):
         ws2.write(0, col, h, header_fmt)
 
@@ -1286,6 +1288,9 @@ def _generate_playbook_excel_body(workbook: Any, run_info: Dict[str, Any], resul
         ws2.write(row, 2, r.get('platform') or '通用网络设备', border_fmt)
         ws2.write(row, 3, r.get('role') or '接入设备', border_fmt)
         ws2.write(row, 4, status, st_fmt)
+        ws2.write(row, 5, _extract_playbook_device_metrics_summary(r) or '—', wrap_border_fmt)
+        dur = _report_duration_ms(r)
+        ws2.write(row, 6, dur if dur is not None else '—', border_fmt)
         try:
             findings = json.loads(r.get('findings_json') or '[]')
         except (TypeError, ValueError):
@@ -1295,7 +1300,7 @@ def _generate_playbook_excel_body(workbook: Any, run_info: Dict[str, Any], resul
         finding_message = str(finding.get('message') or finding.get('description') or '—')
         if finding_item and finding_item not in finding_message:
             finding_message = f'{finding_item}：{finding_message}'
-        ws2.write(row, 5, finding_message if health_status in ('critical', 'warning') else '—', border_fmt)
+        ws2.write(row, 7, finding_message if health_status in ('critical', 'warning') else '—', border_fmt)
         row += 1
 
     # Sheet 3: 阶段命令输出明细表 (支持筛选与命令块拆解)
@@ -1977,6 +1982,97 @@ def _get_system_name() -> str:
     return system_name
 
 
+def _format_report_timestamp(value: Any) -> str:
+    text = str(value or '').strip()
+    if not text:
+        return 'N/A'
+    return text.replace('T', ' ').split('.')[0].replace('Z', '')
+
+
+def _extract_playbook_device_metrics_summary(r: Dict[str, Any]) -> str:
+    """Extract concise human-readable KPIs from structured or CLI playbook output."""
+    text = _collect_result_output_text(r)
+    if not text:
+        return ''
+    parts: List[str] = []
+
+    sm_idx = text.find('--- STRUCTURED_METRICS ---')
+    if sm_idx >= 0:
+        kv: Dict[str, str] = {}
+        for raw_line in text[sm_idx + len('--- STRUCTURED_METRICS ---'):].splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith('---') or '=' not in line:
+                continue
+            k, v = line.split('=', 1)
+            kv[k.strip()] = v.strip()
+        if kv.get('CPU_UTIL') not in (None, '', 'NA'):
+            parts.append(f"CPU {kv['CPU_UTIL']}%")
+        if kv.get('MEM_UTIL') not in (None, '', 'NA'):
+            parts.append(f"内存 {kv['MEM_UTIL']}%")
+        if kv.get('DISK_UTIL') not in (None, '', 'NA'):
+            parts.append(f"磁盘 {kv['DISK_UTIL']}%")
+        if kv.get('RO_MOUNTS') not in (None, '', '0', 'NA'):
+            parts.append(f"只读挂载 {kv['RO_MOUNTS']}")
+        if kv.get('OOM_24H') not in (None, '', '0', 'NA'):
+            parts.append(f"OOM {kv['OOM_24H']}")
+        if kv.get('CORE_DUMPS') not in (None, '', '0', 'NA'):
+            parts.append(f"CoreDump {kv['CORE_DUMPS']}")
+        if parts:
+            return ' · '.join(parts)
+
+    # Network CLI extraction (H3C / Huawei / Cisco)
+    cpu_m = re.search(r'(\d+(?:\.\d+)?)%\s+in last 1 minute', text, re.I) or re.search(
+        r'one minute:\s*(\d+)%', text, re.I
+    )
+    if cpu_m:
+        parts.append(f"CPU {cpu_m.group(1)}%")
+    mem_m = re.search(r'Mem:\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+(?:\.\d+)?)%', text, re.I)
+    if mem_m:
+        try:
+            used_pct = max(0.0, min(100.0, round(100.0 - float(mem_m.group(1)), 1)))
+            parts.append(f"内存 {used_pct}%")
+        except ValueError:
+            pass
+    temps = re.findall(r'(?:Inflow|Outflow|Hotspot|Sensor)\s+\d+\s+(\d+)\s+\d+\s+\d+\s+\d+', text, re.I)
+    if temps:
+        try:
+            parts.append(f"最高温度 {max(int(t) for t in temps)}°C")
+        except ValueError:
+            pass
+    uptime_m = re.search(r'uptime is\s+([^\r\n]+)', text, re.I)
+    if uptime_m and len(parts) < 3:
+        parts.append(f"运行 {uptime_m.group(1).strip()[:32]}")
+    return ' · '.join(parts)
+
+
+def _extract_playbook_command_blocks(r: Dict[str, Any]) -> List[Dict[str, str]]:
+    hostname = r.get('hostname') or r.get('ip_address') or '未知设备'
+    phases = {}
+    try:
+        phases = json.loads(r.get('phases_json') or '{}')
+    except Exception:
+        phases = {}
+    blocks_out: List[Dict[str, str]] = []
+    if not isinstance(phases, dict):
+        return blocks_out
+    for p_name, p_data in phases.items():
+        if not isinstance(p_data, dict):
+            continue
+        p_status = p_data.get('status', 'success')
+        out_str = str(p_data.get('output', '') or '')
+        cmds = p_data.get('commands') or []
+        if isinstance(cmds, str):
+            cmds = [cmds]
+        err_m = r.get('error_message') or ''
+        for blk_title, blk_content in _split_output_into_blocks(out_str, hostname, cmds, p_status=p_status, err_msg=err_m):
+            blocks_out.append({
+                'phase': _report_phase_label(p_name),
+                'command': str(blk_title or 'system'),
+                'output': str(blk_content or '')[:12000],
+            })
+    return blocks_out
+
+
 def _prepare_report_context(run_info, results, customer_name, engineer_name):
     """提取通用的报表上下文准备逻辑。"""
     _preprocess_and_enrich_results(results)
@@ -2022,6 +2118,7 @@ def _prepare_report_context(run_info, results, customer_name, engineer_name):
     all_devices = []
     for r in results:
         health_status = _report_health_status(r)
+        cmd_blocks = _extract_playbook_command_blocks(r) if run_info.get('report_type') == 'playbook' else []
         all_devices.append({
             'hostname': r.get('hostname') or r.get('ip_address') or '未知设备',
             'ip_address': r.get('ip_address', ''),
@@ -2030,6 +2127,9 @@ def _prepare_report_context(run_info, results, customer_name, engineer_name):
             'status_label': _report_status_label(health_status),
             'compliance_status': _report_compliance_label(r.get('compliance_status')),
             'duration_ms': _report_duration_ms(r),
+            'key_metrics': _extract_playbook_device_metrics_summary(r),
+            'command_blocks': cmd_blocks,
+            'command_count': len(cmd_blocks),
         })
 
     all_risks = []
@@ -2063,6 +2163,8 @@ def _prepare_report_context(run_info, results, customer_name, engineer_name):
 
     return {
         'run_info': run_info,
+        'job_name': str(run_info.get('name') or run_info.get('scenario_name') or '自动化巡检作业').strip(),
+        'started_at_display': _format_report_timestamp(started_at or completed_at),
         'report_type': run_info.get('report_type', 'inspection'),
         'customer_name': customer_name,
         'engineer_name': engineer_name,

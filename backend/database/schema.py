@@ -4240,14 +4240,23 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
             std_scripts
         )
 
-    insp_script_ids = [
+    python_script_ids = {'oneclick_network_inspect'}
+    cli_script_ids = {
         'insp_cisco_ios_full', 'insp_cisco_nxos_full',
         'insp_huawei_vrp_full', 'insp_huawei_vrpv8_full',
-        'insp_h3c_comware_full', 'insp_juniper_junos_full', 'insp_arista_eos_full',
-        'insp_linux_full',
-    ]
-    for sid in insp_script_ids:
-        stype = 'shell' if sid == 'insp_linux_full' else 'cli'
+        'insp_h3c_comware_full', 'insp_juniper_junos_full',
+        'insp_arista_eos_full', 'insp_ruijie_rgos_full',
+        'insp_h3c_firewall_cli', 'insp_h3c_wireless_ac_cli',
+        'insp_huawei_firewall_cli', 'insp_huawei_wireless_ac_cli',
+    }
+    for script_tuple in std_scripts:
+        sid = script_tuple[0]
+        if sid in python_script_ids:
+            stype = 'python'
+        elif sid in cli_script_ids:
+            stype = 'cli'
+        else:
+            stype = 'shell'
         cursor.execute(
             "UPDATE scripts SET script_type=?, status=?, author=?, "
             "submitter_name=?, approver_username=?, "

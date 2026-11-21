@@ -129,7 +129,14 @@ _EXPECTED_SCRIPT_IDS = {
     "insp_h3c_comware_full",
     "insp_juniper_junos_full",
     "insp_arista_eos_full",
+    "insp_ruijie_rgos_full",
+    "insp_h3c_firewall_cli",
+    "insp_h3c_wireless_ac_cli",
+    "insp_huawei_firewall_cli",
+    "insp_huawei_wireless_ac_cli",
     "insp_linux_full",
+    "oneclick_network_inspect",
+    "oneclick_server_inspect",
 }
 
 
@@ -863,7 +870,7 @@ def test_seeded_script_catalog_and_server_bindings_match_output_contract():
     defaults = get_default_items("2026-10-23T00:00:00+08:00")
     server_items = {item[4]: item for item in defaults if item[3] == "Server"}
     scripts = {script[0]: script for script in std_scripts}
-    assert len(std_scripts) == 31
+    assert len(std_scripts) == 38
     assert set(scripts) == _EXPECTED_SCRIPT_IDS
     assert set(server_items) == set(_SERVER_SCRIPT_BY_CHECK_KEY)
     for check_key, script_id in _SERVER_SCRIPT_BY_CHECK_KEY.items():
@@ -915,6 +922,7 @@ def test_network_script_bundles_only_use_platform_read_only_catalog_commands():
         "insp_h3c_comware_full": "h3c_comware",
         "insp_juniper_junos_full": "juniper_junos",
         "insp_arista_eos_full": "arista_eos",
+        "insp_ruijie_rgos_full": "ruijie_rgos",
     }
     assert set(expected).issubset(scripts)
     for script_id, platform in expected.items():
@@ -931,6 +939,15 @@ def test_network_script_bundles_only_use_platform_read_only_catalog_commands():
         assert all(command.startswith(("show ", "display ", "dis ")) for command in commands)
         assert "综合巡检" not in script[1]
         assert "综合巡检" not in script[3]
+        assert "display ip routing-table verbose" not in commands
+        assert "display ip routing-table" not in commands
+        assert "show ip route" not in commands
+
+    # Guard Linux safety fixes & new one-click scripts
+    assert "squashfs" in scripts["std_linux_ro_mounts"][2]
+    assert "-maxdepth 2" in scripts["std_linux_core_dumps_count"][2]
+    assert "display ip routing-table statistics" in scripts["oneclick_network_inspect"][2]
+    assert "OVERALL_STATUS=" in scripts["oneclick_server_inspect"][2]
 
 
 def test_inspection_item_vendor_facet_uses_raw_values_and_ignores_selected_vendor(isolated_db):

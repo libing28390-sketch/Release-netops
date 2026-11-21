@@ -84,6 +84,11 @@ def _digest(value: str) -> str:
     return hmac.new(key, value.encode('utf-8'), hashlib.sha256).hexdigest()
 
 
+def approval_sequence_number(approval_token: str) -> str:
+    """Derive a deterministic 2-digit sequence number ('01'..'99') from an approval token."""
+    return f"{(int(_digest(str(approval_token or ''))[:4], 16) % 99) + 1:02d}"
+
+
 def approval_manifest_hash(manifest: object) -> str:
     """Hash a canonical, secret-free operation manifest for exact approval binding."""
     if not isinstance(manifest, dict) or not manifest:
@@ -555,11 +560,23 @@ def request_approval(
     }
     tc = type_config.get(approval_type, type_config['config'])
 
+    seq_no = approval_sequence_number(approval_token)
+    job_name = ''
+    if isinstance(operation_manifest, dict):
+        job_name = str(operation_manifest.get('name') or '').strip()
+    if not job_name and isinstance(extra_fields, dict):
+        job_name = str(extra_fields.get('job_name') or '').strip()
+    approval_item_label = (
+        f"{tc['title']} · 作业「{job_name}」 [序号 #{seq_no}]"
+        if job_name
+        else f"{tc['title']} [序号 #{seq_no}]"
+    )
+
     if method == 'email':
         email_result = notification_service.send_approval_verification_email(
             smtp_profile,
             email_recipients,
-            approval_item=tc['title'],
+            approval_item=approval_item_label,
             requester=requester_username,
             code=code,
         )
@@ -602,7 +619,7 @@ def request_approval(
         "card": {
             "config": {"wide_screen_mode": True},
             "header": {
-                "title": {"tag": "plain_text", "content": tc['title']},
+                "title": {"tag": "plain_text", "content": approval_item_label},
                 "template": tc['template'],
             },
             "elements": [

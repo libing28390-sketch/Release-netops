@@ -228,7 +228,7 @@ def claim_scheduled_job_run(
                     (_text(grant.get("grant_id")),),
                 )
                 denied_code, denied_message = "grant_expired", "作业授权已到期"
-            elif int(grant.get("used_runs") or 0) >= int(grant.get("max_runs") or 0):
+            elif int(grant.get("max_runs") or 0) > 0 and int(grant.get("used_runs") or 0) >= int(grant.get("max_runs") or 0):
                 conn.execute(
                     "UPDATE scheduled_job_authorization_grants SET status = 'exhausted' WHERE grant_id = ?",
                     (_text(grant.get("grant_id")),),
@@ -280,9 +280,9 @@ def claim_scheduled_job_run(
         updated = conn.execute(
             """UPDATE scheduled_job_authorization_grants
                   SET used_runs = used_runs + 1,
-                      status = CASE WHEN used_runs + 1 >= max_runs THEN 'exhausted' ELSE status END
+                      status = CASE WHEN max_runs > 0 AND used_runs + 1 >= max_runs THEN 'exhausted' ELSE status END
                 WHERE grant_id = ? AND status = 'active'
-                  AND used_runs < max_runs AND valid_until > NOW()
+                  AND (max_runs <= 0 OR used_runs < max_runs) AND valid_until > NOW()
             RETURNING used_runs, max_runs""",
             (_text(grant.get("grant_id")),),
         ).fetchone()
@@ -394,7 +394,7 @@ def finalize_scheduled_job_run(
             "SELECT used_runs, max_runs, status FROM scheduled_job_authorization_grants WHERE grant_id = ? FOR UPDATE",
             (_text(run.get("grant_id")),),
         ).fetchone()
-        if grant_row and int(dict(grant_row).get("used_runs") or 0) >= int(dict(grant_row).get("max_runs") or 0):
+        if grant_row and int(dict(grant_row).get("max_runs") or 0) > 0 and int(dict(grant_row).get("used_runs") or 0) >= int(dict(grant_row).get("max_runs") or 0):
             conn.execute(
                 "UPDATE scheduled_jobs SET enabled = 0, status = 'reauthorization_required' WHERE id = ?",
                 (_text(job.get("id")),),

@@ -653,7 +653,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         # canonical command.  The parser still accepts historical ``dis``
         # output in fixtures, but new fallback sends must match the release
         # contract so legacy and registry paths cannot drift.
-        'fan': ['dis fan'],
+        'fan': ['display fan', 'dis fan'],
         'power': ['display power'],
         'stack': ['display stack'],
         'eth_trunk': ['display eth-trunk'],
@@ -852,6 +852,23 @@ _STP_COMMANDS = {
 }
 for _platform_name, _commands in _STP_COMMANDS.items():
     COMMAND_CATALOG.setdefault(_platform_name, {})['stp'] = _commands
+
+_ROUTING_SUMMARY_COMMANDS = {
+    'cisco_ios': ['show ip route summary'],
+    'cisco_nxos': ['show ip route summary'],
+    'arista_eos': ['show ip route summary'],
+    'ruijie_rgos': ['show ip route summary'],
+    'huawei_vrp': ['display ip routing-table statistics'],
+    'huawei_vrpv8': ['display ip routing-table statistics'],
+    'h3c_comware': ['display ip routing-table statistics'],
+    'h3c_comware_v3': ['display ip routing-table statistics'],
+    'h3c_comware_v5': ['display ip routing-table statistics'],
+    'h3c_comware_v7': ['display ip routing-table statistics'],
+    'h3c_comware_v9': ['display ip routing-table statistics'],
+    'juniper_junos': ['show route summary'],
+}
+for _platform_name, _commands in _ROUTING_SUMMARY_COMMANDS.items():
+    COMMAND_CATALOG.setdefault(_platform_name, {})['routing_summary'] = _commands
 
 
 def _utc_now_iso() -> str:

@@ -457,19 +457,36 @@ def _scheduled_occurrence_time(job_id: str, scheduled_for: datetime | str | None
                 value = value.replace(tzinfo=scheduler.timezone)
             return value.astimezone(timezone.utc)
         trigger = scheduled.trigger
-        now = datetime.now(trigger.timezone)
-        previous = trigger.get_prev_fire_time(None, now)
-        if previous is not None:
-            return previous.astimezone(timezone.utc)
+        get_prev = getattr(trigger, "get_prev_fire_time", None)
+        if callable(get_prev):
+            now = datetime.now(trigger.timezone)
+            previous = get_prev(None, now)
+            if previous is not None:
+                return previous.astimezone(timezone.utc)
 
     conn = get_db_connection()
     try:
-        row = conn.execute("SELECT job_type, scheduled_at FROM scheduled_jobs WHERE id = ?", (job_id,)).fetchone()
+        row = conn.execute(
+            "SELECT job_type, scheduled_at, cron_expr FROM scheduled_jobs WHERE id = ?",
+            (job_id,),
+        ).fetchone()
         if row and str(row["job_type"] or "") == "once" and row["scheduled_at"]:
             value = datetime.fromisoformat(str(row["scheduled_at"]).replace("Z", "+00:00"))
             if value.tzinfo is None:
                 value = value.astimezone()
             return value.astimezone(timezone.utc)
+        if row and str(row["job_type"] or "") == "cron" and row["cron_expr"]:
+            try:
+                from datetime import timedelta
+                from croniter import croniter
+                tz = getattr(scheduler, "timezone", None) or datetime.now().astimezone().tzinfo
+                now_local = datetime.now(tz)
+                previous = croniter(str(row["cron_expr"]).strip(), now_local + timedelta(seconds=1)).get_prev(datetime)
+                if previous.tzinfo is None:
+                    previous = previous.replace(tzinfo=tz)
+                return previous.astimezone(timezone.utc)
+            except Exception as exc:
+                logger.warning("Failed to compute previous cron occurrence for %s (%s): %s", job_id, row["cron_expr"], exc)
     finally:
         conn.close()
     return datetime.now(timezone.utc).replace(second=0, microsecond=0)
@@ -748,7 +765,7 @@ async def _run_scheduled_automation_job_body(job_id: str, *, run_id: str) -> dic
                 logger.warning("[Scheduler] %s neighbor job %s skipped: no online target matches its saved scope", protocol.upper(), job_id)
                 return {"status": "skipped", "target_count": 0, "summary": "没有在线设备匹配已批准范围"}
             max_targets = _scheduled_job_max_targets(conn, job)
-            if max_targets is not None and len(device_ids) > max_targets:
+            if max_targets is not None and max_targets > 0 and len(device_ids) > max_targets:
                 now = datetime.now().isoformat()
                 conn.execute(
                     "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
@@ -920,7 +937,7 @@ async def _run_scheduled_automation_job_body(job_id: str, *, run_id: str) -> dic
         device_map = _authorize_scheduled_job_targets(conn, owner or {}, job, device_ids)
         device_ids = list(device_map.keys())
         max_targets = _scheduled_job_max_targets(conn, job)
-        if max_targets is not None and len(device_ids) > max_targets:
+        if max_targets is not None and max_targets > 0 and len(device_ids) > max_targets:
             now = datetime.now().isoformat()
             conn.execute(
                 "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
@@ -1066,16 +1083,28 @@ async def _run_scheduled_automation_job_body(job_id: str, *, run_id: str) -> dic
                 return
 
             d = dict(device)
-            if d.get('platform_profile_id'):
-                # Scheduled jobs store arbitrary CLI/script text. A bound
-                # network device must use a published registry action so the
-                # selected Profile also controls the TextFSM parser; do not
-                # let the scheduler become a second raw-command entry point.
+            if d.get('platform_profile_id') and not (action_type == 'script_run' and job.get('script_id')):
+                # Unbound raw commands on a profile-bound network device must
+                # use a published registry action. Approved script_run jobs
+                # are bound to a released script + SHA-256 snapshot + grant.
+                err_msg = f"设备 {d.get('hostname') or dev_id} 已绑定平台，计划任务必须使用 platform action_code"
+                now_err = datetime.now().isoformat()
+                err_phase = {'execute': {'status': 'failed', 'commands': commands or [], 'output': err_msg}}
+                p_enc, p_json, p_exp, _ = protect_output(err_phase)
+                err_conn = get_db_connection()
+                try:
+                    err_conn.execute(
+                        '''INSERT INTO execution_device_results
+                           (id, execution_id, device_id, hostname, ip_address, status, error_message, phases_json, phases_encrypted, raw_output_expires_at, started_at, completed_at, duration_ms)
+                           VALUES (?, ?, ?, ?, ?, 'failed', ?, ?, ?, ?, ?, ?, 0)''',
+                        (str(uuid.uuid4()), execution_id, dev_id, d.get('hostname') or '', d.get('ip_address') or '', err_msg, p_json, p_enc, p_exp, now_err, now_err),
+                    )
+                    err_conn.commit()
+                finally:
+                    err_conn.close()
                 async with results_lock:
                     total_failed += 1
-                    failure_details.append(
-                        f"设备 {d.get('hostname') or dev_id} 已绑定平台，计划任务必须使用 platform action_code"
-                    )
+                    failure_details.append(err_msg)
                 return
             creds = resolve_device_credentials(d)
             if job.get('use_admin_creds', 0) == 1:

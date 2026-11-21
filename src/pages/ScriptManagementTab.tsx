@@ -35,6 +35,37 @@ interface Script {
   approver_username?: string;
   rejected_reason?: string;
   updated_at?: string;
+  risk_level?: 'low' | 'medium' | 'high';
+  risk_findings?: string[];
+}
+
+const HIGH_RISK_RULES: Array<{ re: RegExp; zh: string; en: string }> = [
+  { re: /\brm\s+-[a-z]*r[a-z]*f\b|\brm\s+-[a-z]*f[a-z]*r\b/i, zh: '强制递归删除文件 (rm -rf)', en: 'Recursive force delete (rm -rf)' },
+  { re: /\bmkfs(?:\.[a-z0-9]+)?\b/i, zh: '格式化磁盘分区 (mkfs)', en: 'Filesystem format (mkfs)' },
+  { re: /\bdd\s+if=.*\bof=\/dev\//i, zh: '直接覆写块设备 (dd of=/dev/)', en: 'Direct block device write (dd)' },
+  { re: /\b(?:reboot|shutdown|poweroff|halt|init\s+[06])\b/i, zh: '主机重启或关机指令', en: 'Host reboot / shutdown command' },
+  { re: /\breset\s+saved-configuration\b|\bwrite\s+erase\b|\berase\s+startup-config\b/i, zh: '清空网络设备启动配置', en: 'Erase network device startup config' },
+  { re: /\b(?:reload|format\s+flash:|delete\s+\/unreserved)\b/i, zh: '网络设备重启或不可恢复删除', en: 'Network device reload / unreserved delete' },
+  { re: /\biptables\s+-F\b|\bufw\s+disable\b/i, zh: '清空或关闭主机防火墙', en: 'Flush or disable host firewall' },
+];
+
+const MEDIUM_RISK_RULES: Array<{ re: RegExp; zh: string; en: string }> = [
+  { re: /\bdisplay\s+ip\s+routing-table\s+verbose\b/i, zh: '拉取全量详细路由表（大网易超时）', en: 'Full verbose routing table dump' },
+  { re: /\bsystemctl\s+(?:stop|restart|disable)\b|\bservice\s+\S+\s+(?:stop|restart)\b/i, zh: '停止或重启系统服务', en: 'Stop or restart system service' },
+  { re: /\bkill\s+-9\b|\bpkill\s+-9\b/i, zh: '强制终止进程 (kill -9)', en: 'Force kill process (kill -9)' },
+  { re: /^\s*(?:system-view|configure\s+terminal)\b/im, zh: '进入网络设备配置视图', en: 'Enter device configuration mode' },
+];
+
+function analyzeScriptRisk(content: string | undefined, zh: boolean): { level: 'low' | 'medium' | 'high'; findings: string[] } {
+  const effective = String(content || '')
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('#'))
+    .join('\n');
+  const high = HIGH_RISK_RULES.filter((r) => r.re.test(effective)).map((r) => (zh ? r.zh : r.en));
+  const med = MEDIUM_RISK_RULES.filter((r) => r.re.test(effective)).map((r) => (zh ? r.zh : r.en));
+  if (high.length > 0) return { level: 'high', findings: [...high, ...med] };
+  if (med.length > 0) return { level: 'medium', findings: med };
+  return { level: 'low', findings: [] };
 }
 
 interface UserInfo {
@@ -45,6 +76,11 @@ interface UserInfo {
 
 const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string, type: 'success' | 'error' | 'info') => void; view?: 'scripts' | 'nsot' }> = ({ language, showToast, view = 'scripts' }) => {
   const location = useLocation();
+  const scriptDomain: 'all' | 'network' | 'server' = location.pathname.endsWith('/network')
+    ? 'network'
+    : location.pathname.endsWith('/server')
+      ? 'server'
+      : 'all';
   const [scripts, setScripts] = useState<Script[]>([]);
   const [users, setUsers] = useState<UserInfo[]>([]);
   const [currentUser, setCurrentUser] = useState<string>('');
@@ -65,13 +101,26 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
   
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showRejectPrompt, setShowRejectPrompt] = useState(false);
-  useEscapeClose(isModalOpen, () => setIsModalOpen(false));
+  useEscapeClose(isModalOpen, () => { setIsModalOpen(false); setValidationResult(null); setShowOutputChecker(false); });
   useEscapeClose(showConfirmModal, () => setShowConfirmModal(false));
   useEscapeClose(showRejectPrompt, () => setShowRejectPrompt(false));
   const [rejectReason, setRejectReason] = useState('');
   
   const [auditorSearch, setAuditorSearch] = useState('');
   const [showAuditorDropdown, setShowAuditorDropdown] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [validationResult, setValidationResult] = useState<{
+    valid: boolean;
+    syntax_errors: string[];
+    syntax_warnings: string[];
+    output_validation?: { passed: boolean; checks: Array<{ rule: string; passed: boolean; detail: string }> } | null;
+  } | null>(null);
+  const [showOutputChecker, setShowOutputChecker] = useState(false);
+  const [outputFormat, setOutputFormat] = useState<'any' | 'json' | 'key_value' | 'numeric'>('key_value');
+  const [mustContain, setMustContain] = useState('');
+  const [mustNotContain, setMustNotContain] = useState('Traceback, SyntaxError, % Invalid input');
+  const [outputRegex, setOutputRegex] = useState('');
+  const [sampleOutput, setSampleOutput] = useState('');
 
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -86,8 +135,9 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
 
   useEffect(() => {
     setSearchQuery(new URLSearchParams(location.search).get('q') || '');
+    setPlatformFilter('All');
     setCurrentPage(1);
-  }, [location.search]);
+  }, [location.search, scriptDomain]);
 
   // Status Localization Map
   const STATUS_MAP: Record<string, { zh: string, en: string, color: string, bg: string, border: string }> = {
@@ -117,6 +167,46 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
     showToast(zh ? '格式已整理' : 'Formatted', 'info');
   };
 
+  const handleValidateScript = async (includeOutput = false) => {
+    setValidating(true);
+    try {
+      const body: Record<string, unknown> = {
+        content: editForm.content || '',
+        script_type: editForm.script_type || 'shell',
+      };
+      if (includeOutput) {
+        body.sample_output = sampleOutput;
+        body.output_contract = {
+          format: outputFormat,
+          must_contain: mustContain.split(/[,\n]/).map((s) => s.trim()).filter(Boolean),
+          must_not_contain: mustNotContain.split(/[,\n]/).map((s) => s.trim()).filter(Boolean),
+          regex: outputRegex.trim(),
+        };
+      }
+      const res = await fetch('/api/scripts/validate', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setValidationResult(data);
+        showToast(
+          data.valid
+            ? (zh ? '语法与输出校验通过' : 'Validation passed')
+            : (zh ? '校验未通过，请查看下方详情' : 'Validation failed'),
+          data.valid ? 'success' : 'error',
+        );
+      } else {
+        showToast(zh ? '校验接口调用失败' : 'Validation request failed', 'error');
+      }
+    } catch {
+      showToast(zh ? '校验请求异常' : 'Validation error', 'error');
+    } finally {
+      setValidating(false);
+    }
+  };
+
   const fetchScripts = useCallback(async () => {
     activeRequestRef.current?.abort();
     const controller = new AbortController();
@@ -136,6 +226,9 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
         page: String(currentPage),
         page_size: String(pageSize),
       });
+      if (scriptDomain !== 'all') {
+        params.set('domain', scriptDomain);
+      }
       const res = await fetch(`/api/scripts?${params.toString()}`, { headers: getHeaders(), signal: controller.signal });
       if (controller.signal.aborted || requestSequence !== requestSequenceRef.current) return;
       if (res.ok) {
@@ -165,7 +258,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
         if (activeRequestRef.current === controller) activeRequestRef.current = null;
       }
     }
-  }, [getHeaders, searchQuery, platformFilter, categoryFilter, typeFilter, statusFilter, currentPage, pageSize]);
+  }, [getHeaders, searchQuery, platformFilter, categoryFilter, typeFilter, statusFilter, currentPage, pageSize, scriptDomain]);
 
   const fetchUsers = async () => {
     try {
@@ -223,10 +316,13 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
       });
       if (res.ok) {
         showToast(zh ? '操作成功' : 'Success', 'success');
-        setIsModalOpen(false);
+        setIsModalOpen(false); setValidationResult(null); setShowOutputChecker(false);
         setShowConfirmModal(false);
         setShowRejectPrompt(false);
         fetchScripts();
+      } else {
+        const errBody = await res.json().catch(() => ({}));
+        showToast(errBody?.detail || (zh ? '操作失败，请检查表单或权限' : 'Operation failed'), 'error');
       }
     } catch (err) {
       showToast(zh ? '同步失败' : 'Failed', 'error');
@@ -278,6 +374,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
       script_type: typeFilter === 'All' ? '' : typeFilter,
       status: statusFilter === 'All' ? '' : statusFilter,
     });
+    if (scriptDomain !== 'all') params.set('domain', scriptDomain);
     const allScripts = await fetchAllPaginatedItems<Script>('/api/scripts', params);
     return {
       headers: [
@@ -321,6 +418,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
   const isSystemScript = editForm.submitter_name === 'system' || editForm.author === 'system';
   const isReviewMode = editForm.status === 'pending_audit' && editForm.approver_username === currentUser;
   const isReadOnly = isReviewMode || editForm.status === 'released' || (editForm.status === 'pending_audit' && editForm.submitter_name === currentUser) || isSystemScript;
+  const editorRisk = useMemo(() => analyzeScriptRisk(editForm.content, zh), [editForm.content, zh]);
 
   const inputClass = `w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-[13px] outline-none transition-all ${isReadOnly ? 'text-slate-400 cursor-not-allowed opacity-70' : 'text-slate-700 dark:text-slate-100 focus:ring-2 focus:ring-[#2563eb]/20'}`;
   const labelClass = "text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5";
@@ -329,8 +427,20 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
     <div className="flex flex-col h-full bg-transparent overflow-hidden">
       <PageHero
         icon={Terminal}
-        title={zh ? '操作管理' : 'Ops'}
-        subtitle={zh ? '自动化脚本与系统操作' : 'Automation scripts and system operations'}
+        title={
+          scriptDomain === 'network'
+            ? (zh ? '网络设备脚本' : 'Network Device Scripts')
+            : scriptDomain === 'server'
+              ? (zh ? '服务器脚本' : 'Server Scripts')
+              : (zh ? '操作管理' : 'Ops')
+        }
+        subtitle={
+          scriptDomain === 'network'
+            ? (zh ? '交换机 / 防火墙 / 无线 AC / 路由器巡检与运维脚本' : 'Switch, firewall, wireless AC & router scripts')
+            : scriptDomain === 'server'
+              ? (zh ? 'Linux / Windows 服务器性能指标、一键深度巡检与系统脚本' : 'Linux & Windows server metrics, inspection & ops scripts')
+              : (zh ? '自动化脚本与系统操作' : 'Automation scripts and system operations')
+        }
         accent={BRAND_COLOR}
         compact={view === 'nsot'}
       />
@@ -343,7 +453,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
               icon={Plus}
               variant="primary"
               size="md"
-              onClick={() => { setModalMode('create'); setEditForm({ platform: 'Linux', script_type: 'shell', version: 'v1.0.0', status: 'draft' }); setIsModalOpen(true); }}
+              onClick={() => { setModalMode('create'); setEditForm({ platform: scriptDomain === 'network' ? 'h3c_comware' : 'Linux', script_type: scriptDomain === 'network' ? 'cli' : 'shell', category: 'inspection', version: 'v1.0.0', status: 'draft' }); setIsModalOpen(true); }}
             >
               {zh ? '新建' : 'New'}
             </ActionButton>
@@ -500,7 +610,19 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                           className="hover:bg-slate-50/40 dark:hover:bg-slate-800/20 transition-colors group"
                         >
                           <td className="px-6 py-3.5">
-                            <div data-export-primary className="font-bold text-slate-700 dark:text-slate-200 text-[13px]">{script.name}</div>
+                            <div data-export-primary className="flex items-center gap-2 font-bold text-slate-700 dark:text-slate-200 text-[13px]">
+                              <span>{script.name}</span>
+                              {script.risk_level === 'high' && (
+                                <span title={(script.risk_findings || []).join('；')} className="shrink-0 rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[10px] font-bold text-rose-600 dark:text-rose-400">
+                                  {zh ? '高危' : 'High Risk'}
+                                </span>
+                              )}
+                              {script.risk_level === 'medium' && (
+                                <span title={(script.risk_findings || []).join('；')} className="shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-600 dark:text-amber-400">
+                                  {zh ? '中危' : 'Med Risk'}
+                                </span>
+                              )}
+                            </div>
                             <div data-export-ignore className="text-[10px] text-slate-400 dark:text-slate-500 font-mono mt-0.5">{script.id}</div>
                           </td>
                           <td className="px-6 py-3.5 text-[12px] font-semibold text-slate-600 dark:text-slate-300">
@@ -585,7 +707,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
       <AnimatePresence>
         {isModalOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsModalOpen(false)} className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => { setIsModalOpen(false); setValidationResult(null); setShowOutputChecker(false); }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
             <motion.div
               layout
               initial={{ opacity: 0, scale: 0.98 }}
@@ -609,7 +731,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                     )}
                   </h3>
                 </div>
-                <button onClick={() => setIsModalOpen(false)} className="p-2 text-slate-400 hover:text-slate-800 transition-all"><X size={20} /></button>
+                <button onClick={() => { setIsModalOpen(false); setValidationResult(null); setShowOutputChecker(false); }} className="p-2 text-slate-400 hover:text-slate-800 transition-all"><X size={20} /></button>
               </div>
 
               <div className="flex-1 flex overflow-hidden">
@@ -675,12 +797,94 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                          <Terminal size={14} className="text-[#2563eb]" />
                          {zh ? '编辑器' : 'EDITOR'} / {editForm.script_type}
                       </div>
-                      {!isReadOnly && (
-                        <button onClick={handleFormat} className="px-3 py-1 bg-[#2563eb]/10 text-[#2563eb] rounded-lg text-[10px] font-bold border border-[#2563eb]/20 flex items-center gap-1.5 hover:bg-[#2563eb]/20 transition-all">
-                          <Wand2 size={12} /> {zh ? '格式化' : 'FORMAT'}
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={validating}
+                          onClick={() => void handleValidateScript(false)}
+                          className="px-3 py-1 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-lg text-[10px] font-bold border border-emerald-500/20 flex items-center gap-1.5 hover:bg-emerald-500/20 transition-all disabled:opacity-50"
+                        >
+                          <CheckCircle2 size={12} /> {validating ? (zh ? '校验中...' : 'CHECKING...') : (zh ? '语法预检' : 'SYNTAX CHECK')}
                         </button>
-                      )}
+                        <button
+                          type="button"
+                          onClick={() => setShowOutputChecker((cur) => !cur)}
+                          className={`px-3 py-1 rounded-lg text-[10px] font-bold border flex items-center gap-1.5 transition-all ${showOutputChecker ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20 hover:bg-indigo-500/20'}`}
+                        >
+                          <SearchCode size={12} /> {zh ? '输出校验' : 'OUTPUT CHECK'}
+                        </button>
+                        {!isReadOnly && (
+                          <button type="button" onClick={handleFormat} className="px-3 py-1 bg-[#2563eb]/10 text-[#2563eb] rounded-lg text-[10px] font-bold border border-[#2563eb]/20 flex items-center gap-1.5 hover:bg-[#2563eb]/20 transition-all">
+                            <Wand2 size={12} /> {zh ? '格式化' : 'FORMAT'}
+                          </button>
+                        )}
+                      </div>
                    </div>
+                   {editorRisk.level !== 'low' && (
+                     <div className={`mx-6 mt-3 flex items-start gap-2.5 rounded-xl border px-4 py-2.5 text-[12px] ${editorRisk.level === 'high' ? 'border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'}`}>
+                       <AlertCircle size={15} className="mt-0.5 shrink-0" />
+                       <div>
+                         <span className="font-bold">
+                           {editorRisk.level === 'high'
+                             ? (zh ? '高危命令静态检测告警：' : 'High-risk command detected: ')
+                             : (zh ? '中危操作风险提示：' : 'Medium-risk command notice: ')}
+                         </span>
+                         <span>{editorRisk.findings.join('；')}</span>
+                       </div>
+                     </div>
+                   )}
+                   {validationResult && (
+                     <div className={`mx-6 mt-2.5 rounded-xl border px-4 py-2.5 text-[11px] ${validationResult.valid ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300'}`}>
+                       <div className="font-bold flex items-center gap-1.5">
+                         {validationResult.valid ? <CheckCircle2 size={13} /> : <XCircle size={13} />}
+                         <span>{validationResult.valid ? (zh ? '语法与输出契约校验通过' : 'Syntax & output validation passed') : (zh ? '发现以下校验问题：' : 'Validation issues found:')}</span>
+                       </div>
+                       {validationResult.syntax_errors.map((err, i) => (
+                         <div key={`se-${i}`} className="mt-1">• {err}</div>
+                       ))}
+                       {validationResult.syntax_warnings.map((warn, i) => (
+                         <div key={`sw-${i}`} className="mt-1 text-amber-600 dark:text-amber-400">! {warn}</div>
+                       ))}
+                       {validationResult.output_validation?.checks?.map((chk, i) => (
+                         <div key={`oc-${i}`} className={`mt-1 ${chk.passed ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-600 dark:text-rose-400'}`}>
+                           {chk.passed ? '✓' : '✗'} {chk.rule}：{chk.detail}
+                         </div>
+                       ))}
+                     </div>
+                   )}
+                   {showOutputChecker && (
+                     <div className="mx-6 mt-2.5 rounded-xl border border-indigo-200/70 dark:border-indigo-500/20 bg-white dark:bg-slate-900/70 p-3.5 space-y-2.5 text-[11px]">
+                       <div className="grid grid-cols-2 gap-2">
+                         <label className="flex flex-col gap-1">
+                           <span className="font-bold text-slate-500">{zh ? '期望输出格式' : 'Expected Format'}</span>
+                           <select value={outputFormat} onChange={(e) => setOutputFormat(e.target.value as typeof outputFormat)} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2.5 py-1.5 text-xs">
+                             <option value="any">{zh ? '任意文本' : 'Any text'}</option>
+                             <option value="key_value">{zh ? 'KEY=VALUE / KEY:VALUE 键值' : 'Key-Value pairs'}</option>
+                             <option value="json">{zh ? 'JSON 结构化对象' : 'Valid JSON'}</option>
+                             <option value="numeric">{zh ? '纯数值指标' : 'Numeric metric'}</option>
+                           </select>
+                         </label>
+                         <label className="flex flex-col gap-1">
+                           <span className="font-bold text-slate-500">{zh ? '正则断言（可选）' : 'Regex (optional)'}</span>
+                           <input value={outputRegex} onChange={(e) => setOutputRegex(e.target.value)} placeholder="OVERALL_STATUS=PASS" className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2.5 py-1.5 text-xs font-mono" />
+                         </label>
+                         <label className="flex flex-col gap-1">
+                           <span className="font-bold text-slate-500">{zh ? '必须包含关键字（逗号分隔）' : 'Must contain'}</span>
+                           <input value={mustContain} onChange={(e) => setMustContain(e.target.value)} placeholder="OVERALL_STATUS, CPU_UTIL" className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2.5 py-1.5 text-xs" />
+                         </label>
+                         <label className="flex flex-col gap-1">
+                           <span className="font-bold text-slate-500">{zh ? '禁止包含异常词（逗号分隔）' : 'Must not contain'}</span>
+                           <input value={mustNotContain} onChange={(e) => setMustNotContain(e.target.value)} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2.5 py-1.5 text-xs" />
+                         </label>
+                       </div>
+                       <textarea value={sampleOutput} onChange={(e) => setSampleOutput(e.target.value)} placeholder={zh ? '粘贴一段样本输出（stdout）后点击“执行输出校验”...' : 'Paste sample stdout here...'} className="w-full h-16 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2.5 py-1.5 font-mono text-[11px] resize-none" />
+                       <div className="flex justify-end">
+                         <button type="button" disabled={validating} onClick={() => void handleValidateScript(true)} className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-[11px] font-bold text-white hover:bg-indigo-700 disabled:opacity-50">
+                           {zh ? '执行输出校验' : 'Run Output Check'}
+                         </button>
+                       </div>
+                     </div>
+                   )}
                    <textarea readOnly={isReadOnly} spellCheck={false} className={`flex-1 bg-transparent font-mono text-[13px] p-8 focus:outline-none resize-none leading-6 no-scrollbar ${isReadOnly ? 'text-slate-500 opacity-60' : 'text-slate-700 dark:text-slate-300'}`} value={editForm.content ?? ''} onChange={e => setEditForm({...editForm, content: e.target.value})} />
                    
                    <div className="h-20 bg-white dark:bg-black/10 border-t border-slate-100 dark:border-white/5 px-10 flex items-center justify-end gap-3 shrink-0">
@@ -690,7 +894,38 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                           <button onClick={() => handleAction('released')} className="px-14 py-2.5 bg-green-600 text-white rounded-xl text-[12px] font-bold shadow-lg shadow-green-600/20 active:scale-[0.98] transition-all uppercase tracking-widest">{zh ? '通过并发布' : 'APPROVE'}</button>
                         </>
                       ) : isReadOnly ? (
-                        <button onClick={() => setIsModalOpen(false)} className="px-10 py-2.5 bg-slate-100 text-slate-500 rounded-xl text-[12px] font-bold transition-all uppercase tracking-widest">{zh ? '关闭窗口' : 'CLOSE'}</button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setModalMode('create');
+                              const rootId = (editForm as any).parent_script_id || editForm.id || 'script';
+                              const baseVer = String((editForm as any).version || 'v1.0.0').trim();
+                              const verMatch = baseVer.match(/^v?(\d+)\.(\d+)\.(\d+)$/i);
+                              const nextVersion = verMatch
+                                ? `v${verMatch[1]}.${verMatch[2]}.${Number(verMatch[3]) + 1}`
+                                : 'v1.0.1';
+                              setEditForm({
+                                ...editForm,
+                                id: `${rootId}_${nextVersion.replace(/\./g, '_')}`,
+                                name: editForm.name || (zh ? '脚本' : 'Script'),
+                                version: nextVersion,
+                                parent_script_id: rootId,
+                                status: 'draft',
+                                submitter_name: currentUser,
+                                author: currentUser,
+                                approver_username: '',
+                                rejected_reason: '',
+                              } as any);
+                              showToast(zh ? '已克隆为可编辑草稿，请修改标识与内容后提交审核' : 'Cloned as editable draft', 'info');
+                            }}
+                            className="inline-flex items-center gap-1.5 px-6 py-2.5 bg-[#2563eb]/10 text-[#2563eb] rounded-xl text-[12px] font-bold border border-[#2563eb]/20 hover:bg-[#2563eb]/20 transition-all"
+                          >
+                            <Copy size={14} />
+                            {zh ? '克隆为新版本' : 'CLONE AS NEW VERSION'}
+                          </button>
+                          <button onClick={() => { setIsModalOpen(false); setValidationResult(null); setShowOutputChecker(false); }} className="px-10 py-2.5 bg-slate-100 text-slate-500 rounded-xl text-[12px] font-bold transition-all uppercase tracking-widest">{zh ? '关闭窗口' : 'CLOSE'}</button>
+                        </>
                       ) : (
                         <>
                           <button onClick={() => handleAction('draft')} className="px-10 py-2.5 bg-slate-100 dark:bg-white/5 text-slate-500 dark:text-slate-400 rounded-xl text-[12px] font-bold transition-all uppercase tracking-widest">{zh ? '保存草稿' : 'DRAFT'}</button>
