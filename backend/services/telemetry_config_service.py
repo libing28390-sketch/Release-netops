@@ -2565,9 +2565,34 @@ def simulate_subscription_push(subscription_id: str, user: dict[str, Any]) -> di
             remote_write = os.environ.get("TELEMETRY_REMOTE_WRITE_URL", "").strip()
             vm_base = os.environ.get("VICTORIAMETRICS_URL", "http://127.0.0.1:8428").strip().rstrip("/")
             vm_import_url = remote_write or f"{vm_base}/api/v1/import/prometheus"
+            # Synthesize a 6-point (5-minute) continuous burst ending at now_ms so
+            # Grafana immediately draws smooth waves & rate() traffic curves for every simulated device.
+            vm_lines: list[str] = []
+            host_seed = sum(ord(ch) for ch in hostname) % 11
+            step_offsets = (-300_000, -240_000, -180_000, -120_000, -60_000, 0)
+            for sample_line in normalized_samples:
+                try:
+                    identity, val_str, ts_str = sample_line.rsplit(" ", 2)
+                    base_val = float(val_str)
+                    base_ts = int(ts_str)
+                    metric_name = identity.split("{", 1)[0].lower()
+                    is_counter = any(tok in metric_name for tok in ("octets", "bytes", "packets", "errors", "discards", "drop", "pause"))
+                    for idx, delta_ms in enumerate(step_offsets):
+                        ts_i = base_ts + delta_ms
+                        if is_counter:
+                            # Monotonically increasing counter so rate() renders realistic bps/pps
+                            step_inc = max(125_000.0, abs(base_val) * 0.002) if ("octets" in metric_name or "bytes" in metric_name) else max(1.0, abs(base_val) * 0.05)
+                            val_i = max(0.0, base_val - (len(step_offsets) - 1 - idx) * step_inc)
+                        else:
+                            # Subtle per-device wave variation (+/- 4%) so multiple devices separate cleanly
+                            wave = ((idx + host_seed) % 5 - 2) * 0.02
+                            val_i = round(base_val * (1.0 + wave), 3)
+                        vm_lines.append(f"{identity} {val_i:.15g} {ts_i}")
+                except Exception:
+                    vm_lines.append(sample_line)
             req = urllib.request.Request(
                 vm_import_url,
-                data=("\n".join(normalized_samples) + "\n").encode("utf-8"),
+                data=("\n".join(vm_lines) + "\n").encode("utf-8"),
                 headers={"Content-Type": "text/plain; version=0.0.4"},
                 method="POST",
             )

@@ -126,7 +126,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "count(count by (hostname) ({__name__=~\"nexora_telemetry_.*\", vendor=~\"$vendor\", hostname=~\"$hostname\"}))",
+          "expr": "count(count by (hostname) (last_over_time({__name__=~\"nexora_telemetry_.*\", vendor=~\"$vendor\", hostname=~\"$hostname\"}[$__range])))",
           "legendFormat": "设备数"
         }
       ],
@@ -188,7 +188,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "count({__name__=~\"nexora_telemetry_.*\", vendor=~\"$vendor\", hostname=~\"$hostname\"})",
+          "expr": "count(last_over_time({__name__=~\"nexora_telemetry_.*\", vendor=~\"$vendor\", hostname=~\"$hostname\"}[$__range]))",
           "legendFormat": "活跃序列"
         }
       ],
@@ -252,7 +252,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max(nexora_telemetry_h3c_cpu_usage_percent{vendor=~\"$vendor\", hostname=~\"$hostname\"} or nexora_telemetry_huawei_cpu_system_usage{vendor=~\"$vendor\", hostname=~\"$hostname\"})",
+          "expr": "max(last_over_time(nexora_telemetry_h3c_cpu_usage_percent{vendor=~\"$vendor\", hostname=~\"$hostname\"}[$__range]) or last_over_time(nexora_telemetry_huawei_cpu_system_usage{vendor=~\"$vendor\", hostname=~\"$hostname\"}[$__range]))",
           "legendFormat": "最高 CPU"
         }
       ],
@@ -316,7 +316,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max(nexora_telemetry_h3c_memory_usage_percent{vendor=~\"$vendor\", hostname=~\"$hostname\"} or nexora_telemetry_huawei_memory_os_usage{vendor=~\"$vendor\", hostname=~\"$hostname\"})",
+          "expr": "max(last_over_time(nexora_telemetry_h3c_memory_usage_percent{vendor=~\"$vendor\", hostname=~\"$hostname\"}[$__range]) or last_over_time(nexora_telemetry_huawei_memory_usage_percent{vendor=~\"$vendor\", hostname=~\"$hostname\"}[$__range]))",
           "legendFormat": "最高内存"
         }
       ],
@@ -359,10 +359,11 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "fillOpacity": 26,
-            "showPoints": "never",
+            "showPoints": "auto",
             "lineWidth": 2,
             "gradientMode": "opacity",
-            "spanNulls": true
+            "spanNulls": true,
+            "pointSize": 5
           }
         },
         "overrides": []
@@ -421,10 +422,11 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "fillOpacity": 26,
-            "showPoints": "never",
+            "showPoints": "auto",
             "lineWidth": 2,
             "gradientMode": "opacity",
-            "spanNulls": true
+            "spanNulls": true,
+            "pointSize": 5
           }
         },
         "overrides": []
@@ -481,10 +483,11 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "fillOpacity": 26,
-            "showPoints": "never",
+            "showPoints": "auto",
             "lineWidth": 2,
             "gradientMode": "opacity",
-            "spanNulls": true
+            "spanNulls": true,
+            "pointSize": 5
           }
         },
         "overrides": []
@@ -541,10 +544,11 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "fillOpacity": 26,
-            "showPoints": "never",
+            "showPoints": "auto",
             "lineWidth": 2,
             "gradientMode": "opacity",
-            "spanNulls": true
+            "spanNulls": true,
+            "pointSize": 5
           }
         },
         "overrides": []
@@ -614,10 +618,11 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "fillOpacity": 26,
-            "showPoints": "never",
+            "showPoints": "auto",
             "lineWidth": 2,
             "gradientMode": "opacity",
-            "spanNulls": true
+            "spanNulls": true,
+            "pointSize": 5
           }
         },
         "overrides": []
@@ -674,10 +679,11 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "fillOpacity": 26,
-            "showPoints": "never",
+            "showPoints": "auto",
             "lineWidth": 2,
             "gradientMode": "opacity",
-            "spanNulls": true
+            "spanNulls": true,
+            "pointSize": 5
           }
         },
         "overrides": []
@@ -733,14 +739,15 @@
           "custom": {
             "drawStyle": "bars",
             "fillOpacity": 82,
-            "showPoints": "never",
+            "showPoints": "auto",
             "barAlignment": 0,
             "lineWidth": 1,
             "gradientMode": "opacity",
             "stacking": {
               "group": "A",
               "mode": "normal"
-            }
+            },
+            "pointSize": 5
           }
         },
         "overrides": []
@@ -854,10 +861,11 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "fillOpacity": 26,
-            "showPoints": "never",
+            "showPoints": "auto",
             "lineWidth": 2,
             "gradientMode": "opacity",
-            "spanNulls": true
+            "spanNulls": true,
+            "pointSize": 5
           }
         },
         "overrides": []
@@ -914,10 +922,11 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "fillOpacity": 26,
-            "showPoints": "never",
+            "showPoints": "auto",
             "lineWidth": 2,
             "gradientMode": "opacity",
-            "spanNulls": true
+            "spanNulls": true,
+            "pointSize": 5
           }
         },
         "overrides": []
@@ -987,10 +996,11 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "fillOpacity": 26,
-            "showPoints": "never",
+            "showPoints": "auto",
             "lineWidth": 2,
             "gradientMode": "opacity",
-            "spanNulls": true
+            "spanNulls": true,
+            "pointSize": 5
           }
         },
         "overrides": []
@@ -1046,14 +1056,15 @@
           "custom": {
             "drawStyle": "bars",
             "fillOpacity": 82,
-            "showPoints": "never",
+            "showPoints": "auto",
             "barAlignment": 0,
             "lineWidth": 1,
             "gradientMode": "opacity",
             "stacking": {
               "group": "A",
               "mode": "normal"
-            }
+            },
+            "pointSize": 5
           }
         },
         "overrides": []
@@ -1115,10 +1126,11 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "fillOpacity": 26,
-            "showPoints": "never",
+            "showPoints": "auto",
             "lineWidth": 2,
             "gradientMode": "opacity",
-            "spanNulls": true
+            "spanNulls": true,
+            "pointSize": 5
           }
         },
         "overrides": []
