@@ -114,9 +114,14 @@
         },
         "orientation": "auto",
         "textMode": "auto",
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "area",
-        "wideLayout": true
+        "wideLayout": true,
+        "justifyMode": "center",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {
@@ -171,9 +176,14 @@
         },
         "orientation": "auto",
         "textMode": "auto",
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "area",
-        "wideLayout": true
+        "wideLayout": true,
+        "justifyMode": "center",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
       },
       "targets": [
         {

@@ -4811,11 +4811,12 @@ def _apply_noc_v3_panel_options(uid, panels):
             panel["options"] = opts
         elif ptype == "stat":
             opts = deepcopy(panel.get("options") or {})
-            opts["colorMode"] = "value"
+            opts["colorMode"] = "background"
             opts["graphMode"] = "none" if (uid, pid) in NOC_V3_NO_SPARKLINE_STATS else "area"
-            opts["justifyMode"] = "auto"
+            opts["justifyMode"] = "center"
             opts["textMode"] = "auto"
             opts["wideLayout"] = True
+            opts.setdefault("text", {"titleSize": 13, "valueSize": 28})
             opts.setdefault("orientation", "auto")
             opts.setdefault("reduceOptions", {"calcs": ["lastNotNull"], "fields": "", "values": False})
             panel["options"] = opts
