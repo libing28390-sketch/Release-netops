@@ -126,10 +126,10 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
 
         {/* Right: Telemetry & Live Status (Consolidated Minimalist Header) */}
         <div className="flex items-center gap-2 pointer-events-auto">
-          <div className="flex items-center gap-2.5 px-3.5 py-1.5 rounded-full bg-white/70 backdrop-blur-md border border-gray-200/50 shadow-2xs text-[11px] text-gray-500 font-normal">
+          <div className="flex items-center gap-2.5 px-3.5 py-1.5 rounded-full bg-white/80 backdrop-blur-xl border border-gray-200/70 shadow-[0_2px_12px_rgba(15,23,42,0.04)] text-[11px] text-gray-500 font-normal">
             {currentTime && (
               <>
-                <div className="hidden sm:flex items-center gap-1.5 font-mono text-gray-500">
+                <div className="hidden sm:flex items-center gap-1.5 font-mono text-gray-500 tabular-nums">
                   <Clock size={11} className="text-gray-400" />
                   <span>{currentTime}</span>
                 </div>
@@ -139,19 +139,19 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
 
             <div className="hidden md:flex items-center gap-1.5 text-gray-500">
               <Server size={11} className="text-blue-500" />
-              <span>在管资产 <strong className="text-gray-700 font-medium">{managedDevices !== null && managedDevices > 0 ? `${managedDevices} 台` : '已接入'}</strong></span>
+              <span>纳管设备 <strong className="text-gray-800 font-semibold tabular-nums">{managedDevices !== null && managedDevices > 0 ? `${managedDevices} 台` : '已接入'}</strong></span>
             </div>
 
             <span className="hidden md:inline text-gray-300">·</span>
 
             <div className="hidden lg:flex items-center gap-1.5 text-gray-500">
               <CheckCircle2 size={11} className="text-emerald-500" />
-              <span>可用率 <strong className="text-gray-700 font-medium">99.99%</strong></span>
+              <span>服务可用率 <strong className="text-gray-800 font-semibold tabular-nums">99.99%</strong></span>
             </div>
 
             <span className="hidden lg:inline text-gray-300">·</span>
 
-            <div className="flex items-center gap-1.5 font-medium text-gray-600">
+            <div className="flex items-center gap-1.5 font-medium text-emerald-700">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
               <span>{t('systemOnline')}</span>
             </div>
@@ -166,13 +166,22 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
           initial={{ opacity: 0, y: -12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.55, ease: 'easeOut' }}
-          className="text-center mb-5 sm:mb-7 pointer-events-none"
+          className="text-center mb-6 sm:mb-8 pointer-events-none"
         >
-          <h1 className="text-3xl sm:text-4xl lg:text-[40px] font-extrabold tracking-tight text-gray-950 leading-[1.18]">
-            开启下一代全网自动化运维
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/85 backdrop-blur-md border border-blue-100/90 shadow-[0_2px_10px_rgba(37,99,235,0.06)] mb-4">
+            <span className="h-1.5 w-1.5 rounded-full bg-blue-600" />
+            <span className="text-[11px] font-semibold tracking-wider uppercase text-blue-700/90">
+              {sysName} Network Control Plane
+            </span>
+          </div>
+          <h1 className="text-3xl sm:text-4xl lg:text-[42px] font-extrabold tracking-tight text-slate-950 leading-[1.15]">
+            开启下一代
+            <span className="bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-600 bg-clip-text text-transparent">
+              全网自动化运维
+            </span>
           </h1>
-          <p className="mt-2.5 sm:mt-3 text-xs sm:text-sm text-gray-400 font-normal tracking-wide max-w-lg mx-auto">
-            设备自动化编排 · 巡检合规审计 · 数字孪生全景感知
+          <p className="mt-3 text-xs sm:text-[13.5px] text-slate-500 font-normal tracking-wide max-w-xl mx-auto">
+            拓扑全景感知 · 秒级 IP 定位 · 配置编排与合规巡检
           </p>
         </motion.div>
 
@@ -180,19 +189,29 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.1, ease: 'easeOut' }}
-          className="w-full max-w-[390px]"
+          transition={{ duration: 0.5, delay: 0.08, ease: 'easeOut' }}
+          className="w-full max-w-[404px]"
         >
-          <div data-login-particle-obstacle className="rounded-3xl bg-white/80 backdrop-blur-xl border border-gray-200/70 p-7 sm:p-8 shadow-[0_20px_50px_rgba(0,0,0,0.04)] transition-all">
-            <div className="mb-5">
-              <h2 className="text-lg font-bold tracking-tight text-gray-950">
-                {mfaRequired ? '双因子二次验证 (MFA)' : t('welcomeBack')}
-              </h2>
-              <p className="text-xs text-gray-400 mt-1">
-                {mfaRequired
-                  ? '请输入手机身份验证器中的 6 位动态验证码'
-                  : '登录到网络自动化控制台'}
-              </p>
+          <div
+            data-login-particle-obstacle
+            data-login-authenticating={isAuthenticating ? 'true' : 'false'}
+            className="rounded-3xl bg-white/86 backdrop-blur-2xl border border-slate-200/80 ring-1 ring-white/80 p-7 sm:p-8 shadow-[0_24px_70px_-16px_rgba(15,23,42,0.10),0_4px_16px_-4px_rgba(37,99,235,0.05)] transition-all"
+          >
+            <div className="mb-6 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold tracking-tight text-slate-950">
+                  {mfaRequired ? '双因子二次验证 (MFA)' : '账号登录'}
+                </h2>
+                <p className="text-xs text-slate-500 mt-1">
+                  {mfaRequired
+                    ? '请输入身份验证器中的 6 位动态验证码'
+                    : '输入运维凭据进入控制台'}
+                </p>
+              </div>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100/90 text-[10px] font-medium text-slate-500 border border-slate-200/60 mt-0.5 flex-shrink-0">
+                <Shield size={10} className="text-blue-600" />
+                RBAC
+              </span>
             </div>
 
             {mfaRequired ? (
@@ -432,26 +451,26 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                       type="checkbox"
                       checked={rememberMe}
                       onChange={(e) => onRememberMeChange(e.target.checked)}
-                      className="h-3.5 w-3.5 rounded border-gray-300 text-gray-900 focus:ring-gray-900 cursor-pointer"
+                      className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-600 cursor-pointer"
                     />
-                    <span className="text-xs text-gray-400">{t('rememberMe')}</span>
+                    <span className="text-xs text-slate-500">{t('rememberMe')}</span>
                   </label>
 
                   <button
                     type="button"
                     onClick={() => setShowForgotPwd(true)}
-                    className="text-xs text-gray-400 hover:text-gray-700 transition-colors cursor-pointer"
+                    className="text-xs text-slate-500 hover:text-blue-600 transition-colors cursor-pointer"
                   >
                     {t('forgotPassword')}
                   </button>
                 </div>
 
                 {/* Mature, Restrained Deep Pill Action Button */}
-                <div className="pt-2">
+                <div className="pt-2.5">
                   <button
                     type="submit"
                     disabled={isAuthenticating}
-                    className="group relative flex w-full items-center justify-center gap-2 rounded-full bg-gray-950 hover:bg-black py-3.5 px-6 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 disabled:opacity-50 cursor-pointer"
+                    className="group relative flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-b from-slate-900 to-slate-950 hover:from-blue-600 hover:to-indigo-600 py-3.5 px-6 text-sm font-semibold text-white shadow-[0_10px_24px_-10px_rgba(15,23,42,0.55)] hover:shadow-[0_12px_28px_-8px_rgba(37,99,235,0.55)] transition-all duration-200 hover:-translate-y-0.5 disabled:opacity-50 cursor-pointer"
                   >
                     {isAuthenticating ? (
                       <><RotateCcw className="animate-spin" size={14} />{t('authenticating')}</>

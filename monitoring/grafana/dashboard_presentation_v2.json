@@ -314,9 +314,10 @@
                 "drawStyle": "line",
                 "lineInterpolation": "stepAfter",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 35,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": []
@@ -334,11 +335,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": []
@@ -710,11 +712,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": []
@@ -732,11 +735,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": []
@@ -754,11 +758,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -789,6 +794,10 @@
                       "mode": "fixed",
                       "fixedColor": "#3B82F6"
                     }
+                  },
+                  {
+                    "id": "custom.transform",
+                    "value": "negative-Y"
                   }
                 ]
               }
@@ -1203,11 +1212,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": []
@@ -1274,11 +1284,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": []
@@ -1296,11 +1307,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": []
@@ -1318,11 +1330,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": []
@@ -1340,11 +1353,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": []
@@ -1362,11 +1376,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -1861,11 +1876,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -1896,6 +1912,10 @@
                       "mode": "fixed",
                       "fixedColor": "#3B82F6"
                     }
+                  },
+                  {
+                    "id": "custom.transform",
+                    "value": "negative-Y"
                   }
                 ]
               }
@@ -2235,11 +2255,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -2270,6 +2291,10 @@
                       "mode": "fixed",
                       "fixedColor": "#3B82F6"
                     }
+                  },
+                  {
+                    "id": "custom.transform",
+                    "value": "negative-Y"
                   }
                 ]
               }
@@ -2288,11 +2313,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -2492,6 +2518,41 @@
                   {
                     "id": "unit",
                     "value": "percent"
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "gauge",
+                      "mode": "gradient"
+                    }
+                  },
+                  {
+                    "id": "min",
+                    "value": 0
+                  },
+                  {
+                    "id": "max",
+                    "value": 100
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "#10B981",
+                          "value": null
+                        },
+                        {
+                          "color": "#F59E0B",
+                          "value": 70
+                        },
+                        {
+                          "color": "#EF4444",
+                          "value": 85
+                        }
+                      ]
+                    }
                   }
                 ]
               },
@@ -2556,6 +2617,41 @@
                   {
                     "id": "unit",
                     "value": "percent"
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "gauge",
+                      "mode": "gradient"
+                    }
+                  },
+                  {
+                    "id": "min",
+                    "value": 0
+                  },
+                  {
+                    "id": "max",
+                    "value": 100
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "#10B981",
+                          "value": null
+                        },
+                        {
+                          "color": "#F59E0B",
+                          "value": 75
+                        },
+                        {
+                          "color": "#EF4444",
+                          "value": 90
+                        }
+                      ]
+                    }
                   }
                 ]
               },
@@ -2620,6 +2716,41 @@
                   {
                     "id": "unit",
                     "value": "celsius"
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "gauge",
+                      "mode": "gradient"
+                    }
+                  },
+                  {
+                    "id": "min",
+                    "value": 0
+                  },
+                  {
+                    "id": "max",
+                    "value": 90
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "#10B981",
+                          "value": null
+                        },
+                        {
+                          "color": "#F59E0B",
+                          "value": 55
+                        },
+                        {
+                          "color": "#EF4444",
+                          "value": 70
+                        }
+                      ]
+                    }
                   }
                 ]
               },
@@ -2728,12 +2859,17 @@
                 "mode": "palette-classic"
               },
               "custom": {
-                "drawStyle": "line",
-                "lineInterpolation": "linear",
-                "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "drawStyle": "bars",
+                "lineInterpolation": "smooth",
+                "lineWidth": 1,
+                "fillOpacity": 82,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "barAlignment": 0,
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                }
               }
             },
             "overrides": [
@@ -2981,7 +3117,7 @@
         },
         "3": {
           "title": "平均 CPU 使用率",
-          "type": "stat",
+          "type": "gauge",
           "fieldConfig": {
             "defaults": {
               "unit": "percent",
@@ -3027,14 +3163,16 @@
                     }
                   }
                 }
-              ]
+              ],
+              "min": 0,
+              "max": 100
             },
             "overrides": []
           }
         },
         "4": {
           "title": "平均物理内存利用率",
-          "type": "stat",
+          "type": "gauge",
           "fieldConfig": {
             "defaults": {
               "unit": "percent",
@@ -3080,7 +3218,9 @@
                     }
                   }
                 }
-              ]
+              ],
+              "min": 0,
+              "max": 100
             },
             "overrides": []
           }
@@ -3199,11 +3339,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -3282,11 +3423,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -3384,11 +3526,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -3467,11 +3610,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -3502,6 +3646,10 @@
                       "mode": "fixed",
                       "fixedColor": "#3B82F6"
                     }
+                  },
+                  {
+                    "id": "custom.transform",
+                    "value": "negative-Y"
                   }
                 ]
               }
@@ -3581,11 +3729,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -3616,6 +3765,10 @@
                       "mode": "fixed",
                       "fixedColor": "#3B82F6"
                     }
+                  },
+                  {
+                    "id": "custom.transform",
+                    "value": "negative-Y"
                   }
                 ]
               }
@@ -3646,6 +3799,37 @@
                   {
                     "id": "unit",
                     "value": "none"
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "gauge",
+                      "mode": "gradient"
+                    }
+                  },
+                  {
+                    "id": "min",
+                    "value": 0
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "#3B82F6",
+                          "value": null
+                        },
+                        {
+                          "color": "#F59E0B",
+                          "value": 2000
+                        },
+                        {
+                          "color": "#EF4444",
+                          "value": 5000
+                        }
+                      ]
+                    }
                   }
                 ]
               }
@@ -3664,11 +3848,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -3924,11 +4109,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -3959,6 +4145,10 @@
                       "mode": "fixed",
                       "fixedColor": "#3B82F6"
                     }
+                  },
+                  {
+                    "id": "custom.transform",
+                    "value": "negative-Y"
                   }
                 ]
               }
@@ -4571,12 +4761,17 @@
                 "mode": "palette-classic"
               },
               "custom": {
-                "drawStyle": "line",
-                "lineInterpolation": "linear",
-                "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "drawStyle": "bars",
+                "lineInterpolation": "smooth",
+                "lineWidth": 1,
+                "fillOpacity": 82,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "barAlignment": 0,
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                }
               }
             },
             "overrides": [
@@ -4625,11 +4820,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -5085,7 +5281,7 @@
         },
         "2": {
           "title": "平均 CPU 使用率",
-          "type": "stat",
+          "type": "gauge",
           "fieldConfig": {
             "defaults": {
               "unit": "percent",
@@ -5131,14 +5327,16 @@
                     }
                   }
                 }
-              ]
+              ],
+              "min": 0,
+              "max": 100
             },
             "overrides": []
           }
         },
         "3": {
           "title": "平均物理内存使用率",
-          "type": "stat",
+          "type": "gauge",
           "fieldConfig": {
             "defaults": {
               "unit": "percent",
@@ -5184,7 +5382,9 @@
                     }
                   }
                 }
-              ]
+              ],
+              "min": 0,
+              "max": 100
             },
             "overrides": []
           }
@@ -5250,11 +5450,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -5288,11 +5489,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -5436,11 +5638,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -5493,11 +5696,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -5528,6 +5732,10 @@
                       "mode": "fixed",
                       "fixedColor": "#3B82F6"
                     }
+                  },
+                  {
+                    "id": "custom.transform",
+                    "value": "negative-Y"
                   }
                 ]
               }
@@ -5886,7 +6094,7 @@
         },
         "6": {
           "title": "平均 Radio 利用率",
-          "type": "stat",
+          "type": "gauge",
           "fieldConfig": {
             "defaults": {
               "unit": "percent",
@@ -5936,7 +6144,9 @@
                     }
                   }
                 }
-              ]
+              ],
+              "min": 0,
+              "max": 100
             },
             "overrides": []
           }
@@ -5957,11 +6167,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -6000,7 +6211,7 @@
         },
         "8": {
           "title": "AP 状态分布",
-          "type": "bargauge",
+          "type": "piechart",
           "fieldConfig": {
             "defaults": {
               "unit": "short",
@@ -6265,7 +6476,32 @@
                   {
                     "id": "custom.cellOptions",
                     "value": {
-                      "type": "color-text"
+                      "type": "gauge",
+                      "mode": "gradient"
+                    }
+                  },
+                  {
+                    "id": "min",
+                    "value": 0
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "#06B6D4",
+                          "value": null
+                        },
+                        {
+                          "color": "#3B82F6",
+                          "value": 40
+                        },
+                        {
+                          "color": "#F59E0B",
+                          "value": 80
+                        }
+                      ]
                     }
                   }
                 ]
@@ -6353,7 +6589,32 @@
                   {
                     "id": "custom.cellOptions",
                     "value": {
-                      "type": "color-text"
+                      "type": "gauge",
+                      "mode": "gradient"
+                    }
+                  },
+                  {
+                    "id": "min",
+                    "value": 0
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "#06B6D4",
+                          "value": null
+                        },
+                        {
+                          "color": "#3B82F6",
+                          "value": 40
+                        },
+                        {
+                          "color": "#F59E0B",
+                          "value": 80
+                        }
+                      ]
                     }
                   }
                 ]
@@ -6396,7 +6657,32 @@
                   {
                     "id": "custom.cellOptions",
                     "value": {
-                      "type": "color-text"
+                      "type": "gauge",
+                      "mode": "gradient"
+                    }
+                  },
+                  {
+                    "id": "min",
+                    "value": 0
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "#06B6D4",
+                          "value": null
+                        },
+                        {
+                          "color": "#3B82F6",
+                          "value": 80
+                        },
+                        {
+                          "color": "#8B5CF6",
+                          "value": 200
+                        }
+                      ]
                     }
                   }
                 ]
@@ -6604,11 +6890,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 10,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -6639,6 +6926,10 @@
                       "mode": "fixed",
                       "fixedColor": "#3B82F6"
                     }
+                  },
+                  {
+                    "id": "custom.transform",
+                    "value": "negative-Y"
                   }
                 ]
               }
@@ -6968,7 +7259,7 @@
         },
         "6": {
           "title": "24h 告警成功率",
-          "type": "stat",
+          "type": "gauge",
           "fieldConfig": {
             "defaults": {
               "unit": "percentunit",
@@ -7023,7 +7314,9 @@
                     }
                   }
                 }
-              ]
+              ],
+              "min": 0,
+              "max": 1
             },
             "overrides": []
           }
@@ -7043,12 +7336,17 @@
                 "mode": "palette-classic"
               },
               "custom": {
-                "drawStyle": "line",
-                "lineInterpolation": "linear",
-                "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "drawStyle": "bars",
+                "lineInterpolation": "smooth",
+                "lineWidth": 1,
+                "fillOpacity": 82,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "barAlignment": 0,
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                }
               }
             },
             "overrides": [
@@ -7102,7 +7400,7 @@
         },
         "8": {
           "title": "当前未恢复告警严重度分布",
-          "type": "timeseries",
+          "type": "piechart",
           "fieldConfig": {
             "defaults": {
               "unit": "short",
@@ -7112,10 +7410,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -7269,12 +7567,17 @@
                 "mode": "palette-classic"
               },
               "custom": {
-                "drawStyle": "line",
-                "lineInterpolation": "linear",
-                "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "drawStyle": "bars",
+                "lineInterpolation": "smooth",
+                "lineWidth": 1,
+                "fillOpacity": 82,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "barAlignment": 0,
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                }
               }
             },
             "overrides": [
@@ -7388,7 +7691,7 @@
         },
         "10": {
           "title": "通知 Outbox 当前状态",
-          "type": "timeseries",
+          "type": "piechart",
           "fieldConfig": {
             "defaults": {
               "unit": "short",
@@ -7398,10 +7701,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -7770,11 +8073,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -7853,11 +8157,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -7950,7 +8255,7 @@
         },
         "2": {
           "title": "1h 系统级拨测可用率",
-          "type": "stat",
+          "type": "gauge",
           "fieldConfig": {
             "defaults": {
               "unit": "percentunit",
@@ -7996,7 +8301,9 @@
                     }
                   }
                 }
-              ]
+              ],
+              "min": 0,
+              "max": 1
             },
             "overrides": []
           }
@@ -8138,7 +8445,7 @@
         },
         "6": {
           "title": "24h 系统级拨测可用率",
-          "type": "stat",
+          "type": "gauge",
           "fieldConfig": {
             "defaults": {
               "unit": "percentunit",
@@ -8184,7 +8491,9 @@
                     }
                   }
                 }
-              ]
+              ],
+              "min": 0,
+              "max": 1
             },
             "overrides": []
           }
@@ -8402,11 +8711,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -8455,11 +8765,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -8528,7 +8839,7 @@
         },
         "11": {
           "title": "各协议拨测成功率（24h）",
-          "type": "timeseries",
+          "type": "bargauge",
           "fieldConfig": {
             "defaults": {
               "unit": "percentunit",
@@ -8538,12 +8849,14 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
-              }
+              },
+              "min": 0,
+              "max": 1
             },
             "overrides": []
           }
@@ -8560,11 +8873,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": []
@@ -8576,7 +8890,7 @@
         },
         "13": {
           "title": "24h ICMP 多回显丢包率",
-          "type": "stat",
+          "type": "gauge",
           "fieldConfig": {
             "defaults": {
               "unit": "percentunit",
@@ -8622,7 +8936,9 @@
                     }
                   }
                 }
-              ]
+              ],
+              "min": 0,
+              "max": 1
             },
             "overrides": []
           }
@@ -8674,7 +8990,7 @@
         },
         "15": {
           "title": "1h WAN 接口采集成功率",
-          "type": "stat",
+          "type": "gauge",
           "fieldConfig": {
             "defaults": {
               "unit": "percentunit",
@@ -8720,14 +9036,16 @@
                     }
                   }
                 }
-              ]
+              ],
+              "min": 0,
+              "max": 1
             },
             "overrides": []
           }
         },
         "16": {
           "title": "24h WAN 接口 Oper UP 比例",
-          "type": "stat",
+          "type": "gauge",
           "fieldConfig": {
             "defaults": {
               "unit": "percentunit",
@@ -8773,14 +9091,16 @@
                     }
                   }
                 }
-              ]
+              ],
+              "min": 0,
+              "max": 1
             },
             "overrides": []
           }
         },
         "17": {
           "title": "当前 WAN 接口健康状态",
-          "type": "timeseries",
+          "type": "piechart",
           "fieldConfig": {
             "defaults": {
               "unit": "short",
@@ -8790,10 +9110,10 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
                 "showPoints": "never"
               }
             },
@@ -8903,11 +9223,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -8938,6 +9259,10 @@
                       "mode": "fixed",
                       "fixedColor": "#3B82F6"
                     }
+                  },
+                  {
+                    "id": "custom.transform",
+                    "value": "negative-Y"
                   }
                 ]
               }
@@ -8955,12 +9280,17 @@
                 "mode": "palette-classic"
               },
               "custom": {
-                "drawStyle": "line",
-                "lineInterpolation": "linear",
-                "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "drawStyle": "bars",
+                "lineInterpolation": "smooth",
+                "lineWidth": 1,
+                "fillOpacity": 82,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "barAlignment": 0,
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                }
               }
             },
             "overrides": [
@@ -9098,7 +9428,7 @@
         },
         "3": {
           "title": "出口最高入向利用率",
-          "type": "stat",
+          "type": "gauge",
           "fieldConfig": {
             "defaults": {
               "unit": "percent",
@@ -9137,14 +9467,16 @@
                     }
                   }
                 }
-              ]
+              ],
+              "min": 0,
+              "max": 100
             },
             "overrides": []
           }
         },
         "4": {
           "title": "出口最高出向利用率",
-          "type": "stat",
+          "type": "gauge",
           "fieldConfig": {
             "defaults": {
               "unit": "percent",
@@ -9183,7 +9515,9 @@
                     }
                   }
                 }
-              ]
+              ],
+              "min": 0,
+              "max": 100
             },
             "overrides": []
           }
@@ -9302,11 +9636,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -9340,11 +9675,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -9382,11 +9718,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -9420,11 +9757,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -9461,12 +9799,17 @@
                 "mode": "palette-classic"
               },
               "custom": {
-                "drawStyle": "line",
-                "lineInterpolation": "linear",
-                "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "drawStyle": "bars",
+                "lineInterpolation": "smooth",
+                "lineWidth": 1,
+                "fillOpacity": 82,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "barAlignment": 0,
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                }
               }
             },
             "overrides": [
@@ -9854,7 +10197,7 @@
         },
         "3": {
           "title": "入向利用率",
-          "type": "stat",
+          "type": "gauge",
           "fieldConfig": {
             "defaults": {
               "unit": "percent",
@@ -9893,14 +10236,16 @@
                     }
                   }
                 }
-              ]
+              ],
+              "min": 0,
+              "max": 100
             },
             "overrides": []
           }
         },
         "4": {
           "title": "出向利用率",
-          "type": "stat",
+          "type": "gauge",
           "fieldConfig": {
             "defaults": {
               "unit": "percent",
@@ -9939,7 +10284,9 @@
                     }
                   }
                 }
-              ]
+              ],
+              "min": 0,
+              "max": 100
             },
             "overrides": []
           }
@@ -10064,11 +10411,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -10099,6 +10447,10 @@
                       "mode": "fixed",
                       "fixedColor": "#3B82F6"
                     }
+                  },
+                  {
+                    "id": "custom.transform",
+                    "value": "negative-Y"
                   }
                 ]
               }
@@ -10117,11 +10469,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -10152,6 +10505,10 @@
                       "mode": "fixed",
                       "fixedColor": "#3B82F6"
                     }
+                  },
+                  {
+                    "id": "custom.transform",
+                    "value": "negative-Y"
                   }
                 ]
               }
@@ -10312,11 +10669,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -10409,12 +10767,17 @@
                 "mode": "palette-classic"
               },
               "custom": {
-                "drawStyle": "line",
-                "lineInterpolation": "linear",
-                "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "drawStyle": "bars",
+                "lineInterpolation": "smooth",
+                "lineWidth": 1,
+                "fillOpacity": 82,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "barAlignment": 0,
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                }
               }
             },
             "overrides": [
@@ -10966,11 +11329,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -11224,11 +11588,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": []
@@ -11246,11 +11611,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 12,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": []
@@ -11686,7 +12052,7 @@
         },
         "7": {
           "title": "数据库 Shared Buffer 命中率",
-          "type": "stat",
+          "type": "gauge",
           "fieldConfig": {
             "defaults": {
               "unit": "percent",
@@ -11724,7 +12090,9 @@
                     }
                   }
                 }
-              ]
+              ],
+              "min": 0,
+              "max": 100
             },
             "overrides": []
           }
@@ -11745,11 +12113,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 10,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -11783,11 +12152,12 @@
               },
               "custom": {
                 "drawStyle": "line",
-                "lineInterpolation": "linear",
+                "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 10,
-                "gradientMode": "none",
-                "showPoints": "never"
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [

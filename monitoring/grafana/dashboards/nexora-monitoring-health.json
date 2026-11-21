@@ -6,7 +6,92 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "全网总览",
+      "tooltip": "切换到 全网总览",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-overview/nexora-network-overview"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "单设备详情",
+      "tooltip": "切换到 单设备详情",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-device/nexora-network-device"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "接口全景",
+      "tooltip": "切换到 接口全景",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-interface/nexora-network-interface"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "无线专网",
+      "tooltip": "切换到 无线专网",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-wireless/nexora-network-wireless"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "出口质量",
+      "tooltip": "切换到 出口质量",
+      "type": "link",
+      "url": "/grafana/d/nexora-outbound-probe-quality/nexora-outbound-probe-quality"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Telemetry 实时",
+      "tooltip": "切换到 Telemetry 实时",
+      "type": "link",
+      "url": "/grafana/d/nexora-telemetry-realtime/nexora-telemetry-realtime"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": true,
+      "title": "返回 Nexora 监控",
+      "tooltip": "在新标签页打开 Nexora 网络监控页面",
+      "type": "link",
+      "url": "/monitor/network"
+    }
+  ],
   "panels": [
     {
       "id": 900,
@@ -77,8 +162,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -88,7 +173,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -158,8 +248,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -169,7 +259,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -235,8 +330,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -246,7 +341,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -320,8 +420,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -331,7 +431,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -377,21 +482,26 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
+            "fillOpacity": 24,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": []
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "right",
-          "showLegend": true,
-          "calcs": []
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -429,21 +539,26 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
+            "fillOpacity": 24,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": []
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "right",
-          "showLegend": true,
-          "calcs": []
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -760,5 +875,6 @@
   "timezone": "browser",
   "title": "05 SNMP 采集健康 (SNMP Scrape Health)",
   "uid": "nexora-monitoring-health",
-  "version": 30
+  "version": 33,
+  "description": "SNMP 采集引擎健康与性能大盘：直观监控在线/失败采集目标、设备轮询耗时与样本量趋势，快速定位超时或采集异常设备。"
 }

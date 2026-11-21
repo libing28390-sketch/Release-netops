@@ -1,0 +1,90 @@
+{
+  "status": "PASS",
+  "task_id": "EVAL-017",
+  "database": "postgresql",
+  "sqlite": "not_used",
+  "frontend_test_database": "none",
+  "production_database_write": false,
+  "browser_surfaces": [
+    "copilot",
+    "providers",
+    "models_and_routes",
+    "knowledge_management",
+    "security_gateway"
+  ],
+  "required_states": [
+    "loading",
+    "success",
+    "empty",
+    "error",
+    "permission_boundary",
+    "narrow_layout"
+  ],
+  "source_sha256": {
+    "contract": "4ecdf589feb27d744ed955becb91c23ad2829858a458592616f7bf56b0d9153e",
+    "src/pages/ai/Copilot/keypaths.test.tsx": "6ec27c090925fbc89dc49bf6210b87895b2a9575d8a4cf162c495901ef1bdd50",
+    "src/pages/ai/Copilot/progress.test.ts": "495388ef69efe582a239be3cdae9285a74706e5174407cb4a31dae075730dbb8",
+    "src/api/ai.test.ts": "68b9f391822f08553c2a5076b0baf76ce7e2ce27e23c8183c9d0c5898bb4014e",
+    "src/pages/ai/Providers/ProviderManagementTab.test.tsx": "0682b0a3ba672fe7484eb1300abffe969e5208cacc7d1e554a7555a45b4c2fc1",
+    "src/pages/ai/Models/ModelManagementTab.test.tsx": "3aa83ce84862d7ef1debe5eb92b39c6d9c00a9daa2af9000893f8ec5d170e824",
+    "src/pages/ai/Security/SecurityPolicyTab.test.tsx": "cc4a1bd257ad2f00a16b3dfbf4a9fa94437135069dcb2214ee5967866a3e6ed5",
+    "src/api/http.test.ts": "312916ab825729cfdd42c6a0504dc0762983a3e6650ad6a98c9df6a38b69a27a",
+    "src/utils/routeContext.test.ts": "f9f7b9ec73c5c634e8d74ec233cbf40f7d59b4121c3b6d3cf841419576565266",
+    "src/pages/ai/Knowledge/IngestionJobsPanel.test.tsx": "e47987918a75f37c0f93ff519c17ce0aa4561f7a3012b9ed888fd37af72ca699",
+    "src/pages/ai/Knowledge/KnowledgeAdminResponsive.test.tsx": "25e2c47c1a9bd05c084cc8f193e6b6c77bf02f82151471b882c0007ebc290ca6",
+    "src/pages/ai/Knowledge/RagEvaluationPanel.test.tsx": "7eed473f93f47a67834859ade8d814af101a4b1f6400ec84aa555d3928269fc7",
+    "src/pages/ai/Knowledge/RetrievalTracePanel.test.tsx": "d2a82d66360f3886588991256a6b64998a1713f2da0809c3747d73bb148c863a",
+    "src/pages/PlatformRegistryTab.test.tsx": "e5985ede0b8ebb2da3521c7ea58b7398a9989b8a75d4e1ade088975aced1c78c"
+  },
+  "frontend_tests": {
+    "status": "PASS",
+    "database": "none",
+    "sqlite": "not_used",
+    "test_files_passed": 13,
+    "tests_passed": 43,
+    "command": [
+      "npm.cmd",
+      "run",
+      "test:frontend",
+      "--",
+      "--run",
+      "src/pages/ai/Copilot/keypaths.test.tsx",
+      "src/pages/ai/Copilot/progress.test.ts",
+      "src/api/ai.test.ts",
+      "src/pages/ai/Providers/ProviderManagementTab.test.tsx",
+      "src/pages/ai/Models/ModelManagementTab.test.tsx",
+      "src/pages/ai/Security/SecurityPolicyTab.test.tsx",
+      "src/api/http.test.ts",
+      "src/utils/routeContext.test.ts",
+      "src/pages/ai/Knowledge/IngestionJobsPanel.test.tsx",
+      "src/pages/ai/Knowledge/KnowledgeAdminResponsive.test.tsx",
+      "src/pages/ai/Knowledge/RagEvaluationPanel.test.tsx",
+      "src/pages/ai/Knowledge/RetrievalTracePanel.test.tsx",
+      "src/pages/PlatformRegistryTab.test.tsx",
+      "--reporter=dot"
+    ]
+  },
+  "v1_postgresql": {
+    "status": "PASS",
+    "database": "postgresql",
+    "sqlite": "not_used",
+    "case_count": 10,
+    "metrics": {
+      "retrieval_accuracy": 1.0,
+      "wrong_vendor_rate": 0.0,
+      "version_conflict_rate": 0.0,
+      "citation_accuracy": 1.0,
+      "latency_ms": {
+        "average": 3.1569,
+        "p50": 2.7851,
+        "p95": 5.0514,
+        "max": 6.1819
+      }
+    },
+    "rollback": "transaction_rollback",
+    "production_database_write": false
+  },
+  "live_browser_status": "USER_VERIFY_PENDING",
+  "live_browser_note": "Automated key-path coverage passed; visible authenticated browser verification is tracked separately.",
+  "rollback_or_cleanup": true
+}

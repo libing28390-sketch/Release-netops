@@ -233,6 +233,12 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
     }
   };
 
+  const usedRuns = authorizationGrant?.used_runs ?? 0;
+  const maxRuns = Math.max(1, Number(authorizationGrant?.max_runs || 1));
+  const quotaPct = Math.min(100, Math.round((usedRuns / maxRuns) * 100));
+  const manifestHash = authorizationGrant?.manifest_hash || '';
+  const shortHash = manifestHash.length > 20 ? `${manifestHash.slice(0, 10)}…${manifestHash.slice(-8)}` : (manifestHash || '—');
+
   return (
     <AnimatePresence>
       <motion.div
@@ -241,23 +247,32 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
         exit={{ opacity: 0 }}
         className="fixed inset-0 z-[60] flex items-center justify-center p-4"
       >
-        <div className="fixed inset-0 bg-black/40" onClick={onClose} />
+        <div className="fixed inset-0 bg-slate-950/45 backdrop-blur-[2px]" onClick={onClose} />
         <motion.div
-          initial={{ opacity: 0, scale: 0.95, y: 20 }}
+          initial={{ opacity: 0, scale: 0.96, y: 16 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.95, y: 20 }}
-          className="relative w-full max-w-2xl max-h-[85vh] bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-black/5"
+          exit={{ opacity: 0, scale: 0.96, y: 16 }}
+          transition={{ duration: 0.16 }}
+          className="relative w-full max-w-3xl max-h-[86vh] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200/80 dark:border-white/10"
         >
           {/* Header */}
-          <div className="px-6 py-5 border-b border-black/[0.03] flex items-center justify-between bg-gradient-to-r from-slate-50/50 to-white">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-cyan-500/10 flex items-center justify-center">
-                <Info className="w-5 h-5 text-cyan-600" />
+          <div className="px-6 py-4 border-b border-slate-100 dark:border-white/10 flex items-center justify-between bg-gradient-to-r from-slate-50/90 via-white to-blue-50/40 dark:from-slate-900 dark:via-slate-900 dark:to-slate-800/60">
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div className="w-10 h-10 shrink-0 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-sm shadow-blue-600/20">
+                <CalendarClock className="w-5 h-5" />
               </div>
-              <div>
-                <h3 className="text-base font-bold text-[#164e63]">{detailJob.name}</h3>
-                <div className="flex items-center gap-2 text-[10px] text-black/40 mt-0.5">
-                  <span className="bg-slate-100 px-1.5 py-0.5 rounded font-mono">{detailJob.id}</span>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <h3 className="text-[15px] font-bold text-slate-900 dark:text-white truncate">{detailJob.name}</h3>
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border ${detailJob.enabled ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/20' : 'bg-slate-100 text-slate-500 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${detailJob.enabled ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                    {detailJob.enabled ? (zh ? '已启用' : 'Active') : (zh ? '已停用' : 'Disabled')}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-[11px] text-slate-400 mt-1">
+                  <span className="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded font-mono text-[10px] text-slate-500 dark:text-slate-400" title={detailJob.id}>
+                    {detailJob.id}
+                  </span>
                   <span>·</span>
                   <span>{zh ? '定时作业详情' : 'Scheduled Job Detail'}</span>
                 </div>
@@ -265,220 +280,281 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
             </div>
             <button
               onClick={onClose}
-              className="p-2 rounded-xl text-black/20 hover:bg-black/5 hover:text-black/40 transition-all"
+              aria-label={zh ? '关闭弹窗' : 'Close dialog'}
+              className="p-2 rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-white/10 dark:hover:text-slate-200 transition-colors"
             >
-              <X size={20} />
+              <X size={18} />
             </button>
           </div>
 
           {/* Content */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-            {/* 1. Schedule & Scope Grid */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="p-4 rounded-2xl bg-slate-50/50 border border-black/[0.02]">
-                <div className="flex items-center gap-2 text-[11px] font-bold text-black/40 mb-2 uppercase tracking-wider">
-                  <CalendarClock size={12} />
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4 custom-scrollbar bg-slate-50/40 dark:bg-slate-950/20">
+            {/* 1. Compact 3-Column Overview Strip */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-white/10 p-3.5 shadow-xs">
+                <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-400 mb-1.5">
+                  <CalendarClock size={13} className="text-blue-600" />
                   {zh ? '执行周期' : 'Schedule'}
                 </div>
-                <p className="text-sm font-semibold text-[#0e7490]">
+                <p className="text-[13px] font-bold text-slate-800 dark:text-slate-100">
                   {describeCron(detailJob.cron_expr, zh)}
                 </p>
-                <p className="text-[10px] font-mono text-black/30 mt-1">{detailJob.cron_expr}</p>
+                <p className="mt-1 inline-block rounded bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] font-mono text-slate-500">
+                  {detailJob.cron_expr}
+                </p>
               </div>
-              <div className="p-4 rounded-2xl bg-slate-50/50 border border-black/[0.02]">
-                <div className="flex items-center gap-2 text-[11px] font-bold text-black/40 mb-2 uppercase tracking-wider">
-                  <Target size={12} />
-                  {zh ? '执行范围' : 'Target Scope'}
+
+              <div className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-white/10 p-3.5 shadow-xs">
+                <div className="flex items-center justify-between gap-1.5 text-[11px] font-semibold text-slate-400 mb-1.5">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Target size={13} className="text-indigo-600" />
+                    {zh ? '执行范围' : 'Target Scope'}
+                  </span>
+                  {detailJob.device_scope === 'ip' && (
+                    <span className="text-[10px] font-medium text-slate-400">
+                      {(detailJob.device_filter || '').split(',').filter(Boolean).length} {zh ? '台' : 'hosts'}
+                    </span>
+                  )}
                 </div>
-                <p className="text-sm font-semibold text-slate-700">
+                <p className="text-[13px] font-bold text-slate-800 dark:text-slate-100">
                   {detailJob.device_scope === 'all' ? (zh ? '全部在线设备' : 'All Online Devices') :
                    detailJob.device_scope === 'ip' ? (zh ? '按 IP 指定' : 'By IP Address') :
                    detailJob.device_scope === 'tag' ? (zh ? '按标签筛选' : 'By Tags') : (zh ? '自定义范围' : 'Custom')}
                 </p>
-                <p className="text-[10px] text-black/40 mt-1 truncate">
-                  {detailJob.device_filter || (zh ? '无额外过滤条件' : 'No filter')}
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {detailJob.device_scope === 'ip' && detailJob.device_filter ? (
+                    detailJob.device_filter.split(',').slice(0, 3).map((ip, idx) => (
+                      <span key={idx} className="inline-flex items-center px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-mono text-slate-600 dark:text-slate-300">
+                        {ip.trim()}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-[11px] text-slate-400 truncate">
+                      {detailJob.device_filter || (zh ? '动态扫描在线设备' : 'Dynamic online devices')}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-white/10 p-3.5 shadow-xs">
+                <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-400 mb-1.5">
+                  <FileText size={13} className="text-emerald-600" />
+                  {zh ? '执行方式' : 'Execution Method'}
+                </div>
+                <p className="text-[13px] font-bold text-slate-800 dark:text-slate-100">
+                  {detailJob.action_type === 'backup' ? (zh ? '配置备份' : 'Configuration backup') :
+                   detailJob.action_type === 'arp_sweep' ? (zh ? 'ARP 分批采集' : 'Bounded ARP sweep') :
+                   detailJob.action_type === 'bgp_neighbors' ? (zh ? 'BGP 邻居采集' : 'BGP neighbor collection') :
+                   detailJob.action_type === 'ospf_neighbors' ? (zh ? 'OSPF 邻居采集' : 'OSPF neighbor collection') :
+                   detailJob.action_type === 'nsot' ? (zh ? '全量 NSOT 作业（已下线）' : 'Full NSOT job (retired)') :
+                   detailJob.action_type === 'inspection' ? (zh ? '智能巡检' : 'Smart inspection') :
+                   detailJob.action_type === 'command' ? (zh ? '命令执行' : 'Command execution') :
+                   (zh ? '自动化脚本' : 'Automation script')}
                 </p>
+                <div className="mt-1 truncate text-[11px] text-slate-500">
+                  {detailJob.script_id ? (
+                    <button
+                      type="button"
+                      onClick={() => openScriptManagement(detailJob.script_id!)}
+                      aria-label={zh ? `打开脚本：${availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}` : `Open script: ${availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}`}
+                      title={zh ? '点击跳转到脚本管理' : 'Open in script management'}
+                      className="inline-flex max-w-full items-center gap-1 truncate font-semibold text-blue-600 hover:text-blue-700 hover:underline"
+                    >
+                      <span className="truncate">{availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}</span>
+                      <ExternalLink size={11} className="shrink-0" />
+                    </button>
+                  ) : detailJob.action_type === 'command'
+                    ? (zh ? '按审批命令执行' : 'Approved commands')
+                    : detailJob.action_type === 'inspection'
+                      ? (zh ? '平台内置巡检项' : 'Built-in checks')
+                      : (zh ? '系统托管动作' : 'Platform managed')}
+                </div>
               </div>
             </div>
 
-            {/* 2. Device List (IP List) */}
-            {(detailJob.device_scope === 'ip' || detailJob.device_scope === 'all') && (
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-[11px] font-bold text-black/50 uppercase tracking-wider">{zh ? '执行 IP 列表' : 'Target IPs'}</h4>
-                  <span className="text-[10px] text-black/30">
-                    {detailJob.device_scope === 'all' ? (zh ? '动态获取' : 'Dynamic') : `${(detailJob.device_filter || '').split(',').length} 个目标`}
+            {/* 2. Authorization Card */}
+            <section className="rounded-xl border border-slate-200/80 dark:border-white/10 bg-white dark:bg-slate-900 overflow-hidden shadow-xs" aria-label={zh ? '作业授权' : 'Job authorization'}>
+              <div className="px-4 py-3 border-b border-slate-100 dark:border-white/10 flex flex-wrap items-center justify-between gap-2 bg-slate-50/60 dark:bg-slate-800/40">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck size={15} className="shrink-0 text-blue-600" />
+                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-100">{zh ? '有界授权与审批凭证' : 'Bounded Authorization'}</h4>
+                  {authorizationGrant && (
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${grantStatusClass(authorizationGrant.status)}`}>
+                      {grantStatusText(authorizationGrant.status, zh)}
+                    </span>
+                  )}
+                </div>
+                {authorizationGrant && (
+                  <span className="text-[10px] font-mono text-slate-400">
+                    v{authorizationGrant.version ?? '—'} · {String(authorizationGrant.template_version || '—').slice(0, 10)}
                   </span>
-                </div>
-                <div className="p-3 rounded-2xl border border-black/[0.04] bg-slate-50/30">
-                  <div className="flex flex-wrap gap-1.5">
-                    {detailJob.device_scope === 'all' ? (
-                      <div className="text-[11px] text-black/40 italic px-2 py-1">{zh ? '作业运行时将自动扫描所有在线设备' : 'Automatically targets all online devices at runtime'}</div>
-                    ) : (
-                      (detailJob.device_filter || '').split(',').map((ip, idx) => (
-                        <span key={idx} className="inline-flex items-center px-2 py-0.5 rounded-md bg-white border border-black/[0.06] text-[11px] font-mono text-slate-600 shadow-sm">
-                          {ip.trim()}
-                        </span>
-                      ))
-                    )}
-                  </div>
-                </div>
+                )}
               </div>
-            )}
 
-            {/* 3. Execution summary */}
-            <div>
-              <h4 className="text-[11px] font-bold text-black/50 uppercase tracking-wider mb-2">{zh ? '执行方式' : 'Execution Method'}</h4>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    <FileText size={15} className="shrink-0 text-cyan-700" />
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-slate-800">
-                        {detailJob.action_type === 'backup' ? (zh ? '配置备份' : 'Configuration backup') :
-                         detailJob.action_type === 'arp_sweep' ? (zh ? 'ARP 分批采集' : 'Bounded ARP sweep') :
-                         detailJob.action_type === 'bgp_neighbors' ? (zh ? 'BGP 邻居采集' : 'BGP neighbor collection') :
-                         detailJob.action_type === 'ospf_neighbors' ? (zh ? 'OSPF 邻居采集' : 'OSPF neighbor collection') :
-                         detailJob.action_type === 'nsot' ? (zh ? '全量 NSOT 作业（已下线）' : 'Full NSOT job (retired)') :
-                         detailJob.action_type === 'inspection' ? (zh ? '智能巡检' : 'Smart inspection') :
-                         detailJob.action_type === 'command' ? (zh ? '命令执行' : 'Command execution') :
-                         (zh ? '自动化脚本' : 'Automation script')}
-                      </p>
-                      <div className="mt-0.5 truncate text-[11px] text-slate-500">
-                        {detailJob.script_id ? (
-                          <span className="inline-flex max-w-full items-center gap-1">
-                            <span>{zh ? '绑定脚本：' : 'Bound script: '}</span>
+              <div className="p-4">
+                {jobDetailLoading && !authorizationGrant && <p role="status" className="text-xs text-slate-500">{zh ? '正在加载授权信息…' : 'Loading authorization…'}</p>}
+                {jobDetailError && <div role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-800"><span>{jobDetailForbidden ? (zh ? '当前账号无权查看作业授权详情。' : 'You do not have permission to view job authorization details.') : jobDetailError}</span><button type="button" onClick={() => setJobDetailRetry(value => value + 1)} className="font-semibold underline">{zh ? '重试' : 'Retry'}</button></div>}
+                {!jobDetailLoading && !jobDetailError && !authorizationGrant && <p role="status" className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">{zh ? '服务端未返回该作业的授权信息。' : 'No authorization details were returned for this job.'}</p>}
+                {authorizationGrant && (
+                  <div className="space-y-3.5">
+                    {/* Quota Progress Bar */}
+                    <div className="rounded-lg bg-slate-50 dark:bg-slate-800/50 px-3.5 py-2.5 border border-slate-100 dark:border-white/5">
+                      <div className="flex items-center justify-between text-[11px] mb-1.5">
+                        <span className="font-medium text-slate-500">{zh ? '授权执行次数' : 'Execution Count'}</span>
+                        <span className="font-bold text-slate-700 dark:text-slate-200">
+                          {Number(authorizationGrant.max_runs || 0) > 0 ? (
+                            <>
+                              {usedRuns} / {authorizationGrant.max_runs}
+                              <span className="ml-1.5 font-normal text-slate-400">
+                                ({zh ? `剩余 ${authorizationGrant.remaining_runs ?? '—'} 次` : `${authorizationGrant.remaining_runs ?? '—'} left`})
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              {zh ? `已执行 ${usedRuns} 次` : `${usedRuns} runs`}
+                              <span className="ml-1.5 font-normal text-emerald-600">
+                                ({zh ? '不限次数' : 'Unlimited'})
+                              </span>
+                            </>
+                          )}
+                        </span>
+                      </div>
+                      {Number(authorizationGrant.max_runs || 0) > 0 && (
+                        <div className="h-1.5 w-full rounded-full bg-slate-200/80 dark:bg-slate-700 overflow-hidden">
+                          <div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-emerald-500 transition-all" style={{ width: `${Math.max(quotaPct, usedRuns > 0 ? 6 : 0)}%` }} />
+                        </div>
+                      )}
+                    </div>
+
+                    <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2.5 text-[11px]">
+                      <div className="flex items-center justify-between gap-2 py-1 border-b border-slate-100 dark:border-white/5">
+                        <dt className="text-slate-400 shrink-0">{zh ? '有效期至' : 'Valid until'}</dt>
+                        <dd className="font-semibold text-slate-700 dark:text-slate-200 truncate">{formatRunTime(authorizationGrant.valid_until, zh)}</dd>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 py-1 border-b border-slate-100 dark:border-white/5">
+                        <dt className="text-slate-400 shrink-0">{zh ? '批准范围' : 'Approved scope'}</dt>
+                        <dd className="font-semibold text-slate-700 dark:text-slate-200 truncate" title={describeScope(displayedJob.device_scope, displayedJob.device_filter, zh)}>
+                          {describeScope(displayedJob.device_scope, displayedJob.device_filter, zh)}
+                          {Number(authorizationGrant.max_targets || 0) > 0
+                            ? ` · ${zh ? `≤${authorizationGrant.max_targets} 台` : `≤${authorizationGrant.max_targets}`}`
+                            : ''}
+                        </dd>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 py-1 border-b border-slate-100 dark:border-white/5">
+                        <dt className="text-slate-400 shrink-0">{zh ? '关联工单' : 'Linked ticket'}</dt>
+                        <dd className="min-w-0 truncate">
+                          {authorizationGrant.ticket_id ? (
                             <button
                               type="button"
-                              onClick={() => openScriptManagement(detailJob.script_id!)}
-                              aria-label={zh ? `打开脚本：${availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}` : `Open script: ${availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}`}
-                              title={zh ? '点击跳转到脚本管理' : 'Open in script management'}
-                              className="inline-flex max-w-full items-center gap-1 truncate font-semibold text-blue-700 hover:text-blue-600 hover:underline"
+                              onClick={() => openTicket(authorizationGrant.ticket_source_type, authorizationGrant.ticket_id)}
+                              title={`${authorizationGrant.ticket_number || authorizationGrant.ticket_id}${authorizationGrant.ticket_title ? ` · ${authorizationGrant.ticket_title}` : ''}`}
+                              className="inline-flex max-w-full items-center gap-1 truncate font-semibold text-blue-600 hover:underline"
                             >
-                              <span className="truncate">{availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id}</span>
-                              <ExternalLink size={11} className="shrink-0" />
+                              <span className="truncate">{authorizationGrant.ticket_number || authorizationGrant.ticket_id}</span>
+                              <ExternalLink size={10} className="shrink-0" />
                             </button>
-                          </span>
-                        ) : detailJob.action_type === 'command'
-                            ? (zh ? '命令已配置，按审批后的内容执行。' : 'Commands are configured and run from the approved content.')
-                            : detailJob.action_type === 'inspection'
-                              ? (zh ? '使用平台内置巡检项。' : 'Uses built-in inspection checks.')
-                              : detailJob.action_type === 'backup'
-                                ? (zh ? '采集设备配置并进行版本比对。' : 'Collects device configuration and tracks versions.')
-                                : detailJob.action_type === 'bgp_neighbors'
-                                  ? (zh ? '仅采集 BGP 邻居状态，不采集完整 BGP 路由表。' : 'Collects BGP neighbor state only; it does not collect the full BGP RIB.')
-                                  : detailJob.action_type === 'ospf_neighbors'
-                                    ? (zh ? '仅采集 OSPF 邻居状态。' : 'Collects OSPF neighbor state only.')
-                                    : detailJob.action_type === 'arp_sweep'
-                                      ? (zh ? '系统内置分批 ARP 扫描。' : 'Built-in bounded ARP sweep.')
-                                      : detailJob.action_type === 'nsot'
-                                        ? (zh ? '全量 NSOT 定时采集已下线；资产 NSOT 页面仍支持手动更新。' : 'Full NSOT scheduling is retired. Manual refresh remains available on the Assets NSOT page.')
-                                : (zh ? '未关联脚本。' : 'No script is linked.')}
+                          ) : <span className="text-slate-400">—</span>}
+                        </dd>
                       </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <section className="rounded-2xl border border-cyan-100 bg-cyan-50/35 p-4" aria-label={zh ? '作业授权' : 'Job authorization'}>
-              <div className="mb-3 flex items-start gap-2">
-                <ShieldCheck size={15} className="mt-0.5 shrink-0 text-cyan-700" />
-                <div>
-                  <h4 className="text-xs font-bold text-slate-800">{zh ? '授权状态' : 'Authorization'}</h4>
-                  <p className="mt-0.5 text-[10px] text-slate-500">{zh ? '每次运行均受此授权版本、有效期和额度约束。' : 'Each run is bound to this authorization version, expiry, and limits.'}</p>
-                </div>
-              </div>
-              {jobDetailLoading && !authorizationGrant && <p role="status" className="text-xs text-slate-500">{zh ? '正在加载授权信息…' : 'Loading authorization…'}</p>}
-              {jobDetailError && <div role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-800"><span>{jobDetailForbidden ? (zh ? '当前账号无权查看作业授权详情。' : 'You do not have permission to view job authorization details.') : jobDetailError}</span><button type="button" onClick={() => setJobDetailRetry(value => value + 1)} className="font-semibold underline">{zh ? '重试' : 'Retry'}</button></div>}
-              {!jobDetailLoading && !jobDetailError && !authorizationGrant && <p role="status" className="rounded-lg bg-white/80 px-3 py-2 text-xs text-slate-500">{zh ? '服务端未返回该作业的授权信息。' : 'No authorization details were returned for this job.'}</p>}
-              {authorizationGrant && (
-                <div className="space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${grantStatusClass(authorizationGrant.status)}`}>{grantStatusText(authorizationGrant.status, zh)}</span>
-                    <span className="text-[10px] font-semibold text-slate-500">{zh ? '授权版本' : 'Grant version'} {authorizationGrant.version ?? '—'} · {zh ? '内容版本' : 'Content'} {String(authorizationGrant.template_version || '—').slice(0, 12)}</span>
-                  </div>
-                  <dl className="grid gap-2 text-[11px] sm:grid-cols-2">
-                    <div className="rounded-lg bg-white/85 px-3 py-2"><dt className="text-[10px] text-slate-500">{zh ? '有效期至' : 'Valid until'}</dt><dd className="mt-0.5 font-semibold text-slate-700">{formatRunTime(authorizationGrant.valid_until, zh)}</dd></div>
-                    <div className="rounded-lg bg-white/85 px-3 py-2"><dt className="text-[10px] text-slate-500">{zh ? '执行次数' : 'Runs used'}</dt><dd className="mt-0.5 font-semibold text-slate-700">{authorizationGrant.used_runs ?? 0} / {authorizationGrant.max_runs} · {zh ? `剩余 ${authorizationGrant.remaining_runs ?? '—'} 次` : `${authorizationGrant.remaining_runs ?? '—'} remaining`}</dd></div>
-                    <div className="rounded-lg bg-white/85 px-3 py-2"><dt className="text-[10px] text-slate-500">{zh ? '批准范围 / 目标上限' : 'Approved scope / target limit'}</dt><dd className="mt-0.5 break-words font-semibold text-slate-700">{describeScope(displayedJob.device_scope, displayedJob.device_filter, zh)} · {zh ? `最多 ${authorizationGrant.max_targets} 台` : `up to ${authorizationGrant.max_targets} targets`}</dd></div>
-                    <div className="rounded-lg bg-white/85 px-3 py-2"><dt className="text-[10px] text-slate-500">{zh ? '授权摘要哈希' : 'Manifest hash'}</dt><dd className="mt-0.5 break-all font-mono text-[9px] text-slate-600">{authorizationGrant.manifest_hash || '—'}</dd></div>
-                    <div className="rounded-lg bg-white/85 px-3 py-2"><dt className="text-[10px] text-slate-500">{zh ? '关联工单' : 'Linked ticket'}</dt><dd className="mt-0.5">{authorizationGrant.ticket_id ? <button type="button" onClick={() => openTicket(authorizationGrant.ticket_source_type, authorizationGrant.ticket_id)} className="inline-flex items-center gap-1 break-all text-left font-semibold text-cyan-800 hover:underline">{authorizationGrant.ticket_number || authorizationGrant.ticket_id}{authorizationGrant.ticket_title ? ` · ${authorizationGrant.ticket_title}` : ''}<ExternalLink size={10} className="shrink-0" /></button> : '—'}</dd></div>
-                    <div className="rounded-lg bg-white/85 px-3 py-2"><dt className="text-[10px] text-slate-500">{zh ? '关联变更单' : 'Linked change order'}</dt><dd className="mt-0.5">{authorizationGrant.change_order_id ? <button type="button" onClick={() => openChangeOrder(authorizationGrant.change_order_id)} className="inline-flex items-center gap-1 break-all text-left font-semibold text-cyan-800 hover:underline">{authorizationGrant.change_order_number || authorizationGrant.change_order_id}<ExternalLink size={10} className="shrink-0" /></button> : (zh ? '未关联' : 'Not linked')}</dd></div>
-                  </dl>
-                </div>
-              )}
-            </section>
-
-            <section className="rounded-2xl border border-slate-200 bg-white p-4" aria-label={zh ? '周期作业运行记录' : 'Scheduled job runs'}>
-              <div className="mb-3 flex items-start justify-between gap-3">
-                <div className="flex items-start gap-2">
-                  <Clock3 size={15} className="mt-0.5 shrink-0 text-cyan-700" />
-                  <div><h4 className="text-xs font-bold text-slate-800">{zh ? '运行记录' : 'Run history'}</h4><p className="mt-0.5 text-[10px] text-slate-500">{zh ? `共 ${runsTotal} 次；未知结果需人工核实，不会在此重试。` : `${runsTotal} runs. Unknown outcomes require manual review; this view does not retry jobs.`}</p></div>
-                </div>
-              </div>
-              {runsLoading && <p role="status" className="flex items-center gap-2 py-4 text-xs text-slate-500"><LoaderCircle size={14} className="animate-spin" />{zh ? '正在加载运行记录…' : 'Loading run history…'}</p>}
-              {!runsLoading && runsError && <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-800"><span>{runsForbidden ? (zh ? '当前账号无权查看运行记录。' : 'You do not have permission to view run history.') : runsError}</span><button type="button" onClick={() => setRunsRetry(value => value + 1)} className="font-semibold underline">{zh ? '重试' : 'Retry'}</button></div>}
-              {!runsLoading && !runsError && runs.length === 0 && <p role="status" className="rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-500">{zh ? '该作业暂无运行记录。' : 'No runs have been recorded for this job.'}</p>}
-              {!runsLoading && !runsError && runs.length > 0 && <ol className="space-y-2">
-                {runs.map(run => {
-                  const canResolve = run.allowed_actions?.includes('resolve') === true;
-                  const unknown = canResolve || run.status === 'unknown';
-                  return <li key={run.run_id} className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div className="min-w-0"><p className="break-all font-mono text-[10px] font-semibold text-slate-700">{run.run_id}</p><p className={`mt-1 inline-flex items-center gap-1 text-[10px] font-bold ${unknown ? 'text-amber-800' : run.status === 'succeeded' ? 'text-emerald-700' : ['failed', 'partial_failure'].includes(run.status) ? 'text-rose-700' : 'text-slate-600'}`}>{unknown ? <CircleAlert size={11} /> : run.status === 'succeeded' ? <CheckCircle2 size={11} /> : null}{runStatusText(run, zh)}</p></div>
-                      {run.authorization_version != null && <span className="rounded bg-white px-2 py-1 text-[9px] text-slate-500">{zh ? '授权版本' : 'Grant'} {run.authorization_version}</span>}
-                    </div>
-                    <dl className="mt-2 grid gap-x-4 gap-y-1 text-[10px] sm:grid-cols-2">
-                      <div><dt className="inline text-slate-500">{zh ? '计划：' : 'Scheduled: '}</dt><dd className="inline text-slate-700">{formatRunTime(run.scheduled_for, zh)}</dd></div>
-                      <div><dt className="inline text-slate-500">{zh ? '开始 / 结束：' : 'Started / finished: '}</dt><dd className="inline text-slate-700">{formatRunTime(run.started_at, zh)} / {formatRunTime(run.finished_at, zh)}</dd></div>
-                      <div><dt className="inline text-slate-500">{zh ? '目标 / 成功 / 失败：' : 'Targets / success / failure: '}</dt><dd className="inline text-slate-700">{run.target_count ?? '—'} / {run.success_count ?? '—'} / {run.failure_count ?? '—'}</dd></div>
-                      <div className="flex flex-wrap gap-x-2"><dt className="text-slate-500">{zh ? '关联：' : 'Linked: '}</dt><dd className="flex flex-wrap gap-x-2">{run.ticket_id ? <button type="button" onClick={() => openTicket(run.ticket_source_type, run.ticket_id)} className="font-semibold text-cyan-800 hover:underline">{run.ticket_number || run.ticket_id}</button> : null}{run.change_order_id ? <button type="button" onClick={() => openChangeOrder(run.change_order_id)} className="font-semibold text-cyan-800 hover:underline">{run.change_order_number || run.change_order_id}</button> : null}{!run.ticket_id && !run.change_order_id ? <span className="text-slate-700">—</span> : null}</dd></div>
+                      <div className="flex items-center justify-between gap-2 py-1 border-b border-slate-100 dark:border-white/5">
+                        <dt className="text-slate-400 shrink-0">{zh ? '关联变更单' : 'Change order'}</dt>
+                        <dd className="min-w-0 truncate">
+                          {authorizationGrant.change_order_id ? (
+                            <button type="button" onClick={() => openChangeOrder(authorizationGrant.change_order_id)} className="inline-flex items-center gap-1 font-semibold text-blue-600 hover:underline">
+                              {authorizationGrant.change_order_number || authorizationGrant.change_order_id}
+                              <ExternalLink size={10} className="shrink-0" />
+                            </button>
+                          ) : <span className="text-slate-400">{zh ? '未关联' : 'Not linked'}</span>}
+                        </dd>
+                      </div>
+                      <div className="sm:col-span-2 flex items-center justify-between gap-2 py-1">
+                        <dt className="text-slate-400 shrink-0">{zh ? '授权摘要哈希' : 'Manifest hash'}</dt>
+                        <dd className="font-mono text-[10px] text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded" title={manifestHash}>
+                          {shortHash}
+                        </dd>
+                      </div>
                     </dl>
-                    {run.summary && <p className="mt-2 whitespace-pre-wrap break-words text-[10px] text-slate-700">{run.summary}</p>}
-                    {run.error && <p className="mt-1 whitespace-pre-wrap break-words rounded-md bg-rose-50 px-2 py-1.5 text-[10px] text-rose-800">{run.error}</p>}
-                    {unknown && !canResolve && <p role="note" className="mt-2 text-[10px] text-slate-500">{zh ? '当前账号不能提交结果核实。' : 'Your account cannot resolve this run outcome.'}</p>}
-                    {canResolve && resolvingRunId !== run.run_id && <button type="button" onClick={() => { setResolvingRunId(run.run_id); setResolutionOutcome('succeeded'); setResolutionNote(''); setResolutionError(''); setResolutionForbidden(false); }} className="mt-2 min-h-8 rounded-lg border border-amber-300 bg-amber-50 px-3 text-[10px] font-bold text-amber-900 hover:bg-amber-100">{zh ? '人工核实结果' : 'Resolve outcome'}</button>}
-                    {canResolve && resolvingRunId === run.run_id && <div className="mt-3 space-y-2 border-t border-slate-200 pt-3">
-                      <label className="block text-[10px] font-semibold text-slate-600">{zh ? '核实结果' : 'Verified outcome'}<select aria-label={zh ? '核实结果' : 'Verified outcome'} value={resolutionOutcome} onChange={event => setResolutionOutcome(event.target.value as typeof resolutionOutcome)} className="mt-1 min-h-8 w-full rounded-lg border border-slate-200 bg-white px-2 text-[11px] font-normal text-slate-700"><option value="succeeded">{zh ? '成功' : 'Succeeded'}</option><option value="partial_failure">{zh ? '部分失败' : 'Partial failure'}</option><option value="failed">{zh ? '失败' : 'Failed'}</option></select></label>
-                      <label className="block text-[10px] font-semibold text-slate-600">{zh ? '核实说明' : 'Review note'}<textarea aria-label={zh ? '核实说明' : 'Review note'} required rows={2} value={resolutionNote} onChange={event => setResolutionNote(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-normal text-slate-700" /></label>
-                      {resolutionError && <p role="alert" className="text-[10px] text-rose-700">{resolutionForbidden ? (zh ? '当前账号无权核实此运行结果。' : 'You are not permitted to resolve this run.') : resolutionError}</p>}
-                      <div className="flex justify-end gap-2"><button type="button" onClick={() => { setResolvingRunId(''); setResolutionError(''); }} disabled={resolutionBusy} className="min-h-8 rounded-lg border border-slate-200 px-3 text-[10px] font-semibold text-slate-600 disabled:opacity-50">{zh ? '取消' : 'Cancel'}</button><button type="button" onClick={() => void submitResolution(run)} disabled={!resolutionNote.trim() || resolutionBusy} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-amber-700 px-3 text-[10px] font-bold text-white disabled:opacity-50">{resolutionBusy && <LoaderCircle size={11} className="animate-spin" />}{zh ? '保存核实结果' : 'Save verified outcome'}</button></div>
-                    </div>}
-                  </li>;
-                })}
-              </ol>}
-              {!runsLoading && !runsError && runsTotal > 0 && <div className="mt-3 border-t border-slate-100 pt-2"><Pagination currentPage={runsPage} totalItems={runsTotal} itemsPerPage={runsPageSize} onPageChange={setRunsPage} onItemsPerPageChange={size => { setRunsPageSize(size); setRunsPage(1); }} language={language} /></div>}
+                  </div>
+                )}
+              </div>
             </section>
 
-            {/* 4. Meta Info */}
-            <div className="pt-4 border-t border-black/[0.03] grid grid-cols-2 gap-y-4 text-[10px]">
+            {/* 3. Run History Card */}
+            <section className="rounded-xl border border-slate-200/80 dark:border-white/10 bg-white dark:bg-slate-900 overflow-hidden shadow-xs" aria-label={zh ? '周期作业运行记录' : 'Scheduled job runs'}>
+              <div className="px-4 py-3 border-b border-slate-100 dark:border-white/10 flex items-center justify-between gap-2 bg-slate-50/60 dark:bg-slate-800/40">
+                <div className="flex items-center gap-2">
+                  <Clock3 size={15} className="shrink-0 text-slate-500" />
+                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-100">{zh ? '运行记录' : 'Run history'}</h4>
+                  <span className="rounded-full bg-slate-200/70 dark:bg-slate-700 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:text-slate-300">
+                    {zh ? `共 ${runsTotal} 次` : `${runsTotal} runs`}
+                  </span>
+                </div>
+                <span className="text-[10px] text-slate-400">{zh ? '未知结果需人工核实' : 'Unknown outcomes require review'}</span>
+              </div>
+              <div className="p-4">
+                {runsLoading && <p role="status" className="flex items-center gap-2 py-4 text-xs text-slate-500"><LoaderCircle size={14} className="animate-spin" />{zh ? '正在加载运行记录…' : 'Loading run history…'}</p>}
+                {!runsLoading && runsError && <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-800"><span>{runsForbidden ? (zh ? '当前账号无权查看运行记录。' : 'You do not have permission to view run history.') : runsError}</span><button type="button" onClick={() => setRunsRetry(value => value + 1)} className="font-semibold underline">{zh ? '重试' : 'Retry'}</button></div>}
+                {!runsLoading && !runsError && runs.length === 0 && (
+                  <div role="status" className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/20 py-6 text-center">
+                    <Clock3 size={20} className="text-slate-300 mb-1.5" />
+                    <p className="text-xs font-medium text-slate-500">{zh ? '该作业暂无运行记录。' : 'No runs have been recorded for this job.'}</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">{zh ? '到达计划时间后将自动触发执行并记录结果' : 'Execution records will appear here once triggered'}</p>
+                  </div>
+                )}
+                {!runsLoading && !runsError && runs.length > 0 && <ol className="space-y-2">
+                  {runs.map(run => {
+                    const canResolve = run.allowed_actions?.includes('resolve') === true;
+                    const unknown = canResolve || run.status === 'unknown';
+                    return <li key={run.run_id} className="rounded-xl border border-slate-200/80 dark:border-white/10 bg-slate-50/60 dark:bg-slate-800/30 p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0"><p className="break-all font-mono text-[10px] font-semibold text-slate-700 dark:text-slate-200">{run.run_id}</p><p className={`mt-1 inline-flex items-center gap-1 text-[10px] font-bold ${unknown ? 'text-amber-800' : run.status === 'succeeded' ? 'text-emerald-700' : ['failed', 'partial_failure'].includes(run.status) ? 'text-rose-700' : 'text-slate-600'}`}>{unknown ? <CircleAlert size={11} /> : run.status === 'succeeded' ? <CheckCircle2 size={11} /> : null}{runStatusText(run, zh)}</p></div>
+                        {run.authorization_version != null && <span className="rounded bg-white dark:bg-slate-900 border border-slate-200/70 px-2 py-0.5 text-[9px] text-slate-500">{zh ? '授权版本' : 'Grant'} v{run.authorization_version}</span>}
+                      </div>
+                      <dl className="mt-2 grid gap-x-4 gap-y-1 text-[10px] sm:grid-cols-2">
+                        <div><dt className="inline text-slate-400">{zh ? '计划：' : 'Scheduled: '}</dt><dd className="inline text-slate-700 dark:text-slate-300">{formatRunTime(run.scheduled_for, zh)}</dd></div>
+                        <div><dt className="inline text-slate-400">{zh ? '开始 / 结束：' : 'Started / finished: '}</dt><dd className="inline text-slate-700 dark:text-slate-300">{formatRunTime(run.started_at, zh)} / {formatRunTime(run.finished_at, zh)}</dd></div>
+                        <div><dt className="inline text-slate-400">{zh ? '目标 / 成功 / 失败：' : 'Targets / success / failure: '}</dt><dd className="inline text-slate-700 dark:text-slate-300">{run.target_count ?? '—'} / {run.success_count ?? '—'} / {run.failure_count ?? '—'}</dd></div>
+                        <div className="flex flex-wrap gap-x-2"><dt className="text-slate-400">{zh ? '关联：' : 'Linked: '}</dt><dd className="flex flex-wrap gap-x-2">{run.ticket_id ? <button type="button" onClick={() => openTicket(run.ticket_source_type, run.ticket_id)} className="font-semibold text-blue-600 hover:underline">{run.ticket_number || run.ticket_id}</button> : null}{run.change_order_id ? <button type="button" onClick={() => openChangeOrder(run.change_order_id)} className="font-semibold text-blue-600 hover:underline">{run.change_order_number || run.change_order_id}</button> : null}{!run.ticket_id && !run.change_order_id ? <span className="text-slate-700">—</span> : null}</dd></div>
+                      </dl>
+                      {run.summary && <p className="mt-2 whitespace-pre-wrap break-words text-[10px] text-slate-700 dark:text-slate-300">{run.summary}</p>}
+                      {run.error && <p className="mt-1 whitespace-pre-wrap break-words rounded-md bg-rose-50 px-2 py-1.5 text-[10px] text-rose-800">{run.error}</p>}
+                      {unknown && !canResolve && <p role="note" className="mt-2 text-[10px] text-slate-500">{zh ? '当前账号不能提交结果核实。' : 'Your account cannot resolve this run outcome.'}</p>}
+                      {canResolve && resolvingRunId !== run.run_id && <button type="button" onClick={() => { setResolvingRunId(run.run_id); setResolutionOutcome('succeeded'); setResolutionNote(''); setResolutionError(''); setResolutionForbidden(false); }} className="mt-2 min-h-8 rounded-lg border border-amber-300 bg-amber-50 px-3 text-[10px] font-bold text-amber-900 hover:bg-amber-100">{zh ? '人工核实结果' : 'Resolve outcome'}</button>}
+                      {canResolve && resolvingRunId === run.run_id && <div className="mt-3 space-y-2 border-t border-slate-200 pt-3">
+                        <label className="block text-[10px] font-semibold text-slate-600">{zh ? '核实结果' : 'Verified outcome'}<select aria-label={zh ? '核实结果' : 'Verified outcome'} value={resolutionOutcome} onChange={event => setResolutionOutcome(event.target.value as typeof resolutionOutcome)} className="mt-1 min-h-8 w-full rounded-lg border border-slate-200 bg-white px-2 text-[11px] font-normal text-slate-700"><option value="succeeded">{zh ? '成功' : 'Succeeded'}</option><option value="partial_failure">{zh ? '部分失败' : 'Partial failure'}</option><option value="failed">{zh ? '失败' : 'Failed'}</option></select></label>
+                        <label className="block text-[10px] font-semibold text-slate-600">{zh ? '核实说明' : 'Review note'}<textarea aria-label={zh ? '核实说明' : 'Review note'} required rows={2} value={resolutionNote} onChange={event => setResolutionNote(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-normal text-slate-700" /></label>
+                        {resolutionError && <p role="alert" className="text-[10px] text-rose-700">{resolutionForbidden ? (zh ? '当前账号无权核实此运行结果。' : 'You are not permitted to resolve this run.') : resolutionError}</p>}
+                        <div className="flex justify-end gap-2"><button type="button" onClick={() => { setResolvingRunId(''); setResolutionError(''); }} disabled={resolutionBusy} className="min-h-8 rounded-lg border border-slate-200 px-3 text-[10px] font-semibold text-slate-600 disabled:opacity-50">{zh ? '取消' : 'Cancel'}</button><button type="button" onClick={() => void submitResolution(run)} disabled={!resolutionNote.trim() || resolutionBusy} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-amber-700 px-3 text-[10px] font-bold text-white disabled:opacity-50">{resolutionBusy && <LoaderCircle size={11} className="animate-spin" />}{zh ? '保存核实结果' : 'Save verified outcome'}</button></div>
+                      </div>}
+                    </li>;
+                  })}
+                </ol>}
+                {!runsLoading && !runsError && runsTotal > 0 && <div className="mt-3 border-t border-slate-100 pt-2"><Pagination currentPage={runsPage} totalItems={runsTotal} itemsPerPage={runsPageSize} onPageChange={setRunsPage} onItemsPerPageChange={size => { setRunsPageSize(size); setRunsPage(1); }} language={language} /></div>}
+              </div>
+            </section>
+
+            {/* 4. Compact Audit Meta Bar */}
+            <div className="rounded-xl border border-slate-200/70 dark:border-white/10 bg-white dark:bg-slate-900 px-4 py-3 grid grid-cols-1 sm:grid-cols-3 gap-3 text-[11px]">
               <div>
-                <p className="text-black/30 mb-1">{zh ? '状态' : 'Status'}</p>
-                <span className={`px-2 py-0.5 rounded-full font-bold ${detailJob.enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
-                  {detailJob.enabled ? (zh ? '已启用' : 'Active') : (zh ? '已停用' : 'Disabled')}
-                </span>
+                <p className="text-[10px] text-slate-400">{zh ? '审批人' : 'Approver'}</p>
+                <p className="mt-0.5 font-semibold text-slate-700 dark:text-slate-200">{detailJob.approved_by || (zh ? '系统自核' : 'Auto')}</p>
               </div>
               <div>
-                <p className="text-black/30 mb-1">{zh ? '配置原因' : 'Reason'}</p>
-                <p className="text-slate-600 font-medium italic truncate">{detailJob.config_reason || '\u2014'}</p>
+                <p className="text-[10px] text-slate-400">{zh ? '创建者' : 'Creator'}</p>
+                <p className="mt-0.5 font-semibold text-slate-700 dark:text-slate-200">{detailJob.created_by} · {new Date(detailJob.created_at).toLocaleDateString()}</p>
               </div>
-              <div>
-                <p className="text-black/30 mb-1">{zh ? '审批人' : 'Approver'}</p>
-                <p className="text-slate-600 font-bold">{detailJob.approved_by || (zh ? '系统自核' : 'Auto')}</p>
-              </div>
-              <div>
-                <p className="text-black/30 mb-1">{zh ? '创建者' : 'Creator'}</p>
-                <p className="text-slate-600 font-bold">{detailJob.created_by} · {new Date(detailJob.created_at).toLocaleDateString()}</p>
+              <div className="min-w-0">
+                <p className="text-[10px] text-slate-400">{zh ? '配置原因' : 'Reason'}</p>
+                <p className="mt-0.5 font-medium text-slate-600 dark:text-slate-300 truncate" title={detailJob.config_reason || ''}>{detailJob.config_reason || '—'}</p>
               </div>
             </div>
           </div>
 
           {/* Footer */}
-          <div className="px-6 py-4 bg-slate-50/80 border-t border-black/[0.03] flex items-center justify-end gap-3">
+          <div className="px-6 py-3.5 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-white/10 flex items-center justify-end gap-2.5">
             <button
               onClick={onClose}
-              className="px-6 py-2 rounded-xl border border-black/10 text-xs font-bold text-black/50 hover:bg-black/5 transition-all"
+              className="px-5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
             >
               {zh ? '关闭' : 'Close'}
             </button>
@@ -493,7 +569,7 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
                   onClose();
                   openEditModal(detailJob);
                 }}
-                className="px-6 py-2 rounded-xl bg-[#164e63] text-white text-xs font-bold shadow-lg shadow-cyan-900/10 hover:bg-[#0891b2] transition-all"
+                className="px-5 py-2 rounded-xl bg-blue-600 text-white text-xs font-semibold shadow-sm shadow-blue-600/20 hover:bg-blue-700 transition-colors"
               >
                 {zh ? '编辑该作业' : 'Edit Job'}
               </button>

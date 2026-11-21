@@ -1,0 +1,212 @@
+task_id: CAT-017
+priority: P2
+owner: NET+AI
+milestone: M2
+status: reviewed_sample_pending_source_allowlist_and_catalog_migration
+authority:
+  vendor_scope: GOV-008
+  base_official_allowlist: CAT-001
+  source_taxonomy: CAT-002
+  product_identity_contract: DB-006
+  os_software_contract: DB-007
+  network_driver_contract: netops-network-drivers
+  source_authority: Ruijie Networks
+
+vendor:
+  vendor_id: ruijie
+  display_name: Ruijie
+  status: active
+  catalog_scope: tenant-default-reviewed-seed
+
+product_family:
+  code: rg_s6220
+  display_name: Ruijie RG-S6220
+  status: active
+  description: Ruijie RG-S6220 data-center and cloud-computing switch family.
+  source_kind: product_page
+  canonical_source:
+    source_ref: cat017:ruijie:cn:s6220-family
+    url: https://www.ruijie.com.cn/fw/wd-cp-6220/
+  product_series:
+    - code: s6220
+      display_name: RG-S6220
+      status: active
+      model_code_rule: '^RG-S6220-(?:48XS4QXS-L|48XT4QXS|48XS6QXS-H)$'
+      product_identity_is_orthogonal_to:
+        - cli_platform
+        - connection_driver
+        - software_train
+        - software_version
+      model_samples:
+        - model_code: RG-S6220-48XS4QXS-L
+          display_name: Ruijie RG-S6220-48XS4QXS-L
+          status: draft
+          review_status: sample_pending_source_registry_review
+          source_refs:
+            - cat017:ruijie:cn:s6220-family
+        - model_code: RG-S6220-48XT4QXS
+          display_name: Ruijie RG-S6220-48XT4QXS
+          status: draft
+          review_status: sample_pending_source_registry_review
+          source_refs:
+            - cat017:ruijie:cn:s6220-family
+        - model_code: RG-S6220-48XS6QXS-H
+          display_name: Ruijie RG-S6220-48XS6QXS-H
+          status: draft
+          review_status: sample_pending_source_registry_review
+          source_refs:
+            - cat017:ruijie:cn:s6220-model
+
+software_scope:
+  primary_version: RGOS 11.0(5)B9P59
+  compatibility_version: RGOS 11.0(5)B3P2
+  software_versions: [RGOS 11.0(5)B9P59, RGOS 11.0(5)B9P27, RGOS 11.0(5)B3P2]
+  os_family: RGOS
+  software_train: RGOS 11.0(5)
+  rule: >-
+    An RGOS release narrows document applicability but never becomes a
+    product family, series, model, vendor, or network-driver parent.
+  unknown_version: quarantine_and_require_review
+
+os_family:
+  code: rgos
+  display_name: Ruijie RGOS
+  status: draft
+  version_scheme: ruijie_rgos_release
+  description: Ruijie RGOS operating-system family; generation and release train remain separate from product identity.
+  generations:
+    - code: rgos11
+      display_name: RGOS 11
+      status: draft
+      generation_order: 11
+      explicit_platform_mappings:
+        - os_generation: rgos11
+          cli_platform: ruijie_rgos
+          connection_driver: ruijie_os
+          parser_platform: ruijie_rgos
+          driver_authority: false
+      release_trains:
+        - code: rgos_11_0_5
+          display_name: RGOS 11.0(5)
+          status: draft
+          version_pattern: '^RGOS 11\.0\(5\)(?:B[0-9]+)(?:P[0-9]+)?(?:_SP[0-9]+)?$'
+          software_versions:
+            - original_version_string: RGOS 11.0(5)B9P59
+              normalized_version: rgos 11.0(5)b9p59
+              sort_key: [11, 0, 5, 9, 59]
+              status: draft
+              applicability: primary_CAT017_s6220_scope
+              source_ref: cat017:ruijie:cn:s6220-b9p59
+            - original_version_string: RGOS 11.0(5)B9P27
+              normalized_version: rgos 11.0(5)b9p27
+              sort_key: [11, 0, 5, 9, 27]
+              status: draft
+              applicability: reviewed_candidate_CAT017_s6220_scope
+              source_ref: cat017:ruijie:cn:s6220-b9p59
+            - original_version_string: RGOS 11.0(5)B3P2
+              normalized_version: rgos 11.0(5)b3p2
+              sort_key: [11, 0, 5, 3, 2]
+              status: draft
+              applicability: compatibility_CAT017_s6220_scope
+              source_ref: cat017:ruijie:cn:s6220-b3p2
+
+platform_binding_advisory:
+  platform_code: ruijie_rgos
+  connection_driver: ruijie_os
+  parser_platform: ruijie_rgos
+  driver_authority: false
+  execution_write_authority: false
+  parser_boundary: >-
+    ruijie_rgos is the canonical catalog/TextFSM namespace; ruijie_os is the
+    Netmiko connection driver. Model or version strings cannot select a driver
+    or grant a write command.
+  forbidden_inference: [vendor_from_model, driver_from_alias, parser_from_version]
+
+identity_rules:
+  canonical_code_case: preserve_model_code_case
+  vendor_resolution: explicit_ruijie_only
+  family_resolution: exact_rg_s6220
+  series_resolution:
+    exact_and_reviewed_aliases: [RG-S6220, S6220, RG S6220]
+    result: series_candidate_only
+  model_resolution:
+    full_model_code_required_for_unique_identity: true
+    partial_prefix_result: candidate_list_and_clarification
+    unknown_model_result: UNKNOWN_and_no_vendor_or_driver_guess
+  ambiguity:
+    no_first_match_fallback: true
+    return_candidates: true
+    require_manual_clarification: true
+
+version_rules:
+  original_version_string_immutable: true
+  normalized_version_is_derived: true
+  normalization: trim_nfkc_preserve_vendor_tokens_and_lowercase_for_lookup
+  ordering: rgos_release_sort_key_only
+  exact_lookup_requires: active_reviewed_version_row
+  range_values: never_exact_version_identity
+  malformed_or_wrong_scheme: reject_or_pending_review
+  unknown_version: UNKNOWN_and_require_source_or_clarification
+
+source_allowlist:
+  status: pending_CAT001_additive_extension
+  base_contract: CAT-001
+  reason: >-
+    CAT-001 deliberately freezes the Huawei/Cisco first batch. CAT-017 keeps
+    Ruijie evidence as a reviewed sample and does not widen live collection
+    until an additive Ruijie allowlist review is recorded.
+  official_hosts:
+    - host: www.ruijie.com.cn
+      path_prefixes:
+        - /fw/wd-cp-6220/
+        - /cp/jh-shjzhx-sjzxjr/s6248xsh/
+        - /fw/wd/86075/
+        - /fw/wd/88538/
+  collection_activation: forbidden_until_CAT001_CAT003_CAT004_review
+
+source_refs:
+  - source_ref: cat017:ruijie:cn:s6220-family
+    source_type: product_page
+    url: https://www.ruijie.com.cn/fw/wd-cp-6220/
+    path_scope: /fw/wd-cp-6220/
+  - source_ref: cat017:ruijie:cn:s6220-model
+    source_type: product_page
+    url: https://www.ruijie.com.cn/cp/jh-shjzhx-sjzxjr/s6248xsh/
+    path_scope: /cp/jh-shjzhx-sjzxjr/s6248xsh/
+  - source_ref: cat017:ruijie:cn:s6220-b9p59
+    source_type: command_reference
+    url: https://www.ruijie.com.cn/fw/wd/86075/
+    path_scope: /fw/wd/86075/
+  - source_ref: cat017:ruijie:cn:s6220-b3p2
+    source_type: command_reference
+    url: https://www.ruijie.com.cn/fw/wd/88538/
+    path_scope: /fw/wd/88538/
+
+unknown_and_legacy_policy:
+  preserved_v1_fields: [ai_document.os_family, ai_document.os_generation, ai_document.software_train, ai_document.software_release, devices.version]
+  never_rewrite_original: true
+  out_of_scope_values: [RGOS10, RGOS12, RGOS 10.4, RGOS 12.3, RGOS_UNKNOWN]
+  behavior: retain_original_return_UNKNOWN_and_require_review
+
+activation_gate:
+  catalog_rows: reviewed_seed_only_until_DB006_migration
+  model_status: draft_until_source_allowlist_and_exact_sku_review
+  version_status: draft_until_source_record_content_hash_and_version_review
+  required_before_active:
+    - additive_Ruijie_source_allowlist_review
+    - tenant_scoped_vendor_and_parent_ids
+    - exact_model_code_evidence
+    - duplicate_and_ambiguous_model_report
+    - CAT-009_alias_conflict_result
+    - CAT-011_manual_resolution_state
+    - explicit_platform_mapping_review
+  forbidden:
+    - infer_vendor_from_model_string
+    - infer_driver_from_alias
+    - infer_parser_namespace_from_version
+    - rewrite_v1_ai_document_metadata
+
+rollback:
+  runtime: disable_cat017_catalog_reads_and_use_v1_advisory_resolver
+  data: retain_reviewed_seed_artifact_and_all_v1_metadata
+  production_ddl: none_in_CAT-017

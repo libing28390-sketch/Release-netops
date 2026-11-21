@@ -1,0 +1,28 @@
+{
+  "task_id": "REL-010",
+  "status": "PASS",
+  "reason_codes": [],
+  "checks": {
+    "contract_postgresql_authority": true,
+    "global_and_tenant_kill_switch_api": true,
+    "gateway_stable_block_code": true,
+    "provider_disable_api": true,
+    "v2_flags_declared_disabled": true,
+    "v2_v1_preservation": true,
+    "reindex_lease_and_checkpoint": true,
+    "reindex_tenant_scope": true,
+    "rollback_and_no_destructive_sql": true,
+    "redaction": true,
+    "postgres_only_acceptance": true,
+    "production_write_free_gate": true
+  },
+  "postgres_control_probe": {
+    "status": "NOT_RUN",
+    "reason": "static_gate_only"
+  },
+  "production_database_write": false,
+  "reindex_executed_by_gate": false,
+  "external_provider_request": false,
+  "network_device_write": false,
+  "sqlite": "forbidden_for_acceptance"
+}

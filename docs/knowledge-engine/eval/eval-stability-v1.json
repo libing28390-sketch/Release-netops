@@ -1,0 +1,44 @@
+{
+  "status": "PASS",
+  "task_id": "EVAL-019",
+  "database": "PostgreSQL",
+  "sqlite": "forbidden",
+  "duration_seconds": 2.842,
+  "bounded_soak": true,
+  "import": {
+    "cycles": 100,
+    "completed": 100,
+    "recovered_failures": 10,
+    "terminal_failures": 0,
+    "duplicate_idempotency": 0
+  },
+  "reindex": {
+    "rows": 1000,
+    "batch_size": 50,
+    "batches": 20,
+    "recovered_batches": 4,
+    "completed": 1000,
+    "max_checkpoint": 1000,
+    "retry_rows": 200,
+    "production_database_write": false
+  },
+  "sse": {
+    "cycles": 100,
+    "emitted_events": 400,
+    "replayed_events": 200,
+    "duplicate_events": 0,
+    "out_of_order_streams": 0
+  },
+  "provider": {
+    "cycles": 100,
+    "successes": 100,
+    "transient_failures_injected": 4,
+    "provider_attempts": 104,
+    "circuit_open_after_recovery": false,
+    "external_provider_request": false
+  },
+  "external_calls": false,
+  "device_write_commands": false,
+  "production_database_write": false,
+  "rollback": "temporary_queue_transaction_rollback_and_connection_close"
+}

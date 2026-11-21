@@ -1,0 +1,78 @@
+task_id: EVAL-017
+title: Copilot、Provider、Model、Knowledge、Security 浏览器关键路径测试
+priority: P1
+milestone: M2
+authority: PostgreSQL
+database_policy:
+  persistence_authority: PostgreSQL
+  sqlite: forbidden
+  frontend_component_tests_database: none
+  production_database_write: false
+scope:
+  browser_surfaces:
+    - copilot
+    - providers
+    - models_and_routes
+    - knowledge_management
+    - security_gateway
+  required_states:
+    - loading
+    - success
+    - empty
+    - error
+    - permission_boundary
+    - narrow_layout
+  visible_paths:
+    - /ai/center
+    - /ai/providers
+    - /ai/models
+    - /ai/knowledge
+    - /ai/security
+automation:
+  runner: npm.cmd run test:frontend -- --run
+  environment: jsdom
+  browser_auth: user_session_required_for_live_visible_check
+  live_browser_blocker_policy: browser authentication is tracked separately and never converts automated coverage into a false PASS
+  no_sqlite_process: true
+coverage:
+  copilot:
+    tests:
+      - src/pages/ai/Copilot/keypaths.test.tsx
+      - src/pages/ai/Copilot/progress.test.ts
+      - src/api/ai.test.ts
+    assertions: model switching, context capture, send action, SSE event versions, inspector actions
+  providers:
+    tests:
+      - src/pages/ai/Providers/ProviderManagementTab.test.tsx
+      - src/api/http.test.ts
+    assertions: masked secret, gateway probe result, add flow, empty state, recoverable error
+  models:
+    tests:
+      - src/pages/ai/Models/ModelManagementTab.test.tsx
+    assertions: provider/model mapping, default model, scene route switching, add flow, empty state
+  knowledge:
+    tests:
+      - src/pages/ai/Knowledge/IngestionJobsPanel.test.tsx
+      - src/pages/ai/Knowledge/KnowledgeAdminResponsive.test.tsx
+      - src/pages/ai/Knowledge/RagEvaluationPanel.test.tsx
+      - src/pages/ai/Knowledge/RetrievalTracePanel.test.tsx
+    assertions: pagination, retry, safe error, PostgreSQL regression presentation, redacted trace, responsive table
+  security:
+    tests:
+      - src/pages/ai/Security/SecurityPolicyTab.test.tsx
+    assertions: fail-closed posture, outlet enable confirmation, dry-run without external call, safe error
+  routing:
+    tests:
+      - src/utils/routeContext.test.ts
+    assertions: provider and security routes resolve to the correct active tab
+quality_gates:
+  - focused frontend tests pass
+  - npm run lint passes
+  - npm run build passes
+  - no secret or raw payload rendered by tested paths
+  - PostgreSQL V1 baseline remains passing
+rollback:
+  code: revert the EVAL-017 test/contract/evidence commit; no production DDL
+  data: no production database writes; PostgreSQL baseline uses transaction rollback
+known_limitations:
+  - live browser verification requires an authenticated user session and is reported separately when unavailable

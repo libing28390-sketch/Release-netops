@@ -1,0 +1,30 @@
+{
+  "status": "PASS",
+  "annotation_set_id": "nexora-kb-eval-golden-v1-20260817",
+  "parent_dataset_id": "nexora-kb-eval-v1-20260817",
+  "annotation_count": 12,
+  "citation_count": 12,
+  "vendor_intent_counts": {
+    "Cisco:interface": 1,
+    "Cisco:ntp": 1,
+    "Cisco:ospf": 1,
+    "Cisco:route": 1,
+    "Cisco:ssh": 1,
+    "Cisco:vlan": 1,
+    "Huawei:interface": 1,
+    "Huawei:ntp": 1,
+    "Huawei:ospf": 1,
+    "Huawei:route": 1,
+    "Huawei:ssh": 1,
+    "Huawei:vlan": 1
+  },
+  "review_status_counts": {
+    "frozen": 12
+  },
+  "dataset_sha256": "132f36c7b2b0534372b44907284c036f751e4a4b21c8370f03ef7d51212261e9",
+  "annotation_sha256": "4e84c4fddf745a137bae520eb881139c1c8eee8b86f1007b50411647fc883716",
+  "database": "none",
+  "sqlite": "not_used",
+  "external_network": "not_used",
+  "secrets": false
+}

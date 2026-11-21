@@ -1,0 +1,42 @@
+task_id: OBS-001
+title: Retrieval observation spine
+status: verified
+contract_version: nxa.retrieval.observation.v1
+authority:
+  trace_store: backend/ai/services/retrieval_trace_store.py
+  producer: backend/ai/services/assistant.py
+  storage: bounded in-process read model until DB-012 physical projections are release-gated
+recorded_at_request_boundary:
+  raw_query:
+    captured: true
+    retention: request_scope_only
+    persisted_fields: [sha256, length]
+    body: forbidden_by_DB-012_and_RET-001
+  normalized_query:
+    text: bounded and normalizer-redacted
+    hash: sha256
+  entities: allowlisted scalar vendor/product/os/version/topic/intent fields
+  filters: server-owned retrieval filter allowlist; tenant identity is not copied into user fields
+  candidates: bounded ranked candidate projections with opaque candidate hashes
+  scores: bounded lexical/vector/metadata/trust/version/total score projections
+  final_chunks: bounded chunk hashes, context counts and relevance scores; no body or raw ids
+projection:
+  max_candidates: 100
+  max_final_chunks: 50
+  max_citations: 20
+  query_hash: sha256_compatibility_projection
+  tenant_scope: strict server-owned tenant
+privacy:
+  - raw query body is observed only during request processing and is never persisted/exported
+  - normalized query is produced by RET-001 redaction rules and bounded before projection
+  - candidate/chunk identifiers are hashed; document body, URL, SQL, credentials and actor username are absent
+  - cross-tenant trace lookup returns not-found
+compatibility:
+  - existing KUI-017 list/detail fields remain available
+  - existing query_hash and redaction flags remain unchanged
+  - no PostgreSQL DDL or V1 table mutation
+verification:
+  tests:
+    - backend/tests/ai/test_obs001_retrieval_observation.py
+    - backend/tests/catalog/test_kui_017_retrieval_trace.py
+  result: PASS

@@ -218,7 +218,11 @@ describe('ScheduledJobs user row actions', () => {
     expect(await screen.findByRole('heading', { name: '删除安全校验与工单授权' })).toBeTruthy();
     await user.click(screen.getByRole('button', { name: '取消' }));
 
-    const writeRequests = fetchMock.mock.calls.filter(([, init]) => ['POST', 'PUT', 'DELETE'].includes(String((init as RequestInit | undefined)?.method || 'GET').toUpperCase()));
+    const writeRequests = fetchMock.mock.calls.filter(
+      ([input, init]) =>
+        !String(input).includes('/cron-preview')
+        && ['POST', 'PUT', 'DELETE'].includes(String((init as RequestInit | undefined)?.method || 'GET').toUpperCase()),
+    );
     expect(writeRequests).toHaveLength(0);
   }, 20_000);
 
@@ -230,7 +234,11 @@ describe('ScheduledJobs user row actions', () => {
     expect(await screen.findByRole('heading', { name: '启用作业审批' })).toBeTruthy();
     await user.click(screen.getByRole('button', { name: '取消' }));
 
-    const writeRequests = fetchMock.mock.calls.filter(([, init]) => ['POST', 'PUT', 'DELETE'].includes(String((init as RequestInit | undefined)?.method || 'GET').toUpperCase()));
+    const writeRequests = fetchMock.mock.calls.filter(
+      ([input, init]) =>
+        !String(input).includes('/cron-preview')
+        && ['POST', 'PUT', 'DELETE'].includes(String((init as RequestInit | undefined)?.method || 'GET').toUpperCase()),
+    );
     expect(writeRequests).toHaveLength(0);
   });
 });

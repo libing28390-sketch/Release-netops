@@ -117,6 +117,204 @@ def list_device_routing_contexts(
         conn.close()
 
 
+def _table_exists(conn, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema = current_schema() AND table_name = ?",
+        (table_name,),
+    ).fetchone()
+    return bool(row)
+
+
+def list_device_routing_context_candidates(
+    *,
+    device_id: str,
+    security_tenant_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Aggregate discovered routing contexts from latest successful snapshots for a device.
+
+    Combines current ARP/ND endpoint observations and CMDB CLI interface-address
+    snapshots, then joins against stored ``ipam_device_routing_contexts`` so an
+    operator only needs to pick a target address space to confirm ownership.
+    Unknown contexts are returned explicitly with ``can_confirm=False`` so they
+    are never coerced into Global.
+    """
+    normalized_device_id = str(device_id or '').strip()
+    if not normalized_device_id:
+        return []
+
+    conn = get_db_connection()
+    try:
+        device_row = conn.execute(
+            """SELECT id, hostname,
+                      COALESCE(NULLIF(btrim(tenant_id), ''), 'tenant-default') AS tenant_id,
+                      site_id
+                 FROM devices
+                WHERE id = ?""",
+            (normalized_device_id,),
+        ).fetchone()
+        if not device_row:
+            return []
+        device_tenant = str(device_row['tenant_id'] or _DEFAULT_TENANT_ID)
+        if security_tenant_id is not None and device_tenant != _tenant_key(security_tenant_id):
+            return []
+
+        existing_rows = conn.execute(
+            _ROUTING_CONTEXT_SELECT + ' WHERE context.device_id = ?',
+            (normalized_device_id,),
+        ).fetchall()
+        mappings_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for row in existing_rows:
+            item = dict(row)
+            key = (
+                str(item.get('context_source') or '').strip().lower(),
+                str(item.get('context_type') or '').strip().lower(),
+                str(item.get('local_context_key') or '').strip(),
+            )
+            mappings_by_key[key] = item
+
+        buckets: dict[tuple[str, str, str], dict[str, Any]] = {}
+
+        def _merge_observation(
+            *,
+            context_source: str,
+            context_type: str,
+            local_context_key: str,
+            local_context_name: str,
+            domain: str,
+            count: int,
+            last_observed_at: Any,
+            coverage_status: str = 'complete',
+        ) -> None:
+            src = str(context_source or '').strip().lower()
+            ctype = str(context_type or '').strip().lower() or 'unknown'
+            ckey = str(local_context_key or '').strip()
+            cname = str(local_context_name or '').strip()
+            if src not in {'cli', 'snmp'}:
+                return
+            ts = str(last_observed_at) if last_observed_at else ''
+            bucket_key = (src, ctype, ckey)
+            bucket = buckets.get(bucket_key)
+            if not bucket:
+                bucket = {
+                    'device_id': normalized_device_id,
+                    'device_name': str(device_row['hostname'] or normalized_device_id),
+                    'context_source': src,
+                    'context_type': ctype,
+                    'local_context_key': ckey,
+                    'local_context_name': cname,
+                    'sources': set(),
+                    'observation_count': 0,
+                    'last_observed_at': ts or None,
+                    'coverage_status': coverage_status or 'complete',
+                }
+                buckets[bucket_key] = bucket
+            bucket['sources'].add(domain)
+            bucket['observation_count'] += int(count or 0)
+            if cname and not bucket['local_context_name']:
+                bucket['local_context_name'] = cname
+            if ts and (not bucket['last_observed_at'] or ts > str(bucket['last_observed_at'])):
+                bucket['last_observed_at'] = ts
+            if coverage_status and coverage_status != 'complete':
+                bucket['coverage_status'] = coverage_status
+
+        if _table_exists(conn, 'ipam_current_endpoint_observations') and _table_exists(conn, 'ipam_endpoint_collection_states'):
+            arp_rows = conn.execute(
+                """SELECT obs.observation_source, obs.context_source, obs.context_type,
+                          obs.local_context_key,
+                          MAX(obs.local_context_name) AS local_context_name,
+                          COUNT(*) AS obs_count,
+                          MAX(obs.observed_at)::text AS last_observed_at,
+                          MAX(state.latest_status) AS latest_status
+                     FROM ipam_current_endpoint_observations obs
+                     JOIN ipam_endpoint_collection_states state
+                       ON state.device_id = obs.source_device_id
+                      AND state.observation_source = obs.observation_source
+                      AND state.context_source = obs.context_source
+                      AND state.context_type = obs.context_type
+                      AND state.local_context_key = obs.local_context_key
+                      AND state.last_success_generation = obs.generation
+                    WHERE obs.source_device_id = ?
+                    GROUP BY obs.observation_source, obs.context_source, obs.context_type, obs.local_context_key""",
+                (normalized_device_id,),
+            ).fetchall()
+            for row in arp_rows:
+                _merge_observation(
+                    context_source=row['context_source'],
+                    context_type=row['context_type'],
+                    local_context_key=row['local_context_key'],
+                    local_context_name=row['local_context_name'],
+                    domain=str(row['observation_source'] or 'arp'),
+                    count=int(row['obs_count'] or 0),
+                    last_observed_at=row['last_observed_at'],
+                    coverage_status=str(row['latest_status'] or 'complete'),
+                )
+
+        if _table_exists(conn, 'cmdb_device_interface_address_observations') and _table_exists(conn, 'cmdb_collection_snapshots'):
+            iface_rows = conn.execute(
+                """SELECT obs.context_source, obs.context_type, obs.local_context_key,
+                          MAX(obs.local_context_name) AS local_context_name,
+                          COUNT(*) AS obs_count,
+                          MAX(obs.observed_at)::text AS last_observed_at
+                     FROM cmdb_device_interface_address_observations obs
+                     JOIN cmdb_collection_snapshots snap
+                       ON snap.device_id = obs.device_id
+                      AND snap.domain = 'interface_inventory'
+                      AND snap.successful_generation = obs.generation
+                    WHERE obs.device_id = ?
+                    GROUP BY obs.context_source, obs.context_type, obs.local_context_key""",
+                (normalized_device_id,),
+            ).fetchall()
+            for row in iface_rows:
+                _merge_observation(
+                    context_source=row['context_source'],
+                    context_type=row['context_type'],
+                    local_context_key=row['local_context_key'],
+                    local_context_name=row['local_context_name'],
+                    domain='interface_inventory',
+                    count=int(row['obs_count'] or 0),
+                    last_observed_at=row['last_observed_at'],
+                    coverage_status='complete',
+                )
+
+        candidates: list[dict[str, Any]] = []
+        for bucket_key, bucket in sorted(buckets.items()):
+            ctype = bucket['context_type']
+            ckey = bucket['local_context_key']
+            can_confirm = ctype in {'global', 'vrf'} and bool(ckey)
+            existing = mappings_by_key.get(bucket_key)
+            if existing:
+                mapping_status = 'mapped' if str(existing.get('status') or '') == 'active' else 'disabled'
+            elif can_confirm:
+                mapping_status = 'pending'
+            else:
+                mapping_status = 'unknown_context'
+            candidates.append({
+                'device_id': bucket['device_id'],
+                'device_name': bucket['device_name'],
+                'context_source': bucket['context_source'],
+                'context_type': ctype,
+                'local_context_key': ckey,
+                'local_context_name': bucket['local_context_name'] or (
+                    '默认路由表' if ctype == 'global' else ckey
+                ),
+                'sources': sorted(bucket['sources']),
+                'observation_count': bucket['observation_count'],
+                'last_observed_at': bucket['last_observed_at'],
+                'coverage_status': bucket['coverage_status'],
+                'can_confirm': can_confirm,
+                'mapping_status': mapping_status,
+                'mapping_id': str(existing['id']) if existing else None,
+                'mapping_revision': int(existing['revision']) if existing else None,
+                'address_space_id': str(existing['address_space_id']) if existing else None,
+                'address_space_name': str(existing['address_space_name']) if existing else None,
+                'address_space_kind': str(existing['address_space_kind']) if existing else None,
+            })
+        return candidates
+    finally:
+        conn.close()
+
+
 def _locked_device(conn, device_id: str) -> dict[str, Any] | None:
     row = conn.execute(
         """SELECT id, hostname, COALESCE(NULLIF(btrim(tenant_id), ''), 'tenant-default') AS tenant_id,

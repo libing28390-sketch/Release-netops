@@ -1,0 +1,58 @@
+task_id: OBS-005
+title: Provider operational metrics
+status: verified
+contract_version: nxa.provider.metrics.v1
+authority:
+  metrics: backend/ai/services/metrics.py
+  limits: backend/ai/gateway/limits.py
+  gateway: backend/ai/gateway/llm_gateway.py
+  durable_usage: backend/ai/api/usage.py
+  api: backend/ai/api/usage.py
+dimensions:
+  provider_key: provider_id:model_id
+  bounded: true
+  payloads: forbidden
+metrics:
+  provider:
+    - requests
+    - success
+    - errors
+    - error_rate
+    - avg_latency_ms
+    - p95_latency_ms
+    - input_tokens
+    - output_tokens
+    - estimated_cost_usd
+  limits:
+    - provider_rate_limit
+    - concurrency_timeout
+    - circuit_open
+    - quota
+  fallback:
+    - started
+    - success
+    - error
+  durable_usage:
+    - daily_requests
+    - success_count
+    - error_count
+    - avg_latency
+    - estimated_cost
+security:
+  low_cardinality: true
+  no_prompt_or_provider_body: true
+  error_codes_only: true
+  cost_is_estimated: true
+compatibility:
+  - existing /api/ai/metrics requests retain prior fields
+  - existing /api/ai/usage/summary provider breakdown remains available
+  - legacy ai_usage_daily tables without additive success/error columns use a read-only fallback query
+  - no migration or production DDL
+verification:
+  tests:
+    - backend/tests/ai/test_obs005_provider_metrics.py
+    - backend/tests/ai
+    - backend/tests/catalog
+    - backend/tests/database
+    - src/api
+  result: PASS

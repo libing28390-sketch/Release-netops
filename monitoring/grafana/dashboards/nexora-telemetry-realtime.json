@@ -1,0 +1,1238 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "01 网络总览",
+      "tooltip": "切换到 01 网络总览",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-overview/nexora-network-overview"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "02 设备详情",
+      "tooltip": "切换到 02 设备详情",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-device/nexora-network-device"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "04 接口流量",
+      "tooltip": "切换到 04 接口流量",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-interface/nexora-network-interface"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": true,
+      "title": "返回 Telemetry 订阅管理",
+      "tooltip": "在新标签页打开 Telemetry 采集管理页",
+      "type": "link",
+      "url": "/monitor/telemetry-management/subscriptions"
+    }
+  ],
+  "panels": [
+    {
+      "id": 900,
+      "title": "Telemetry 实时遥测总览（华为 VRP / 华三 Comware V7 gRPC Dial-out）",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "id": 1,
+      "title": "在线推流设备数",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "area",
+        "wideLayout": true,
+        "justifyMode": "center",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "count(count by (hostname) (last_over_time({__name__=~\"nexora_telemetry_.*\", vendor=~\"$vendor\", hostname=~\"$hostname\"}[$__range])))",
+          "legendFormat": "设备数"
+        }
+      ],
+      "description": "当前正在向平台主动推送 gRPC Telemetry 遥测数据的网络设备总数。"
+    },
+    {
+      "id": 2,
+      "title": "活跃遥测指标序列数",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              },
+              {
+                "color": "blue",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "area",
+        "wideLayout": true,
+        "justifyMode": "center",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "count(last_over_time({__name__=~\"nexora_telemetry_.*\", vendor=~\"$vendor\", hostname=~\"$hostname\"}[$__range]))",
+          "legendFormat": "活跃序列"
+        }
+      ],
+      "description": "当前活跃采集的遥测指标时间序列总数，用于评估秒级推流规模与采集负载。"
+    },
+    {
+      "id": 3,
+      "title": "最高设备 CPU 利用率",
+      "type": "gauge",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "noValue": "暂无数据",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 85
+              }
+            ]
+          },
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "minVizWidth": 75,
+        "minVizHeight": 75
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(last_over_time(nexora_telemetry_h3c_cpu_usage_percent{vendor=~\"$vendor\", hostname=~\"$hostname\"}[$__range]) or last_over_time(nexora_telemetry_huawei_cpu_system_usage{vendor=~\"$vendor\", hostname=~\"$hostname\"}[$__range]))",
+          "legendFormat": "最高 CPU"
+        }
+      ],
+      "description": "在线推流设备中的最高单板/核心 CPU 利用率峰值。"
+    },
+    {
+      "id": 4,
+      "title": "最高设备内存利用率",
+      "type": "gauge",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "noValue": "暂无数据",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 75
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          },
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "minVizWidth": 75,
+        "minVizHeight": 75
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(last_over_time(nexora_telemetry_h3c_memory_usage_percent{vendor=~\"$vendor\", hostname=~\"$hostname\"}[$__range]) or last_over_time(nexora_telemetry_huawei_memory_usage_percent{vendor=~\"$vendor\", hostname=~\"$hostname\"}[$__range]))",
+          "legendFormat": "最高内存"
+        }
+      ],
+      "description": "在线推流设备中的最高单板/内存池利用率峰值。"
+    },
+    {
+      "id": 901,
+      "title": "系统性能与硬件环境（CPU / 内存 / 单板温度 / 风扇）",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "panels": []
+    },
+    {
+      "id": 5,
+      "title": "设备 CPU 利用率走势 (%)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "noValue": "暂无 Telemetry CPU 数据",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 26,
+            "showPoints": "auto",
+            "lineWidth": 2,
+            "gradientMode": "opacity",
+            "spanNulls": true,
+            "pointSize": 5
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nexora_telemetry_h3c_cpu_usage_percent{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} Slot-{{cpu_slot}} (H3C)"
+        },
+        {
+          "refId": "B",
+          "expr": "nexora_telemetry_huawei_cpu_system_usage{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} CPU-{{cpu_position}} (Huawei)"
+        }
+      ],
+      "description": "华为与华三设备秒级上报的 CPU 利用率实时波动曲线。"
+    },
+    {
+      "id": 6,
+      "title": "设备内存利用率走势 (%)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "noValue": "暂无 Telemetry 内存数据",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 26,
+            "showPoints": "auto",
+            "lineWidth": 2,
+            "gradientMode": "opacity",
+            "spanNulls": true,
+            "pointSize": 5
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nexora_telemetry_h3c_memory_usage_percent{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} Slot-{{memory_slot}} (H3C)"
+        },
+        {
+          "refId": "B",
+          "expr": "nexora_telemetry_huawei_memory_os_usage{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} Pos-{{memory_position}} (Huawei)"
+        }
+      ],
+      "description": "华为与华三设备秒级上报的内存占用实时走势。"
+    },
+    {
+      "id": 7,
+      "title": "单板与芯片温度 (°C)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "noValue": "暂无温度遥测数据",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 26,
+            "showPoints": "auto",
+            "lineWidth": 2,
+            "gradientMode": "opacity",
+            "spanNulls": true,
+            "pointSize": 5
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nexora_telemetry_h3c_board_temperature_celsius{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} · {{entity_name}}"
+        },
+        {
+          "refId": "B",
+          "expr": "nexora_telemetry_huawei_board_temperature_celsius{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} · {{sensor_position}}"
+        }
+      ],
+      "description": "核心交换机与路由器各单板及芯片实时温度监测，辅助提前发现散热异常。"
+    },
+    {
+      "id": 8,
+      "title": "风扇转速 (RPM) 与日志缓冲水位",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无风扇/日志缓冲数据",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 26,
+            "showPoints": "auto",
+            "lineWidth": 2,
+            "gradientMode": "opacity",
+            "spanNulls": true,
+            "pointSize": 5
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nexora_telemetry_huawei_fan_speed_rpm{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} {{fan_position}} RPM"
+        },
+        {
+          "refId": "B",
+          "expr": "nexora_telemetry_h3c_syslog_buffer_size{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} Syslog Buffer Entries"
+        }
+      ],
+      "description": "设备风扇实时转速（RPM）与系统日志缓冲水位趋势。"
+    },
+    {
+      "id": 902,
+      "title": "接口实时吞吐、错包与丢包（秒级 Telemetry）",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "panels": []
+    },
+    {
+      "id": 9,
+      "title": "接口入向实时速率 (bps) / 累计字节",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "noValue": "暂无接口入向流量数据",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 26,
+            "showPoints": "auto",
+            "lineWidth": 2,
+            "gradientMode": "opacity",
+            "spanNulls": true,
+            "pointSize": 5
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(nexora_telemetry_h3c_interface_in_octets{vendor=~\"$vendor\", hostname=~\"$hostname\"}[2m]) * 8",
+          "legendFormat": "{{hostname}} {{interface_name}} In (H3C)"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(nexora_telemetry_huawei_interface_rx_bytes{vendor=~\"$vendor\", hostname=~\"$hostname\"}[2m]) * 8",
+          "legendFormat": "{{hostname}} {{interface_name}} Rx (Huawei)"
+        }
+      ],
+      "description": "秒级捕捉接口入向微突发流量速率，比传统 SNMP 轮询更快发现拥塞。"
+    },
+    {
+      "id": 10,
+      "title": "接口出向实时速率 (bps) / 累计字节",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "noValue": "暂无接口出向流量数据",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 26,
+            "showPoints": "auto",
+            "lineWidth": 2,
+            "gradientMode": "opacity",
+            "spanNulls": true,
+            "pointSize": 5
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(nexora_telemetry_h3c_interface_out_octets{vendor=~\"$vendor\", hostname=~\"$hostname\"}[2m]) * 8",
+          "legendFormat": "{{hostname}} {{interface_name}} Out (H3C)"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(nexora_telemetry_huawei_interface_tx_bytes{vendor=~\"$vendor\", hostname=~\"$hostname\"}[2m]) * 8",
+          "legendFormat": "{{hostname}} {{interface_name}} Tx (Huawei)"
+        }
+      ],
+      "description": "秒级捕捉接口出向实时流量速率与带宽波峰。"
+    },
+    {
+      "id": 11,
+      "title": "接口错包与丢包计数 (Errors & Discards)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 28
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无错包/丢包告警",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 82,
+            "showPoints": "auto",
+            "barAlignment": 0,
+            "lineWidth": 1,
+            "gradientMode": "opacity",
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "pointSize": 5
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nexora_telemetry_h3c_interface_in_errors{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} {{interface_name}} InErrors"
+        },
+        {
+          "refId": "B",
+          "expr": "nexora_telemetry_h3c_interface_out_discards{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} {{interface_name}} OutDiscards"
+        },
+        {
+          "refId": "C",
+          "expr": "nexora_telemetry_huawei_interface_rx_errors{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} {{interface_name}} RxErrors"
+        },
+        {
+          "refId": "D",
+          "expr": "nexora_telemetry_huawei_interface_tx_drops{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} {{interface_name}} TxDrops"
+        }
+      ],
+      "description": "接口错包与丢包秒级脉冲柱状图，异常尖峰一目了然。"
+    },
+    {
+      "id": 12,
+      "title": "接口累计收发字节数快照（含单次模拟推流可见）",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 28
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "noValue": "暂无接口数据"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nexora_telemetry_h3c_interface_in_octets{vendor=~\"$vendor\", hostname=~\"$hostname\"} or nexora_telemetry_huawei_interface_rx_bytes{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "description": "展示各接口最新累计收发字节数快照（执行单次模拟推流后即可立即看到数据）。"
+    },
+    {
+      "id": 903,
+      "title": "光模块 DDM 数字诊断（收 / 发光功率）",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 35
+      },
+      "panels": []
+    },
+    {
+      "id": 13,
+      "title": "光模块接收光功率 RxPower (dBm)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 36
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dBm",
+          "noValue": "暂无光模块收光功率数据",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 26,
+            "showPoints": "auto",
+            "lineWidth": 2,
+            "gradientMode": "opacity",
+            "spanNulls": true,
+            "pointSize": 5
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nexora_telemetry_h3c_optical_rx_power_dbm{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} {{interface_name}} Rx"
+        },
+        {
+          "refId": "B",
+          "expr": "nexora_telemetry_huawei_optical_rx_power_dbm{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} {{port_position}} Rx"
+        }
+      ],
+      "description": "光模块接收光功率（RxPower）实时趋势，持续低于 -14 dBm 请及时核查光路衰耗。"
+    },
+    {
+      "id": 14,
+      "title": "光模块发送光功率 TxPower (dBm)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 36
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dBm",
+          "noValue": "暂无光模块发光功率数据",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 26,
+            "showPoints": "auto",
+            "lineWidth": 2,
+            "gradientMode": "opacity",
+            "spanNulls": true,
+            "pointSize": 5
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nexora_telemetry_h3c_optical_tx_power_dbm{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} {{interface_name}} Tx"
+        },
+        {
+          "refId": "B",
+          "expr": "nexora_telemetry_huawei_optical_tx_power_dbm{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} {{port_position}} Tx"
+        }
+      ],
+      "description": "光模块发送光功率（TxPower）实时趋势，监测光模块发射端健康度。"
+    },
+    {
+      "id": 904,
+      "title": "数据中心 QoS 缓存 / PFC 无损网络 & 防火墙 / 无线业务",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "panels": []
+    },
+    {
+      "id": 15,
+      "title": "数据中心 QoS 缓存与 PFC Headroom 水位 (Bytes)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 44
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "noValue": "暂无 QoS 缓存数据",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 26,
+            "showPoints": "auto",
+            "lineWidth": 2,
+            "gradientMode": "opacity",
+            "spanNulls": true,
+            "pointSize": 5
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nexora_telemetry_h3c_qos_buffer_used_bytes{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} {{interface_name}} Buffer"
+        },
+        {
+          "refId": "B",
+          "expr": "nexora_telemetry_h3c_pfc_headroom_used_bytes{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} {{interface_name}} PFC Headroom"
+        }
+      ],
+      "description": "数据中心交换机端口队列缓存与 PFC Headroom 水位，用于提前预警无损网络拥塞。"
+    },
+    {
+      "id": 16,
+      "title": "QoS 队列拥塞丢包与 PFC 暂停帧",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 44
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无拥塞丢包/PFC 暂停帧",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 82,
+            "showPoints": "auto",
+            "barAlignment": 0,
+            "lineWidth": 1,
+            "gradientMode": "opacity",
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "pointSize": 5
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nexora_telemetry_h3c_qos_egress_drop_packets{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} {{interface_name}} EgressDrop (H3C)"
+        },
+        {
+          "refId": "B",
+          "expr": "nexora_telemetry_huawei_qos_queue_discarded_packets{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} {{interface_name}} QueueDrop (Huawei)"
+        },
+        {
+          "refId": "C",
+          "expr": "nexora_telemetry_huawei_pfc_rx_pause_frames{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} {{interface_name}} PFC RxPause"
+        }
+      ],
+      "description": "QoS 队列拥塞丢包与 PFC 暂停帧脉冲监测，快速定位微突发反压。"
+    },
+    {
+      "id": 17,
+      "title": "防火墙并发会话与无线 AC 在线 AP 数",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 44
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "暂无安全/无线遥测数据",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 26,
+            "showPoints": "auto",
+            "lineWidth": 2,
+            "gradientMode": "opacity",
+            "spanNulls": true,
+            "pointSize": 5
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "nexora_telemetry_h3c_fw_active_sessions{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} 防火墙并发会话"
+        },
+        {
+          "refId": "B",
+          "expr": "nexora_telemetry_h3c_wlan_online_ap_count{vendor=~\"$vendor\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} 无线在线 AP 数"
+        }
+      ],
+      "description": "防火墙当前并发会话数与无线 AC 在线 AP 规模实时走势。"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": [
+    "nexora",
+    "telemetry",
+    "huawei",
+    "h3c",
+    "grpc"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "vendor",
+        "label": "厂商",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "victoriametrics"
+        },
+        "query": "label_values({__name__=~\"nexora_telemetry_.*\"}, vendor)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "refresh": 2
+      },
+      {
+        "name": "hostname",
+        "label": "设备",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "victoriametrics"
+        },
+        "query": "label_values({__name__=~\"nexora_telemetry_.*\", vendor=~\"$vendor\"}, hostname)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "refresh": 2
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "Asia/Shanghai",
+  "title": "14 Telemetry 实时遥测大盘",
+  "uid": "nexora-telemetry-realtime",
+  "version": 1,
+  "description": "华为 VRP / VRP8 与华三 Comware V7 秒级 gRPC Dial-out 主动遥测实时大盘：覆盖设备 CPU/内存仪表盘、单板温度与风扇、秒级接口流量及错包丢包、光模块 DDM 诊断、数据中心无损网络 QoS/PFC 缓存以及防火墙并发会话与无线 AP 规模。"
+}

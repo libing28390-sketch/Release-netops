@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CalendarClock, Plus, RotateCcw } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import PageHero from '../../components/PageHero';
 import { ActionButton } from '../../components/ui/ActionIconButton';
 import { ColumnSettingsButton, ListSearchInput, ListToolbar } from '../../components/ui/TableListControls';
@@ -1296,6 +1295,7 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
       const prefix = reportFilename.slice(0, reportFilename.lastIndexOf('.'));
 
       if (format === 'xlsx') {
+        const XLSX = await import('xlsx');
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet([summary]), zh ? '批次汇总' : 'Batch Summary');
         XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(deviceRows, { header: deviceHeaders }), zh ? '设备结果' : 'Device Results');

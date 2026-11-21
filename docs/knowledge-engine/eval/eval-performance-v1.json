@@ -1,0 +1,109 @@
+{
+  "capacity_warning": true,
+  "database": "PostgreSQL",
+  "extensions": {
+    "pg_trgm": "1.6",
+    "vector": "0.8.6"
+  },
+  "fixture": "temporary_session_only",
+  "percentile_method": "nearest_rank; p99 is max observed with five repetitions",
+  "production_database_write": false,
+  "repeats": 5,
+  "rollback": "transaction_rollback_and_connection_close",
+  "scales": [
+    {
+      "p50_ms": {
+        "fts": 0.213,
+        "trigram": 100.402,
+        "vector": 0.205
+      },
+      "p95_ms": {
+        "fts": 0.226,
+        "trigram": 160.475,
+        "vector": 0.233
+      },
+      "p99_is_max_observed": true,
+      "p99_ms": {
+        "fts": 0.226,
+        "trigram": 160.475,
+        "vector": 0.233
+      },
+      "rows": 10000,
+      "sample_count": 5,
+      "scale_elapsed_ms": 1200.948,
+      "tenant_leaks": 0,
+      "top_k": 10,
+      "vector_plan_indexes": [
+        "eval018_hnsw_tenant_a"
+      ],
+      "vector_plan_nodes": [
+        "Limit",
+        "Index Scan"
+      ]
+    },
+    {
+      "p50_ms": {
+        "fts": 0.163,
+        "trigram": 1017.611,
+        "vector": 0.167
+      },
+      "p95_ms": {
+        "fts": 0.194,
+        "trigram": 1025.375,
+        "vector": 0.179
+      },
+      "p99_is_max_observed": true,
+      "p99_ms": {
+        "fts": 0.194,
+        "trigram": 1025.375,
+        "vector": 0.179
+      },
+      "rows": 100000,
+      "sample_count": 5,
+      "scale_elapsed_ms": 9698.513,
+      "tenant_leaks": 0,
+      "top_k": 10,
+      "vector_plan_indexes": [
+        "eval018_hnsw_tenant_a"
+      ],
+      "vector_plan_nodes": [
+        "Limit",
+        "Index Scan"
+      ]
+    },
+    {
+      "p50_ms": {
+        "fts": 0.166,
+        "trigram": 10777.785,
+        "vector": 0.421
+      },
+      "p95_ms": {
+        "fts": 0.181,
+        "trigram": 11313.107,
+        "vector": 0.679
+      },
+      "p99_is_max_observed": true,
+      "p99_ms": {
+        "fts": 0.181,
+        "trigram": 11313.107,
+        "vector": 0.679
+      },
+      "rows": 1000000,
+      "sample_count": 5,
+      "scale_elapsed_ms": 111016.388,
+      "tenant_leaks": 0,
+      "top_k": 10,
+      "vector_plan_indexes": [
+        "eval018_hnsw_tenant_a"
+      ],
+      "vector_plan_nodes": [
+        "Limit",
+        "Index Scan"
+      ]
+    }
+  ],
+  "server": "PostgreSQL 18.4 on x86_64-windows, compiled by msvc-19.44.35227, 64-bit",
+  "sqlite": "forbidden",
+  "status": "PASS_WITH_CAPACITY_WARNING",
+  "task_id": "EVAL-018"
+}

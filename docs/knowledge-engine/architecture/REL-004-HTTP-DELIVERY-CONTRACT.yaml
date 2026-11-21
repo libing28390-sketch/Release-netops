@@ -1,0 +1,38 @@
+task_id: REL-004
+priority: P0
+milestone: M2
+status: contract_frozen
+authority: FastAPI_and_Nginx
+sqlite: forbidden_for_acceptance
+production_database_write: false
+
+static_delivery:
+  backend_downloads: /static
+  frontend_spa: dist_mounted_at_root_with_index_fallback
+  api_paths_must_not_fallback_to_index: true
+  cache_headers: hashed_assets_long_cache; index_no_store
+
+sse_delivery:
+  media_type: text/event-stream
+  required_headers: [Cache-Control_no-cache, X-Accel-Buffering_no]
+  backend_routes: [/api/ai/assistant/chat-stream, /api/v1/ai/chat-stream]
+  api_proxy_timeout_seconds: 300
+  buffering: disabled_at_application_boundary; Nginx_specific_gate_is_REL-005
+  replay: nxa.sse.v1_bounded_stream_registry
+
+request_limits:
+  application_env: REQUEST_BODY_MAX_BYTES
+  default_bytes: 157286400
+  reverse_proxy: client_max_body_size_150m
+  oversized_response: HTTP_413_REQUEST_BODY_TOO_LARGE
+  route_specific_limits: pydantic_and_upload_handlers_may_be_smaller
+  secrets: never_in_error_body_or_logs
+
+verification:
+  runner: scripts/knowledge_engine_v2_rel004_http_delivery_gate.py
+  tests: tests/knowledge_engine_v2/test_rel004_http_delivery_gate.py
+  required: [static_mounts, spa_fallback_boundary, sse_headers, proxy_timeout, request_limit, compose_wiring]
+
+rollback:
+  method: restore_last_verified_main_and_proxy_config
+  runtime: V1_routes_and_non_streaming_fallback_remain_available

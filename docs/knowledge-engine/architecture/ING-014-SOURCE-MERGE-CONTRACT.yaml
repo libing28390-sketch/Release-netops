@@ -1,0 +1,76 @@
+task_id: ING-014
+priority: P0
+owner: BE
+milestone: M2
+status: implemented_shadow_boundary
+authority: PostgreSQL
+
+goal: >-
+  Deduplicate equal server-owned content found at different URLs without
+  deleting source provenance or weakening tenant, trust, parser, or lifecycle
+  boundaries.
+
+identity:
+  source_fact_key: [tenant_id, source_registry_id, source_version_id]
+  canonical_document_key: [tenant_id, document_id, document_version_id]
+  content_match_key: [tenant_id, content_hash]
+  observation_key: [tenant_id, source_version_id]
+  hash: lowercase_sha256_over_authoritative_source_version_bytes
+
+resolution:
+  same_url_same_content:
+    decision: replay_same_document_content
+    action: reuse_document_version_and_increment_source_observation
+  different_url_same_content_compatible:
+    decision: merge_same_content_different_source
+    action: reuse_document_version_and_append_kb_document_source_observation
+    compatibility: [trust_level, parser_name, parser_version, document_kind]
+  different_url_same_content_incompatible:
+    decision: new_document_same_content_incompatible_source
+    action: create_separate_document_and_document_version
+  different_url_changed_content:
+    decision: new_version
+    action: create_separate_document_and_document_version
+  cross_tenant:
+    decision: never_merge
+    action: tenant_predicate_prevents_read_replay_or_write
+  deleted_or_quarantined_candidate:
+    decision: never_merge
+    action: create_or_quarantine_separate_source_path
+
+source_observation:
+  table: kb_document_source
+  immutable_facts: [tenant_id, document_id, document_version_id, source_registry_id, source_version_id, canonical_url, content_hash]
+  mutable_counters: [observed_at, observation_count, status, metadata_json, updated_at, updated_by]
+  raw_content: never_copied_to_observation
+  one_source_version_one_document_version: true
+  provenance_policy: retain_source_registry_and_source_version_rows
+
+storage:
+  migration: m0118_knowledge_v2_document_sources
+  tables: [kb_document_source]
+  constraints:
+    - tenant_source_version_unique
+    - tenant_document_version_registry_unique
+    - composite_tenant_foreign_keys
+    - tenant_document_hash_and_document_version_indexes
+  v1_compatibility: ai_document_and_ai_document_chunk_are_not_updated_or_deleted
+  cutover: shadow_only_until_DB009_DB013_lifecycle_and_release_gates_pass
+
+authority_and_security:
+  source_of_truth: [kb_source_registry, kb_source_version]
+  caller_fields: url_hash_parser_and_trust_are_not_authoritative
+  authorization: knowledge_source_create_permission_and_tenant_predicate
+  fail_closed_codes: [DOCUMENT_SOURCE_NOT_FOUND, DOCUMENT_SOURCE_VERSION_NOT_FOUND, DOCUMENT_SOURCE_FACT_MISMATCH, DOCUMENT_SOURCE_OBSERVATION_CONFLICT]
+  audit_events: [document_source_merged, document_version_replayed, document_version_added]
+  forbidden_output: [raw_body, credentials, unrestricted_exception_text]
+
+rollback:
+  default: disable_merge_adapter_and_continue_source_version_replay
+  data_policy: preserve_source_observations_and_immutable_document_facts
+  downgrade_policy: no_destructive_drop_or_provenance_delete
+  production_ddl: release_gated_transaction_only
+
+handoff:
+  next_task: ING-015
+  note: lifecycle_publication_and_quarantine_transitions_are_not_claimed_here

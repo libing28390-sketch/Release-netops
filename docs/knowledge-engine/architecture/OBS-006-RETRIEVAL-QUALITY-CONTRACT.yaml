@@ -1,0 +1,47 @@
+task_id: OBS-006
+title: Retrieval quality monitoring
+status: verified
+contract_version: nxa.retrieval.quality.v1
+authority:
+  retrieval: backend/ai/services/rag_retriever.py
+  assistant_quality: backend/ai/services/assistant.py
+  trace_projection: backend/ai/services/retrieval_trace_store.py
+  metrics: backend/ai/services/metrics.py
+signals:
+  no_match:
+    definition: final_results_empty
+    metric: no_match_rate
+  wrong_vendor:
+    definition: returned vendor differs from requested canonical vendor
+    action: count_and_expose; never silently relabel
+  version_conflict:
+    definition: explicit train/release request scores zero against known incompatible evidence
+    action: hard_filter_and_count
+  low_confidence:
+    definition: final relevance_score below 0.45
+    threshold: 0.45
+  retrieval_error:
+    definition: bounded retrieval debug error exists
+    payload: boolean_only
+exposure:
+  api: /api/ai/metrics.retrieval
+  trace: runtime.quality
+  sse: retrieval.runtime.quality through existing redacted trace contract
+security:
+  no_raw_query: true
+  no_document_body: true
+  no_sql_or_exception_text: true
+  tenant_trace_scope: strict
+compatibility:
+  - existing retrieval response fields remain additive
+  - known version conflicts remain excluded from final results
+  - PostgreSQL eligibility and V1 retrieval behavior unchanged
+  - no migration or production DDL
+verification:
+  tests:
+    - backend/tests/ai/test_obs006_retrieval_quality_metrics.py
+    - backend/tests/ai
+    - backend/tests/catalog
+    - backend/tests/database
+    - src/api
+  result: PASS

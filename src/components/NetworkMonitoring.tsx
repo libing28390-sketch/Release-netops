@@ -261,6 +261,12 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
   const pollCycleRef = useRef(0);
   const networkDevicesRef = useRef<Device[]>([]);
   const deviceListRequestRef = useRef(0);
+  const deviceTelemetryCacheRef = useRef<Map<string, {
+    ts: number;
+    provider: MetricProvider;
+    realtime: any;
+    collectionStatus: CollectionStatusItem[];
+  }>>(new Map());
 
   const networkDevices = useMemo(() => (devices || []).filter((d) => !isServerDevice(d)), [devices]);
 
@@ -346,15 +352,26 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
   );
   const canRunSnmpWalk = ['administrator', 'operator'].includes(String(currentUserRole).trim().toLowerCase());
 
+  const selectDevice = useCallback((deviceId: string | null) => {
+    setSelectedId((prev) => {
+      if (prev !== deviceId) {
+        setTrendInterface('');
+        setAlertsPage(1);
+        setDiagnosticResult(null);
+      }
+      return deviceId;
+    });
+  }, []);
+
   const { monitorSelectedDevice, setMonitorSelectedDevice } = useMonitoringStore();
 
   // Sync selected device from topology redirects (Zustand store)
   useEffect(() => {
     if (monitorSelectedDevice && !isServerDevice(monitorSelectedDevice)) {
-      setSelectedId(monitorSelectedDevice.id);
+      selectDevice(monitorSelectedDevice.id);
       setMonitorSelectedDevice(null);
     }
-  }, [monitorSelectedDevice, setMonitorSelectedDevice]);
+  }, [monitorSelectedDevice, selectDevice, setMonitorSelectedDevice]);
 
   // Auto-select first network device once data is available
   useEffect(() => {
@@ -489,7 +506,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
     }
   }, [diagnosticsLoading, fetchCollectionStatus, selectedId, showToast, zh]);
 
-  // Load telemetry data when selected device changes or range changes
+  // Load full telemetry bundle (used for manual refresh & 30s auto-refresh)
   const loadDeviceData = useCallback(async (deviceId: string, hours: number, iface: string, page: number, sev: string, ph: string, showSpinner = true, signal?: AbortSignal, includeTrend = true) => {
     if (showSpinner) setLoading(true);
     try {
@@ -504,6 +521,12 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
       setAlerts(Array.isArray(al?.items) ? al.items : []);
       setAlertTotal(typeof al?.total === 'number' ? al.total : 0);
       setCollectionStatus(cs);
+      deviceTelemetryCacheRef.current.set(deviceId, {
+        ts: Date.now(),
+        provider: metricProvider,
+        realtime: rt,
+        collectionStatus: cs,
+      });
       setDataError('');
     } catch (e) {
       if (!(e instanceof DOMException && e.name === 'AbortError')) {
@@ -512,8 +535,11 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
     } finally {
       if (showSpinner) setLoading(false);
     }
-  }, [fetchRealtime, fetchTrend, fetchAlerts, fetchCollectionStatus]);
+  }, [fetchRealtime, fetchTrend, fetchAlerts, fetchCollectionStatus, metricProvider]);
 
+  // 1) Core device telemetry (realtime + collection-status) with 15s SWR cache.
+  //    Decoupled from alerts pagination and trend range/interface selectors so
+  //    paging alerts or changing trend range never re-fetches realtime snapshots.
   useEffect(() => {
     if (!isAuthenticated || !selectedId) {
       setRealtimeData(null);
@@ -525,33 +551,79 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
       setDataError('');
       return;
     }
-    let cancelled = false;
     const controller = new AbortController();
+    const cached = deviceTelemetryCacheRef.current.get(selectedId);
+    const cacheValid = Boolean(cached && cached.provider === metricProvider && (Date.now() - cached.ts) < 15_000);
+    if (cacheValid && cached) {
+      setRealtimeData(cached.realtime);
+      setCollectionStatus(cached.collectionStatus);
+      setDataError('');
+    } else {
+      setLoading(true);
+    }
 
-    loadDeviceData(
-      selectedId,
-      rangeHours,
-      trendInterface,
-      alertsPage,
-      alertsSeverity,
-      alertsPhase,
-      true,
-      controller.signal
-    );
+    Promise.all([
+      fetchRealtime(selectedId, controller.signal),
+      fetchCollectionStatus(selectedId, controller.signal),
+    ])
+      .then(([rt, cs]) => {
+        setRealtimeData(rt);
+        setCollectionStatus(cs);
+        deviceTelemetryCacheRef.current.set(selectedId, {
+          ts: Date.now(),
+          provider: metricProvider,
+          realtime: rt,
+          collectionStatus: cs,
+        });
+        setDataError('');
+      })
+      .catch((e) => {
+        if (!(e instanceof DOMException && e.name === 'AbortError')) {
+          setDataError(e instanceof Error ? e.message : 'monitoring data fetch failed');
+        }
+      })
+      .finally(() => {
+        if (!cacheValid) setLoading(false);
+      });
 
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, [isAuthenticated, selectedId, rangeHours, trendInterface, alertsPage, alertsSeverity, alertsPhase, loadDeviceData]);
-  // Reset trend configuration and pagination when selected device changes
+    return () => controller.abort();
+  }, [isAuthenticated, selectedId, metricProvider, fetchRealtime, fetchCollectionStatus]);
+
+  // 2) Trend series — only refetches when device, time range, interface, or provider changes.
   useEffect(() => {
-    setTrendInterface('');
-    setAlertsPage(1);
-    setDiagnosticResult(null);
-  }, [selectedId]);
+    if (!isAuthenticated || !selectedId) return;
+    const controller = new AbortController();
+    fetchTrend(selectedId, rangeHours, trendInterface, controller.signal)
+      .then((tr) => {
+        if (Array.isArray(tr)) setTrendSeries(tr);
+      })
+      .catch((e) => {
+        if (!(e instanceof DOMException && e.name === 'AbortError')) {
+          setDataError(e instanceof Error ? e.message : 'trend fetch failed');
+        }
+      });
+    return () => controller.abort();
+  }, [isAuthenticated, selectedId, rangeHours, trendInterface, fetchTrend]);
 
-  // Auto-refresh polling (every 30 seconds for realtime and alerts, 60 seconds for trend)
+  // 3) Device alert timeline — only refetches when device or alert filters/page change.
+  useEffect(() => {
+    if (!isAuthenticated || !selectedId) return;
+    const controller = new AbortController();
+    fetchAlerts(selectedId, alertsPage, alertsSeverity, alertsPhase, controller.signal)
+      .then((al) => {
+        setAlerts(Array.isArray(al?.items) ? al.items : []);
+        setAlertTotal(typeof al?.total === 'number' ? al.total : 0);
+      })
+      .catch((e) => {
+        if (!(e instanceof DOMException && e.name === 'AbortError')) {
+          setDataError(e instanceof Error ? e.message : 'alerts fetch failed');
+        }
+      });
+    return () => controller.abort();
+  }, [isAuthenticated, selectedId, alertsPage, alertsSeverity, alertsPhase, fetchAlerts]);
+
+  // Auto-refresh polling (every 30 seconds for realtime and alerts, 60 seconds for trend).
+  // Pauses automatically while the browser tab is hidden to avoid background load.
   useEffect(() => {
     if (pollRef.current) {
       clearInterval(pollRef.current);
@@ -560,6 +632,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
     if (!isAuthenticated || !autoRefresh || !selectedId) return;
 
     pollRef.current = setInterval(async () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       try {
         pollCycleRef.current += 1;
         await loadDeviceData(
@@ -888,7 +961,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({
                 return (
                   <button
                     type="button"
-                    onClick={() => setSelectedId(dev.id)}
+                    onClick={() => selectDevice(dev.id)}
                     className={`w-full flex items-center gap-2.5 rounded-2xl border px-3 py-2.5 text-left transition-all cursor-pointer mb-1.5 ${active ? 'border-blue-500/50 bg-blue-50/70 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 shadow-2xs' : 'border-transparent bg-white/70 dark:bg-zinc-800/40 hover:border-gray-20 dark:hover:border-zinc-700 hover:bg-white'}`}
                   >
                     <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${active ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-zinc-700 text-gray-500 dark:text-zinc-400'}`}>

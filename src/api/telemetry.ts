@@ -6,6 +6,7 @@ import type {
   TelemetryDeviceConfig,
   TelemetryPage,
   TelemetryProtocolProfile,
+  TelemetrySimulationResult,
   TelemetrySubscription,
   TelemetrySubscriptionAction,
   TelemetrySubscriptionStatus,
@@ -130,5 +131,23 @@ export function runTelemetrySubscriptionAction(
   return apiRequest<TelemetryActionAccepted>(
     `${TELEMETRY_API_PREFIX}/subscriptions/${encodeURIComponent(subscriptionId)}/${action}`,
     { method: 'POST' },
+  );
+}
+
+export function simulateTelemetrySubscription(
+  subscriptionId: string,
+): Promise<TelemetrySimulationResult> {
+  return apiRequest<TelemetrySimulationResult>(
+    `${TELEMETRY_API_PREFIX}/subscriptions/${encodeURIComponent(subscriptionId)}/simulate`,
+    { method: 'POST' },
+  );
+}
+
+export function deleteTelemetrySubscription(
+  subscriptionId: string,
+): Promise<TelemetryActionAccepted> {
+  return apiRequest<TelemetryActionAccepted>(
+    `${TELEMETRY_API_PREFIX}/subscriptions/${encodeURIComponent(subscriptionId)}`,
+    { method: 'DELETE' },
   );
 }

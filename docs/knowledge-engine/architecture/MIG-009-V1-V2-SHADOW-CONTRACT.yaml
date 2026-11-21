@@ -1,0 +1,53 @@
+task_id: MIG-009
+priority: P0
+owner: BE+AI
+milestone: M2
+status: implemented_v1_primary_shadow
+contract_version: v1.0
+authority: PostgreSQL
+depends_on: [CHK-014, MIG-008]
+
+decision:
+  choice: v1_primary_v2_shadow_read
+  summary: >-
+    A request executes the V1 retrieval that owns the user-visible answer. If
+    KNOWLEDGE_V2_SHADOW_READ is explicitly enabled and a tenant-scoped active
+    PostgreSQL generation exists, a second bounded V2 read runs for comparison.
+    The V2 result is never passed to answer synthesis or citations.
+
+runtime:
+  primary: ai_document_and_ai_document_chunk
+  shadow: ai_retrieval_index_shadow_chunk
+  enable_flags: [KNOWLEDGE_V2_SHADOW_READ]
+  v2_read_switch: KNOWLEDGE_V2_ENABLED
+  default: v1
+  no_user_double_answer: true
+  v2_failure: retain_v1_and_record_RETRIEVAL_V2_SHADOW_FAILED
+
+comparison:
+  fields: [v1_result_count, v2_result_count, overlap_count, v1_only_count,
+    v2_only_count, v1_latency_ms, v2_latency_ms, index_version]
+  identity: sha256_storage_document_and_chunk_id_prefix
+  raw_content: forbidden
+  raw_query: forbidden
+  raw_sql: forbidden
+  credentials: forbidden
+
+security:
+  tenant_scope: active_generation_tenant_must_equal_request_tenant
+  acl: each_source_path_uses_existing_V1_or_shadow_visibility_filter
+  provider_call: false
+  network_device_write: false
+  database_write: false
+  sqlite_acceptance: forbidden
+
+verification:
+  focused_tests: backend/tests/ai/test_mig009_v1_v2_shadow.py
+  related_tests: [backend/tests/ai/test_rag_retriever_v2.py,
+    backend/tests/ai/test_obs001_retrieval_observation.py]
+  required_checks: [v1_primary, shadow_only_when_flagged, no_double_answer,
+    tenant_scope, failure_fallback, redacted_diff, trace_projection, v1_preservation]
+
+rollback:
+  immediate: set_KNOWLEDGE_V2_SHADOW_READ_to_0_and_keep_V1_primary
+  data: no_source_or_V1_row_is_deleted_or_replaced

@@ -1,0 +1,89 @@
+task_id: ING-004
+priority: P0
+owner: BE
+milestone: M2
+status: frozen_for_implementation
+depends_on: [CAT-001, CAT-003, DB-008, ING-001, ING-002, ING-003]
+decision:
+  choice: one_local_file_with_server_owned_official_provenance
+  summary: >-
+    Accept exactly one multipart local file together with a reviewed official
+    source URL and version metadata. The API reads bounded bytes in memory;
+    callers cannot submit a filesystem path. The service validates filename,
+    extension, content type and file magic, computes the SHA-256 itself, and
+    records an immutable Source Version manifest containing a mandatory,
+    server-owned provenance proof. Parsing/chunking/publication remain later
+    ING phases.
+  invariants:
+    - one_request_has_one_bounded_file
+    - filesystem_paths_and_path_traversal_are_forbidden
+    - official_source_url_is_preflighted_against_CAT001_before_job_creation
+    - vendor_family_primary_compatibility_terms_and_reviewer_are_required
+    - content_hash_byte_size_filename_and_capture_facts_are_server_owned
+    - provenance_proof_is_stored_with_the_immutable_source_version
+    - raw_file_body_is_not_returned_or_saved_by_this_boundary
+    - same_tenant_source_and_content_idempotency_replays_without_duplicate_version
+    - different_tenant_or_source_scope_cannot_replay_the_job
+    - ingestion_stops_at_fetched_until_parser_and_publication_tasks
+
+request_contract:
+  endpoint: POST /api/knowledge-v2/ingestion/official-file
+  content_type: multipart/form-data
+  required_parts: [file, source_url, vendor, product_family, version_scope, terms_review_status]
+  version_scope: [primary, compatibility]
+  optional_parts: [source_kind, reviewer, reviewed_at, evidence_url, name, description, idempotency_key, request_id, max_retries]
+  accepted_file_types:
+    pdf: [application/pdf]
+    html: [text/html, text/plain]
+    markdown: [text/markdown, text/plain]
+    text: [text/plain]
+    json: [application/json, text/plain]
+    xml: [application/xml, text/plain]
+  max_bytes: 20000000
+  unknown_path_input: forbidden
+
+file_security:
+  filename: single_basename_max_255_no_control_slash_backslash_dot_escape
+  pdf_magic: required_%PDF-
+  text_encoding: UTF-8
+  text_binary_controls: forbidden
+  empty_file: forbidden
+  content_type_mismatch: fail_closed
+  hash: sha256_lowercase_hex_computed_server_side
+
+provenance:
+  proof_type: official_source_url_plus_local_content_hash
+  required_facts: [source_url, evidence_url, filename, content_type, content_hash, byte_size, captured_at, captured_by, vendor, product_family, version_scope, terms_review_status, reviewer, reviewed_at]
+  evidence_url_rule: must_equal_canonical_source_url
+  storage: source_version.metadata_json.provenance
+  raw_content_storage: hash_only_memory_boundary
+  raw_content_ref: local_upload_sha256_prefix_only
+
+pipeline:
+  phase_flow: [accepted, scoped, fetched, continuation]
+  source_boundary: create_or_reuse_tenant_source_registry_then_record_source_version
+  version_status: fetched
+  parser_pin: local-file-boundary@1.0.0
+  continuation_required: true
+  no_network: true
+
+security_and_audit:
+  rbac: knowledge_source.create
+  tenant_scope: required_on_source_and_job
+  audit_events: [local_file_import_started, local_file_import_completed, local_file_import_failed, fetch_completed]
+  audit_fields: [content_hash, byte_size, safe_filename, detected_content_type, source_version_id]
+  audit_forbidden: [raw_file_body, credentials, filesystem_path, unreviewed_url]
+  rollback: disable_or_quarantine_source_registry_row_and_retain_immutable_version
+  production_ddl: none
+  v1_impact: none
+
+acceptance:
+  focused_tests: backend/tests/catalog/test_ing004_local_official_file_import.py
+  required_checks:
+    - successful_pdf_or_text_import_with_provenance_proof
+    - idempotent_replay_and_source_version_deduplication
+    - filename_type_magic_size_and_utf8_negative_paths
+    - missing_terms_or_unreviewed_evidence_fails_before_source_creation
+    - tenant_scope_and_server_owned_hash
+    - multipart_route_contract
+    - CAT_DB_AI_V1_compile_yaml_secret_diff_lint_build_gates

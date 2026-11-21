@@ -1,0 +1,66 @@
+task_id: ING-020
+title: Import Job list, filtering, pagination, progress and retry UI
+status: implemented
+scope:
+  - tenant-scoped Import Job list in the Knowledge Management page
+  - server-side execution-state, phase and bounded keyword filtering
+  - server-side pagination with a maximum page size of 100
+  - phase/progress counters and safe error-code display
+  - explicit retry action for failed and retry_wait jobs
+api:
+  list:
+    method: GET
+    path: /api/v2/kb/ingestion/jobs
+    query:
+      execution_state: optional enum
+      phase: optional enum
+      job_kind: optional enum
+      search: optional bounded string
+      page: integer >= 1
+      page_size: integer 1..100, default 20
+    response:
+      items: bounded summary rows
+      total: tenant-scoped total before pagination
+      page: requested page
+      page_size: bounded page size
+      total_pages: bounded page count
+      compatibility_fields: [success, data, count]
+    list_row_forbidden:
+      - tenant_id
+      - idempotency_key
+      - errors
+      - phase_history
+      - audit_events
+      - fencing_token
+      - lease_owner_value
+  errors:
+    method: GET
+    path: /api/v2/kb/ingestion/jobs/{job_id}/errors
+    response: safe_error_summary_only
+  retry:
+    method: POST
+    path: /api/v2/kb/ingestion/jobs/{job_id}/retry
+    allowed_states: [failed, retry_wait]
+    permission: knowledge_import.retry
+ui:
+  route: knowledge-management
+  required_states: [loading, empty, filtered_empty, error, retrying, permission_denied]
+  interactions:
+    - search_submits_to_server_and_resets_page
+    - state_or_phase_filter_resets_page
+    - page_size_options: [10, 20, 50, 100]
+    - retry_refreshes_current_page
+    - error_details_loaded_on_demand
+security:
+  tenant_predicate_required: true
+  list_is_summary_only: true
+  raw_error_and_worker_fence_fields_forbidden: true
+  retry_authorized_server_side: true
+compatibility:
+  v1_untouched: true
+  existing_ingestion_job_control_api_fields_preserved: true
+  no_migration: true
+acceptance:
+  - backend pagination/filter/tenant/redaction tests pass
+  - frontend success/empty/error/filter/retry tests pass
+  - TypeScript lint and production build pass

@@ -1,0 +1,58 @@
+schema_version: 1
+project: Nexora Knowledge Engine V2
+cadence:
+  timezone: Asia/Shanghai
+  weekday: Tuesday
+  time: "10:00"
+  window: previous_monday_to_sunday
+  ad_hoc_on: [P0_incident, release_candidate, scope_change]
+roles: [PM, ARCH, AI, NET, SEC, DBA, BE, FE, QA, OPS]
+metrics:
+  - id: SEC-REDLINE
+    domain: security
+    sources: [/api/ai/metrics, security_gateway, audit]
+    redline: any_secret_leak_or_unauthorized_write
+    action: kill_switch_and_p0_escalation
+  - id: RAG-QUALITY
+    domain: quality
+    sources: [eval_fixed_set, retrieval_trace, citation_trace]
+    redline: wrong_vendor_or_missing_citation_over_eval_threshold
+    action: stop_rollout_and_create_fix
+  - id: AI-OPS
+    domain: operations
+    sources: [/api/ai/usage/summary, /api/ai/metrics, /api/ai/audit]
+    fields: [success, error, blocked, p95_latency, timeout, tokens, cost, availability, failover]
+    action: budget_or_route_review
+  - id: DATA-HEALTH
+    domain: data
+    sources: [ingestion_jobs, reindex_jobs, schema_migrations, db_quality]
+    fields: [idempotency, chunk_failures, embedding_failures, index_ready, version_mismatch, data_loss]
+    action: dba_gate
+  - id: NET-READONLY
+    domain: network
+    sources: [vendor_fixtures, diagnostic_trace, command_audit]
+    redline: any_real_write_or_wrong_platform
+    action: stop_device_scope_and_net_sec_escalation
+  - id: JOURNEY
+    domain: product
+    sources: [journey_telemetry, qa, user_feedback]
+    fields: [completion_rate, clarification_rate, feedback, wrong_answer_review]
+    action: pm_ai_net_backlog
+  - id: RELEASE
+    domain: release
+    sources: [release_manifest, health, migration_evidence, rollback_evidence]
+    fields: [migration_level, flag_drift, readiness, v1_regression, rollback_time]
+    action: release_gate
+risk_levels:
+  P0:
+    response: immediate_stop
+    approvers: [SEC, ARCH, PM, OPS]
+  P1:
+    response: owner_and_mitigation_within_24h
+    approvers: [domain_owner, QA]
+  P2:
+    response: fix_this_week
+  P3:
+    response: observe_and_track
+required_outputs: [metrics_snapshot, risk_register, decisions, action_items, gate_conclusion, approvals]
+conclusion_values: [PASS, CONDITIONAL, BLOCKED]

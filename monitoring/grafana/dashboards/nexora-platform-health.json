@@ -6,7 +6,104 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "全网总览",
+      "tooltip": "切换到 全网总览",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-overview/nexora-network-overview"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "单设备详情",
+      "tooltip": "切换到 单设备详情",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-device/nexora-network-device"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "接口全景",
+      "tooltip": "切换到 接口全景",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-interface/nexora-network-interface"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "无线专网",
+      "tooltip": "切换到 无线专网",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-wireless/nexora-network-wireless"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "出口质量",
+      "tooltip": "切换到 出口质量",
+      "type": "link",
+      "url": "/grafana/d/nexora-outbound-probe-quality/nexora-outbound-probe-quality"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "采集健康",
+      "tooltip": "切换到 采集健康",
+      "type": "link",
+      "url": "/grafana/d/nexora-monitoring-health/nexora-monitoring-health"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Telemetry 实时",
+      "tooltip": "切换到 Telemetry 实时",
+      "type": "link",
+      "url": "/grafana/d/nexora-telemetry-realtime/nexora-telemetry-realtime"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": true,
+      "title": "返回 Nexora 监控",
+      "tooltip": "在新标签页打开 Nexora 网络监控页面",
+      "type": "link",
+      "url": "/monitor/network"
+    }
+  ],
   "panels": [
     {
       "id": 900,
@@ -77,8 +174,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -88,7 +185,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -97,7 +199,7 @@
           "instant": true
         }
       ],
-      "description": "统计可访问的监控端点，不代表容器数。"
+      "description": "当前正常响应指标抓取的监控服务端点总数。"
     },
     {
       "id": 2,
@@ -159,8 +261,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -170,7 +272,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -179,7 +286,7 @@
           "instant": true
         }
       ],
-      "description": "有端点采集样本时统计失败数；0 表示当前无失败，无样本时仍显示暂无数据。"
+      "description": "当前采集失败的平台端点数量；0 表示全部正常，无样本时仍显示暂无数据。"
     },
     {
       "id": 3,
@@ -237,8 +344,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -248,7 +355,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -322,8 +434,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -333,7 +445,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -403,7 +520,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -414,7 +531,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -423,7 +545,7 @@
           "instant": true
         }
       ],
-      "description": "1 表示连接与查询成功，0 表示失败。"
+      "description": "监控后端核心数据库连通性状态，正常时显示在线。"
     },
     {
       "id": 6,
@@ -481,8 +603,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -492,7 +614,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -540,19 +667,24 @@
             "drawStyle": "line",
             "lineInterpolation": "stepAfter",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
+            "fillOpacity": 35,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": []
       },
       "options": {
         "legend": {
-          "displayMode": "list",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -566,7 +698,7 @@
           "refId": "A"
         }
       ],
-      "description": "1 表示可达，0 表示不可达。"
+      "description": "各平台监控端点历史可达性阶梯走势，断崖下跌即代表服务短暂不可达。"
     },
     {
       "id": 8,
@@ -591,21 +723,26 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
+            "fillOpacity": 24,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": []
       },
       "options": {
         "legend": {
-          "displayMode": "list",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -727,7 +864,7 @@
           }
         }
       ],
-      "description": "只反映监控指标端点状态，不代表容器健康。"
+      "description": "列出所有平台组件采集端点的实时抓取状态与耗时，便于定位内部组件异常。"
     },
     {
       "id": 902,
@@ -806,8 +943,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -817,7 +954,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -826,7 +968,7 @@
           "instant": true
         }
       ],
-      "description": "显示等待写入的数据量；无数据时状态未知。"
+      "description": "采集代理等待推送至时序库的积压数据量，持续飙升说明写入出现瓶颈。"
     },
     {
       "id": 11,
@@ -888,8 +1030,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -899,7 +1041,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -969,8 +1116,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -980,7 +1127,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -1046,8 +1198,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -1057,7 +1209,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -1123,8 +1280,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -1134,7 +1291,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -1143,7 +1305,7 @@
           "instant": true
         }
       ],
-      "description": "显示监控数据量，不代表磁盘使用率。"
+      "description": "VictoriaMetrics 当前已占用的历史监控数据总容量。"
     },
     {
       "id": 15,
@@ -1205,7 +1367,7 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
@@ -1216,7 +1378,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -1225,7 +1392,7 @@
           "instant": true
         }
       ],
-      "description": "0 表示可写，1 表示只读；无数据时状态未知。"
+      "description": "时序库当前写入状态：正常为可写，若触发只读请立即核查磁盘剩余空间。"
     },
     {
       "id": 16,
@@ -1250,24 +1417,26 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
+            "fillOpacity": 24,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": []
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
           "calcs": [
             "lastNotNull",
-            "max"
-          ]
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -1305,24 +1474,26 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
+            "fillOpacity": 24,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": []
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
           "calcs": [
             "lastNotNull",
-            "max"
-          ]
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -1360,11 +1531,12 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
+            "fillOpacity": 24,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -1395,6 +1567,10 @@
                   "mode": "fixed",
                   "fixedColor": "#3B82F6"
                 }
+              },
+              {
+                "id": "custom.transform",
+                "value": "negative-Y"
               }
             ]
           }
@@ -1402,13 +1578,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
           "calcs": [
             "lastNotNull",
-            "max"
-          ]
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -1432,172 +1609,178 @@
       "id": 903,
       "title": "容器资源与观测",
       "type": "row",
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
         "y": 43
       },
-      "panels": []
-    },
-    {
-      "id": 19,
-      "title": "Docker 容器采集观测数",
-      "type": "stat",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 0,
-        "y": 44
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "thresholds"
+      "panels": [
+        {
+          "id": 19,
+          "title": "Docker 容器采集观测数",
+          "type": "stat",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#3B82F6",
-                "value": null
-              }
-            ]
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 1
           },
-          "mappings": [
-            {
-              "type": "special",
-              "options": {
-                "match": "null",
-                "result": {
-                  "text": "暂无采集数据",
-                  "color": "#64748B"
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#3B82F6",
+                    "value": null
+                  }
+                ]
+              },
+              "mappings": [
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "null",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                },
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
                 }
-              }
+              ]
             },
-            {
-              "type": "special",
-              "options": {
-                "match": "nan",
-                "result": {
-                  "text": "暂无采集数据",
-                  "color": "#64748B"
-                }
-              }
-            }
-          ]
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "expr": "count(count by (name) (container_last_seen{name!=\"\"}))",
-          "refId": "A",
-          "instant": true
-        }
-      ],
-      "description": "统计已观测到的容器，不代表容器健康。"
-    },
-    {
-      "id": 20,
-      "title": "Docker 容器采集观测清单",
-      "type": "table",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 20,
-        "x": 4,
-        "y": 44
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "thresholds"
+            "overrides": []
           },
-          "custom": {
-            "filterable": true
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "最后观测时间"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "dateTimeAsIso"
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "cellHeight": "sm",
-        "showHeader": true,
-        "footer": {
-          "show": false
-        },
-        "enablePagination": true
-      },
-      "targets": [
-        {
-          "expr": "max by (name) (container_last_seen{name!=\"\"}) * 1000",
-          "format": "table",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "transformations": [
-        {
-          "id": "organize",
           "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "id": true,
-              "instance": true,
-              "job": true
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
             },
-            "indexByName": {
-              "name": 0,
-              "Value": 1
+            "textMode": "auto",
+            "text": {
+              "titleSize": 13,
+              "valueSize": 28
             },
-            "renameByName": {
-              "name": "容器名称",
-              "Value": "最后观测时间"
+            "wideLayout": true
+          },
+          "targets": [
+            {
+              "expr": "count(count by (name) (container_last_seen{name!=\"\"}))",
+              "refId": "A",
+              "instant": true
             }
-          }
+          ],
+          "description": "当前纳入资源观测的平台应用容器总数。"
+        },
+        {
+          "id": 20,
+          "title": "Docker 容器采集观测清单",
+          "type": "table",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 20,
+            "x": 4,
+            "y": 1
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "filterable": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "最后观测时间"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "dateTimeAsIso"
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "cellHeight": "sm",
+            "showHeader": true,
+            "footer": {
+              "show": false
+            },
+            "enablePagination": true
+          },
+          "targets": [
+            {
+              "expr": "max by (name) (container_last_seen{name!=\"\"}) * 1000",
+              "format": "table",
+              "instant": true,
+              "refId": "A"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true,
+                  "__name__": true,
+                  "id": true,
+                  "instance": true,
+                  "job": true
+                },
+                "indexByName": {
+                  "name": 0,
+                  "Value": 1
+                },
+                "renameByName": {
+                  "name": "容器名称",
+                  "Value": "最后观测时间"
+                }
+              }
+            }
+          ],
+          "description": "展示各应用容器的最近观测时间戳与基础元数据。"
         }
-      ],
-      "description": "最后观测时间不代表容器健康状态。"
+      ]
     }
   ],
   "refresh": "30s",
@@ -1617,7 +1800,7 @@
   },
   "timezone": "browser",
   "title": "10 监控平台健康（Monitoring Platform Health）",
-  "description": "覆盖平台服务可用性、remote-write 队列、VictoriaMetrics 存储和应用容器资源。数据库连接来自 API SELECT 1；Docker API 仅通过内网只读代理供 cAdvisor 获取容器元数据，cAdvisor 仅只读访问宿主 /sys cgroup，不挂载宿主根目录。",
+  "description": "Nexora 监控平台自身健康度看板：实时巡检采集端点可达性、数据写入队列、VictoriaMetrics 存储水位及核心容器资源占用。",
   "uid": "nexora-platform-health",
-  "version": 30
+  "version": 33
 }

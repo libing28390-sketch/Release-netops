@@ -30,7 +30,8 @@ def _escape_label(value: Any) -> str:
 
 def _lookup_path(document: Any, expression: str) -> Iterable[tuple[Any, dict[str, Any]]]:
     """Resolve a deliberately small JSON path grammar: ``a.b[*].c``."""
-    tokens = [token for token in str(expression or "").strip(".").split(".") if token]
+    normalized_expr = str(expression or "").replace("[*]", ".*").strip(".")
+    tokens = [token for token in normalized_expr.split(".") if token]
     current: list[tuple[Any, dict[str, Any]]] = [(document, {})]
     for token in tokens:
         next_values: list[tuple[Any, dict[str, Any]]] = []

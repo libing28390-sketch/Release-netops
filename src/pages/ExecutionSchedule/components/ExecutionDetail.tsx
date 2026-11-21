@@ -13,6 +13,12 @@ import Pagination from '../../../components/Pagination';
 import type { UnifiedExecutionLog, InspDetailTab, PlaybookExecutionApproval, ConfigBackupRunDetail, BackupDetailStatus } from '../types';
 import type { Device } from '../../../types';
 import { splitOutputByCommand, downloadInspJSON } from '../helpers';
+import {
+  buildPlaybookMarkdownReport,
+  classifyCommandBlock,
+  parseStructuredInspectionOutput,
+  triggerTextDownload,
+} from '../playbookOutputParser';
 import { buildExecutionSnapshotExportData, getExecutionSnapshotCells } from '../executionSnapshotExport';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
@@ -657,6 +663,8 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = ({
                 <PlaybookView
                   zh={zh}
                   isLinuxOutput={isLinuxOutput}
+                  taskName={selectedLog.name || ''}
+                  startedAt={selectedLog.started_at || ''}
                   pbDevices={pbDevices}
                   selectedPbDevice={selectedPbDevice}
                   pbDeviceDetail={pbDeviceDetail}
@@ -1423,19 +1431,112 @@ const ConfigBackupRunView: React.FC<{
 /* ═══════════════════════════════════════════════════════ */
 
 const PlaybookView: React.FC<{
-  zh: boolean; isLinuxOutput: boolean; pbDevices: any[]; selectedPbDevice: any; pbDeviceDetail: any;
+  zh: boolean; isLinuxOutput: boolean; taskName: string; startedAt: string;
+  pbDevices: any[]; selectedPbDevice: any; pbDeviceDetail: any;
   onSelectPbDevice: (deviceId: string) => void; devices: Device[];
   collapsedCmds: Record<string, boolean>; toggleCmdCollapse: (cmd: string) => void;
   setCollapsedCmds: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
-}> = ({ zh, isLinuxOutput, pbDevices, selectedPbDevice, pbDeviceDetail, onSelectPbDevice, devices, collapsedCmds, toggleCmdCollapse, setCollapsedCmds }) => (
+}> = ({ zh, isLinuxOutput, taskName, startedAt, pbDevices, selectedPbDevice, pbDeviceDetail, onSelectPbDevice, devices, collapsedCmds, toggleCmdCollapse, setCollapsedCmds }) => {
+  const [viewMode, setViewMode] = React.useState<'structured' | 'raw'>('structured');
+
+  // Sort abnormal devices first so operators see failures immediately
+  const sortedDevices = React.useMemo(() => {
+    const rank = (status: string) => {
+      const s = String(status || '').toLowerCase();
+      if (s === 'failed' || s === 'error' || s === 'denied') return 0;
+      if (s === 'partial' || s === 'partial_failure') return 1;
+      if (s === 'running') return 2;
+      return 3;
+    };
+    return [...pbDevices].sort((a, b) => rank(a.status) - rank(b.status));
+  }, [pbDevices]);
+
+  const deviceStats = React.useMemo(() => {
+    let ok = 0;
+    let abnormal = 0;
+    for (const d of pbDevices) {
+      const s = String(d.status || '').toLowerCase();
+      if (s === 'success' || s === 'completed') ok += 1;
+      else if (s !== 'running') abnormal += 1;
+    }
+    return { total: pbDevices.length, ok, abnormal };
+  }, [pbDevices]);
+
+  const currentPbDevice = React.useMemo(
+    () => pbDevices.find((d: any) => d.device_id === selectedPbDevice) || null,
+    [pbDevices, selectedPbDevice],
+  );
+
+  const { allBlocks, combinedRawOutput, parsedSummary } = React.useMemo(() => {
+    if (!pbDeviceDetail?.phases) {
+      return {
+        allBlocks: [] as { phase: string; command: string; output: string }[],
+        combinedRawOutput: '',
+        parsedSummary: parseStructuredInspectionOutput(''),
+      };
+    }
+    const collected: { phase: string; command: string; output: string }[] = [];
+    const rawParts: string[] = [];
+    Object.entries(pbDeviceDetail.phases).forEach(([phase, pdata]: any) => {
+      const pd = pdata || {};
+      const cmds = pd.commands || [];
+      const outputStr = typeof pd.output === 'string' ? pd.output : JSON.stringify(pd.output || '');
+      rawParts.push(outputStr);
+      const blocks = splitOutputByCommand(outputStr, cmds);
+      blocks.forEach((blk) => {
+        collected.push({ phase, command: blk.command || 'system', output: blk.output || '' });
+      });
+    });
+    const combined = rawParts.join('\n');
+    return {
+      allBlocks: collected,
+      combinedRawOutput: combined,
+      parsedSummary: parseStructuredInspectionOutput(combined),
+    };
+  }, [pbDeviceDetail]);
+
+  const handleExportMarkdown = () => {
+    if (!currentPbDevice) return;
+    const dev = devices.find((d) => d.id === selectedPbDevice);
+    const md = buildPlaybookMarkdownReport({
+      taskName,
+      hostname: currentPbDevice.hostname || dev?.hostname || 'device',
+      ipAddress: currentPbDevice.ip_address || dev?.ip_address || '',
+      platform: dev?.platform || '',
+      status: currentPbDevice.status || 'unknown',
+      startedAt,
+      summary: parsedSummary,
+      blocks: allBlocks.map((b) => ({ command: b.command, output: b.output })),
+      zh,
+    });
+    const safeName = `${taskName || 'inspection'}_${currentPbDevice.hostname || 'device'}`.replace(/[^\w\u4e00-\u9fff-]+/g, '_');
+    triggerTextDownload(md, `${safeName}.md`, 'text/markdown;charset=utf-8');
+  };
+
+  const handleExportRawTxt = () => {
+    if (!currentPbDevice) return;
+    const safeName = `${taskName || 'inspection'}_${currentPbDevice.hostname || 'device'}`.replace(/[^\w\u4e00-\u9fff-]+/g, '_');
+    triggerTextDownload(combinedRawOutput, `${safeName}.txt`, 'text/plain;charset=utf-8');
+  };
+
+  const showStructuredCard = viewMode === 'structured' && parsedSummary.hasStructuredData;
+
+  return (
   <div className="flex flex-col md:flex-row h-full">
     {/* Device List (Left) */}
     <div className="w-full md:w-4/12 border-r border-black/5 flex flex-col h-full bg-slate-50/50">
-      <div className="p-4 border-b border-black/5 bg-white">
-        <span className="text-xs font-bold text-black/50">{zh ? '执行设备情况' : 'Device Execution'}</span>
+      <div className="p-4 border-b border-black/5 bg-white flex items-center justify-between gap-2">
+        <span className="text-xs font-bold text-black/60">{zh ? '执行设备情况' : 'Device Execution'}</span>
+        <div className="flex items-center gap-2 text-[10px] font-semibold">
+          <span className="text-slate-500">{zh ? `共 ${deviceStats.total}` : `${deviceStats.total}`}</span>
+          <span className="text-emerald-600">{zh ? `正常 ${deviceStats.ok}` : `OK ${deviceStats.ok}`}</span>
+          {deviceStats.abnormal > 0 && (
+            <span className="text-rose-600">{zh ? `异常 ${deviceStats.abnormal}` : `Fail ${deviceStats.abnormal}`}</span>
+          )}
+        </div>
       </div>
       <div className="flex-1 overflow-auto p-2 space-y-1">
-        {pbDevices.map((dev) => {
+        {sortedDevices.map((dev) => {
           const stMap: Record<string, { cls: string; label: string }> = {
             success: { cls: 'bg-emerald-500', label: zh ? '正常' : 'Pass' },
             completed: { cls: 'bg-emerald-500', label: zh ? '正常' : 'Pass' },
@@ -1469,11 +1570,11 @@ const PlaybookView: React.FC<{
 
     {/* Command Output (Right) */}
     <div className={`flex-1 flex flex-col overflow-hidden ${isLinuxOutput ? 'bg-white' : 'bg-[#1E1E1E]'}`}>
-      <div className={`p-4 border-b flex items-center justify-between ${isLinuxOutput ? 'border-black/10 bg-slate-50' : 'border-white/10 bg-black/20'}`}>
+      <div className={`p-4 border-b flex flex-wrap items-center justify-between gap-3 ${isLinuxOutput ? 'border-black/10 bg-slate-50' : 'border-white/10 bg-black/20'}`}>
         <div>
           <span className={`text-xs font-bold block ${isLinuxOutput ? 'text-black' : 'text-white/80'}`}>
             {selectedPbDevice 
-              ? (pbDevices.find((d: any) => d.device_id === selectedPbDevice)?.hostname || '') 
+              ? (currentPbDevice?.hostname || '') 
               : (zh ? '请选择设备查看命令输出' : 'Select a device to view command outputs')}
           </span>
           {selectedPbDevice && (() => {
@@ -1490,7 +1591,58 @@ const PlaybookView: React.FC<{
           })()}
         </div>
         {selectedPbDevice && pbDeviceDetail?.phases && (
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            {parsedSummary.hasStructuredData && (
+              <div className={`inline-flex rounded-lg p-0.5 border ${isLinuxOutput ? 'bg-slate-200/70 border-slate-200' : 'bg-white/5 border-white/10'}`}>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('structured')}
+                  className={`px-2 py-1 rounded-md text-[10px] font-bold transition-all cursor-pointer ${
+                    viewMode === 'structured'
+                      ? (isLinuxOutput ? 'bg-white text-blue-700 shadow-xs' : 'bg-cyan-500/20 text-cyan-300')
+                      : (isLinuxOutput ? 'text-slate-500 hover:text-slate-800' : 'text-white/40 hover:text-white/70')
+                  }`}
+                >
+                  {zh ? '结构化摘要' : 'Structured'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('raw')}
+                  className={`px-2 py-1 rounded-md text-[10px] font-bold transition-all cursor-pointer ${
+                    viewMode === 'raw'
+                      ? (isLinuxOutput ? 'bg-white text-blue-700 shadow-xs' : 'bg-cyan-500/20 text-cyan-300')
+                      : (isLinuxOutput ? 'text-slate-500 hover:text-slate-800' : 'text-white/40 hover:text-white/70')
+                  }`}
+                >
+                  {zh ? '原始回显' : 'Raw'}
+                </button>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={handleExportMarkdown}
+              className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold border transition-colors cursor-pointer ${
+                isLinuxOutput
+                  ? 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                  : 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20'
+              }`}
+            >
+              <Download size={11} />
+              {zh ? '导出报告' : 'Report .md'}
+            </button>
+            <button
+              type="button"
+              onClick={handleExportRawTxt}
+              className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold border transition-colors cursor-pointer ${
+                isLinuxOutput
+                  ? 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'
+                  : 'border-white/10 bg-white/5 text-white/60 hover:bg-white/10'
+              }`}
+            >
+              <FileText size={11} />
+              {zh ? '原始日志' : 'Raw .txt'}
+            </button>
+            <div className={`w-px h-3 ${isLinuxOutput ? 'bg-black/10' : 'bg-white/10'}`} />
             <button 
               onClick={() => {
                 const next = { ...collapsedCmds };
@@ -1506,7 +1658,6 @@ const PlaybookView: React.FC<{
             >
               {zh ? '全部展开' : 'Expand All'}
             </button>
-            <div className={`w-px h-2.5 ${isLinuxOutput ? 'bg-black/10' : 'bg-white/10'}`} />
             <button 
               onClick={() => {
                 const next = { ...collapsedCmds };
@@ -1526,6 +1677,86 @@ const PlaybookView: React.FC<{
         )}
       </div>
       <div className={`flex-1 p-6 font-mono text-xs overflow-auto whitespace-pre-wrap select-text relative ${isLinuxOutput ? 'bg-white text-black' : 'bg-[#1E1E1E] text-[#d4d4d4]'}`}>
+        {showStructuredCard && (
+          <div className={`mb-5 rounded-xl border p-4 font-sans ${isLinuxOutput ? 'border-slate-200 bg-slate-50/80' : 'border-white/10 bg-white/[0.04]'}`}>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <div className="flex items-center gap-2">
+                <span className={`text-xs font-bold ${isLinuxOutput ? 'text-slate-800' : 'text-white/90'}`}>
+                  {zh ? '结构化巡检摘要' : 'Structured Inspection Summary'}
+                </span>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                  parsedSummary.overallStatus === 'FAIL'
+                    ? 'bg-rose-500/15 text-rose-500 border border-rose-500/30'
+                    : parsedSummary.overallStatus === 'WARN'
+                    ? 'bg-amber-500/15 text-amber-500 border border-amber-500/30'
+                    : 'bg-emerald-500/15 text-emerald-500 border border-emerald-500/30'
+                }`}>
+                  {parsedSummary.overallStatus === 'FAIL'
+                    ? (zh ? '异常 FAIL' : 'FAIL')
+                    : parsedSummary.overallStatus === 'WARN'
+                    ? (zh ? '警告 WARN' : 'WARN')
+                    : (zh ? '正常 PASS' : 'PASS')}
+                </span>
+              </div>
+              {parsedSummary.hostMeta.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2 text-[10px]">
+                  {parsedSummary.hostMeta.map((hm, idx) => (
+                    <span key={idx} className={`px-2 py-0.5 rounded-md ${isLinuxOutput ? 'bg-white border border-slate-200 text-slate-600' : 'bg-white/5 text-white/60'}`}>
+                      <span className="opacity-65 mr-1">{zh ? hm.labelZh : hm.labelEn}:</span>
+                      <span className="font-semibold">{hm.value}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {parsedSummary.findings.length > 0 && (
+              <div className="mb-3 space-y-1.5">
+                {parsedSummary.findings.map((f, idx) => (
+                  <div
+                    key={idx}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] font-medium ${
+                      f.severity === 'FAIL'
+                        ? (isLinuxOutput ? 'bg-rose-50 text-rose-700 border border-rose-200' : 'bg-rose-500/15 text-rose-300 border border-rose-500/30')
+                        : f.severity === 'WARN'
+                        ? (isLinuxOutput ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-amber-500/15 text-amber-300 border border-amber-500/30')
+                        : (isLinuxOutput ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30')
+                    }`}
+                  >
+                    <span className="font-bold">[{f.severity}]</span>
+                    <span>{f.text}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {parsedSummary.metrics.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                {parsedSummary.metrics.map((m) => {
+                  const toneCls =
+                    m.tone === 'fail'
+                      ? (isLinuxOutput ? 'border-rose-200 bg-rose-50/70 text-rose-700' : 'border-rose-500/30 bg-rose-500/10 text-rose-300')
+                      : m.tone === 'warn'
+                      ? (isLinuxOutput ? 'border-amber-200 bg-amber-50/70 text-amber-700' : 'border-amber-500/30 bg-amber-500/10 text-amber-300')
+                      : m.tone === 'ok'
+                      ? (isLinuxOutput ? 'border-emerald-200/80 bg-white text-slate-800' : 'border-emerald-500/20 bg-black/20 text-white/90')
+                      : (isLinuxOutput ? 'border-slate-200 bg-white text-slate-700' : 'border-white/10 bg-black/20 text-white/70');
+                  return (
+                    <div key={m.key} className={`rounded-lg border px-3 py-2 ${toneCls}`}>
+                      <div className={`text-[10px] truncate ${isLinuxOutput ? 'text-slate-500' : 'text-white/45'}`}>
+                        {zh ? m.labelZh : m.labelEn}
+                      </div>
+                      <div className="text-sm font-bold font-mono mt-0.5">
+                        {m.value}{m.unit || ''}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {pbDeviceDetail?.phases ? (
           Object.entries(pbDeviceDetail.phases).map(([phase, pdata]: any) => {
             const pd = pdata || {};
@@ -1546,19 +1777,34 @@ const PlaybookView: React.FC<{
                   {blocks.map((blk, bi) => {
                     const rawOutput = blk.output || '';
                     const bOutput = isLinuxOutput ? stripLinuxHealthRating(rawOutput) : rawOutput;
-                    const bIsError = !isLinuxOutput && (bOutput.includes('__ERROR__') || bOutput.includes('% Invalid input') || bOutput.includes('error'));
+                    const blockSeverity = classifyCommandBlock(blk.command || '', rawOutput);
+                    const bIsError = blockSeverity === 'fail';
+                    const bIsWarn = blockSeverity === 'warn';
                     const bKey = `pb_${selectedPbDevice}_${phase}_${bi}`;
                     const isCollapsed = collapsedCmds[bKey] ?? false;
                     
                     return (
-                      <div key={bi} className={`rounded-lg overflow-hidden border transition-all ${isLinuxOutput ? 'border-black/10 bg-white' : bIsError ? 'border-red-500/30 bg-red-500/5' : 'border-white/5 bg-black/20'}`}>
+                      <div key={bi} className={`rounded-lg overflow-hidden border transition-all ${
+                        isLinuxOutput
+                          ? (bIsError ? 'border-rose-200 bg-white' : bIsWarn ? 'border-amber-200 bg-white' : 'border-black/10 bg-white')
+                          : (bIsError ? 'border-red-500/35 bg-red-500/5' : bIsWarn ? 'border-amber-500/35 bg-amber-500/5' : 'border-white/5 bg-black/20')
+                      }`}>
                         <div 
                           onClick={() => toggleCmdCollapse(bKey)}
                           className={`px-4 py-2 flex items-center justify-between cursor-pointer select-none ${isLinuxOutput ? 'bg-slate-50 hover:bg-slate-100' : 'bg-white/5 hover:bg-white/[0.08]'}`}
                         >
                           <div className="flex items-center gap-2 min-w-0">
                             <ChevronRight size={14} className={`shrink-0 transition-transform duration-200 ${isLinuxOutput ? 'text-black/35' : 'text-white/20'} ${isCollapsed ? '' : 'rotate-90'}`} />
-                            <span className={`text-[11px] font-mono font-bold truncate ${isLinuxOutput ? 'text-black/75' : bIsError ? 'text-red-400' : 'text-cyan-400/80'}`}>&gt; {blk.command || 'system'}</span>
+                            <span className={`text-[11px] font-mono font-bold truncate ${isLinuxOutput ? 'text-black/75' : bIsError ? 'text-red-400' : bIsWarn ? 'text-amber-300' : 'text-cyan-400/80'}`}>&gt; {blk.command || 'system'}</span>
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                              bIsError
+                                ? 'bg-rose-500/15 text-rose-500'
+                                : bIsWarn
+                                ? 'bg-amber-500/15 text-amber-500'
+                                : 'bg-emerald-500/15 text-emerald-500'
+                            }`}>
+                              {bIsError ? (zh ? '异常' : 'FAIL') : bIsWarn ? (zh ? '警告' : 'WARN') : (zh ? '正常' : 'OK')}
+                            </span>
                           </div>
                           <div className="flex items-center gap-2 shrink-0 ml-3" onClick={e => e.stopPropagation()}>
                             {isCollapsed && (
@@ -1593,6 +1839,7 @@ const PlaybookView: React.FC<{
       </div>
     </div>
   </div>
-);
+  );
+};
 
 export default ExecutionDetail;

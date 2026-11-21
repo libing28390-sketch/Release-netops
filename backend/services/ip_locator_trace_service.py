@@ -844,6 +844,91 @@ def _device_map(devices: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {str(item.get("id") or ""): item for item in devices if item.get("id")}
 
 
+def _device_site_key(device: Mapping[str, Any] | None) -> str:
+    if not isinstance(device, Mapping):
+        return ""
+    return str(device.get("site_id") or device.get("site") or "").strip().lower()
+
+
+def _infer_target_ip_sites(
+    conn: Any,
+    target_ip: str,
+    by_id: Mapping[str, dict[str, Any]],
+) -> set[str]:
+    """Infer likely site keys for ``target_ip`` from CMDB ARP and L3 interface subnets.
+
+    Used strictly as a priority hint when global ``role=core`` seed devices span
+    multiple sites; callers fall back to all other sites if the hinted site(s)
+    yield no direct gateway.
+    """
+    sites: set[str] = set()
+    try:
+        target_addr = ipaddress.ip_address(str(target_ip).strip())
+    except ValueError:
+        return sites
+
+    # 1. Exact ARP hit in CMDB
+    try:
+        arp_rows = conn.execute(
+            "SELECT DISTINCT device_id FROM arp_table WHERE ip_address = ? LIMIT 10",
+            (str(target_ip).strip(),),
+        ).fetchall()
+        for row in arp_rows:
+            dev_id = str(row["device_id"] if isinstance(row, Mapping) or hasattr(row, "keys") else row[0] or "")
+            site_key = _device_site_key(by_id.get(dev_id))
+            if site_key:
+                sites.add(site_key)
+    except Exception:
+        pass
+    if sites:
+        return sites
+
+    # 2. Longest-prefix L3 interface subnet match in CMDB (interfaces + CMDB observations)
+    try:
+        intf_rows = list(conn.execute(
+            """SELECT device_id, ip_address, ip_prefix_length
+               FROM interfaces
+               WHERE ip_address IS NOT NULL AND ip_address != ''
+                 AND ip_prefix_length IS NOT NULL"""
+        ).fetchall())
+        try:
+            intf_rows.extend(conn.execute(
+                """SELECT i.device_id, i.ip_address, i.ip_prefix_length
+                   FROM cmdb_device_interface_observations i
+                   JOIN cmdb_collection_snapshots s
+                     ON s.device_id = i.device_id
+                    AND s.domain = 'interface_inventory'
+                    AND s.successful_generation = i.generation
+                   WHERE i.ip_address IS NOT NULL AND i.ip_address != ''
+                     AND i.ip_prefix_length IS NOT NULL"""
+            ).fetchall())
+        except Exception:
+            pass
+        best_prefix_len = -1
+        best_sites: set[str] = set()
+        for row in intf_rows:
+            dev_id = str(row["device_id"] if isinstance(row, Mapping) or hasattr(row, "keys") else row[0] or "")
+            site_key = _device_site_key(by_id.get(dev_id))
+            if not site_key:
+                continue
+            raw_ip = str(row["ip_address"] if isinstance(row, Mapping) or hasattr(row, "keys") else row[1] or "").strip()
+            raw_plen = row["ip_prefix_length"] if isinstance(row, Mapping) or hasattr(row, "keys") else row[2]
+            try:
+                net = ipaddress.ip_network(f"{raw_ip}/{int(raw_plen)}", strict=False)
+            except (ValueError, TypeError):
+                continue
+            if net.version == target_addr.version and target_addr in net and net.prefixlen > 0:
+                if net.prefixlen > best_prefix_len:
+                    best_prefix_len = net.prefixlen
+                    best_sites = {site_key}
+                elif net.prefixlen == best_prefix_len:
+                    best_sites.add(site_key)
+        sites.update(best_sites)
+    except Exception:
+        pass
+    return sites
+
+
 def _run_cli_with_device_lease(
     device: dict[str, Any],
     operation: str,
@@ -1945,8 +2030,44 @@ def _trace_ip_uncached(
         logger.warning("[IPLocatorV2] database unavailable: %s", exc)
         return result
 
+    deferred_start_devices: list[dict[str, Any]] = []
+    if not start_device_id and not site_id:
+        distinct_core_sites = {
+            _device_site_key(d) for d in start_devices if _device_site_key(d)
+        }
+        if len(distinct_core_sites) > 1:
+            inferred_sites = _infer_target_ip_sites(conn, target_ip, by_id)
+            if inferred_sites:
+                preferred_starts = [
+                    d for d in start_devices if _device_site_key(d) in inferred_sites
+                ]
+                if preferred_starts and len(preferred_starts) < len(start_devices):
+                    deferred_start_devices = [
+                        d for d in start_devices if _device_site_key(d) not in inferred_sites
+                    ]
+                    frontier = [
+                        {
+                            "device": device,
+                            "vrf": vrf,
+                            "path": [],
+                            "visited": set(),
+                        }
+                        for device in preferred_starts
+                    ]
+
     try:
-        while frontier and len(queried_device_ids) < limits.max_devices:
+        while (frontier or (not direct_devices and deferred_start_devices)) and len(queried_device_ids) < limits.max_devices:
+            if not frontier and not direct_devices and deferred_start_devices:
+                frontier = [
+                    {
+                        "device": device,
+                        "vrf": vrf,
+                        "path": [],
+                        "visited": set(),
+                    }
+                    for device in deferred_start_devices
+                ]
+                deferred_start_devices = []
             if not operation_budget_available():
                 break
             branch = frontier.pop(0)
@@ -3525,10 +3646,48 @@ def _trace_ip_uncached(
                         result["coverage_gaps"].append(f"l2_entry_unknown:{current_id}:unknown")
                         result["errors"].append(f"{label} 不支持目标 MAC/FDB 查询")
                         continue
+                    # On H3C/Comware switches, MAC aging (300s) is shorter than ARP aging (1200s),
+                    # and `display arp` already reports the exact physical egress port (e.g. GE1/0/2).
+                    # If the ARP physical port has no downstream switch neighbor and CMDB confirms
+                    # it is an Access port for this VLAN, treat it as a confirmed terminal port.
+                    arp_port = str(arp.get("interface") or "").strip() if not path else ""
+                    if arp_port and conn is not None:
+                        arp_topology = _topology_neighbors(conn, current_id, arp_port)
+                        arp_identity = _terminal_evidence(conn, current_id, arp_port, vlan_hint)
+                        if not arp_topology and arp_identity.get("is_terminal"):
+                            arp_hop = {
+                                "device_id": current_id,
+                                "device": label,
+                                "port": arp_port,
+                                "mac": mac,
+                                "vlan": vlan_hint,
+                                "type": "arp_egress",
+                                "source": "arp_physical_interface",
+                                "collected_at": arp.get("collected_at") or _now_iso(),
+                                "terminal_evidence": arp_identity,
+                            }
+                            result["l2_paths"].append({"l3_path": l3_path, "hops": path + [arp_hop]})
+                            final_candidates.append({
+                                "device_id": current_id,
+                                "device": label,
+                                "port": arp_port,
+                                "vlan": vlan_hint,
+                                "mac": mac,
+                                "l3_path": l3_path,
+                                "l2_path": path + [arp_hop],
+                                "confidence": "high",
+                            })
+                            continue
+
                     result["coverage_gaps"].append(f"mac_not_found:{current_id}")
                     if mac_status in {"query_failed", "parse_incomplete"}:
                         result["coverage_gaps"].append(f"mac_{mac_status}:{current_id}")
-                        result["errors"].append(f"{label} MAC 查询{mac_status}")
+                        readable_mac_err = (
+                            "MAC 表未命中或设备未返回有效输出（可能已超过 5 分钟老化时间）"
+                            if mac_status == "query_failed"
+                            else "MAC 表输出不完整"
+                        )
+                        result["errors"].append(f"{label} {readable_mac_err}")
                     continue
                 for record in records[: limits.max_candidates_per_hop]:
                     port = str(record.get("port") or record.get("interface") or "").strip()
@@ -3699,8 +3858,22 @@ def _trace_ip_uncached(
         "arp_proxy_or_virtual_gateway:",
         "arp_ambiguous:",
     )
+    confirmed_candidate_site = (
+        _device_site_key(by_id.get(str(final_candidates[0].get("device_id") or "")))
+        if len(final_candidates) == 1
+        else ""
+    )
+
+    def _gap_is_unrelated_cross_site_route_failure(gap: str) -> bool:
+        if not confirmed_candidate_site or not gap.startswith("route_failed:"):
+            return False
+        failed_dev_id = gap.split(":", 1)[1].strip()
+        failed_site = _device_site_key(by_id.get(failed_dev_id))
+        return bool(failed_site and failed_site != confirmed_candidate_site)
+
     has_unverified_branch = any(
         any(str(gap).startswith(prefix) for prefix in fatal_gap_prefixes)
+        and not _gap_is_unrelated_cross_site_route_failure(str(gap))
         for gap in result["coverage_gaps"]
     )
     if len(final_candidates) == 1 and not has_unverified_branch and not deadline_exceeded:
@@ -4100,14 +4273,42 @@ def add_legacy_compatibility(result: dict[str, Any]) -> dict[str, Any]:
         enriched["mac_lookup"] = {"status": mac_status}
     if enriched.get("coverage_gaps"):
         existing_errors = list(enriched.get("errors") or [])
+        internal_gap_prefixes = (
+            "route_failed:",
+            "topology_incomplete:",
+            "neighbor_unmanaged:",
+            "neighbor_ambiguous:",
+            "l2_entry_unknown:",
+            "mac_not_found:",
+            "mac_query_failed:",
+            "mac_parse_incomplete:",
+            "mac_failed:",
+            "mac_unsupported:",
+            "mac_vlan_evidence_missing:",
+            "arp_failed:",
+            "arp_query_failed:",
+            "neighbor_query_failed:",
+            "neighbor_parse_incomplete:",
+            "neighbor_unsupported:",
+            "next_hop_neighbor_",
+            "observation_persist_failed:",
+        )
         for gap in enriched["coverage_gaps"]:
             message = str(gap)
-            # These identifiers are for correlation/diagnostics; the same
-            # failed device already has a readable error in ``errors``.
-            if message.startswith("route_failed:"):
+            # Keep machine correlation tags (containing device UUIDs) in
+            # coverage_gaps without leaking raw UUIDs into user-facing errors.
+            if message.startswith(internal_gap_prefixes):
                 continue
             if message not in existing_errors:
                 existing_errors.append(message)
+        # Once a terminal access port is definitively confirmed, drop unrelated
+        # non-path route-query noise (e.g. wireless controllers) from user errors
+        # while retaining them in coverage_gaps for diagnostics.
+        if enriched.get("conclusion") in {"managed_access_confirmed", "endpoint_evidence_confirmed"}:
+            existing_errors = [
+                msg for msg in existing_errors
+                if not str(msg).endswith("路由查询失败")
+            ]
         enriched["errors"] = existing_errors
     cache = dict(enriched.get("cache") or {})
     cache.setdefault("enabled", True)

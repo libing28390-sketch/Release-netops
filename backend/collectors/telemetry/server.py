@@ -19,7 +19,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-import grpc
+try:
+    import grpc
+except ImportError:  # pragma: no cover - allow ReceiverState unit tests without grpcio installed
+    grpc = None  # type: ignore[assignment]
 import httpx
 
 from collectors.telemetry.normalizer import TelemetryPayloadError, normalize_message

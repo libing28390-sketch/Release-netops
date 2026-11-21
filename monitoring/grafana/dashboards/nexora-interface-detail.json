@@ -6,7 +6,104 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "全网总览",
+      "tooltip": "切换到 全网总览",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-overview/nexora-network-overview"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "单设备详情",
+      "tooltip": "切换到 单设备详情",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-device/nexora-network-device"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "接口全景",
+      "tooltip": "切换到 接口全景",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-interface/nexora-network-interface"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "无线专网",
+      "tooltip": "切换到 无线专网",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-wireless/nexora-network-wireless"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "出口质量",
+      "tooltip": "切换到 出口质量",
+      "type": "link",
+      "url": "/grafana/d/nexora-outbound-probe-quality/nexora-outbound-probe-quality"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "采集健康",
+      "tooltip": "切换到 采集健康",
+      "type": "link",
+      "url": "/grafana/d/nexora-monitoring-health/nexora-monitoring-health"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Telemetry 实时",
+      "tooltip": "切换到 Telemetry 实时",
+      "type": "link",
+      "url": "/grafana/d/nexora-telemetry-realtime/nexora-telemetry-realtime"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": true,
+      "title": "返回 Nexora 监控",
+      "tooltip": "在新标签页打开 Nexora 网络监控页面",
+      "type": "link",
+      "url": "/monitor/network"
+    }
+  ],
   "panels": [
     {
       "id": 901,
@@ -77,8 +174,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -88,7 +185,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -154,8 +256,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -165,7 +267,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -178,7 +285,7 @@
     {
       "id": 3,
       "title": "入向利用率",
-      "type": "stat",
+      "type": "gauge",
       "datasource": {
         "type": "prometheus",
         "uid": "victoriametrics"
@@ -227,14 +334,13 @@
                 }
               }
             }
-          ]
+          ],
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -243,7 +349,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "minVizWidth": 75,
+        "minVizHeight": 75
       },
       "targets": [
         {
@@ -256,7 +366,7 @@
     {
       "id": 4,
       "title": "出向利用率",
-      "type": "stat",
+      "type": "gauge",
       "datasource": {
         "type": "prometheus",
         "uid": "victoriametrics"
@@ -305,14 +415,13 @@
                 }
               }
             }
-          ]
+          ],
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -321,7 +430,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "minVizWidth": 75,
+        "minVizHeight": 75
       },
       "targets": [
         {
@@ -396,8 +509,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -407,7 +520,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -482,8 +600,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -493,7 +611,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -526,11 +649,12 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
+            "fillOpacity": 24,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -561,6 +685,10 @@
                   "mode": "fixed",
                   "fixedColor": "#3B82F6"
                 }
+              },
+              {
+                "id": "custom.transform",
+                "value": "negative-Y"
               }
             ]
           }
@@ -568,14 +696,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true,
           "calcs": [
             "lastNotNull",
             "max",
             "mean"
-          ]
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -618,11 +746,12 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
+            "fillOpacity": 24,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -653,6 +782,10 @@
                   "mode": "fixed",
                   "fixedColor": "#3B82F6"
                 }
+              },
+              {
+                "id": "custom.transform",
+                "value": "negative-Y"
               }
             ]
           }
@@ -660,14 +793,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true,
           "calcs": [
             "lastNotNull",
             "max",
             "mean"
-          ]
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -980,6 +1113,19 @@
       ]
     },
     {
+      "id": 903,
+      "title": "质量与稳定性",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      },
+      "panels": []
+    },
+    {
       "id": 9,
       "title": "入向 / 出向 / 单播 / 组播 / 广播 PPS",
       "type": "timeseries",
@@ -1002,11 +1148,12 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
+            "fillOpacity": 24,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -1089,10 +1236,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "list",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -1129,12 +1280,17 @@
             "mode": "palette-classic"
           },
           "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
+            "drawStyle": "bars",
+            "lineInterpolation": "smooth",
+            "lineWidth": 1,
+            "fillOpacity": 82,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "barAlignment": 0,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
           }
         },
         "overrides": [
@@ -1172,14 +1328,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true,
           "calcs": [
             "lastNotNull",
             "max",
             "mean"
-          ]
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -1198,32 +1354,6 @@
           "refId": "B"
         }
       ]
-    },
-    {
-      "id": 903,
-      "title": "质量与稳定性",
-      "type": "row",
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 27
-      },
-      "panels": []
-    },
-    {
-      "id": 904,
-      "title": "接口状态",
-      "type": "row",
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 42
-      },
-      "panels": []
     },
     {
       "id": 11,
@@ -1534,336 +1664,350 @@
       ]
     },
     {
-      "id": 13,
-      "title": "距上次接口状态变化时间",
-      "type": "table",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
+      "id": 904,
+      "title": "接口状态",
+      "type": "row",
+      "collapsed": true,
       "gridPos": {
-        "h": 7,
-        "w": 12,
+        "h": 1,
+        "w": 24,
         "x": 0,
-        "y": 43
+        "y": 42
       },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "thresholds"
+      "panels": [
+        {
+          "id": 13,
+          "title": "距上次接口状态变化时间",
+          "type": "table",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
           },
-          "custom": {
-            "filterable": true
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "距上次变化 (秒)"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "s"
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 1
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "filterable": true
               }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "接口用途"
             },
-            "properties": [
+            "overrides": [
               {
-                "id": "mappings",
-                "value": [
+                "matcher": {
+                  "id": "byName",
+                  "options": "距上次变化 (秒)"
+                },
+                "properties": [
                   {
-                    "type": "value",
-                    "options": {
-                      "unclassified": {
-                        "text": "用途待确认",
-                        "color": "#64748B"
+                    "id": "unit",
+                    "value": "s"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "接口用途"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "type": "value",
+                        "options": {
+                          "unclassified": {
+                            "text": "用途待确认",
+                            "color": "#64748B"
+                          }
+                        }
                       }
-                    }
+                    ]
                   }
                 ]
               }
             ]
-          }
-        ]
-      },
-      "options": {
-        "cellHeight": "sm",
-        "showHeader": true,
-        "footer": {
-          "show": false
-        },
-        "enablePagination": true
-      },
-      "targets": [
-        {
-          "expr": "((((last_over_time(sysUpTime{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[20m]) + (time() - timestamp(last_over_time(sysUpTime{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[20m]))) * 100) - on(instance) group_right(ifIndex, ifName, ifAlias, interface_role, utilization_warn_pct, utilization_high_pct, utilization_critical_pct) ifLastChange{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}) + 4294967296) % 4294967296) / 100",
-          "format": "table",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "ifIndex": true,
-              "asset_id": true,
-              "nexora_asset_id": true,
-              "nexora_hostname": true,
-              "nexora_module": true,
-              "nexora_platform": true,
-              "nexora_role": true,
-              "nexora_site_id": true,
-              "nexora_site_name": true,
-              "nexora_tenant_id": true,
-              "nexora_vendor": true,
-              "job": true,
-              "tenant_id": true,
-              "site_id": true,
-              "platform": true,
-              "sysName": true,
-              "nexora_interface_role": true,
-              "ifDescr": true
-            },
-            "indexByName": {
-              "site_name": 0,
-              "hostname": 1,
-              "instance": 2,
-              "ifName": 3,
-              "ifAlias": 4,
-              "vendor": 5,
-              "role": 6,
-              "interface_role": 7,
-              "utilization_warn_pct": 8,
-              "utilization_high_pct": 9,
-              "utilization_critical_pct": 10,
-              "Value": 11
-            },
-            "renameByName": {
-              "sysName": "设备名称",
-              "hostname": "设备名称",
-              "instance": "采集目标",
-              "site_name": "站点",
-              "ifName": "接口全称",
-              "ifAlias": "接口描述",
-              "vendor": "厂商",
-              "role": "角色",
-              "interface_role": "接口用途",
-              "utilization_warn_pct": "预警阈值 (%)",
-              "utilization_high_pct": "高位阈值 (%)",
-              "utilization_critical_pct": "严重阈值 (%)",
-              "Value": "距上次变化 (秒)"
-            }
-          }
-        }
-      ]
-    },
-    {
-      "id": 14,
-      "title": "接口运行状态",
-      "type": "table",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 12,
-        "y": 43
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "thresholds"
           },
-          "custom": {
-            "filterable": true
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "运行状态"
+          "options": {
+            "cellHeight": "sm",
+            "showHeader": true,
+            "footer": {
+              "show": false
             },
-            "properties": [
+            "enablePagination": true
+          },
+          "targets": [
+            {
+              "expr": "((((last_over_time(sysUpTime{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[20m]) + (time() - timestamp(last_over_time(sysUpTime{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"}[20m]))) * 100) - on(instance) group_right(ifIndex, ifName, ifAlias, interface_role, utilization_warn_pct, utilization_high_pct, utilization_critical_pct) ifLastChange{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}) + 4294967296) % 4294967296) / 100",
+              "format": "table",
+              "instant": true,
+              "refId": "A"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true,
+                  "__name__": true,
+                  "ifIndex": true,
+                  "asset_id": true,
+                  "nexora_asset_id": true,
+                  "nexora_hostname": true,
+                  "nexora_module": true,
+                  "nexora_platform": true,
+                  "nexora_role": true,
+                  "nexora_site_id": true,
+                  "nexora_site_name": true,
+                  "nexora_tenant_id": true,
+                  "nexora_vendor": true,
+                  "job": true,
+                  "tenant_id": true,
+                  "site_id": true,
+                  "platform": true,
+                  "sysName": true,
+                  "nexora_interface_role": true,
+                  "ifDescr": true
+                },
+                "indexByName": {
+                  "site_name": 0,
+                  "hostname": 1,
+                  "instance": 2,
+                  "ifName": 3,
+                  "ifAlias": 4,
+                  "vendor": 5,
+                  "role": 6,
+                  "interface_role": 7,
+                  "utilization_warn_pct": 8,
+                  "utilization_high_pct": 9,
+                  "utilization_critical_pct": 10,
+                  "Value": 11
+                },
+                "renameByName": {
+                  "sysName": "设备名称",
+                  "hostname": "设备名称",
+                  "instance": "采集目标",
+                  "site_name": "站点",
+                  "ifName": "接口全称",
+                  "ifAlias": "接口描述",
+                  "vendor": "厂商",
+                  "role": "角色",
+                  "interface_role": "接口用途",
+                  "utilization_warn_pct": "预警阈值 (%)",
+                  "utilization_high_pct": "高位阈值 (%)",
+                  "utilization_critical_pct": "严重阈值 (%)",
+                  "Value": "距上次变化 (秒)"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": 14,
+          "title": "接口运行状态",
+          "type": "table",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 1
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "filterable": true
+              }
+            },
+            "overrides": [
               {
-                "id": "mappings",
-                "value": [
+                "matcher": {
+                  "id": "byName",
+                  "options": "运行状态"
+                },
+                "properties": [
                   {
-                    "type": "value",
-                    "options": {
-                      "1": {
-                        "text": "Up",
-                        "color": "#22C55E"
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "type": "value",
+                        "options": {
+                          "1": {
+                            "text": "Up",
+                            "color": "#22C55E"
+                          },
+                          "2": {
+                            "text": "Down",
+                            "color": "#F43F5E"
+                          },
+                          "3": {
+                            "text": "Testing",
+                            "color": "#3B82F6"
+                          },
+                          "4": {
+                            "text": "Unknown",
+                            "color": "#64748B"
+                          },
+                          "5": {
+                            "text": "Dormant",
+                            "color": "#3B82F6"
+                          },
+                          "6": {
+                            "text": "Not present",
+                            "color": "#3B82F6"
+                          },
+                          "7": {
+                            "text": "Lower layer down",
+                            "color": "#F43F5E"
+                          }
+                        }
                       },
-                      "2": {
-                        "text": "Down",
-                        "color": "#F43F5E"
+                      {
+                        "type": "special",
+                        "options": {
+                          "match": "null",
+                          "result": {
+                            "text": "暂无采集数据",
+                            "color": "#64748B"
+                          }
+                        }
                       },
-                      "3": {
-                        "text": "Testing",
-                        "color": "#3B82F6"
-                      },
-                      "4": {
-                        "text": "Unknown",
-                        "color": "#64748B"
-                      },
-                      "5": {
-                        "text": "Dormant",
-                        "color": "#3B82F6"
-                      },
-                      "6": {
-                        "text": "Not present",
-                        "color": "#3B82F6"
-                      },
-                      "7": {
-                        "text": "Lower layer down",
-                        "color": "#F43F5E"
+                      {
+                        "type": "special",
+                        "options": {
+                          "match": "nan",
+                          "result": {
+                            "text": "暂无采集数据",
+                            "color": "#64748B"
+                          }
+                        }
                       }
-                    }
+                    ]
                   },
                   {
-                    "type": "special",
-                    "options": {
-                      "match": "null",
-                      "result": {
-                        "text": "暂无采集数据",
-                        "color": "#64748B"
-                      }
-                    }
-                  },
-                  {
-                    "type": "special",
-                    "options": {
-                      "match": "nan",
-                      "result": {
-                        "text": "暂无采集数据",
-                        "color": "#64748B"
-                      }
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-text"
                     }
                   }
                 ]
               },
               {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-text"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "接口用途"
-            },
-            "properties": [
-              {
-                "id": "mappings",
-                "value": [
+                "matcher": {
+                  "id": "byName",
+                  "options": "接口用途"
+                },
+                "properties": [
                   {
-                    "type": "value",
-                    "options": {
-                      "unclassified": {
-                        "text": "用途待确认",
-                        "color": "#64748B"
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "type": "value",
+                        "options": {
+                          "unclassified": {
+                            "text": "用途待确认",
+                            "color": "#64748B"
+                          }
+                        }
                       }
-                    }
+                    ]
                   }
                 ]
               }
             ]
-          }
-        ]
-      },
-      "options": {
-        "cellHeight": "sm",
-        "showHeader": true,
-        "footer": {
-          "show": false
-        },
-        "enablePagination": true
-      },
-      "targets": [
-        {
-          "expr": "ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)))",
-          "format": "table",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "transformations": [
-        {
-          "id": "organize",
+          },
           "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "ifIndex": true,
-              "asset_id": true,
-              "nexora_asset_id": true,
-              "nexora_hostname": true,
-              "nexora_module": true,
-              "nexora_platform": true,
-              "nexora_role": true,
-              "nexora_site_id": true,
-              "nexora_site_name": true,
-              "nexora_tenant_id": true,
-              "nexora_vendor": true,
-              "job": true,
-              "tenant_id": true,
-              "site_id": true,
-              "platform": true,
-              "sysName": true,
-              "nexora_interface_role": true,
-              "ifDescr": true
+            "cellHeight": "sm",
+            "showHeader": true,
+            "footer": {
+              "show": false
             },
-            "indexByName": {
-              "site_name": 0,
-              "hostname": 1,
-              "instance": 2,
-              "ifName": 3,
-              "ifAlias": 4,
-              "vendor": 5,
-              "role": 6,
-              "interface_role": 7,
-              "utilization_warn_pct": 8,
-              "utilization_high_pct": 9,
-              "utilization_critical_pct": 10,
-              "Value": 11
-            },
-            "renameByName": {
-              "sysName": "设备名称",
-              "hostname": "设备名称",
-              "instance": "采集目标",
-              "site_name": "站点",
-              "ifName": "接口全称",
-              "ifAlias": "接口描述",
-              "vendor": "厂商",
-              "role": "角色",
-              "interface_role": "接口用途",
-              "utilization_warn_pct": "预警阈值 (%)",
-              "utilization_high_pct": "高位阈值 (%)",
-              "utilization_critical_pct": "严重阈值 (%)",
-              "Value": "运行状态"
+            "enablePagination": true
+          },
+          "targets": [
+            {
+              "expr": "ifOperStatus{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)))",
+              "format": "table",
+              "instant": true,
+              "refId": "A"
             }
-          }
+          ],
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true,
+                  "__name__": true,
+                  "ifIndex": true,
+                  "asset_id": true,
+                  "nexora_asset_id": true,
+                  "nexora_hostname": true,
+                  "nexora_module": true,
+                  "nexora_platform": true,
+                  "nexora_role": true,
+                  "nexora_site_id": true,
+                  "nexora_site_name": true,
+                  "nexora_tenant_id": true,
+                  "nexora_vendor": true,
+                  "job": true,
+                  "tenant_id": true,
+                  "site_id": true,
+                  "platform": true,
+                  "sysName": true,
+                  "nexora_interface_role": true,
+                  "ifDescr": true
+                },
+                "indexByName": {
+                  "site_name": 0,
+                  "hostname": 1,
+                  "instance": 2,
+                  "ifName": 3,
+                  "ifAlias": 4,
+                  "vendor": 5,
+                  "role": 6,
+                  "interface_role": 7,
+                  "utilization_warn_pct": 8,
+                  "utilization_high_pct": 9,
+                  "utilization_critical_pct": 10,
+                  "Value": 11
+                },
+                "renameByName": {
+                  "sysName": "设备名称",
+                  "hostname": "设备名称",
+                  "instance": "采集目标",
+                  "site_name": "站点",
+                  "ifName": "接口全称",
+                  "ifAlias": "接口描述",
+                  "vendor": "厂商",
+                  "role": "角色",
+                  "interface_role": "接口用途",
+                  "utilization_warn_pct": "预警阈值 (%)",
+                  "utilization_high_pct": "高位阈值 (%)",
+                  "utilization_critical_pct": "严重阈值 (%)",
+                  "Value": "运行状态"
+                }
+              }
+            }
+          ]
         }
       ]
     },
@@ -1871,177 +2015,178 @@
       "id": 905,
       "title": "CMDB 利用率阈值判断",
       "type": "row",
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 50
+        "y": 43
       },
-      "panels": []
-    },
-    {
-      "id": 16,
-      "title": "当前利用率状态（按接口配置阈值）",
-      "type": "table",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 24,
-        "x": 0,
-        "y": 51
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "thresholds"
+      "panels": [
+        {
+          "id": 16,
+          "title": "当前利用率状态（按接口配置阈值）",
+          "type": "table",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
           },
-          "custom": {
-            "filterable": true
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "阈值状态"
+          "gridPos": {
+            "h": 7,
+            "w": 24,
+            "x": 0,
+            "y": 1
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "filterable": true
+              }
             },
-            "properties": [
+            "overrides": [
               {
-                "id": "mappings",
-                "value": [
+                "matcher": {
+                  "id": "byName",
+                  "options": "阈值状态"
+                },
+                "properties": [
                   {
-                    "type": "value",
-                    "options": {
-                      "0": {
-                        "text": "NORMAL",
-                        "color": "#22C55E"
-                      },
-                      "1": {
-                        "text": "WARNING",
-                        "color": "#F59E0B"
-                      },
-                      "2": {
-                        "text": "HIGH",
-                        "color": "#F97316"
-                      },
-                      "3": {
-                        "text": "CRITICAL",
-                        "color": "#F43F5E"
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "type": "value",
+                        "options": {
+                          "0": {
+                            "text": "NORMAL",
+                            "color": "#22C55E"
+                          },
+                          "1": {
+                            "text": "WARNING",
+                            "color": "#F59E0B"
+                          },
+                          "2": {
+                            "text": "HIGH",
+                            "color": "#F97316"
+                          },
+                          "3": {
+                            "text": "CRITICAL",
+                            "color": "#F43F5E"
+                          }
+                        }
                       }
+                    ]
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-text"
                     }
                   }
                 ]
               },
               {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-text"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "接口用途"
-            },
-            "properties": [
-              {
-                "id": "mappings",
-                "value": [
+                "matcher": {
+                  "id": "byName",
+                  "options": "接口用途"
+                },
+                "properties": [
                   {
-                    "type": "value",
-                    "options": {
-                      "unclassified": {
-                        "text": "用途待确认",
-                        "color": "#64748B"
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "type": "value",
+                        "options": {
+                          "unclassified": {
+                            "text": "用途待确认",
+                            "color": "#64748B"
+                          }
+                        }
                       }
-                    }
+                    ]
                   }
                 ]
               }
             ]
-          }
-        ]
-      },
-      "options": {
-        "cellHeight": "sm",
-        "showHeader": true,
-        "footer": {
-          "show": false
-        },
-        "enablePagination": true
-      },
-      "targets": [
-        {
-          "expr": "((max by (instance, hostname, site_name, vendor, role, ifIndex, ifName, ifAlias, interface_role, utilization_warn_pct, utilization_high_pct, utilization_critical_pct) (label_replace((((rate(ifHCInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"in\", \"\", \"\") or label_replace((((rate(ifHCOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"out\", \"\", \"\")) >= $utilization_critical_pct) * 0 + 3) or (((max by (instance, hostname, site_name, vendor, role, ifIndex, ifName, ifAlias, interface_role, utilization_warn_pct, utilization_high_pct, utilization_critical_pct) (label_replace((((rate(ifHCInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"in\", \"\", \"\") or label_replace((((rate(ifHCOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"out\", \"\", \"\")) < $utilization_critical_pct) and (max by (instance, hostname, site_name, vendor, role, ifIndex, ifName, ifAlias, interface_role, utilization_warn_pct, utilization_high_pct, utilization_critical_pct) (label_replace((((rate(ifHCInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"in\", \"\", \"\") or label_replace((((rate(ifHCOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"out\", \"\", \"\")) >= $utilization_high_pct)) * 0 + 2) or (((max by (instance, hostname, site_name, vendor, role, ifIndex, ifName, ifAlias, interface_role, utilization_warn_pct, utilization_high_pct, utilization_critical_pct) (label_replace((((rate(ifHCInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"in\", \"\", \"\") or label_replace((((rate(ifHCOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"out\", \"\", \"\")) < $utilization_high_pct) and (max by (instance, hostname, site_name, vendor, role, ifIndex, ifName, ifAlias, interface_role, utilization_warn_pct, utilization_high_pct, utilization_critical_pct) (label_replace((((rate(ifHCInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"in\", \"\", \"\") or label_replace((((rate(ifHCOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"out\", \"\", \"\")) >= $utilization_warn_pct)) * 0 + 1) or ((max by (instance, hostname, site_name, vendor, role, ifIndex, ifName, ifAlias, interface_role, utilization_warn_pct, utilization_high_pct, utilization_critical_pct) (label_replace((((rate(ifHCInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"in\", \"\", \"\") or label_replace((((rate(ifHCOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"out\", \"\", \"\")) < $utilization_warn_pct) * 0)",
-          "format": "table",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "transformations": [
-        {
-          "id": "organize",
+          },
           "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "ifIndex": true,
-              "asset_id": true,
-              "nexora_asset_id": true,
-              "nexora_hostname": true,
-              "nexora_module": true,
-              "nexora_platform": true,
-              "nexora_role": true,
-              "nexora_site_id": true,
-              "nexora_site_name": true,
-              "nexora_tenant_id": true,
-              "nexora_vendor": true,
-              "job": true,
-              "tenant_id": true,
-              "site_id": true,
-              "platform": true,
-              "sysName": true,
-              "nexora_interface_role": true,
-              "ifDescr": true
+            "cellHeight": "sm",
+            "showHeader": true,
+            "footer": {
+              "show": false
             },
-            "indexByName": {
-              "site_name": 0,
-              "hostname": 1,
-              "instance": 2,
-              "ifName": 3,
-              "ifAlias": 4,
-              "vendor": 5,
-              "role": 6,
-              "interface_role": 7,
-              "utilization_warn_pct": 8,
-              "utilization_high_pct": 9,
-              "utilization_critical_pct": 10,
-              "Value": 11
-            },
-            "renameByName": {
-              "sysName": "设备名称",
-              "hostname": "设备名称",
-              "instance": "采集目标",
-              "site_name": "站点",
-              "ifName": "接口全称",
-              "ifAlias": "接口描述",
-              "vendor": "厂商",
-              "role": "角色",
-              "interface_role": "接口用途",
-              "utilization_warn_pct": "预警阈值 (%)",
-              "utilization_high_pct": "高位阈值 (%)",
-              "utilization_critical_pct": "严重阈值 (%)",
-              "Value": "阈值状态"
+            "enablePagination": true
+          },
+          "targets": [
+            {
+              "expr": "((max by (instance, hostname, site_name, vendor, role, ifIndex, ifName, ifAlias, interface_role, utilization_warn_pct, utilization_high_pct, utilization_critical_pct) (label_replace((((rate(ifHCInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"in\", \"\", \"\") or label_replace((((rate(ifHCOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"out\", \"\", \"\")) >= $utilization_critical_pct) * 0 + 3) or (((max by (instance, hostname, site_name, vendor, role, ifIndex, ifName, ifAlias, interface_role, utilization_warn_pct, utilization_high_pct, utilization_critical_pct) (label_replace((((rate(ifHCInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"in\", \"\", \"\") or label_replace((((rate(ifHCOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"out\", \"\", \"\")) < $utilization_critical_pct) and (max by (instance, hostname, site_name, vendor, role, ifIndex, ifName, ifAlias, interface_role, utilization_warn_pct, utilization_high_pct, utilization_critical_pct) (label_replace((((rate(ifHCInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"in\", \"\", \"\") or label_replace((((rate(ifHCOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"out\", \"\", \"\")) >= $utilization_high_pct)) * 0 + 2) or (((max by (instance, hostname, site_name, vendor, role, ifIndex, ifName, ifAlias, interface_role, utilization_warn_pct, utilization_high_pct, utilization_critical_pct) (label_replace((((rate(ifHCInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"in\", \"\", \"\") or label_replace((((rate(ifHCOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"out\", \"\", \"\")) < $utilization_high_pct) and (max by (instance, hostname, site_name, vendor, role, ifIndex, ifName, ifAlias, interface_role, utilization_warn_pct, utilization_high_pct, utilization_critical_pct) (label_replace((((rate(ifHCInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"in\", \"\", \"\") or label_replace((((rate(ifHCOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"out\", \"\", \"\")) >= $utilization_warn_pct)) * 0 + 1) or ((max by (instance, hostname, site_name, vendor, role, ifIndex, ifName, ifAlias, interface_role, utilization_warn_pct, utilization_high_pct, utilization_critical_pct) (label_replace((((rate(ifHCInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifInOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"in\", \"\", \"\") or label_replace((((rate(ifHCOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m]) or rate(ifOutOctets{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"}[5m])) * 8) / (((ifHighSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0) * 1000000) or (ifSpeed{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} > 0)) * 100) * on(instance, ifIndex) group_left(ifName, ifAlias) (((max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1)) * on(instance, ifIndex) group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\"} * 0 + 1))) or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} * 0 + 1))), \"direction\", \"out\", \"\", \"\")) < $utilization_warn_pct) * 0)",
+              "format": "table",
+              "instant": true,
+              "refId": "A"
             }
-          }
+          ],
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true,
+                  "__name__": true,
+                  "ifIndex": true,
+                  "asset_id": true,
+                  "nexora_asset_id": true,
+                  "nexora_hostname": true,
+                  "nexora_module": true,
+                  "nexora_platform": true,
+                  "nexora_role": true,
+                  "nexora_site_id": true,
+                  "nexora_site_name": true,
+                  "nexora_tenant_id": true,
+                  "nexora_vendor": true,
+                  "job": true,
+                  "tenant_id": true,
+                  "site_id": true,
+                  "platform": true,
+                  "sysName": true,
+                  "nexora_interface_role": true,
+                  "ifDescr": true
+                },
+                "indexByName": {
+                  "site_name": 0,
+                  "hostname": 1,
+                  "instance": 2,
+                  "ifName": 3,
+                  "ifAlias": 4,
+                  "vendor": 5,
+                  "role": 6,
+                  "interface_role": 7,
+                  "utilization_warn_pct": 8,
+                  "utilization_high_pct": 9,
+                  "utilization_critical_pct": 10,
+                  "Value": 11
+                },
+                "renameByName": {
+                  "sysName": "设备名称",
+                  "hostname": "设备名称",
+                  "instance": "采集目标",
+                  "site_name": "站点",
+                  "ifName": "接口全称",
+                  "ifAlias": "接口描述",
+                  "vendor": "厂商",
+                  "role": "角色",
+                  "interface_role": "接口用途",
+                  "utilization_warn_pct": "预警阈值 (%)",
+                  "utilization_high_pct": "高位阈值 (%)",
+                  "utilization_critical_pct": "严重阈值 (%)",
+                  "Value": "阈值状态"
+                }
+              }
+            }
+          ]
         }
       ]
     },
@@ -2049,214 +2194,216 @@
       "id": 906,
       "title": "光模块功率（SNMP DOM）",
       "type": "row",
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 58
+        "y": 44
       },
-      "panels": []
-    },
-    {
-      "id": 18,
-      "title": "当前接收 / 发送光功率",
-      "type": "table",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 24,
-        "x": 0,
-        "y": 59
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "thresholds"
+      "panels": [
+        {
+          "id": 18,
+          "title": "当前接收 / 发送光功率",
+          "type": "table",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
           },
-          "custom": {
-            "filterable": true
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "光功率 (dBm)"
+          "gridPos": {
+            "h": 7,
+            "w": 24,
+            "x": 0,
+            "y": 1
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "filterable": true
+              }
             },
-            "properties": [
+            "overrides": [
               {
-                "id": "unit",
-                "value": "dBm"
+                "matcher": {
+                  "id": "byName",
+                  "options": "光功率 (dBm)"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "dBm"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "interface_role"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "type": "value",
+                        "options": {
+                          "unclassified": {
+                            "text": "用途待确认",
+                            "color": "#64748B"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
               }
             ]
           },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "interface_role"
+          "options": {
+            "cellHeight": "sm",
+            "showHeader": true,
+            "footer": {
+              "show": false
             },
-            "properties": [
+            "enablePagination": true
+          },
+          "targets": [
+            {
+              "expr": "label_replace((max by (instance, hostname, site_name, vendor, role, ifName) ((hh3cTransceiverCurRXPowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != 21474836.47)) or max by (instance, hostname, site_name, vendor, role, ifName) ((ruijieFiberRXpowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != -100)) or max by (instance, hostname, site_name, vendor, role, ifName) ((jnxDomCurrentRxLaserPowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != 0)) or max by (instance, hostname, site_name, vendor, role, ifName) (zteAnOpticalIfRxPwrCurrDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"})), \"direction\", \"接收\", \"\", \"\") or label_replace((max by (instance, hostname, site_name, vendor, role, ifName) ((hh3cTransceiverCurTXPowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != 21474836.47)) or max by (instance, hostname, site_name, vendor, role, ifName) ((ruijieFiberTXpowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != -100)) or max by (instance, hostname, site_name, vendor, role, ifName) ((jnxDomCurrentTxLaserOutputPowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != 0)) or max by (instance, hostname, site_name, vendor, role, ifName) (zteAnOpticalIfTxPwrCurrDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"})), \"direction\", \"发送\", \"\", \"\")",
+              "format": "table",
+              "instant": true,
+              "refId": "A"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true,
+                  "__name__": true,
+                  "ifIndex": true,
+                  "instance": true,
+                  "role": true
+                },
+                "indexByName": {
+                  "site_name": 0,
+                  "hostname": 1,
+                  "vendor": 2,
+                  "ifName": 3,
+                  "direction": 4,
+                  "Value": 5
+                },
+                "renameByName": {
+                  "site_name": "站点",
+                  "hostname": "设备名称",
+                  "vendor": "厂商",
+                  "ifName": "接口",
+                  "direction": "方向",
+                  "Value": "光功率 (dBm)"
+                }
+              }
+            }
+          ],
+          "description": "展示当前端口光模块实测接收/发送光功率（dBm）；不同型号模块收光灵敏度存在差异，过低时请排查光纤衰耗。"
+        },
+        {
+          "id": 19,
+          "title": "接收 / 发送光功率趋势",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "dBm",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "lineWidth": 2,
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
               {
-                "id": "mappings",
-                "value": [
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": ".*接收$"
+                },
+                "properties": [
                   {
-                    "type": "value",
-                    "options": {
-                      "unclassified": {
-                        "text": "用途待确认",
-                        "color": "#64748B"
-                      }
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#22D3EE"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": ".*发送$"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#3B82F6"
                     }
                   }
                 ]
               }
             ]
-          }
-        ]
-      },
-      "options": {
-        "cellHeight": "sm",
-        "showHeader": true,
-        "footer": {
-          "show": false
-        },
-        "enablePagination": true
-      },
-      "targets": [
-        {
-          "expr": "label_replace((max by (instance, hostname, site_name, vendor, role, ifName) ((hh3cTransceiverCurRXPowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != 21474836.47)) or max by (instance, hostname, site_name, vendor, role, ifName) ((ruijieFiberRXpowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != -100)) or max by (instance, hostname, site_name, vendor, role, ifName) ((jnxDomCurrentRxLaserPowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != 0)) or max by (instance, hostname, site_name, vendor, role, ifName) (zteAnOpticalIfRxPwrCurrDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"})), \"direction\", \"接收\", \"\", \"\") or label_replace((max by (instance, hostname, site_name, vendor, role, ifName) ((hh3cTransceiverCurTXPowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != 21474836.47)) or max by (instance, hostname, site_name, vendor, role, ifName) ((ruijieFiberTXpowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != -100)) or max by (instance, hostname, site_name, vendor, role, ifName) ((jnxDomCurrentTxLaserOutputPowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != 0)) or max by (instance, hostname, site_name, vendor, role, ifName) (zteAnOpticalIfTxPwrCurrDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"})), \"direction\", \"发送\", \"\", \"\")",
-          "format": "table",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "transformations": [
-        {
-          "id": "organize",
+          },
           "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "ifIndex": true,
-              "instance": true,
-              "role": true
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max",
+                "mean"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
             },
-            "indexByName": {
-              "site_name": 0,
-              "hostname": 1,
-              "vendor": 2,
-              "ifName": 3,
-              "direction": 4,
-              "Value": 5
-            },
-            "renameByName": {
-              "site_name": "站点",
-              "hostname": "设备名称",
-              "vendor": "厂商",
-              "ifName": "接口",
-              "direction": "方向",
-              "Value": "光功率 (dBm)"
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
             }
-          }
-        }
-      ],
-      "description": "显示实测光功率；告警阈值因模块而异。"
-    },
-    {
-      "id": 19,
-      "title": "接收 / 发送光功率趋势",
-      "type": "timeseries",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 66
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "dBm",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "palette-classic"
           },
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": ".*接收$"
+          "targets": [
+            {
+              "expr": "max by (instance, hostname, site_name, vendor, role, ifName) ((hh3cTransceiverCurRXPowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != 21474836.47)) or max by (instance, hostname, site_name, vendor, role, ifName) ((ruijieFiberRXpowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != -100)) or max by (instance, hostname, site_name, vendor, role, ifName) ((jnxDomCurrentRxLaserPowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != 0)) or max by (instance, hostname, site_name, vendor, role, ifName) (zteAnOpticalIfRxPwrCurrDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"})",
+              "legendFormat": "{{hostname}} / {{ifName}} 接收",
+              "refId": "A"
             },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#22D3EE"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": ".*发送$"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#3B82F6"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max",
-            "mean"
+            {
+              "expr": "max by (instance, hostname, site_name, vendor, role, ifName) ((hh3cTransceiverCurTXPowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != 21474836.47)) or max by (instance, hostname, site_name, vendor, role, ifName) ((ruijieFiberTXpowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != -100)) or max by (instance, hostname, site_name, vendor, role, ifName) ((jnxDomCurrentTxLaserOutputPowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != 0)) or max by (instance, hostname, site_name, vendor, role, ifName) (zteAnOpticalIfTxPwrCurrDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"})",
+              "legendFormat": "{{hostname}} / {{ifName}} 发送",
+              "refId": "B"
+            }
           ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "expr": "max by (instance, hostname, site_name, vendor, role, ifName) ((hh3cTransceiverCurRXPowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != 21474836.47)) or max by (instance, hostname, site_name, vendor, role, ifName) ((ruijieFiberRXpowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != -100)) or max by (instance, hostname, site_name, vendor, role, ifName) ((jnxDomCurrentRxLaserPowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != 0)) or max by (instance, hostname, site_name, vendor, role, ifName) (zteAnOpticalIfRxPwrCurrDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"})",
-          "legendFormat": "{{hostname}} / {{ifName}} 接收",
-          "refId": "A"
-        },
-        {
-          "expr": "max by (instance, hostname, site_name, vendor, role, ifName) ((hh3cTransceiverCurTXPowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != 21474836.47)) or max by (instance, hostname, site_name, vendor, role, ifName) ((ruijieFiberTXpowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != -100)) or max by (instance, hostname, site_name, vendor, role, ifName) ((jnxDomCurrentTxLaserOutputPowerDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"} != 0)) or max by (instance, hostname, site_name, vendor, role, ifName) (zteAnOpticalIfTxPwrCurrDbm{job=\"network_snmp\",site_name=~\"$site\",vendor=~\"$vendor\",role=~\"$role\",hostname=~\"$device\",ifName=~\"$interface\",interface_role=~\"$interface_role\"})",
-          "legendFormat": "{{hostname}} / {{ifName}} 发送",
-          "refId": "B"
         }
       ]
     }
@@ -2479,7 +2626,7 @@
   },
   "timezone": "browser",
   "title": "09 接口详情（Interface Detail）",
-  "description": "从网络总览或接口排行进入，链接会携带站点、设备、接口筛选和时间范围。“用途待确认”表示 CMDB 尚未配置该端口的用途，不代表接口异常。",
+  "description": "单个网络端口精细化诊断视图：提供双向带宽与利用率仪表盘、P95 容量画像、包型构成、错包丢包、链路震荡及光模块收发光功率趋势。",
   "uid": "nexora-interface-detail",
-  "version": 30
+  "version": 33
 }

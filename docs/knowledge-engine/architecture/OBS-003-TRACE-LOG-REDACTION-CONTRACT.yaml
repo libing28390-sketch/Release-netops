@@ -1,0 +1,44 @@
+task_id: OBS-003
+title: Trace and log redaction boundary
+status: verified
+contract_version: nxa.trace.redaction.v1
+authority:
+  trace_store: backend/ai/services/retrieval_trace_store.py
+  sanitizer: backend/ai/security/sanitizer.py
+  application_logs: backend/core/logging.py
+  gateway_logs: backend/ai/gateway/llm_gateway.py
+  assistant_logs: backend/ai/services/assistant.py
+raw_query:
+  retention: request_scope_only
+  persisted: [sha256, length, captured_flag]
+  body: forbidden_in_trace_api_audit_and_log
+trace:
+  before_write: true
+  allowlists:
+    observation: entities_filters_candidates_scores_final_chunks
+    runtime: reranker_citation_latency_tokens_provider_model_security
+  bounds:
+    text_fields: bounded
+    candidates: 100
+    final_chunks: 50
+    citations: 20
+  forbidden: [prompt_body, document_body, chunk_body, url, sql, credential, private_key, provider_payload]
+logs:
+  before_write: true
+  redactions: [credential_assignments, bearer_tokens, private_keys]
+  exception_policy: stable_type_or_error_code_only
+  provider_payloads: forbidden
+  handlers: [console, rotating_file]
+tenant_scope:
+  trace: strict_server_owned_tenant
+  actor: opaque_or_absent
+compatibility:
+  - existing KUI-017 trace hash/redaction fields remain available
+  - V1 conversation, audit schema and PostgreSQL tables are unchanged
+  - no production DDL or migration
+verification:
+  tests:
+    - backend/tests/ai/test_obs001_retrieval_observation.py
+    - backend/tests/catalog/test_kui_017_retrieval_trace.py
+    - backend/tests/ai/test_security_gateway.py
+  result: PASS

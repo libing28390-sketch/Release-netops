@@ -1,0 +1,34 @@
+tasks: [DIA-001, DIA-002, DIA-003, DIA-004, DIA-005, DIA-006, DIA-007, DIA-008, DIA-009, DIA-010, DIA-011, DIA-012, DIA-013, DIA-014, DIA-015, DIA-016, DIA-017, DIA-018, DIA-019]
+title: Read-only network fault diagnosis contract
+state_machine: [symptom, scope, hypothesis, evidence, check, conclusion, remediation, verification, completed, failed]
+playbooks: [unreachable, interface_down, interface_flap, ospf, bgp, packet_loss, cpu, memory]
+identity:
+  authority: CMDB_device_and_published_platform_profile
+  required: [vendor, platform]
+  model_only_inference: forbidden
+  missing_platform: DIA_PLATFORM_REQUIRED
+commands:
+  contract_key: [vendor, platform, purpose]
+  supported: [cisco_ios, cisco_ios_xe, huawei_vrp, h3c_comware]
+  writes: forbidden
+  interface_aliases: [10GE, Te, XGE, TenGigabitEthernet, GE, GigabitEthernet]
+execution:
+  permission: ai.diagnostics.run
+  authorization: per_step
+  timeout_seconds: 8
+  max_concurrency: 3
+  output: structured_minimized_redacted
+  evidence: [purpose, command_safe, target_safe, status, evidence_hash, duration_ms, error_code]
+  duplicate_check: no_information_gain_is_skipped
+sources:
+  cmdb: [device, platform, site, model, version]
+  operations: [alerts, topology, recent_changes, metrics, history_events]
+  pasted_cli: local_parse_only_no_external_call
+errors: [DIA_SSH_AUTH_FAILED, DIA_TCP_TIMEOUT, DIA_UNREACHABLE, DIA_COMMAND_UNSUPPORTED, DIA_PARSE_FAILED, DIA_NOT_AUTHORIZED, DIA_PLATFORM_REQUIRED, DIA_DRIVER_FAILED]
+governance:
+  default_write_enabled: false
+  write_path: PAM_and_change_governance_only
+  approval_diff_snapshot_rollback_verification: required_before_any_future_write_feature
+rollback:
+  runtime: disable_diagnostics_route_and_retain_read_only_evidence
+  data: retain_runs_steps_and_error_codes; no_raw_cli_storage

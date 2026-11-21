@@ -1,0 +1,63 @@
+task_id: EVAL-016
+title: Cisco, Huawei and H3C platform mapping and read-only command coverage
+priority: P0
+status: executable
+authority: PostgreSQL
+scope:
+  huawei:
+    fixtures: backend/tests/vendor_audit/test_huawei_vrp5_cli_output.py
+    cases: [vrp5_version, interface_brief, arp, lldp, eth_trunk, vrp5_vrp8_alias, read_command_catalog]
+  cisco:
+    fixtures: backend/tests/vendor_audit/test_h3c_cisco_quick_queries.py
+    cases: [ios_command_family, iosxe_alias, nxos_command_family, lldp_only_neighbors, official_fixture_parsing]
+  h3c:
+    fixtures: [backend/tests/vendor_audit/test_h3c_cisco_quick_queries.py, backend/tests/vendor_audit/test_h3c_textfsm_contract.py]
+    cases: [comware_v5, comware_v7, comware_v9, explicit_template_variants, command_family_separation]
+  read_only_commands:
+    tests: [backend/tests/vendor_audit/test_netmiko_driver_security.py, backend/tests/platform_registry/test_platform_registry.py]
+    cases: [config_command_rejected, shell_chaining_rejected, enable_secret_explicit_only, no_secret_logging]
+  unknown_boundary:
+    tests: backend/tests/vendor_audit/test_platform_parser_boundary.py
+    cases: [unknown_platform_preserved, non_cisco_not_defaulted_to_cisco]
+database_policy:
+  database_authority: PostgreSQL
+  fixture_tests_database: none
+  sqlite: forbidden
+  v1_postgresql_probe: scripts/knowledge_engine_v2_v1_baseline_pg.py
+  production_database_write: false
+  external_network: forbidden
+verification:
+  coverage_validator: scripts/knowledge_engine_v2_eval016_platform_check.py
+  focused_test: tests/knowledge_engine_v2/test_eval016_platform.py
+  mock_fixture_targets:
+    - backend/tests/vendor_audit/test_huawei_vrp5_cli_output.py
+    - backend/tests/vendor_audit/test_h3c_cisco_quick_queries.py
+    - backend/tests/vendor_audit/test_h3c_textfsm_contract.py
+    - backend/tests/vendor_audit/test_platform_parser_boundary.py
+    - backend/tests/vendor_audit/test_netmiko_driver_security.py
+    - backend/tests/platform_registry/test_platform_registry.py::test_read_command_guard_rejects_config_and_shell_chaining
+    - backend/tests/platform_registry/test_platform_registry_api.py::test_registry_write_and_execution_gate_is_closed_by_default
+    - backend/tests/platform_registry/test_platform_registry_api.py::test_registry_write_and_execution_gate_can_be_enabled
+    - backend/tests/platform_registry/test_platform_registry_api.py::test_platform_write_request_models_reject_unknown_fields_and_bound_values
+    - backend/tests/platform_registry/test_platform_registry_api.py::test_platform_binding_request_models_normalize_and_reject_duplicate_batches
+    - backend/tests/platform_registry/test_platform_registry_api.py::test_operator_cannot_approve_publish_or_rollback_resources
+  commands:
+    - "$env:DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/netops'; $env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_eval016_platform_check.py"
+    - "$env:DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/netops'; $env:PYTHONPATH='backend'; .venv\\Scripts\\pytest.exe tests/knowledge_engine_v2/test_eval016_platform.py -q -p no:cacheprovider"
+    - "$env:DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/netops'; $env:PYTHONPATH='backend'; .venv\\Scripts\\pytest.exe -p no:conftest <mock_fixture_targets> -q -p no:cacheprovider"
+    - "$env:DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/netops'; $env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_v1_baseline_pg.py"
+    - "git diff --check"
+required_results:
+  - huawei_mapping: PASS
+  - cisco_mapping: PASS
+  - h3c_mapping: PASS
+  - read_only_commands: PASS
+  - unknown_boundary: PASS
+  - fixture_tests_database: none
+  - v1_postgresql_baseline: unchanged
+  - sqlite_acceptance_evidence: false
+  - production_database_write: false
+rollback:
+  application: no device command is sent; all drivers are mocks or fixture parsers
+  database: V1 baseline uses transaction rollback; fixture tests have no DB connection
+  data_loss: forbidden

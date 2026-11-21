@@ -6,7 +6,92 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "全网总览",
+      "tooltip": "切换到 全网总览",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-overview/nexora-network-overview"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "单设备详情",
+      "tooltip": "切换到 单设备详情",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-device/nexora-network-device"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "接口全景",
+      "tooltip": "切换到 接口全景",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-interface/nexora-network-interface"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "无线专网",
+      "tooltip": "切换到 无线专网",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-wireless/nexora-network-wireless"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "采集健康",
+      "tooltip": "切换到 采集健康",
+      "type": "link",
+      "url": "/grafana/d/nexora-monitoring-health/nexora-monitoring-health"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Telemetry 实时",
+      "tooltip": "切换到 Telemetry 实时",
+      "type": "link",
+      "url": "/grafana/d/nexora-telemetry-realtime/nexora-telemetry-realtime"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": true,
+      "title": "返回 Nexora 监控",
+      "tooltip": "在新标签页打开 Nexora 网络监控页面",
+      "type": "link",
+      "url": "/monitor/network"
+    }
+  ],
   "panels": [
     {
       "id": 900,
@@ -77,8 +162,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -88,7 +173,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -101,7 +191,7 @@
     {
       "id": 2,
       "title": "1h 系统级拨测可用率",
-      "type": "stat",
+      "type": "gauge",
       "datasource": {
         "type": "prometheus",
         "uid": "victoriametrics"
@@ -157,14 +247,13 @@
                 }
               }
             }
-          ]
+          ],
+          "min": 0,
+          "max": 1
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -173,7 +262,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "minVizWidth": 75,
+        "minVizHeight": 75
       },
       "targets": [
         {
@@ -239,8 +332,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -250,7 +343,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -316,8 +414,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -327,7 +425,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -393,8 +496,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -404,7 +507,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -417,7 +525,7 @@
     {
       "id": 6,
       "title": "24h 系统级拨测可用率",
-      "type": "stat",
+      "type": "gauge",
       "datasource": {
         "type": "prometheus",
         "uid": "victoriametrics"
@@ -473,14 +581,13 @@
                 }
               }
             }
-          ]
+          ],
+          "min": 0,
+          "max": 1
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -489,7 +596,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "minVizWidth": 75,
+        "minVizHeight": 75
       },
       "targets": [
         {
@@ -555,8 +666,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -566,7 +677,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -632,8 +748,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -643,7 +759,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -726,8 +847,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -737,7 +858,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -746,7 +872,7 @@
           "instant": true
         }
       ],
-      "description": "仅统计采集正常、管理启用且运行 Down 的线路。"
+      "description": "当前处于连续中断（DOWN）状态的已启用 WAN 专线数量。"
     },
     {
       "id": 21,
@@ -813,8 +939,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -824,7 +950,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -833,7 +964,7 @@
           "instant": true
         }
       ],
-      "description": "按采样结果估算，实际故障起点可能不同。"
+      "description": "当前故障 WAN 链路的最长连续中断估算时长，便于评估业务影响范围。"
     },
     {
       "id": 902,
@@ -871,11 +1002,12 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
+            "fillOpacity": 24,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -913,10 +1045,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "list",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -959,11 +1095,12 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
+            "fillOpacity": 24,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -1031,10 +1168,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "list",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -1067,7 +1208,7 @@
     {
       "id": 11,
       "title": "各协议拨测成功率（24h）",
-      "type": "timeseries",
+      "type": "bargauge",
       "datasource": {
         "type": "prometheus",
         "uid": "victoriametrics"
@@ -1087,28 +1228,33 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
+            "fillOpacity": 18,
+            "gradientMode": "opacity",
             "showPoints": "never"
-          }
+          },
+          "min": 0,
+          "max": 1
         },
         "overrides": []
       },
       "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
+        "displayMode": "lcd",
+        "orientation": "horizontal",
+        "reduceOptions": {
           "calcs": [
             "lastNotNull"
-          ]
+          ],
+          "fields": "",
+          "values": false
         },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+        "showUnfilled": true,
+        "valueMode": "color",
+        "namePlacement": "auto",
+        "minVizWidth": 8,
+        "minVizHeight": 16,
+        "sizing": "auto"
       },
       "targets": [
         {
@@ -1141,24 +1287,26 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
+            "fillOpacity": 24,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": []
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
           "calcs": [
             "lastNotNull",
-            "max"
-          ]
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -1172,679 +1320,719 @@
           "refId": "A"
         }
       ],
-      "description": "ICMP 为往返时延；其他协议为自身响应时间。"
+      "description": "对比 ICMP、HTTP、TCP、DNS 各协议近 24 小时平均响应时延，快速识别应用层或网络层劣化。"
     },
     {
       "id": 903,
       "title": "WAN 接口健康与流量",
       "type": "row",
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
         "y": 31
       },
-      "panels": []
-    },
-    {
-      "id": 13,
-      "title": "24h ICMP 多回显丢包率",
-      "type": "stat",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 0,
-        "y": 32
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "thresholds"
+      "panels": [
+        {
+          "id": 13,
+          "title": "24h ICMP 多回显丢包率",
+          "type": "gauge",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#22C55E",
-                "value": null
-              },
-              {
-                "color": "#F59E0B",
-                "value": 0.01
-              },
-              {
-                "color": "#F43F5E",
-                "value": 0.05
-              }
-            ]
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 0,
+            "y": 1
           },
-          "mappings": [
-            {
-              "type": "special",
-              "options": {
-                "match": "null",
-                "result": {
-                  "text": "暂无采集数据",
-                  "color": "#64748B"
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#22C55E",
+                    "value": null
+                  },
+                  {
+                    "color": "#F59E0B",
+                    "value": 0.01
+                  },
+                  {
+                    "color": "#F43F5E",
+                    "value": 0.05
+                  }
+                ]
+              },
+              "mappings": [
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "null",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                },
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
                 }
-              }
+              ],
+              "min": 0,
+              "max": 1
             },
+            "overrides": []
+          },
+          "options": {
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showThresholdLabels": false,
+            "showThresholdMarkers": true,
+            "sizing": "auto",
+            "minVizWidth": 75,
+            "minVizHeight": 75
+          },
+          "targets": [
             {
-              "type": "special",
-              "options": {
-                "match": "nan",
-                "result": {
-                  "text": "暂无采集数据",
-                  "color": "#64748B"
-                }
-              }
+              "expr": "nexora_outbound_probe_icmp_packet_loss_ratio{window=\"24h\"}",
+              "refId": "A",
+              "instant": true
             }
           ]
         },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
         {
-          "expr": "nexora_outbound_probe_icmp_packet_loss_ratio{window=\"24h\"}",
-          "refId": "A",
-          "instant": true
-        }
-      ]
-    },
-    {
-      "id": 14,
-      "title": "24h ICMP 包间时延变化",
-      "type": "stat",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 6,
-        "y": 32
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ms",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "thresholds"
+          "id": 14,
+          "title": "24h ICMP 包间时延变化",
+          "type": "stat",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#22D3EE",
-                "value": null
-              }
-            ]
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 6,
+            "y": 1
           },
-          "mappings": [
-            {
-              "type": "special",
-              "options": {
-                "match": "null",
-                "result": {
-                  "text": "暂无采集数据",
-                  "color": "#64748B"
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#22D3EE",
+                    "value": null
+                  }
+                ]
+              },
+              "mappings": [
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "null",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                },
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
                 }
-              }
+              ]
             },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "text": {
+              "titleSize": 13,
+              "valueSize": 28
+            },
+            "wideLayout": true
+          },
+          "targets": [
             {
-              "type": "special",
-              "options": {
-                "match": "nan",
-                "result": {
-                  "text": "暂无采集数据",
-                  "color": "#64748B"
-                }
-              }
+              "expr": "nexora_outbound_probe_icmp_jitter_avg_ms{window=\"24h\"}",
+              "refId": "A",
+              "instant": true
             }
           ]
         },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
         {
-          "expr": "nexora_outbound_probe_icmp_jitter_avg_ms{window=\"24h\"}",
-          "refId": "A",
-          "instant": true
-        }
-      ]
-    },
-    {
-      "id": 15,
-      "title": "1h WAN 接口采集成功率",
-      "type": "stat",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 12,
-        "y": 32
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "thresholds"
+          "id": 15,
+          "title": "1h WAN 接口采集成功率",
+          "type": "gauge",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 12,
+            "y": 1
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#F43F5E",
+                    "value": null
+                  },
+                  {
+                    "color": "#F59E0B",
+                    "value": 0.95
+                  },
+                  {
+                    "color": "#22C55E",
+                    "value": 0.99
+                  }
+                ]
+              },
+              "mappings": [
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "null",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                },
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                }
+              ],
+              "min": 0,
+              "max": 1
+            },
+            "overrides": []
+          },
+          "options": {
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showThresholdLabels": false,
+            "showThresholdMarkers": true,
+            "sizing": "auto",
+            "minVizWidth": 75,
+            "minVizHeight": 75
+          },
+          "targets": [
+            {
+              "expr": "nexora_wan_interface_collection_success_ratio{window=\"1h\"}",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "description": "近 1 小时已启用 WAN 出口接口的指标采集成功率。"
+        },
+        {
+          "id": 16,
+          "title": "24h WAN 接口 Oper UP 比例",
+          "type": "gauge",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 18,
+            "y": 1
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#F43F5E",
+                    "value": null
+                  },
+                  {
+                    "color": "#F59E0B",
+                    "value": 0.95
+                  },
+                  {
+                    "color": "#22C55E",
+                    "value": 0.99
+                  }
+                ]
+              },
+              "mappings": [
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "null",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                },
+                {
+                  "type": "special",
+                  "options": {
+                    "match": "nan",
+                    "result": {
+                      "text": "暂无采集数据",
+                      "color": "#64748B"
+                    }
+                  }
+                }
+              ],
+              "min": 0,
+              "max": 1
+            },
+            "overrides": []
+          },
+          "options": {
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showThresholdLabels": false,
+            "showThresholdMarkers": true,
+            "sizing": "auto",
+            "minVizWidth": 75,
+            "minVizHeight": 75
+          },
+          "targets": [
+            {
+              "expr": "nexora_wan_interface_oper_up_ratio{window=\"24h\"}",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "description": "近 24 小时 WAN 出口接口保持 UP 状态的健康占比。"
+        },
+        {
+          "id": 17,
+          "title": "当前 WAN 接口健康状态",
+          "type": "piechart",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 5
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "lineWidth": 2,
+                "fillOpacity": 18,
+                "gradientMode": "opacity",
+                "showPoints": "never"
+              }
+            },
+            "overrides": [
               {
-                "color": "#F43F5E",
-                "value": null
+                "matcher": {
+                  "id": "byName",
+                  "options": "healthy"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#22C55E"
+                    }
+                  }
+                ]
               },
               {
-                "color": "#F59E0B",
-                "value": 0.95
+                "matcher": {
+                  "id": "byName",
+                  "options": "degraded"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#F59E0B"
+                    }
+                  }
+                ]
               },
               {
-                "color": "#22C55E",
-                "value": 0.99
+                "matcher": {
+                  "id": "byName",
+                  "options": "warning"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#F59E0B"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "critical"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#F43F5E"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "unavailable"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#F43F5E"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "unknown"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#64748B"
+                    }
+                  }
+                ]
               }
             ]
           },
-          "mappings": [
-            {
-              "type": "special",
-              "options": {
-                "match": "null",
-                "result": {
-                  "text": "暂无采集数据",
-                  "color": "#64748B"
-                }
-              }
+          "options": {
+            "pieType": "donut",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
             },
+            "displayLabels": [
+              "percent"
+            ],
+            "legend": {
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true,
+              "values": [
+                "value",
+                "percent"
+              ]
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "desc"
+            }
+          },
+          "targets": [
             {
-              "type": "special",
-              "options": {
-                "match": "nan",
-                "result": {
-                  "text": "暂无采集数据",
-                  "color": "#64748B"
-                }
-              }
+              "expr": "nexora_wan_links_by_health_status",
+              "legendFormat": "{{status}}",
+              "refId": "A"
             }
           ]
         },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
         {
-          "expr": "nexora_wan_interface_collection_success_ratio{window=\"1h\"}",
-          "refId": "A",
-          "instant": true
-        }
-      ],
-      "description": "仅统计已启用的 WAN 接口。"
-    },
-    {
-      "id": 16,
-      "title": "24h WAN 接口 Oper UP 比例",
-      "type": "stat",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 18,
-        "y": 32
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "thresholds"
+          "id": 18,
+          "title": "WAN 接口平均上下行流量（24h 滚动）",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 5
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bps",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "lineWidth": 2,
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
               {
-                "color": "#F43F5E",
-                "value": null
+                "matcher": {
+                  "id": "byName",
+                  "options": "下行"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#22D3EE"
+                    }
+                  }
+                ]
               },
               {
-                "color": "#F59E0B",
-                "value": 0.95
-              },
-              {
-                "color": "#22C55E",
-                "value": 0.99
+                "matcher": {
+                  "id": "byName",
+                  "options": "上行"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#3B82F6"
+                    }
+                  },
+                  {
+                    "id": "custom.transform",
+                    "value": "negative-Y"
+                  }
+                ]
               }
             ]
           },
-          "mappings": [
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max",
+                "mean"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
             {
-              "type": "special",
-              "options": {
-                "match": "null",
-                "result": {
-                  "text": "暂无采集数据",
-                  "color": "#64748B"
+              "expr": "nexora_wan_interface_avg_download_bps{window=\"24h\"}",
+              "legendFormat": "下行",
+              "refId": "A"
+            },
+            {
+              "expr": "nexora_wan_interface_avg_upload_bps{window=\"24h\"}",
+              "legendFormat": "上行",
+              "refId": "B"
+            }
+          ],
+          "description": "近 24 小时滚动统计的 WAN 出口平均下行与上行速率波形。"
+        },
+        {
+          "id": 19,
+          "title": "WAN 接口错误与丢弃（24h 累计）",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 13
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "bars",
+                "lineInterpolation": "smooth",
+                "lineWidth": 1,
+                "fillOpacity": 82,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "barAlignment": 0,
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
                 }
               }
             },
-            {
-              "type": "special",
-              "options": {
-                "match": "nan",
-                "result": {
-                  "text": "暂无采集数据",
-                  "color": "#64748B"
-                }
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "错误"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#F59E0B"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "丢弃"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#F43F5E"
+                    }
+                  }
+                ]
               }
+            ]
+          },
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max",
+                "mean"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "expr": "nexora_wan_interface_errors_total{window=\"24h\"}",
+              "legendFormat": "错误",
+              "refId": "A"
+            },
+            {
+              "expr": "nexora_wan_interface_discards_total{window=\"24h\"}",
+              "legendFormat": "丢弃",
+              "refId": "B"
             }
           ]
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "expr": "nexora_wan_interface_oper_up_ratio{window=\"24h\"}",
-          "refId": "A",
-          "instant": true
-        }
-      ],
-      "description": "只按采集成功样本计算，不代表端到端 SLA。"
-    },
-    {
-      "id": 17,
-      "title": "当前 WAN 接口健康状态",
-      "type": "timeseries",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 36
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "healthy"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#22C55E"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "degraded"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#F59E0B"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "warning"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#F59E0B"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "critical"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#F43F5E"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "unavailable"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#F43F5E"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "unknown"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#64748B"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "expr": "nexora_wan_links_by_health_status",
-          "legendFormat": "{{status}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 18,
-      "title": "WAN 接口平均上下行流量（24h 滚动）",
-      "type": "timeseries",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 36
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bps",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "下行"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#22D3EE"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "上行"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#3B82F6"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "expr": "nexora_wan_interface_avg_download_bps{window=\"24h\"}",
-          "legendFormat": "下行",
-          "refId": "A"
-        },
-        {
-          "expr": "nexora_wan_interface_avg_upload_bps{window=\"24h\"}",
-          "legendFormat": "上行",
-          "refId": "B"
-        }
-      ],
-      "description": "显示启用接口的平均速率，不是线路总流量。"
-    },
-    {
-      "id": 19,
-      "title": "WAN 接口错误与丢弃（24h 累计）",
-      "type": "timeseries",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 44
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "错误"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#F59E0B"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "丢弃"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#F43F5E"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "expr": "nexora_wan_interface_errors_total{window=\"24h\"}",
-          "legendFormat": "错误",
-          "refId": "A"
-        },
-        {
-          "expr": "nexora_wan_interface_discards_total{window=\"24h\"}",
-          "legendFormat": "丢弃",
-          "refId": "B"
         }
       ]
     }
@@ -1866,7 +2054,7 @@
   },
   "timezone": "browser",
   "title": "11 WAN 链路健康与拨测质量（WAN Health & Probe Quality）",
-  "description": "分开展示 WAN 设备接口采样健康与全局出向 DNS/TCP/HTTP/ICMP 拨测质量。ICMP 使用多回显计算丢包和包间时延变化。探测执行仍未应用 wan_probe_bindings 的逐线路 source-IP 选路，因此接口侧可用率和全局探测结果不能合并解释为单线路端到端 SLA。指标只输出系统聚合值，不带租户、线路、目标或地址标识。",
+  "description": "广域网链路质量与多协议拨测全景：并行呈现 WAN 端口连续故障/流量健康，以及 ICMP/HTTP/TCP/DNS 拨测可用率与响应时延。",
   "uid": "nexora-outbound-probe-quality",
-  "version": 30
+  "version": 33
 }

@@ -58,6 +58,7 @@ export function getRouteContext(pathname: string): RouteContext {
       activeTab = 'monitoring-collectors';
     } else if (second === 'telemetry-management') {
       activeTab = 'telemetry-management';
+      subPage = parts[2] || 'onboarding';
     } else if (second === 'collection-health') {
       activeTab = 'monitoring-health';
     } else if (second === 'topology') {
@@ -219,6 +220,8 @@ export function getRouteContext(pathname: string): RouteContext {
       ipamPage = 'routing-contexts';
     } else if (second === 'fhrp') {
       ipamPage = 'fhrp';
+    } else if (second === 'resources') {
+      ipamPage = 'resources';
     } else {
       ipamPage = 'ips';
     }

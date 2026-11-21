@@ -384,12 +384,13 @@ def stat_panel(
             "overrides": []
         },
         "options": {
-            "colorMode": "value",
+            "colorMode": "background",
             "graphMode": graph_mode,
             "justifyMode": "center",
             "orientation": "auto",
             "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False},
-            "textMode": "auto"
+            "textMode": "auto",
+            "text": {"titleSize": 13, "valueSize": 28},
         },
         # Stat cards represent current state or a rolling aggregate's current
         # sample; a range query plus lastNotNull can retain a stale value after
@@ -431,6 +432,9 @@ def gauge_panel(pid, title, expr, x, y, w=6, h=5, unit="percent", thresholds=Non
             "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False},
             "showThresholdLabels": False,
             "showThresholdMarkers": True,
+            "sizing": "auto",
+            "minVizWidth": 75,
+            "minVizHeight": 75,
         },
         "targets": [{"expr": expr, "instant": True, "refId": "A"}],
     }
@@ -456,10 +460,10 @@ def timeseries_panel(
     unit="",
     color_overrides=None,
     legend_display_mode="table",
-    legend_placement="right",
+    legend_placement="bottom",
     legend_calcs=None,
     description=None,
-    line_interpolation="linear",
+    line_interpolation="smooth",
 ):
     panel = {
         "id": pid,
@@ -476,8 +480,8 @@ def timeseries_panel(
                     "drawStyle": "line",
                     "lineInterpolation": line_interpolation,
                     "lineWidth": 2,
-                    "fillOpacity": 10,
-                    "gradientMode": "none",
+                    "fillOpacity": 18,
+                    "gradientMode": "opacity",
                     "showPoints": "never",
                 }
             },
@@ -832,6 +836,11 @@ def bar_gauge_panel(
         "options": {
             "displayMode": "gradient",
             "orientation": "horizontal",
+            "valueMode": "color",
+            "namePlacement": "auto",
+            "showUnfilled": True,
+            "minVizWidth": 8,
+            "minVizHeight": 16,
             "reduceOptions": {"calcs": ["lastNotNull"], "values": false}
         },
         "targets": [{
@@ -4485,6 +4494,357 @@ def validate_dashboard(source_name, dashboard):
                 occupied[(cell_x, cell_y)] = panel.get("id")
 
 
+
+
+NOC_COLLAPSED_ROW_TITLES = {
+    "nexora-network-overview": {"近期链路状态变动"},
+    "nexora-network-device": {"硬件部件当前读数", "接口诊断"},
+    "nexora-network-interface": {"链路质量", "状态与抖动"},
+    "nexora-interface-detail": {"接口状态", "CMDB 利用率阈值判断", "光模块功率（SNMP DOM）"},
+    "nexora-network-wireless": {"Radio 热点", "SSID / BSS 客户端明细", "无线专网流量"},
+    "nexora-network-outbound": {"链路质量与异常排行"},
+    "nexora-outbound-probe-quality": {"WAN 接口健康与流量"},
+    "nexora-linux-metrics": {"磁盘空间、网络与会话"},
+    "nexora-windows-metrics": {"网络与非运行关键服务", "关键服务运行清单"},
+    "nexora-platform-health": {"容器资源与观测"},
+    "nexora-postgres-performance": {"统计重置说明"},
+    "nexora-alert-operations": {"告警处置效率"},
+}
+
+NOC_QUICK_NAV_DASHBOARDS = (
+    ("nexora-network-overview", "全网总览"),
+    ("nexora-network-device", "单设备详情"),
+    ("nexora-network-interface", "接口全景"),
+    ("nexora-network-wireless", "无线专网"),
+    ("nexora-outbound-probe-quality", "出口质量"),
+    ("nexora-monitoring-health", "采集健康"),
+    ("nexora-telemetry-realtime", "Telemetry 实时"),
+)
+
+NOC_V3_PANEL_TYPE_UPGRADES = {
+    # Percentage / Ratio / SLA KPIs -> Sleek Arc Gauge Dials
+    ("nexora-network-wireless", 6): "gauge",
+    ("nexora-network-outbound", 3): "gauge",
+    ("nexora-network-outbound", 4): "gauge",
+    ("nexora-linux-metrics", 3): "gauge",
+    ("nexora-linux-metrics", 4): "gauge",
+    ("nexora-windows-metrics", 2): "gauge",
+    ("nexora-windows-metrics", 3): "gauge",
+    ("nexora-interface-detail", 3): "gauge",
+    ("nexora-interface-detail", 4): "gauge",
+    ("nexora-outbound-probe-quality", 2): "gauge",
+    ("nexora-outbound-probe-quality", 6): "gauge",
+    ("nexora-outbound-probe-quality", 13): "gauge",
+    ("nexora-outbound-probe-quality", 15): "gauge",
+    ("nexora-outbound-probe-quality", 16): "gauge",
+    ("nexora-alert-operations", 6): "gauge",
+    ("nexora-postgres-performance", 7): "gauge",
+    # Categorical Distributions -> Vibrant Donut Pie Charts
+    ("nexora-network-wireless", 8): "piechart",
+    ("nexora-alert-operations", 8): "piechart",
+    ("nexora-alert-operations", 10): "piechart",
+    ("nexora-outbound-probe-quality", 17): "piechart",
+    # Multi-Protocol SLA Comparison -> Horizontal LCD Bar Gauge
+    ("nexora-outbound-probe-quality", 11): "bargauge",
+}
+
+NOC_V3_NO_SPARKLINE_STATS = {
+    ("nexora-platform-health", 5),
+    ("nexora-platform-health", 15),
+    ("nexora-postgres-performance", 1),
+    ("nexora-postgres-performance", 2),
+}
+
+NOC_V3_DASHBOARD_DESCRIPTIONS = {
+    "nexora-network-overview": "全网核心运行态势一屏总览：汇集设备规模、总吞吐波形、无线终端规模及 CPU/内存/温度热点排行。点击排行中的设备名可直接下钻至单设备详情。",
+    "nexora-network-device": "单台网络设备深度体检视图：集中呈现设备在线状态、CPU/内存仪表盘、单板温度、风扇电源、光模块光功率及端口实时流量。",
+    "nexora-network-wireless": "企业无线专网全景监控：实时掌握 AC 与 AP 在线率、关联终端走势、AP 状态分布、高负载 Radio 热点及 SSID/BSS 业务分布。",
+    "nexora-network-interface": "全网接口流量与链路健康全景：实时追踪聚合吞吐、双向速率 Top10、端口利用率与错包/丢包波动；点击接口名称可下钻单端口详情。",
+    "nexora-interface-detail": "单个网络端口精细化诊断视图：提供双向带宽与利用率仪表盘、P95 容量画像、包型构成、错包丢包、链路震荡及光模块收发光功率趋势。",
+    "nexora-monitoring-health": "SNMP 采集引擎健康与性能大盘：直观监控在线/失败采集目标、设备轮询耗时与样本量趋势，快速定位超时或采集异常设备。",
+    "nexora-network-outbound": "互联网出口与 WAN 专线专题视图：请先在顶部选择出口设备及确认的 WAN 端口，实时掌握出入口带宽波形、利用率水位与错包丢包。",
+    "nexora-linux-metrics": "Linux 服务器核心性能大盘：覆盖主机 CPU 负载、内存与 Swap 分布、磁盘吞吐与容量热点、网卡收发流量及 TCP 活跃会话。",
+    "nexora-windows-metrics": "Windows 服务器运行态势监控：集中展示主机 CPU 与内存水位、逻辑磁盘剩余空间告警、系统进程线程、网卡流量及关键服务运行状态。",
+    "nexora-platform-health": "Nexora 监控平台自身健康度看板：实时巡检采集端点可达性、数据写入队列、VictoriaMetrics 存储水位及核心容器资源占用。",
+    "nexora-outbound-probe-quality": "广域网链路质量与多协议拨测全景：并行呈现 WAN 端口连续故障/流量健康，以及 ICMP/HTTP/TCP/DNS 拨测可用率与响应时延。",
+    "nexora-alert-operations": "告警运营效率与通知触达复盘：全面量化未恢复告警分布、24 小时告警生命周期、通知投递成功率及 MTTA/MTTR 响应处置效率。",
+    "nexora-postgres-performance": "PostgreSQL 数据库核心性能透视：聚焦 SQL 调用速率、执行耗时、Shared Buffer 缓存命中率及慢查询 Query ID Top10 排行。",
+}
+
+NOC_V3_PANEL_DESCRIPTIONS = {
+    # 01 网络总览
+    ("nexora-network-overview", 6): "统计近 24 小时内发生过链路变动且当前仍处于 Down 状态的已启用端口，帮你快速聚焦新发故障。",
+    ("nexora-network-overview", 10): "已成功采集到内存指标的设备数；未覆盖设备可能是暂不支持对应采集规则。",
+    ("nexora-network-overview", 11): "已成功采集到温度传感器的设备数；不同机型安全温度区间存在差异，可下钻设备详情核查。",
+    ("nexora-network-overview", 12): "按近 5 分钟收发总吞吐速率排序，快速识别全网流量最繁忙的骨干设备。",
+    ("nexora-network-overview", 14): "仅列出近 24 小时内状态变动且当前仍 Down 的启用接口，自动过滤长期闲置端口；点击接口可直接下钻。",
+    ("nexora-network-overview", 15): "展示各设备最高核心 CPU 利用率 Top10，点击设备名可一键下钻单设备硬件详情。",
+    # 02 设备详情
+    ("nexora-network-device", 1): "展示当前选中设备的基础身份信息与 SNMP 连通状态，便于快速确认设备可达性。",
+    ("nexora-network-device", 6): "当前检测到告警或故障的硬件部件总数；一切正常时显示 0。",
+    ("nexora-network-device", 7): "暂无法判定健康状态的硬件部件数；全部识别正常时显示 0。",
+    ("nexora-network-device", 14): "分内存池展示已用空间、总容量与实时使用率，便于排查单板内存泄漏。",
+    ("nexora-network-device", 17): "汇总风扇、电源等关键硬件的实时运行状态；特殊厂商状态码会保留原值以供核对。",
+    ("nexora-network-device", 18): "展示各电源模块当前实时输出功率（瓦特），辅助评估机框负载与冗余余量。",
+    # 03 无线专网
+    ("nexora-network-wireless", 1): "当前已纳管的无线 AP 总量，保持完整资产口径，避免因单次抖动造成总数虚降。",
+    ("nexora-network-wireless", 2): "当前正常在线提供无线接入服务的 AP 数量。",
+    ("nexora-network-wireless", 3): "当前处于断连或失联状态的 AP 数量，建议优先排查供电与上联链路。",
+    ("nexora-network-wireless", 5): "信道或空口利用率达到 75% 以上的高负载射频数，用于快速定位无线拥堵热点。",
+    ("nexora-network-wireless", 9): "列出所有纳管 AP 的实时在线状态与基础信息，失联 AP 会高亮标出。",
+    ("nexora-network-wireless", 10): "按当前接入终端数由高到低排列，快速定位高密度接入区域。",
+    ("nexora-network-wireless", 12): "按射频接入单元（BSS）统计实时终端连接数，辅助定位热点频段。",
+    ("nexora-network-wireless", 13): "按无线业务名称（SSID）汇总当前在线终端规模，直观反映各无线网段负载。",
+    ("nexora-network-wireless", 14): "当前离线或采集失联的无线控制器（AC）数量。",
+    ("nexora-network-wireless", 15): "当前在线且通信正常的无线控制器（AC）数量。",
+    ("nexora-network-wireless", 17): "无线控制器聚合上行/入向总流量速率。",
+    ("nexora-network-wireless", 18): "无线控制器聚合下行/出向总流量速率。",
+    ("nexora-network-wireless", 19): "无线控制器接口双向吞吐走势（入向上方、出向镜像下方），反映整体无线业务流量波峰。",
+    ("nexora-network-wireless", 20): "按 AC 端口实时收发总吞吐排名，快速识别无线汇聚链路瓶颈。",
+    ("nexora-network-wireless", 22): "按 AP 连续在线运行天数排名，快速识别刚重启或长期稳定运行的节点。",
+    # 04 接口全景
+    ("nexora-network-interface", 14): "展示端口管理状态与运行状态；默认聚焦已启用但运行 Down 的异常端口，可通过顶部筛选查看停用端口。",
+    # 09 接口详情
+    ("nexora-interface-detail", 18): "展示当前端口光模块实测接收/发送光功率（dBm）；不同型号模块收光灵敏度存在差异，过低时请排查光纤衰耗。",
+    # 10 监控平台健康
+    ("nexora-platform-health", 1): "当前正常响应指标抓取的监控服务端点总数。",
+    ("nexora-platform-health", 2): "当前采集失败的平台端点数量；0 表示全部正常，无样本时仍显示暂无数据。",
+    ("nexora-platform-health", 5): "监控后端核心数据库连通性状态，正常时显示在线。",
+    ("nexora-platform-health", 7): "各平台监控端点历史可达性阶梯走势，断崖下跌即代表服务短暂不可达。",
+    ("nexora-platform-health", 9): "列出所有平台组件采集端点的实时抓取状态与耗时，便于定位内部组件异常。",
+    ("nexora-platform-health", 10): "采集代理等待推送至时序库的积压数据量，持续飙升说明写入出现瓶颈。",
+    ("nexora-platform-health", 14): "VictoriaMetrics 当前已占用的历史监控数据总容量。",
+    ("nexora-platform-health", 15): "时序库当前写入状态：正常为可写，若触发只读请立即核查磁盘剩余空间。",
+    ("nexora-platform-health", 19): "当前纳入资源观测的平台应用容器总数。",
+    ("nexora-platform-health", 20): "展示各应用容器的最近观测时间戳与基础元数据。",
+    # 11 WAN 链路健康与拨测质量
+    ("nexora-outbound-probe-quality", 12): "对比 ICMP、HTTP、TCP、DNS 各协议近 24 小时平均响应时延，快速识别应用层或网络层劣化。",
+    ("nexora-outbound-probe-quality", 15): "近 1 小时已启用 WAN 出口接口的指标采集成功率。",
+    ("nexora-outbound-probe-quality", 16): "近 24 小时 WAN 出口接口保持 UP 状态的健康占比。",
+    ("nexora-outbound-probe-quality", 18): "近 24 小时滚动统计的 WAN 出口平均下行与上行速率波形。",
+    ("nexora-outbound-probe-quality", 20): "当前处于连续中断（DOWN）状态的已启用 WAN 专线数量。",
+    ("nexora-outbound-probe-quality", 21): "当前故障 WAN 链路的最长连续中断估算时长，便于评估业务影响范围。",
+    # 12 告警处置与通知效果
+    ("nexora-alert-operations", 6): "近 24 小时已完成发送的通知中成功触达的比例，衡量告警通道可靠性。",
+    ("nexora-alert-operations", 13): "平均首次响应时间（MTTA）：从告警产生到运维人员首次确认的平均耗时。",
+    ("nexora-alert-operations", 14): "平均故障恢复时间（MTTR）：从告警产生到问题彻底恢复的平均耗时。",
+    ("nexora-alert-operations", 15): "同一故障在未恢复期间持续触发的重复告警数，过高说明存在告警风暴或抑制规则待优化。",
+    # 13 PostgreSQL
+    ("nexora-postgres-performance", 1): "数据库监控采集器（Exporter）当前在线连通状态。",
+    ("nexora-postgres-performance", 2): "慢查询与语句统计模块（pg_stat_statements）的指标采集状态。",
+    ("nexora-postgres-performance", 3): "所选数据库近 5 分钟每秒 SQL 执行次数（QPS），反映数据库整体访问热度。",
+    ("nexora-postgres-performance", 4): "单位时间内消耗的 SQL 累计执行秒数；高并发场景下该值可能大于 1。",
+    ("nexora-postgres-performance", 5): "单次 SQL 执行的加权平均耗时（毫秒），突增通常意味着出现锁等待或慢查询。",
+    ("nexora-postgres-performance", 6): "每秒 SQL 返回或影响的记录行数，用于衡量批量读写压力。",
+    ("nexora-postgres-performance", 7): "数据库级 Shared Buffer 内存缓存命中率（通常建议 >95%）；该指标反映库级整体缓存效率，不属于单条 SQL。",
+    ("nexora-postgres-performance", 10): "按累计耗时速率排名的 Top10 热点 Query ID（已脱敏，不展示原始 SQL 文本）。",
+    ("nexora-postgres-performance", 11): "按平均单次执行耗时排名的 Top10 最慢 Query ID，建议优先针对性优化索引。",
+}
+
+NOC_V3_TEXT_PANEL_CONTENTS = {
+    ("nexora-postgres-performance", 12): (
+        "**统计口径提示**：本页速率指标基于 5 分钟滚动窗口自动计算，可平滑处理常规计数器归零。\n\n"
+        "若管理员手动执行过 `pg_stat_statements_reset()` 重置统计信息，累计数据将重新归零；"
+        "由于当前采集器暂未暴露扩展重置时间戳，本页无法显示具体重置时点。"
+    ),
+}
+
+
+
+def _collapse_secondary_rows(panels, collapsed_titles):
+    """Fold secondary deep-dive rows into collapsed Grafana rows so initial load
+    skips their PromQL queries and keeps the first two screens clean."""
+    if not collapsed_titles:
+        return panels
+
+    ordered = sorted(
+        panels,
+        key=lambda item: (
+            int((item.get("gridPos") or {}).get("y", 0)),
+            int((item.get("gridPos") or {}).get("x", 0)),
+        ),
+    )
+    row_indices = [idx for idx, item in enumerate(ordered) if item.get("type") == "row"]
+    if not row_indices:
+        return panels
+
+    # Group panels under their preceding row
+    result = []
+    prefix_end = row_indices[0]
+    result.extend(ordered[:prefix_end])
+
+    current_y = 0
+    if result:
+        current_y = max(
+            int((p.get("gridPos") or {}).get("y", 0)) + int((p.get("gridPos") or {}).get("h", 0))
+            for p in result
+        )
+
+    for pos, row_idx in enumerate(row_indices):
+        row = deepcopy(ordered[row_idx])
+        next_row_idx = row_indices[pos + 1] if pos + 1 < len(row_indices) else len(ordered)
+        section_children = [deepcopy(p) for p in ordered[row_idx + 1 : next_row_idx]]
+        old_row_y = int((row.get("gridPos") or {}).get("y", 0))
+        row_h = int((row.get("gridPos") or {}).get("h", 1))
+        row["gridPos"]["y"] = current_y
+        if row.get("title") in collapsed_titles and section_children:
+            row["collapsed"] = True
+            # Keep relative child y offsets cleanly normalized under the row
+            for child in section_children:
+                child_y = int((child.get("gridPos") or {}).get("y", old_row_y + 1))
+                child["gridPos"]["y"] = max(0, child_y - old_row_y)
+            row["panels"] = section_children
+            result.append(row)
+            current_y += row_h
+        else:
+            row["collapsed"] = False
+            row["panels"] = []
+            result.append(row)
+            delta_y = current_y - old_row_y
+            section_bottom = current_y + row_h
+            for child in section_children:
+                child_y = int((child.get("gridPos") or {}).get("y", old_row_y + 1)) + delta_y
+                child["gridPos"]["y"] = child_y
+                section_bottom = max(section_bottom, child_y + int((child.get("gridPos") or {}).get("h", 1)))
+                result.append(child)
+            current_y = section_bottom
+
+    return result
+
+
+def _build_noc_quick_links(current_uid):
+    links = []
+    for target_uid, title in NOC_QUICK_NAV_DASHBOARDS:
+        if target_uid == current_uid:
+            continue
+        links.append({
+            "asDropdown": False,
+            "icon": "dashboard",
+            "includeVars": False,
+            "keepTime": True,
+            "tags": [],
+            "targetBlank": False,
+            "title": title,
+            "tooltip": f"切换到 {title}",
+            "type": "link",
+            "url": f"/grafana/d/{target_uid}/{target_uid}",
+        })
+    links.append({
+        "asDropdown": False,
+        "icon": "external link",
+        "includeVars": False,
+        "keepTime": False,
+        "tags": [],
+        "targetBlank": True,
+        "title": "返回 Nexora 监控",
+        "tooltip": "在新标签页打开 Nexora 网络监控页面",
+        "type": "link",
+        "url": "/monitor/network",
+    })
+    return links
+
+
+def apply_noc_v3_panel_types(dashboards):
+    """Apply NOC V3 panel visualization type upgrades prior to V2 fieldConfig validation."""
+    for _, dashboard in dashboards:
+        uid = str(dashboard.get("uid") or "")
+        for panel in iter_panels(dashboard.get("panels")):
+            pid = panel.get("id")
+            upgraded_type = NOC_V3_PANEL_TYPE_UPGRADES.get((uid, pid))
+            if upgraded_type:
+                panel["type"] = upgraded_type
+
+
+def _apply_noc_v3_panel_options(uid, panels):
+    """Upgrade panel display options (Arc Gauges, Donut Pies, LCD BarGauges,
+    sparkline KPI cards, rich bottom-table legends, synced tooltips) without
+    mutating fieldConfig or PromQL."""
+    for panel in iter_panels(panels):
+        ptype = panel.get("type")
+        pid = panel.get("id")
+        if ptype == "gauge":
+            panel["options"] = {
+                "orientation": "auto",
+                "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False},
+                "showThresholdLabels": False,
+                "showThresholdMarkers": True,
+                "sizing": "auto",
+                "minVizWidth": 75,
+                "minVizHeight": 75,
+            }
+        elif ptype == "piechart":
+            panel["options"] = {
+                "pieType": "donut",
+                "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False},
+                "displayLabels": ["percent"],
+                "legend": {
+                    "displayMode": "table",
+                    "placement": "right",
+                    "showLegend": True,
+                    "values": ["value", "percent"],
+                },
+                "tooltip": {"mode": "single", "sort": "desc"},
+            }
+        elif ptype == "bargauge":
+            panel["options"] = {
+                "displayMode": "lcd",
+                "orientation": "horizontal",
+                "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False},
+                "showUnfilled": True,
+                "valueMode": "color",
+                "namePlacement": "auto",
+                "minVizWidth": 8,
+                "minVizHeight": 16,
+                "sizing": "auto",
+            }
+        elif ptype == "timeseries":
+            opts = deepcopy(panel.get("options") or {})
+            opts["tooltip"] = {"mode": "multi", "sort": "desc"}
+            existing_legend = opts.get("legend") or {}
+            if not (uid == "nexora-network-device" and existing_legend.get("displayMode") == "list"):
+                opts["legend"] = {
+                    "calcs": ["lastNotNull", "max", "mean"],
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "showLegend": True,
+                }
+            panel["options"] = opts
+        elif ptype == "stat":
+            opts = deepcopy(panel.get("options") or {})
+            opts["colorMode"] = "background"
+            opts["graphMode"] = "none" if (uid, pid) in NOC_V3_NO_SPARKLINE_STATS else "area"
+            opts["justifyMode"] = "center"
+            opts["textMode"] = "auto"
+            opts["wideLayout"] = True
+            opts.setdefault("text", {"titleSize": 13, "valueSize": 28})
+            opts.setdefault("orientation", "auto")
+            opts.setdefault("reduceOptions", {"calcs": ["lastNotNull"], "fields": "", "values": False})
+            panel["options"] = opts
+
+
+def apply_noc_v3_polish(dashboards):
+    """Apply NOC V3 visualization & usability polish (Arc Gauges, Donut Pies,
+    LCD BarGauges, sparkline KPIs, collapsible deep-dive rows, quick nav links)
+    while preserving every panel ID, query, and V2 fieldConfig contract."""
+    for _, dashboard in dashboards:
+        uid = str(dashboard.get("uid") or "")
+        _apply_noc_v3_panel_options(uid, dashboard.get("panels") or [])
+        collapsed_titles = NOC_COLLAPSED_ROW_TITLES.get(uid)
+        if collapsed_titles:
+            dashboard["panels"] = _collapse_secondary_rows(dashboard.get("panels") or [], collapsed_titles)
+        if uid in NOC_V3_DASHBOARD_DESCRIPTIONS:
+            dashboard["description"] = NOC_V3_DASHBOARD_DESCRIPTIONS[uid]
+        for panel in iter_panels(dashboard.get("panels")):
+            pid = panel.get("id")
+            if (uid, pid) in NOC_V3_PANEL_DESCRIPTIONS:
+                panel["description"] = NOC_V3_PANEL_DESCRIPTIONS[(uid, pid)]
+            if panel.get("type") == "text" and (uid, pid) in NOC_V3_TEXT_PANEL_CONTENTS:
+                panel.setdefault("options", {})["content"] = NOC_V3_TEXT_PANEL_CONTENTS[(uid, pid)]
+        if not dashboard.get("links"):
+            dashboard["links"] = _build_noc_quick_links(uid)
+        dashboard["graphTooltip"] = 1
+
+
 def build_dashboard_catalog():
     dashboards = [
         ("nexora-network-overview.json", build_overview_dashboard()),
@@ -4504,7 +4864,9 @@ def build_dashboard_catalog():
     assert len(dashboards) == 13, "dashboard catalog must contain exactly 13 dashboards"
     uids = [data.get("uid") for _, data in dashboards]
     assert len(uids) == len(set(uids)), "dashboard catalog contains duplicate UIDs"
+    apply_noc_v3_panel_types(dashboards)
     apply_v2_presentation(dashboards)
+    apply_noc_v3_polish(dashboards)
     return dashboards
 
 

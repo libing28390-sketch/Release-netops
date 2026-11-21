@@ -21,6 +21,7 @@ from services.config_approval_service import (
     verify_code,
     consume_approval,
     approval_manifest_hash,
+    approval_sequence_number,
 )
 from core.rbac import enforce_resource_scope, is_global_administrator, require_role
 from services.vault_service import resolve_device_credentials
@@ -136,6 +137,271 @@ def _resolve_script_approver(conn, approver_username: str, tenant_id: str, reque
 def _script_content_hash(content: object) -> str:
     return hashlib.sha256(str(content or '').encode('utf-8')).hexdigest()
 
+
+_HIGH_RISK_SCRIPT_PATTERNS: tuple[tuple[str, str], ...] = (
+    (r"(?i)\brm\s+-[a-z]*r[a-z]*f\b|\brm\s+-[a-z]*f[a-z]*r\b", "强制递归删除文件 (rm -rf)"),
+    (r"(?i)\bmkfs(?:\.[a-z0-9]+)?\b", "格式化磁盘分区 (mkfs)"),
+    (r"(?i)\bdd\s+if=.*\bof=/dev/", "直接覆写块设备 (dd of=/dev/)"),
+    (r"(?i)\b(?:reboot|shutdown|poweroff|halt|init\s+[06])\b", "主机重启或关机指令"),
+    (r"(?i)\breset\s+saved-configuration\b|\bwrite\s+erase\b|\berase\s+startup-config\b", "清空网络设备启动配置"),
+    (r"(?i)\b(?:reload|format\s+flash:|delete\s+/unreserved)\b", "网络设备重启或不可恢复删除"),
+    (r"(?i)\biptables\s+-F\b|\bufw\s+disable\b", "清空或关闭主机防火墙"),
+)
+
+_MEDIUM_RISK_SCRIPT_PATTERNS: tuple[tuple[str, str], ...] = (
+    (r"(?i)\bdisplay\s+ip\s+routing-table\s+verbose\b", "拉取全量详细路由表（大网易超时）"),
+    (r"(?i)\bsystemctl\s+(?:stop|restart|disable)\b|\bservice\s+\S+\s+(?:stop|restart)\b", "停止或重启系统服务"),
+    (r"(?i)\bkill\s+-9\b|\bpkill\s+-9\b", "强制终止进程 (kill -9)"),
+    (r"(?i)^\s*(?:system-view|configure\s+terminal)\b", "进入网络设备配置视图"),
+)
+
+
+def _scan_script_risks(content: object) -> dict:
+    text = str(content or "")
+    # Ignore pure comment lines for shell/python
+    effective_lines = [
+        line for line in text.splitlines()
+        if not line.lstrip().startswith("#")
+    ]
+    effective_text = "\n".join(effective_lines)
+    high_hits: list[str] = []
+    med_hits: list[str] = []
+    for pattern, label in _HIGH_RISK_SCRIPT_PATTERNS:
+        if re.search(pattern, effective_text, re.MULTILINE):
+            high_hits.append(label)
+    for pattern, label in _MEDIUM_RISK_SCRIPT_PATTERNS:
+        if re.search(pattern, effective_text, re.MULTILINE):
+            med_hits.append(label)
+    if high_hits:
+        return {"risk_level": "high", "risk_findings": high_hits + med_hits}
+    if med_hits:
+        return {"risk_level": "medium", "risk_findings": med_hits}
+    return {"risk_level": "low", "risk_findings": []}
+
+
+def _enrich_script_row(row: dict) -> dict:
+    item = dict(row)
+    item.update(_scan_script_risks(item.get("content")))
+    return item
+
+
+def _validate_shell_syntax(content: str) -> list[str]:
+    """Cross-platform lightweight Bash/Shell syntax check (multi-line quote + block balance)."""
+    errors: list[str] = []
+    in_heredoc: str | None = None
+    quote: str | None = None
+    quote_start_line = 0
+    if_depth = 0
+    loop_depth = 0
+    case_depth = 0
+
+    for lineno, raw_line in enumerate(content.splitlines(), 1):
+        stripped = raw_line.strip()
+        if in_heredoc is not None:
+            if stripped == in_heredoc:
+                in_heredoc = None
+            continue
+        if quote is None and (not stripped or stripped.startswith("#")):
+            continue
+
+        # Strip single/double quoted literals (carrying quote state across lines for awk/sed/python blocks)
+        escaped = False
+        cleaned_chars: list[str] = []
+        for ch in raw_line:
+            if quote is None and ch == "#":
+                break
+            if escaped:
+                escaped = False
+                continue
+            if ch == "\\" and quote != "'":
+                escaped = True
+                continue
+            if quote is None:
+                if ch in ("'", '"'):
+                    quote = ch
+                    quote_start_line = lineno
+                    cleaned_chars.append(" ")
+                else:
+                    cleaned_chars.append(ch)
+            else:
+                if ch == quote:
+                    quote = None
+                    cleaned_chars.append(" ")
+
+        cleaned = "".join(cleaned_chars)
+
+        # Detect heredoc start outside quotes like <<'EOF' or <<-EOF
+        if quote is None:
+            hd = re.search(r'''<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?''', raw_line)
+            if hd and not re.search(r"<<<", raw_line):
+                in_heredoc = hd.group(1)
+
+        tokens = re.findall(r"(?:^|[;&|()]\s*|\s)(if|fi|for|while|until|done|case|esac)(?=$|[;&|()\s])", cleaned)
+        for tok in tokens:
+            if tok == "if":
+                if_depth += 1
+            elif tok == "fi":
+                if_depth -= 1
+                if if_depth < 0:
+                    errors.append(f"Shell 语法错误（第 {lineno} 行）：出现多余的 fi（缺少匹配的 if）")
+                    if_depth = 0
+            elif tok in ("for", "while", "until"):
+                loop_depth += 1
+            elif tok == "done":
+                loop_depth -= 1
+                if loop_depth < 0:
+                    errors.append(f"Shell 语法错误（第 {lineno} 行）：出现多余的 done（缺少匹配的 for/while/until）")
+                    loop_depth = 0
+            elif tok == "case":
+                case_depth += 1
+            elif tok == "esac":
+                case_depth -= 1
+                if case_depth < 0:
+                    errors.append(f"Shell 语法错误（第 {lineno} 行）：出现多余的 esac（缺少匹配的 case）")
+                    case_depth = 0
+
+    if quote is not None:
+        errors.append(f"Shell 语法错误（第 {quote_start_line} 行起）：引号 {quote} 未闭合")
+    if in_heredoc is not None:
+        errors.append(f"Shell 语法错误：Heredoc 区块 <<{in_heredoc} 未闭合")
+    if if_depth > 0:
+        errors.append(f"Shell 语法错误：有 {if_depth} 个 if 语句缺少闭合的 fi")
+    if loop_depth > 0:
+        errors.append(f"Shell 语法错误：有 {loop_depth} 个循环语句缺少闭合的 done")
+    if case_depth > 0:
+        errors.append(f"Shell 语法错误：有 {case_depth} 个 case 语句缺少闭合的 esac")
+    return errors
+
+def _validate_script_syntax(content: str, script_type: str) -> tuple[list[str], list[str]]:
+    """Return (errors, warnings) for Python, Shell, or CLI scripts."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    stype = str(script_type or "shell").strip().lower()
+    text = str(content or "")
+    if not text.strip():
+        return ["脚本内容不能为空"], []
+
+    if stype == "python":
+        import ast as _ast
+        try:
+            _ast.parse(text)
+        except SyntaxError as exc:
+            line_hint = f"第 {exc.lineno} 行" if exc.lineno else "未知行"
+            errors.append(f"Python 语法错误（{line_hint}）：{exc.msg}")
+    elif stype == "shell":
+        errors.extend(_validate_shell_syntax(text))
+        if not text.lstrip().startswith("#!"):
+            warnings.append("建议在首行添加 Shebang（如 #!/bin/bash）以明确解释器")
+    elif stype == "cli":
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+        if not lines:
+            errors.append("CLI 命令集至少需要包含一条可执行命令")
+        for idx, ln in enumerate(lines, 1):
+            if re.search(r"(?i)(?:y/n|\[y/n\])", ln):
+                warnings.append(f"第 {idx} 行可能触发交互确认提示：{ln}")
+    return errors, warnings
+
+
+def _validate_script_output(sample_output: str, contract: dict | None) -> dict:
+    """Validate sample script stdout against an operator-defined output contract."""
+    cfg = contract if isinstance(contract, dict) else {}
+    fmt = str(cfg.get("format") or "any").strip().lower()
+    must_contain = [str(x).strip() for x in (cfg.get("must_contain") or []) if str(x).strip()]
+    must_not_contain = [str(x).strip() for x in (cfg.get("must_not_contain") or []) if str(x).strip()]
+    regex_pattern = str(cfg.get("regex") or "").strip()
+
+    text = str(sample_output or "")
+    checks: list[dict] = []
+    passed = True
+
+    if fmt == "json":
+        try:
+            json.loads(text)
+            checks.append({"rule": "JSON 格式校验", "passed": True, "detail": "输出为合法 JSON"})
+        except Exception as exc:
+            passed = False
+            checks.append({"rule": "JSON 格式校验", "passed": False, "detail": f"JSON 解析失败：{exc}"})
+    elif fmt == "key_value":
+        kv_lines = [ln for ln in text.splitlines() if re.match(r"^\s*[A-Za-z0-9_.-]+\s*[:=]\s*.+$", ln)]
+        ok = len(kv_lines) > 0
+        if not ok:
+            passed = False
+        checks.append({
+            "rule": "KEY=VALUE / KEY:VALUE 键值校验",
+            "passed": ok,
+            "detail": f"识别到 {len(kv_lines)} 行键值指标" if ok else "未识别到任何 KEY=VALUE 或 KEY:VALUE 格式行",
+        })
+    elif fmt == "numeric":
+        m = re.search(r"(?m)^\s*(?:[A-Za-z0-9_]+[:=]\s*)?(-?\d+(?:\.\d+)?)\s*$", text)
+        ok = m is not None
+        if not ok:
+            passed = False
+        checks.append({
+            "rule": "纯数值指标校验",
+            "passed": ok,
+            "detail": f"提取到数值：{m.group(1)}" if ok else "未提取到合法数值输出（如 42.50 或 KEY:42.50）",
+        })
+
+    for kw in must_contain:
+        ok = kw in text
+        if not ok:
+            passed = False
+        checks.append({
+            "rule": f"必须包含关键字「{kw}」",
+            "passed": ok,
+            "detail": "命中" if ok else f"输出中缺少「{kw}」",
+        })
+
+    for kw in must_not_contain:
+        ok = kw.lower() not in text.lower()
+        if not ok:
+            passed = False
+        checks.append({
+            "rule": f"禁止包含异常词「{kw}」",
+            "passed": ok,
+            "detail": "未触发异常词" if ok else f"检测到异常关键词「{kw}」",
+        })
+
+    if regex_pattern:
+        try:
+            ok = re.search(regex_pattern, text, re.MULTILINE) is not None
+            if not ok:
+                passed = False
+            checks.append({
+                "rule": f"正则匹配 /{regex_pattern}/",
+                "passed": ok,
+                "detail": "正则匹配成功" if ok else "输出未匹配指定正则表达式",
+            })
+        except re.error as exc:
+            passed = False
+            checks.append({"rule": "正则表达式合法性", "passed": False, "detail": f"正则语法错误：{exc}"})
+
+    return {"passed": passed, "checks": checks}
+
+
+@router.post("/scripts/validate")
+async def validate_script_endpoint(payload: dict = Body(...), user: dict = Depends(get_operator)):
+    content = str(payload.get("content") or "")
+    script_type = str(payload.get("script_type") or "shell")
+    syntax_errors, syntax_warnings = _validate_script_syntax(content, script_type)
+    risk = _scan_script_risks(content)
+    output_result = None
+    if payload.get("sample_output") is not None and payload.get("output_contract") is not None:
+        output_result = _validate_script_output(
+            str(payload.get("sample_output") or ""),
+            payload.get("output_contract"),
+        )
+    return {
+        "valid": len(syntax_errors) == 0 and (output_result["passed"] if output_result is not None else True),
+        "syntax_errors": syntax_errors,
+        "syntax_warnings": syntax_warnings,
+        "risk_level": risk["risk_level"],
+        "risk_findings": risk["risk_findings"],
+        "output_validation": output_result,
+    }
+
+
+
 @router.get("/scripts")
 async def read_scripts(
     q: str = Query('', description='Search script name, id or description'),
@@ -143,6 +409,7 @@ async def read_scripts(
     category: str = Query('', description='Script category'),
     script_type: str = Query('', description='Script type'),
     status: str = Query('', description='Script status'),
+    domain: str = Query('', description='Target domain: network | server'),
     page: int | None = Query(None, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     user: dict = Depends(get_viewer),
@@ -172,6 +439,7 @@ async def read_scripts(
                 'h3c': ['h3c_comware', 'h3c'],
                 'juniper': ['juniper_junos', 'juniper'],
                 'arista': ['arista_eos', 'arista'],
+                'ruijie': ['ruijie_rgos', 'ruijie'],
             }
             values = groups.get(platform.lower(), [platform])
             placeholders = ','.join('?' for _ in values)
@@ -191,11 +459,21 @@ async def read_scripts(
         if status and status.lower() not in ('all', 'any'):
             clauses.append("LOWER(COALESCE(status, '')) = ?")
             params.append(status.lower())
+        if domain and domain.lower() == 'network':
+            clauses.append(
+                "(LOWER(COALESCE(platform, '')) NOT IN ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'windows') "
+                "OR LOWER(COALESCE(id, '')) LIKE '%network%')"
+            )
+        elif domain and domain.lower() == 'server':
+            clauses.append(
+                "(LOWER(COALESCE(platform, '')) IN ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'windows') "
+                "AND LOWER(COALESCE(id, '')) NOT LIKE '%network%')"
+            )
 
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ''
         if page is None:
             scripts = conn.execute(f'SELECT * FROM scripts{where} ORDER BY updated_at DESC', tuple(params)).fetchall()
-            return [dict(s) for s in scripts]
+            return [_enrich_script_row(dict(s)) for s in scripts]
 
         total_row = conn.execute(f'SELECT COUNT(*) AS total FROM scripts{where}', tuple(params)).fetchone()
         total = int(total_row['total'] or 0) if total_row else 0
@@ -205,7 +483,7 @@ async def read_scripts(
             tuple(params + [page_size, offset]),
         ).fetchall()
         return {
-            'items': [dict(row) for row in rows],
+            'items': [_enrich_script_row(dict(row)) for row in rows],
             'total': total,
             'page': page,
             'page_size': page_size,
@@ -277,27 +555,32 @@ async def create_script(script: dict = Body(...), user: dict = Depends(get_opera
             approver_id = str(approver['id'])
             if not content.strip():
                 raise HTTPException(status_code=400, detail='提交审批的脚本内容不能为空')
+            syntax_errors, _ = _validate_script_syntax(content, str(script.get('script_type', 'shell')))
+            if syntax_errors:
+                raise HTTPException(status_code=400, detail='；'.join(syntax_errors))
             content_sha256 = _script_content_hash(content)
         conn.execute('''
             INSERT INTO scripts (
                 id, name, platform, description, content, 
                 script_type, category, author, version, status, 
                 submitter_name, approver_username, created_at, updated_at,
-                created_by_id, tenant_id, approver_id, approved_by_id, content_sha256
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_by_id, tenant_id, approver_id, approved_by_id, content_sha256,
+                parent_script_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             script_id, script.get('name'), script.get('platform'), script.get('description'), 
             content, script.get('script_type', 'shell'), script.get('category', 'custom'), submitter,
             script.get('version', 'v1.0.0'), status,
             submitter, approver_username, now, now,
             actor_id, tenant_id, approver_id, '', content_sha256,
+            str(script.get('parent_script_id') or '').strip(),
         ))
         log_audit_event(
             event_type='SCRIPT_CREATE', category='automation', severity='medium', status='success',
             summary=f"Created script {script_id}", actor_id=actor_id,
             actor_username=submitter, actor_role=user.get('role'), target_type='script',
             target_id=script_id, target_name=str(script.get('name') or script_id),
-            details={'status': status, 'tenant_id': tenant_id, 'content_sha256': content_sha256}, conn=conn,
+            details={'status': status, 'tenant_id': tenant_id, 'content_sha256': content_sha256, **_scan_script_risks(content)}, conn=conn,
         )
         conn.commit()
         return {"success": True, "id": script_id}
@@ -379,6 +662,9 @@ async def update_script(script_id: str, script: dict = Body(...), user: dict = D
                 )
                 if not content.strip():
                     raise HTTPException(status_code=400, detail='提交审批的脚本内容不能为空')
+                syntax_errors, _ = _validate_script_syntax(content, str(script.get('script_type', current.get('script_type', 'shell'))))
+                if syntax_errors:
+                    raise HTTPException(status_code=400, detail='；'.join(syntax_errors))
                 approver_username = str(approver['username'])
                 approver_id = str(approver['id'])
                 content_sha256 = _script_content_hash(content)
@@ -392,7 +678,6 @@ async def update_script(script_id: str, script: dict = Body(...), user: dict = D
                 'version': script.get('version', current.get('version')),
                 'status': target_status,
                 'approver_username': approver_username,
-                'approver_id': approver_id,
                 'approver_id': approver_id,
                 'approved_by_id': '',
                 'content_sha256': content_sha256,
@@ -409,7 +694,7 @@ async def update_script(script_id: str, script: dict = Body(...), user: dict = D
                 summary=f"{target_status.title()} script {script_id}", actor_id=actor_id,
                 actor_username=actor_name, actor_role=user.get('role'), target_type='script',
                 target_id=script_id, target_name=str(fields['name'] or script_id),
-                details={'content_sha256': content_sha256, 'tenant_id': tenant_id}, conn=conn,
+                details={'content_sha256': content_sha256, 'tenant_id': tenant_id, **_scan_script_risks(content)}, conn=conn,
             )
         else:
             raise HTTPException(status_code=409, detail='脚本状态无效，不能继续流转')
@@ -943,9 +1228,23 @@ def _build_approval_manifest(approval_type: str, payload: dict, user: dict) -> d
                         status_code=400,
                         detail='顶层授权条款必须与审批清单中的授权条款一致',
                     )
-            elif not isinstance(nested_grant, dict) and current is not None:
-                nested_grant = current_authorization_grant_input(conn, current)
-                source = {**source, 'authorization_grant': nested_grant}
+            elif operation in {'DELETE', 'DISABLE'}:
+                if isinstance(nested_grant, dict):
+                    try:
+                        nested_grant = normalize_authorization_grant(nested_grant)
+                        source = {**source, 'authorization_grant': nested_grant}
+                    except ValueError:
+                        nested_grant = None
+                        source = {k: v for k, v in source.items() if k != 'authorization_grant'}
+                elif current is not None:
+                    nested_grant = current_authorization_grant_input(conn, current)
+                    if isinstance(nested_grant, dict):
+                        try:
+                            nested_grant = normalize_authorization_grant(nested_grant)
+                            source = {**source, 'authorization_grant': nested_grant}
+                        except ValueError:
+                            nested_grant = None
+                            source = {k: v for k, v in source.items() if k != 'authorization_grant'}
             try:
                 if isinstance(nested_grant, dict):
                     source = {**source, 'authorization_grant': nested_grant}
@@ -1000,7 +1299,8 @@ async def request_config_approval(payload: dict = Body(...), user: dict = Depend
         verification_method=str(payload.get('verification_method') or 'feishu'),
     )
     if err: raise HTTPException(status_code=400, detail=err)
-    return {"success": True, "approval_token": token, "approval_type": approval_type}
+    approval_seq = approval_sequence_number(token)
+    return {"success": True, "approval_token": token, "approval_type": approval_type, "approval_seq": approval_seq}
 
 @router.post("/config-approval/verify")
 async def verify_config_approval(payload: dict = Body(...), user: dict = Depends(get_operator)):

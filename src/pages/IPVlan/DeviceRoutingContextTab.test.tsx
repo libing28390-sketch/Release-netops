@@ -215,4 +215,77 @@ describe('DeviceRoutingContextTab', () => {
     expect(await screen.findByText('该设备还没有上下文映射')).toBeTruthy();
     expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith('/api/ipam/routing-contexts?device_id=')).length).toBeGreaterThan(1);
   });
+
+  it('lists discovered routing context candidates and confirms ownership without manual key entry', async () => {
+    const fetchMock = setup({
+      onRequest: (url) => {
+        if (url === '/api/ipam/routing-contexts/candidates?device_id=device-1') {
+          return response({
+            items: [
+              {
+                device_id: 'device-1',
+                device_name: 'SW-01',
+                context_source: 'cli',
+                context_type: 'vrf',
+                local_context_key: 'CORP-VRF',
+                local_context_name: 'CORP-VRF',
+                sources: ['arp', 'interface_inventory'],
+                observation_count: 12,
+                last_observed_at: '2026-11-19T10:00:00Z',
+                coverage_status: 'complete',
+                can_confirm: true,
+                mapping_status: 'pending',
+                mapping_id: null,
+                mapping_revision: null,
+                address_space_id: null,
+                address_space_name: null,
+                address_space_kind: null,
+              },
+              {
+                device_id: 'device-1',
+                device_name: 'SW-01',
+                context_source: 'snmp',
+                context_type: 'unknown',
+                local_context_key: '',
+                local_context_name: '',
+                sources: ['arp'],
+                observation_count: 3,
+                last_observed_at: '2026-11-19T10:00:00Z',
+                coverage_status: 'scope_unknown',
+                can_confirm: false,
+                mapping_status: 'unknown_context',
+                mapping_id: null,
+                mapping_revision: null,
+                address_space_id: null,
+                address_space_name: null,
+                address_space_kind: null,
+              },
+            ],
+          });
+        }
+        return undefined;
+      },
+    });
+    await selectDevice();
+
+    const candidateSection = await screen.findByRole('region', { name: '已采集路由上下文候选' });
+    expect(within(candidateSection).getAllByText('CORP-VRF').length).toBeGreaterThan(0);
+    expect(within(candidateSection).getByText('缺少可靠上下文（待确认）')).toBeTruthy();
+
+    fireEvent.change(within(candidateSection).getByLabelText('目标地址空间 CORP-VRF'), { target: { value: 'space-vrf' } });
+    fireEvent.click(within(candidateSection).getByRole('button', { name: '确认归属' }));
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([url, init]) => String(url) === '/api/ipam/routing-contexts' && init?.method === 'POST')).toBe(true);
+    });
+    const [, init] = fetchMock.mock.calls.find(([url, request]) => String(url) === '/api/ipam/routing-contexts' && request?.method === 'POST')!;
+    expect(JSON.parse(String(init?.body))).toEqual({
+      device_id: 'device-1',
+      context_source: 'cli',
+      context_type: 'vrf',
+      local_context_key: 'CORP-VRF',
+      local_context_name: 'CORP-VRF',
+      address_space_id: 'space-vrf',
+    });
+  });
 });

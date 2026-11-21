@@ -1,5 +1,46 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { SessionUser } from '../types';
+import { resetSystemInfoCache } from './useSystem';
+import { resetInventoryDeviceCache } from './useInventory';
+
+const SESSION_SNAPSHOT_KEY = 'netops_session_snapshot';
+
+const readSessionSnapshot = (): SessionUser | null => {
+  try {
+    if (typeof sessionStorage === 'undefined' || typeof localStorage === 'undefined') return null;
+    if (!localStorage.getItem('netops_token')) return null;
+    const raw = sessionStorage.getItem(SESSION_SNAPSHOT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && typeof parsed.username === 'string' && parsed.username.trim()) {
+      return parsed as SessionUser;
+    }
+  } catch {
+    // ignore malformed sessionStorage
+  }
+  return null;
+};
+
+const writeSessionSnapshot = (user: SessionUser | null | undefined) => {
+  try {
+    if (typeof sessionStorage === 'undefined') return;
+    if (!user?.username) {
+      sessionStorage.removeItem(SESSION_SNAPSHOT_KEY);
+      return;
+    }
+    sessionStorage.setItem(SESSION_SNAPSHOT_KEY, JSON.stringify({
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      role_profile: user.role_profile,
+      display_name: user.display_name,
+      avatar_url: user.avatar_url,
+      preferred_language: user.preferred_language,
+    }));
+  } catch {
+    // ignore storage quota errors
+  }
+};
 
 interface UseAuthProps {
   language: string;
@@ -20,6 +61,9 @@ export const useAuth = ({
 }: UseAuthProps) => {
   const expireLocalSession = useCallback(() => {
     localStorage.removeItem('netops_token');
+    writeSessionSnapshot(null);
+    resetSystemInfoCache();
+    resetInventoryDeviceCache();
     setShowUserMenu(false);
     setShowNotifications(false);
     setIsAuthenticated(false);
@@ -55,9 +99,10 @@ export const useAuth = ({
     });
   }, [fetchWithTimeout, setShowSetupWizard]);
 
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [authChecking, setAuthChecking] = useState(true);
-  const [currentUser, setCurrentUser] = useState<SessionUser>({ username: 'admin' });
+  const initialSnapshot = readSessionSnapshot();
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => Boolean(initialSnapshot));
+  const [authChecking, setAuthChecking] = useState<boolean>(() => !initialSnapshot && Boolean(typeof localStorage !== 'undefined' && localStorage.getItem('netops_token')));
+  const [currentUser, setCurrentUser] = useState<SessionUser>(() => initialSnapshot || { username: 'admin' });
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [rememberMe, setRememberMe] = useState(() => localStorage.getItem('netops_remember') === 'true');
@@ -111,6 +156,7 @@ export const useAuth = ({
           setIsAuthenticated(true);
           if (data?.user?.username) {
             setCurrentUser(data.user);
+            writeSessionSnapshot(data.user);
             if (data.user.preferred_language === 'en' || data.user.preferred_language === 'zh') {
               setLanguage(data.user.preferred_language);
             }
@@ -261,7 +307,9 @@ export const useAuth = ({
         localStorage.setItem('netops_remember', 'false');
       }
 
-      setCurrentUser(data.user || { username: loginForm.username.trim() });
+      const loggedInUser = data.user || { username: loginForm.username.trim() };
+      setCurrentUser(loggedInUser);
+      writeSessionSnapshot(loggedInUser);
       setIsAuthenticated(true);
       setLoginForm((prev) => ({ ...prev, password: '' }));
       setCaptchaRequired(false);
@@ -324,7 +372,9 @@ export const useAuth = ({
         localStorage.setItem('netops_remember', 'false');
       }
 
-      setCurrentUser(data.user || { username: loginForm.username.trim() });
+      const mfaUser = data.user || { username: loginForm.username.trim() };
+      setCurrentUser(mfaUser);
+      writeSessionSnapshot(mfaUser);
       setIsAuthenticated(true);
       setLoginForm((prev) => ({ ...prev, password: '' }));
       setMfaRequired(false);
@@ -376,6 +426,9 @@ export const useAuth = ({
       const data = await resp.json();
       if (resp.ok && data.token) {
         localStorage.setItem('netops_token', data.token);
+        writeSessionSnapshot(data.user);
+        resetSystemInfoCache();
+        resetInventoryDeviceCache();
         setCurrentUser(data.user);
         showToast(language === 'zh' ? `已切换到用户: ${targetUsername}` : `Switched to user: ${targetUsername}`, 'success');
         window.location.reload();

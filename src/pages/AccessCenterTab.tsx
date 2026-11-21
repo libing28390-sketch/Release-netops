@@ -4,7 +4,7 @@ import {
   Copy, ShieldCheck, RefreshCw, ChevronLeft, ChevronRight, Send, ChevronDown, UserCheck,
   Database, Server, Cpu, Key, FolderTree, Globe, X, Activity, Wifi, Star, Settings, Loader2, AlertCircle
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import TerminalWindow from '../components/access/TerminalWindow';
 import { DataTable } from '../components/DataTable';
 import { TableActionHeader } from '../components/ui/TableActionColumn';

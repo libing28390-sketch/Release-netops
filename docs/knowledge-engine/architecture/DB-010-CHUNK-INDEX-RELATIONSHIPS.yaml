@@ -1,0 +1,232 @@
+task_id: DB-010
+priority: P0
+owner: DBA
+milestone: M1
+status: frozen_for_implementation
+authority: PostgreSQL
+contract_version: v2.0
+
+decision:
+  choice: versioned_chunk_graph_with_atomic_index_generations
+  summary: >-
+    A document version is chunked into an immutable, numbered Chunk Version.
+    Chunks belong to exactly one generation, carry an explicit role and
+    parent relationship, and never infer a Neighbor relationship from ordinal
+    order alone. Embeddings are pinned to an embedding-model contract and an
+    Index Version. Lexical, trigram, and vector indexes cut over as one
+    tenant-scoped generation and can roll back to the last verified ready
+    generation.
+  invariants:
+    - every_chunk_has_one_tenant_and_one_document_version_generation
+    - chunk_version_is_append_only_and_rebuildable
+    - parent_and_child_are_in_the_same_chunk_version_and_have_no_cycles
+    - chunk_role_is_explicit_and_unknown_roles_fail_closed
+    - ordinal_is_unique_within_one_chunk_version_but_is_not_a_neighbor_edge
+    - neighbors_are_explicit_edges_with_same_generation_and_no_self_edges
+    - embedding_dimension_and_contract_version_match_the_model
+    - every_embedding_belongs_to_exactly_one_index_version
+    - one_index_generation_is_the_atomic_read_cutover_boundary
+    - source_document_and_document_version_rows_are_never_overwritten
+
+entities:
+  kb_chunk_version:
+    table: kb_chunk_version
+    aggregate: retrieval
+    purpose: immutable_chunk_generation_for_document_version
+    required_columns: [id, tenant_id, document_version_id, generation_no, chunker_name, chunker_version, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [document_version_id -> kb_document_version.id]
+    unique_keys: [[tenant_id, document_version_id, generation_no]]
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, superseded, purged, failed]
+    generation_contract:
+      generation_no: positive_integer_monotonic_per_document_version
+      chunker_name: server_allowlisted_implementation_name
+      chunker_version: immutable_semver_or_registered_revision
+      configuration_hash: sha256_of_normalized_chunking_configuration
+      source_version: document_version_id_and_content_hash_are_captured_before_build
+      status_gate: only_active_generation_can_feed_a_ready_index
+      immutability: append_new_generation_instead_of_mutating_existing_chunks
+
+  kb_chunk:
+    table: kb_chunk
+    aggregate: retrieval
+    purpose: retrievable_parent_child_chunk
+    required_columns: [id, tenant_id, chunk_version_id, parent_chunk_id, ordinal, chunk_role, chunk_type, content, raw_content, embedding_content, heading_path_json, source_locator_json, token_count, content_hash, is_retrieval_candidate, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [chunk_version_id -> kb_chunk_version.id, parent_chunk_id -> kb_chunk.id]
+    unique_keys: [[tenant_id, chunk_version_id, ordinal]]
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, superseded, purged, failed]
+    role_contract:
+      allowed_roles: [standalone, parent, child, heading, table, code, list, command, output]
+      retrieval_candidate_default: true
+      parent_role_rule: parent_may_be_context_only_and_default_candidate_false
+      child_role_rule: child_requires_parent_chunk_id
+      standalone_role_rule: standalone_must_not_have_parent_chunk_id
+      unknown_role: quarantine_and_exclude_from_retrieval
+    content_contract:
+      content: compatibility_alias_of_raw_content_until_V2_reader_cutover
+      raw_content: source_faithful_chunk_text_before_embedding_normalization
+      embedding_content: deterministic_model_input_without_secret_or_prompt_injection_execution
+      content_hash: sha256_lowercase_hex_over_canonical_raw_content
+      token_count: non_negative_server_or_pinned_tokenizer_count
+      heading_path_json: ordered_heading_context_only_not_authorization
+      source_locator_json: line_page_section_or_source_offset_metadata_only
+      empty_content: not_retrieval_eligible
+    parent_child_contract:
+      parent_chunk_id: nullable_self_reference_with_same_tenant_and_chunk_version
+      root_rule: root_chunks_have_null_parent_chunk_id
+      child_rule: child_parent_must_exist_before_activation
+      self_parent: forbidden
+      cycle_detection: required_before_generation_activation
+      deletion: logical_disable_parent_before_child_cascade; physical_purge_is_gated
+    ordinal_contract:
+      type: non_negative_integer
+      uniqueness: tenant_id_chunk_version_id_ordinal
+      ordering: stable_generation_order_only
+      neighbor_inference: forbidden
+
+  kb_chunk_edge:
+    table: kb_chunk_edge
+    aggregate: retrieval
+    purpose: explicit_neighbor_relationship
+    required_columns: [id, tenant_id, chunk_version_id, from_chunk_id, to_chunk_id, edge_kind, ordinal_delta, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [chunk_version_id -> kb_chunk_version.id, from_chunk_id -> kb_chunk.id, to_chunk_id -> kb_chunk.id]
+    unique_keys: [[tenant_id, chunk_version_id, from_chunk_id, to_chunk_id, edge_kind]]
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, superseded, purged, failed]
+    edge_contract:
+      allowed_edge_kinds: [neighbor, next, previous, semantic, section, cross_reference]
+      neighbor_definition: explicit_same_generation_context_or_adjacency_relation
+      parent_child_separation: parent_chunk_id_is_structural; edge_table_does_not_replace_it
+      same_generation: from_and_to_chunks_must_reference_the_declared_chunk_version
+      self_edge: forbidden
+      duplicate_edge: rejected_by_tenant_generation_endpoint_kind_unique_key
+      ordinal_delta: derived_to_ordinal_minus_from_ordinal_and_must_not_be_authority
+      unknown_kind: quarantine_and_exclude_from_context_expansion
+
+  kb_embedding_model:
+    table: kb_embedding_model
+    aggregate: retrieval
+    purpose: pinned_embedding_contract
+    required_columns: [id, tenant_id, provider_id, model_code, dimension, contract_version, mode, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [provider_id -> ai_provider.id]
+    unique_keys: [[tenant_id, provider_id, model_code, contract_version]]
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, superseded, purged, failed]
+    contract:
+      dimension: positive_integer_and_immutable_for_contract_version
+      contract_version: explicit_preprocessing_and_vector_format_revision
+      mode: allowlist [dense_vector, sparse_vector, hybrid]
+      provider_reference: ai_provider_id_only; no_plaintext_key_or_endpoint_secret
+      activation: model_must_be_active_and_gateway_authorized
+
+  kb_chunk_embedding:
+    table: kb_chunk_embedding
+    aggregate: retrieval
+    purpose: versioned_derived_vector
+    required_columns: [id, tenant_id, chunk_id, embedding_model_id, index_version_id, vector_value, dimension, vector_hash, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [chunk_id -> kb_chunk.id, embedding_model_id -> kb_embedding_model.id, index_version_id -> kb_index_version.id]
+    unique_keys: [[tenant_id, chunk_id, embedding_model_id, index_version_id]]
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, superseded, purged, failed]
+    invariants:
+      vector_contract: dimension_equals_embedding_model_dimension_and_contract_version_is_compatible
+      vector_hash: sha256_of_canonical_serialized_vector
+      source: derived_from_chunk_content_hash_and_model_contract; no_raw_prompt_or_secret
+      eligibility: only_active_chunk_and_active_model_can_be_published
+      immutability: replace_with_new_index_version; never_mutate_ready_vector_in_place
+
+  kb_index_version:
+    table: kb_index_version
+    aggregate: retrieval
+    purpose: searchable_index_generation_and_cutover_pointer
+    required_columns: [id, tenant_id, generation_no, lexical_index_version, trigram_index_version, vector_index_version, status, verified_at, rollback_to_id, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [rollback_to_id -> kb_index_version.id]
+    unique_keys: [[tenant_id, generation_no]]
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, superseded, purged, failed]
+    build_states: [planned, building, verifying, ready, failed, rolling_back, rolled_back]
+    cutover_contract:
+      generation_no: positive_integer_monotonic_per_tenant
+      components: [lexical_index_version, trigram_index_version, vector_index_version]
+      readiness: all_components_built_and_sample_queries_and_acl_checks_pass
+      atomicity: publish_pointer_and_status_in_one_transaction
+      reader_rule: readers_select_one_active_ready_generation; never_mix_generations
+      rollback_to_id: nullable_previous_ready_generation_same_tenant
+      rollback: transactionally_restore_previous_ready_pointer_then_mark_failed_or_superseded_generation
+      verification: verified_at_required_before_active
+      failure: failed_generation_is_not_readable_and_remains_auditable
+
+relationships:
+  - from: kb_document_version
+    to: kb_chunk_version
+    cardinality: one_to_many_append_only_generations
+    rule: document_version_content_hash_is_the_build_input
+  - from: kb_chunk_version
+    to: kb_chunk
+    cardinality: one_to_many_same_generation
+  - from: kb_chunk
+    to: kb_chunk
+    cardinality: parent_to_many_children
+    field: parent_chunk_id
+    rule: same_tenant_same_chunk_version_dag
+  - from: kb_chunk
+    to: kb_chunk
+    cardinality: many_to_many_explicit_edges
+    through: kb_chunk_edge
+    rule: explicit_neighbor_or_context_edge_only
+  - from: kb_chunk
+    to: kb_chunk_embedding
+    cardinality: one_to_many_by_model_and_index_generation
+  - from: kb_embedding_model
+    to: kb_chunk_embedding
+    cardinality: one_to_many_by_contract
+  - from: kb_index_version
+    to: kb_chunk_embedding
+    cardinality: one_to_many
+  - from: kb_index_version
+    to: kb_index_version
+    cardinality: rollback_pointer
+    field: rollback_to_id
+
+legacy_gap_audit:
+  ai_document_chunk:
+    current_fields: [id, document_id, content, embedding, metadata_json, parent_chunk_id, chunk_role, chunk_type, ordinal, raw_content, embedding_content, heading_path_json, token_count, content_hash, source_locator_json, chunking_version, is_retrieval_candidate]
+    migration: backend/database/migrations/m0111_ai_chunking_v2.py
+    mapping: ai_document_chunk_to_kb_chunk_plus_kb_chunk_version; legacy_embedding_to_kb_chunk_embedding_after_model_contract_validation
+    observed_gap: no_canonical_chunk_version_edge_embedding_model_or_index_version
+    compatibility_rule: keep_v1_table_and_reader_until_MIG_and_REL_gates_pass
+  chunking_engine:
+    module: backend/ai/chunking/engine.py
+    observed: [deterministic_chunk_id, parent_chunk_id, chunk_role, chunk_type, raw_content, embedding_content, heading_path, token_count, content_hash, ordinal, is_retrieval_candidate]
+    mapping_rule: Chunk_dataclass_fields_map_without_changing_v1_content_alias
+  rag_retriever:
+    module: backend/ai/services/rag_retriever.py
+    observed: [candidate_filter, chunk_role, parent_chunk_id, ordinal, embedding_model_compatibility_check, sibling_context_expansion]
+    migration_rule: V2_reader_must_add_index_generation_and_explicit_edge_visibility_before_cutover
+
+tenant_security_and_audit:
+  tenant_scope: composite_tenant_id_plus_parent_id_foreign_keys_on_every_relation
+  authorization: kb.retrieval.read_for_active_generation; kb.retrieval.build; kb.retrieval.publish; kb.retrieval.rollback
+  deny_conditions: [missing_tenant, cross_tenant_parent_or_edge, unknown_role, unknown_edge_kind, non_ready_index, model_dimension_mismatch, acl_or_trust_failure]
+  audit_events: [chunk_generation_started, chunk_generation_failed, chunk_generation_activated, index_build_started, index_verified, index_cutover, index_rollback, vector_contract_rejected]
+  sensitive_data: [no_plaintext_api_key, no_prompt_or_device_credential_in_chunk_or_vector_metadata, source_content_acl_enforced_at_read]
+  concurrency: lock_document_version_before_generation; compare_and_set_status; unique_idempotency_key_per_tenant_generation
+
+migration_contract:
+  status: contract_only_no_production_ddl_in_db_010
+  prerequisites: [DB-009_scope_ready, DB-003_lifecycle_ready, PostgreSQL_extensions_checked_by_DB-004, legacy_chunk_inventory, model_dimension_registry]
+  fresh_upgrade: required_before_schema_change
+  idempotence: rerun_safe_and_no_duplicate_generation_or_edge
+  downgrade: disable_v2_reader_and_remove_only_verified_derived_rows; retain_v1_rows_and_source_document_facts
+  rollback: restore_last_ready_index_pointer_and_route_reads_to_v1_adapter
+  production_gate: forbidden_until_MIG_and_REL_and_shadow_acl_retrieval_checks_pass
+  data_loss_policy: no_original_document_or_legacy_chunk_delete_during_DB-010
+
+verification:
+  contract_tests: backend/tests/database/test_db010_chunk_index_relationships.py
+  required_checks: [yaml_contract, DB-001_entity_alignment, DB-002_common_fields, DB-003_derived_lifecycle, M0111_legacy_fields, ChunkingEngine_mapping, RAG_retriever_mapping, DAG_and_edge_invariants, vector_dimension_contract, index_cutover_rollback, report_markers]
+  test_database: PostgreSQL_isolated_contract_database
+  production_database: PostgreSQL_required_for_actual_migration_and_index_validation
+
+rollback:
+  runtime: feature_flag_disable_v2_retrieval_and_restore_v1_reader
+  data: retain_all_v1_rows_and_source_content; mark_derived_generations_disabled_or_superseded
+  schema: no_DB-010_production_DDL; later_migration_must_have_verified_downgrade
+  audit: retain_cutover_and_rollback_events
+
+next_tasks: [DB-011, DB-012, DB-013, DB-014, DB-015, CHK-001, RET-001, MIG-001]

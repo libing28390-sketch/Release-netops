@@ -1,0 +1,309 @@
+task_id: DB-011
+priority: P0
+owner: DBA
+milestone: M1
+status: frozen_for_implementation
+authority: PostgreSQL
+contract_version: v2.0
+
+decision:
+  choice: tenant_scoped_import_job_with_phase_state_machine_and_audited_progress
+  summary: >-
+    kb_import_job is the durable control-plane record for document import,
+    reindex, chunk rebuild, embedding rebuild and index build work. Lifecycle
+    status remains governed by DB-003 while execution_state and phase carry
+    queue/worker progress. Counters are relational columns with server-side
+    invariants; scope and structured error details are JSONB extensions only.
+    Retry, cancellation, leases and idempotency are explicit and safe to
+    recover after a worker or process failure.
+  invariants:
+    - every_job_has_explicit_tenant_scope_and_authenticated_actor
+    - lifecycle_status_and_execution_state_are_not_conflated
+    - phase_transitions_are_allowlisted_and_audited
+    - counters_are_non_negative_and_never_exceed_total_count
+    - progress_is_server_derived_and_terminal_states_are_consistent
+    - retry_is_bounded_idempotent_and_never_replays_a_completed_side_effect
+    - cancellation_is_cooperative_at_safe_points_and_is_idempotent
+    - errors_are_structured_redacted_and_never_contain_secrets_or_raw_content
+    - lease_and_heartbeat_prevent_duplicate_workers_and_allow_recovery
+    - v1_reindex_and_generic_job_rows_are_preserved_until_migration_gate
+
+entity:
+  name: kb_import_job
+  table: kb_import_job
+  aggregate: ingestion
+  purpose: idempotent_import_reindex_and_rebuild_job
+  required_columns: [id, tenant_id, job_kind, scope_json, dry_run, status, total_count, parsed_count, failed_count, retry_count, cancelled_at, error_json, created_at, updated_at, created_by, updated_by]
+  unique_keys: [[tenant_id, id]]
+  lifecycle_statuses: [draft, active, disabled, archived, deleted, purged, failed]
+  optional_columns:
+    - name: execution_state
+      type: text
+      nullable: false
+      default: queued
+    - name: phase
+      type: text
+      nullable: false
+      default: accepted
+    - name: phase_started_at
+      type: timestamptz
+      nullable: true
+    - name: started_at
+      type: timestamptz
+      nullable: true
+    - name: finished_at
+      type: timestamptz
+      nullable: true
+    - name: processed_count
+      type: bigint
+      nullable: false
+      default: 0
+    - name: succeeded_count
+      type: bigint
+      nullable: false
+      default: 0
+    - name: skipped_count
+      type: bigint
+      nullable: false
+      default: 0
+    - name: retryable_failed_count
+      type: bigint
+      nullable: false
+      default: 0
+    - name: progress_percent
+      type: numeric
+      nullable: false
+      default: 0
+    - name: max_retries
+      type: integer
+      nullable: false
+      default: 0
+    - name: attempt_no
+      type: integer
+      nullable: false
+      default: 0
+    - name: next_retry_at
+      type: timestamptz
+      nullable: true
+    - name: last_error_code
+      type: text
+      nullable: true
+    - name: last_error_at
+      type: timestamptz
+      nullable: true
+    - name: cancel_requested_at
+      type: timestamptz
+      nullable: true
+    - name: cancel_requested_by
+      type: uuid
+      nullable: true
+    - name: cancellation_reason
+      type: text
+      nullable: true
+    - name: cancelled_by
+      type: uuid
+      nullable: true
+    - name: idempotency_key
+      type: text
+      nullable: false
+      default: generated_server_key
+    - name: lease_owner
+      type: text
+      nullable: true
+    - name: lease_expires_at
+      type: timestamptz
+      nullable: true
+    - name: heartbeat_at
+      type: timestamptz
+      nullable: true
+    - name: error_count
+      type: bigint
+      nullable: false
+      default: 0
+  additional_unique_keys:
+    - [tenant_id, idempotency_key]
+  foreign_keys:
+    - tenant_id -> tenant.id_or_authorized_scope
+    - created_by -> principal.id
+    - updated_by -> principal.id
+    - cancel_requested_by -> principal.id
+    - cancelled_by -> principal.id
+
+job_kinds:
+  allowlist: [document_import, document_reindex, chunk_rebuild, embedding_rebuild, index_build, scope_refresh, catalog_backfill, dry_run_validation]
+  rule: unknown_job_kind_is_rejected_before_persist
+  network_write: forbidden; jobs may collect or transform knowledge but never execute device_write_commands
+
+execution_state_machine:
+  states: [queued, running, retry_wait, paused, cancel_requested, cancelled, succeeded, failed]
+  initial: queued
+  terminal: [cancelled, succeeded, failed]
+  transitions:
+    - from: queued
+      to: running
+      operation: claim_after_scope_and_permission_check
+      permission: kb.import.manage
+    - from: queued
+      to: cancel_requested
+      operation: request_cancel_before_claim
+      permission: kb.import.cancel
+    - from: running
+      to: retry_wait
+      operation: retryable_error_with_budget_remaining
+      permission: system.worker
+    - from: running
+      to: paused
+      operation: operator_pause_or_dependency_backpressure
+      permission: kb.import.manage
+    - from: running
+      to: cancel_requested
+      operation: cooperative_cancel_at_safe_point
+      permission: kb.import.cancel
+    - from: running
+      to: succeeded
+      operation: all_phases_verified_and_commit_complete
+      permission: system.worker
+    - from: running
+      to: failed
+      operation: non_retryable_error_or_retry_budget_exhausted
+      permission: system.worker
+    - from: retry_wait
+      to: running
+      operation: backoff_elapsed_and_lease_claimed
+      permission: system.worker
+    - from: retry_wait
+      to: failed
+      operation: retry_budget_exhausted
+      permission: system.worker
+    - from: paused
+      to: running
+      operation: resume_after_dependency_check
+      permission: kb.import.manage
+    - from: cancel_requested
+      to: cancelled
+      operation: worker_acknowledges_at_safe_point
+      permission: system.worker
+    - from: terminal
+      to: terminal
+      operation: idempotent_status_read_only
+      permission: kb.import.read
+  forbidden_transitions: [succeeded_to_running, cancelled_to_running, failed_to_running_without_new_attempt, queued_to_succeeded_without_phase_evidence]
+
+phase_contract:
+  phases: [accepted, scoped, fetched, parsed, normalized, classified, chunked, embedded, indexed, validated, committed, completed, failed, cancelled]
+  order:
+    - accepted
+    - scoped
+    - fetched
+    - parsed
+    - normalized
+    - classified
+    - chunked
+    - embedded
+    - indexed
+    - validated
+    - committed
+    - completed
+  skip_rule: a_job_kind_may_skip_irrelevant_phases_only_with_explicit_phase_evidence
+  transition_rule: monotonic_forward_or_explicit_retry_to_same_phase; no_silent_phase_regression
+  terminal_rule: completed_requires_execution_state_succeeded; failed_or_cancelled_requires_error_or_cancel_evidence
+  audit: every_phase_change_records_before_after_phase_actor_attempt_and_request_id
+
+progress_contract:
+  counters: [total_count, processed_count, parsed_count, succeeded_count, failed_count, skipped_count, retryable_failed_count, error_count]
+  required_invariants:
+    - all_counters_are_non_negative
+    - processed_count_less_than_or_equal_to_total_count
+    - parsed_count_plus_skipped_count_plus_failed_count_less_than_or_equal_to_processed_count
+    - succeeded_count_plus_skipped_count_plus_failed_count_less_than_or_equal_to_processed_count
+    - progress_percent_is_server_derived_between_zero_and_one_hundred
+    - succeeded_terminal_requires_processed_count_equal_to_total_count
+  calculation: progress_percent = 100_when_total_zero_or_100_times_processed_count_divided_by_total_count
+  update: compare_and_set_on_each_item_or_batch_with_updated_at_and_heartbeat
+  read_model: API_may_expose_progress_snapshot_but_client_cannot_write_counters
+
+retry_contract:
+  max_retries: non_negative_bounded_by_tenant_policy
+  retry_count: increments_once_per_new_attempt_and_never_decrements
+  attempt_no: starts_at_zero_and_increments_on_worker_claim
+  backoff: server_policy_with_jitter_and_next_retry_at
+  retryable_errors: [source_timeout, rate_limited, transient_database, provider_unavailable, worker_lost]
+  non_retryable_errors: [invalid_scope, acl_denied, parser_contract, unsupported_format, secret_or_ssrf_violation, data_integrity]
+  idempotency: tenant_id_plus_idempotency_key_unique; side_effects_require_phase_and_item_idempotency
+  duplicate_worker: lease_fencing_token_and_compare_and_set_claim_rejects_stale_worker
+  retry_after_failure: new_attempt_may_reuse_job_only_before_terminal_retention; no_implicit_retry_of_succeeded_items
+
+cancellation_contract:
+  request_fields: [cancel_requested_at, cancel_requested_by, cancellation_reason]
+  terminal_fields: [cancelled_at, cancelled_by]
+  safe_points: [before_fetch, after_fetch, before_parse, after_parse, before_chunk_commit, before_index_cutover]
+  behavior: stop_new_work_then_finish_current_transaction_and_mark_cancelled
+  idempotency: repeated_cancel_request_returns_current_state_without_duplicate_audit_or_side_effect
+  forbidden: hard_kill_without_recovery_marker; device_write_rollback_from_import_job
+  visibility: cancelled_jobs_remain_auditable_and_excluded_from_active_work_queue
+
+error_contract:
+  error_json_shape: [code, safe_message, phase, item_id, source_id, attempt_no, retryable, occurred_at, correlation_id]
+  code: stable_allowlisted_machine_code
+  safe_message: operator_safe_message_without_DSN_password_API_key_raw_document_or_device_output_secret
+  item_errors: append_only_bounded_events_with_error_count_column
+  last_error: last_error_code_and_last_error_at_are_indexable_projection_fields
+  redaction: sanitize_before_log_persist_or_API_response
+  terminal_failure: status_failed_or_execution_state_failed_after_retry_budget_or_non_retryable_code
+
+lease_and_recovery:
+  lease_fields: [lease_owner, lease_expires_at, heartbeat_at]
+  claim: atomic_update_where_execution_state_in_queued_retry_wait_and_lease_is_empty_or_expired
+  heartbeat: required_while_running_and_before_lease_expiry
+  recovery: expired_running_lease_transitions_to_retry_wait_or_failed_after_fencing_check
+  stale_worker: cannot_update_after_lease_fencing_token_changes
+  audit: claim_heartbeat_expiry_and_recovery_are_audited
+
+tenant_security_and_audit:
+  tenant_scope: tenant_id_is_required_in_create_select_update_claim_cancel_retry_and_progress_predicates
+  permissions: [kb.import.create, kb.import.read, kb.import.manage, kb.import.cancel, kb.import.retry]
+  deny_conditions: [missing_tenant, cross_tenant_scope, unknown_job_kind, unknown_phase, invalid_transition, stale_lease, counter_invariant_violation, acl_denied, source_policy_denied]
+  source_gate: source_registry_allowlist_tls_ssrf_and_parser_policy_from_DB-008
+  audit_events: [job_created, job_claimed, phase_changed, progress_updated, retry_scheduled, cancel_requested, job_cancelled, job_failed, job_succeeded, lease_expired]
+  sensitive_data: [no_plaintext_secret, no_raw_prompt, no_device_credential, no_unredacted_document_body_in_error_json]
+  retention: retain_terminal_job_state_and_audit_until_tenant_retention_and_purge_gate
+
+legacy_gap_audit:
+  ai_knowledge_reindex_job:
+    module: backend/ai/services/knowledge_reindex_service.py
+    migration: backend/database/migrations/m0113_rag_metadata_v2.py
+    observed_columns: [id, tenant_id, scope_json, dry_run, status, total, parsed, failed, updated, rechunked, embedding_success, embedding_failed, error_log_json, created_at, started_at, finished_at, updated_at]
+    observed_statuses: [queued, running, completed]
+    observed_behavior: [document_scoped_reindex, background_thread, per_document_error_capture, retry_creates_new_job, no_cancel_endpoint, no_phase_column, no_lease_or_heartbeat, no_idempotency_key]
+    mapping: ai_knowledge_reindex_job_to_kb_import_job_adapter_with_status_and_counter_mapping
+    compatibility_rule: retain_table_and_service_until_V2_job_reader_and_MIG_REL_gates_pass
+  generic_jobs:
+    module: backend/database/schema.py
+    observed_columns: [id, device_id, task_name, status, output, created_at, job_type, created_by, started_at, finished_at, progress, total_targets, success_count, failed_count, cancel_requested, error_summary, concurrency_limit, retry_limit, timeout_seconds, scope_json]
+    classification: network_operation_job_not_canonical_knowledge_import
+    mapping: no_direct_merge; preserve_device_job_semantics_and_use_explicit_adapter_only
+  db001_gap: kb_import_job_required_columns_are_frozen_but_phase_retry_cancel_and_lease_extensions_are_not_yet_in_production_schema
+
+migration_contract:
+  status: contract_only_no_production_ddl_in_db_011
+  prerequisites: [DB-002_common_columns, DB-003_job_lifecycle, DB-008_source_policy, DB-010_generation_contract]
+  fresh_upgrade: create_table_indexes_and_constraints_only_after_postgresql_schema_review
+  idempotence: rerun_safe_unique_tenant_idempotency_key_and_no_duplicate_claims
+  downgrade: disable_V2_workers_then_remove_only_verified_derived_job_extensions; retain_V1_job_rows_and_audit
+  rollback: stop_new_claims_restore_V1_reindex_adapter_and_requeue_only_uncommitted_items
+  production_gate: forbidden_until_MIG_job_backfill_and_API_RBAC_observability_tests_pass
+  data_loss_policy: no_document_source_or_V1_job_row_delete_in_DB-011
+
+verification:
+  contract_tests: backend/tests/database/test_db011_import_job_contract.py
+  required_checks: [yaml_contract, DB-001_entity_alignment, DB-002_common_fields, DB-003_job_lifecycle, state_machine, phase_order, progress_invariants, retry_contract, cancellation_contract, error_redaction, lease_recovery, V1_reindex_audit, report_markers]
+  test_database: PostgreSQL_isolated_contract_database
+  production_database: PostgreSQL_required_for_actual_job_schema_and_lock_validation
+
+rollback:
+  runtime: disable_V2_import_workers_and_route_reindex_to_V1_adapter
+  data: retain_all_source_rows_and_existing_job_rows; mark_partial_derived_outputs_for_rebuild
+  schema: no_DB-011_production_DDL; later_migration_requires_fresh_upgrade_and_verified_downgrade
+  audit: retain_attempt_phase_progress_cancel_and_error_events
+
+next_tasks: [DB-012, DB-013, DB-014, DB-015, DB-016, ING-001, MIG-001, API-001]

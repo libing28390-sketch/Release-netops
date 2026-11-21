@@ -1,0 +1,52 @@
+{
+  "policy_probes": [
+    {
+      "id": "R07",
+      "reproduced": true,
+      "behavior": "Operator shell request reaches mocked execution with is_config=False and no approval consumption, even when isConfig=True",
+      "limit": "Direct route call with synthetic identity/device; global HTTP guard tested separately; driver, credentials and history mocked"
+    },
+    {
+      "id": "R08",
+      "reproduced": true,
+      "behavior": "Parsed-command read-prefix gate accepts a compound shell expression and passes client-selected admin auth_role to the collector",
+      "limit": "Benign printf expression only; actual collector mocked; bound-platform downstream controls not bypassed by this probe"
+    },
+    {
+      "id": "R09",
+      "reproduced": true,
+      "behavior": "Tenantless Operator with a permitted profile and no scope rows is allowed against a tenant-bearing resource",
+      "limit": "Central predicate only; empty scopes mocked; no other tenant data was read"
+    },
+    {
+      "id": "R10",
+      "reproduced": true,
+      "behavior": "Coarse Administrator bypasses target tenant comparison",
+      "limit": "Documents the current global-admin policy; a defect only if the account is intended to be a tenant administrator"
+    },
+    {
+      "id": "R11",
+      "reproduced": true,
+      "behavior": "Scope service accepts and attempts to persist an unknown resource name (playbok)",
+      "limit": "All SQL calls mocked; persistence admission, not a change to actual user scopes"
+    },
+    {
+      "id": "R12",
+      "reproduced": true,
+      "behavior": "Invalid composite filter falls back to active-device universe; runner reads current script without publication fields, chooses privileged credentials, and never queries the creator identity",
+      "limit": "Entire persistence/credential/driver/notification path mocked; shows runner checks, not a real disabled account or actual administrator credential use"
+    },
+    {
+      "id": "R13",
+      "reproduced": true,
+      "behavior": "Audit sanitizer redacts approval_token but keeps approval_code",
+      "limit": "Pure function with synthetic values; no log or database was modified"
+    },
+    {
+      "id": "R14",
+      "reproduced": true,
+      "behavior": "Operational collector credential helper selects the admin pair for client-selected admin auth_role; helper has no actor input",
+      "limit": "Synthetic vault and compatibility options; no SSH client was constructed; read together with the unauthorised selection route evidence"
+    }
+  ]
+}

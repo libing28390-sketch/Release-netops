@@ -1,0 +1,21 @@
+{
+  "task_id": "REL-004",
+  "status": "PASS",
+  "reason_codes": [],
+  "checks": {
+    "backend_download_static_mount": true,
+    "spa_root_mount_and_fallback": true,
+    "api_not_spa_fallback": true,
+    "assistant_sse_contract": true,
+    "v1_sse_contract": true,
+    "application_body_limit": true,
+    "nginx_body_limit": true,
+    "nginx_api_timeout": true,
+    "compose_runtime_limit": true,
+    "no_sqlite_acceptance": true
+  },
+  "database": "none",
+  "production_database_write": false,
+  "external_provider_request": false,
+  "sqlite": "forbidden_for_acceptance"
+}

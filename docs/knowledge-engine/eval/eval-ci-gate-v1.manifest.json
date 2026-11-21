@@ -1,0 +1,22 @@
+{
+  "status": "PASS",
+  "task_id": "EVAL-010",
+  "small_ci_profile": "small",
+  "full_release_profile": "full",
+  "database_url_scheme": "postgresql",
+  "postgres_service": true,
+  "database_contract": "postgresql_only",
+  "postgres_ci_image": "repository_dockerfile_with_pgvector_and_pg_trgm",
+  "ci_node_version": "22.22.2",
+  "external_network": "not_used_by_offline_runner",
+  "production_write": false,
+  "isolated_anchor_evidence": true,
+  "automated_source_review_evidence": true,
+  "signed_anchor_dataset_evidence": true,
+  "workflow_sha256": {
+    "knowledge_engine_eval": "4fb25dc92bd6ea53088cc74822465828b3cf55b8741a4c58b89baad4c1b6e609",
+    "backend_pytest": "5b343139af41f24eb7bd01a12e8fcf468e32d5f3d1bc2943ad869f416c4e142f",
+    "release": "ba7941faf75cb5ead617c268101444fa43d4e7ccd9cc82c3a0d0d0da6ec21fa8",
+    "promptfoo": "726ec3502e0549c72e5f0850ffd972e3af38e4af85163aac1d89520743265b3e"
+  }
+}

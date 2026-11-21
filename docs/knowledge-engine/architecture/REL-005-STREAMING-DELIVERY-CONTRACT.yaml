@@ -1,0 +1,38 @@
+task_id: REL-005
+priority: P0
+milestone: M2
+status: contract_frozen
+authority: Nginx_Docker_Desktop
+sqlite: forbidden_for_acceptance
+production_database_write: false
+
+objective: >-
+  Ensure SSE bytes are delivered incrementally through the Docker Nginx
+  reverse proxy and direct Windows desktop Uvicorn path without buffering.
+
+nginx:
+  routes: [/api/ai/assistant/chat-stream, /api/v1/ai/chat-stream]
+  required: [proxy_http_version_1_1, proxy_buffering_off, proxy_request_buffering_off, proxy_cache_off, proxy_set_header_connection_empty]
+  timeout_seconds: 3600
+  application_header: X-Accel-Buffering_no
+
+docker:
+  backend_entrypoint: scripts/sync-frontend-dist.sh
+  proxy_entrypoint: nginx/Dockerfile
+  shared_dist: read_only_nginx_volume
+  no_custom_stream_buffer: true
+
+desktop:
+  entrypoint: desktop/desktop_tray.py
+  server: direct_uvicorn_backend_main_app
+  no_reverse_proxy_buffer: true
+  application_sse_headers: inherited_from_fastapi
+
+verification:
+  runner: scripts/knowledge_engine_v2_rel005_streaming_gate.py
+  tests: tests/knowledge_engine_v2/test_rel005_streaming_gate.py
+  required: [nginx_sse_locations, no_buffer_directives, docker_entrypoints, desktop_direct_uvicorn, application_headers]
+
+rollback:
+  method: restore_last_verified_nginx_and_launcher_config
+  runtime: V1_streaming_route_remains_available

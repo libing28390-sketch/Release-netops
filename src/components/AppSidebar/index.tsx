@@ -20,6 +20,7 @@
  */
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { preloadRouteChunk } from '../../utils/routePreload';
 import {
   Activity,
   BarChart2,
@@ -41,6 +42,7 @@ import {
   Layers3,
   Lock,
   Monitor,
+  Network,
   PanelLeftClose,
   PanelLeftOpen,
   Search,
@@ -69,7 +71,7 @@ import { useEscapeClose } from '../../hooks/useEscapeClose';
 
 /** Map icon string keys (from navConfig) → lucide component */
 const iconMap: Record<string, React.ComponentType<any>> = {
-  Activity, BarChart2, Bell, BookOpen, Bot, Boxes, ClipboardList, Clock, CloudCog, Cpu, FileCode2, FileSpreadsheet, FileText, FolderOpen, Gauge, GitBranch, Globe, Key, Layers3, Lock, MessageSquare, Monitor, Server, Settings, Shield, ShieldAlert, ShieldCheck, Terminal, User, Wrench, Zap,
+  Activity, BarChart2, Bell, BookOpen, Bot, Boxes, ClipboardList, Clock, CloudCog, Cpu, FileCode2, FileSpreadsheet, FileText, FolderOpen, Gauge, GitBranch, Globe, Key, Layers3, Lock, MessageSquare, Monitor, Network, Server, Settings, Shield, ShieldAlert, ShieldCheck, Terminal, User, Wrench, Zap,
 };
 
 
@@ -161,6 +163,9 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
     const { pathname } = location;
     if (pathname === item.path) return true;
     if (item.id === 'reports-interfaces' && (pathname === '/monitor/reports' || pathname === '/monitor/reports/')) {
+      return true;
+    }
+    if (item.id === 'telemetry-onboarding' && (pathname === '/monitor/telemetry-management' || pathname === '/monitor/telemetry-management/')) {
       return true;
     }
     if (item.activeMatch) {
@@ -263,6 +268,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
         active={location.pathname === '/dashboard'}
         icon={Home}
         mini
+        onPrefetch={() => preloadRouteChunk('/dashboard')}
         onClick={() => handleNav('/dashboard')}
       />
       <div className="border-t border-[var(--header-border)] my-2" />
@@ -359,6 +365,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
                       hasChildren={nestedChildren.length > 0}
                       isOpen={isChildOpen}
                       onToggleOpen={() => toggleChild(child.id)}
+                      onPrefetch={() => preloadRouteChunk(child.path)}
                       onClick={() => {
                         if (nestedChildren.length > 0 && !isChildOpen) {
                           toggleChild(child.id);
@@ -378,6 +385,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
                               icon={NestedIcon}
                               indent
                               nested
+                              onPrefetch={() => preloadRouteChunk(nestedChild.path)}
                               onClick={() => handleNav(nestedChild.path)}
                             />
                           );
@@ -419,6 +427,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
                     hasChildren={nestedChildren.length > 0}
                     isOpen={isChildOpen}
                     onToggleOpen={() => toggleChild(child.id)}
+                    onPrefetch={() => preloadRouteChunk(child.path)}
                     onClick={() => {
                       if (nestedChildren.length > 0 && !isChildOpen) {
                         toggleChild(child.id);
@@ -438,6 +447,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
                             icon={NestedIcon}
                             indent
                             nested
+                            onPrefetch={() => preloadRouteChunk(nestedChild.path)}
                             onClick={() => handleNav(nestedChild.path)}
                           />
                         );

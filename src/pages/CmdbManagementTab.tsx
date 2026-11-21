@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Pencil, Trash2, RefreshCw, X, KeyRound, Building2, Network, Layers, Users as UsersIcon, Server, Search, Check, ShieldAlert, Eye, EyeOff, Copy, ChevronDown, ChevronUp, ChevronRight, FolderTree, Download, Upload, FileSpreadsheet, Radio, ShieldCheck, Route, Sparkles } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import PageHero from '../components/PageHero';
 import Pagination from '../components/Pagination';
 import CmdbInterfaceCollectionProgress from '../components/CmdbInterfaceCollectionProgress';
@@ -1740,6 +1739,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [search, setSearch] = useState('');
+  const [credentialFilter, setCredentialFilter] = useState<'all' | 'ssh' | 'snmp' | 'unbound'>('all');
   const [serverSearchQuery, setServerSearchQuery] = useState('');
   const [vlanSearchInput, setVlanSearchInput] = useState('');
   const [vlanSearchQuery, setVlanSearchQuery] = useState('');
@@ -2480,7 +2480,8 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     }
   };
 
-  const downloadSiteImportTemplate = useCallback(() => {
+  const downloadSiteImportTemplate = useCallback(async () => {
+    const XLSX = await import('xlsx');
     const headers = SITE_IMPORT_COLUMNS.map(column => column.header);
     const sample = SITE_IMPORT_COLUMNS.map(column => column.sample);
     const worksheet = XLSX.utils.aoa_to_sheet([headers, sample]);
@@ -2553,6 +2554,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     setSiteImportRows([]);
     setSiteImportErrors([]);
     try {
+      const XLSX = await import('xlsx');
       const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
       if (!firstSheet) throw new Error('导入文件没有可读取的工作表');
@@ -2639,11 +2641,12 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     }
   }, [credentialTemplateDownloading]);
 
-  const exportCredentialInventory = useCallback(() => {
+  const exportCredentialInventory = useCallback(async () => {
     if (credentialExporting) return;
     setCredentialExporting(true);
     setError('');
     try {
+      const XLSX = await import('xlsx');
       const workbook = XLSX.utils.book_new();
       CREDENTIAL_SHEET_DEFS.forEach(sheet => {
         const sheetRows = rows.filter(row => {
@@ -2748,6 +2751,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     setCredentialImportRows([]);
     setCredentialImportErrors([]);
     try {
+      const XLSX = await import('xlsx');
       const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const sheetInputs = workbook.SheetNames.map(name => ({
         name,
@@ -3358,7 +3362,13 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     }
     if (fd.key === 'devices') {
       const devList = row.devices || [];
-      if (devList.length === 0) return <span className="text-black/30 dark:text-white/30">—</span>;
+      if (devList.length === 0) {
+        return (
+          <span className="inline-flex items-center rounded-md border border-dashed border-slate-200 bg-slate-50/70 px-2 py-0.5 text-[11px] text-slate-400 dark:border-slate-700/70 dark:bg-slate-800/40 dark:text-slate-500">
+            {zh ? '未绑定设备' : 'Unbound'}
+          </span>
+        );
+      }
       const credentialId = String(row.id || '');
       const isExpanded = Boolean(expandedCredentialDevices[credentialId]);
       const fullList = credentialDeviceDetails[credentialId];
@@ -3386,45 +3396,45 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         }
       };
       return (
-        <div className="flex max-w-[28rem] flex-wrap items-center gap-1">
-          {displayList.slice(0, isExpanded ? displayList.length : 3).map((d: any) => (
-            <span key={d.id} className="inline-flex items-center gap-1">
+        <div className="flex max-w-[30rem] flex-wrap items-center gap-1.5">
+          {displayList.slice(0, isExpanded ? displayList.length : 4).map((d: any) => {
+            const isSnmp = d.binding_role === 'snmp';
+            const isPriv = d.binding_role === 'admin';
+            const dotClass = isSnmp
+              ? 'bg-violet-500'
+              : isPriv
+                ? 'bg-rose-500'
+                : 'bg-sky-500';
+            const roleHint = isSnmp
+              ? (zh ? 'SNMP 采集' : 'SNMP')
+              : isPriv
+                ? (zh ? '特权账号' : 'Privileged')
+                : (zh ? '普通账号' : 'Normal');
+            const canManageBinding = !isSnmp && isAdministrator;
+            return (
               <button
+                key={d.id}
                 type="button"
-                onClick={() => navigate(`/assets/network-devices`)}
-                className="inline-flex items-center gap-1 rounded-l border border-slate-200/50 bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-350 dark:hover:bg-slate-750"
+                onClick={() => (canManageBinding ? openBindingModal(row, d) : navigate('/assets/network-devices'))}
+                title={canManageBinding
+                  ? (zh ? `${d.hostname || d.ip_address}（${roleHint}）· 点击替换或解绑` : `${d.hostname || d.ip_address} (${roleHint}) · Click to replace or unbind`)
+                  : `${d.hostname || d.ip_address} (${roleHint})`}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200/80 bg-slate-50/90 px-2.5 py-1 text-xs font-medium text-slate-700 transition-all hover:border-blue-300 hover:bg-blue-50/70 hover:text-blue-700 dark:border-slate-700/80 dark:bg-slate-800/80 dark:text-slate-200 dark:hover:border-blue-500/50 dark:hover:bg-blue-950/30"
               >
-                <Server size={11} className="text-slate-400" />
-                {d.hostname || d.ip_address || <span data-export-ignore>{d.id}</span>}
+                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} />
+                <span className="max-w-[120px] truncate">{d.hostname || d.ip_address || <span data-export-ignore>{d.id}</span>}</span>
               </button>
-              {d.binding_role === 'snmp' ? (
-                <span
-                  className="-ml-1 inline-flex items-center gap-0.5 rounded-r border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:border-violet-900/40 dark:bg-violet-950/30 dark:text-violet-300"
-                  title={zh ? '此凭据用于 SNMP 采集' : 'This credential is used for SNMP collection'}
-                >
-                  {zh ? '采集' : 'SNMP'}
-                </span>
-              ) : isAdministrator && (
-                <button
-                  type="button"
-                  onClick={() => openBindingModal(row, d)}
-                  className="-ml-1 inline-flex items-center gap-0.5 rounded-r border border-cyan-200 bg-cyan-50 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-700 hover:bg-cyan-100"
-                  title={zh ? '替换或解除该设备的凭据绑定' : 'Replace or unbind this device credential'}
-                >
-                  {d.binding_role === 'admin' ? (zh ? '特权' : 'Priv') : (zh ? '普通' : 'Normal')}
-                </button>
-              )}
-            </span>
-          ))}
-          {total > 3 && (
+            );
+          })}
+          {total > 4 && (
             <button
               type="button"
               onClick={() => { void toggleDetails(); }}
-              className="inline-flex items-center gap-0.5 rounded border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-100"
+              className="inline-flex items-center gap-1 rounded-lg border border-blue-200/80 bg-blue-50/80 px-2 py-1 text-[11px] font-semibold text-blue-700 transition-colors hover:bg-blue-100 dark:border-blue-800/60 dark:bg-blue-950/40 dark:text-blue-300"
               title={zh ? '按需查看全部关联设备' : 'Load all associated devices on demand'}
             >
               {credentialDeviceLoading[credentialId] ? <RefreshCw size={10} className="animate-spin" /> : isExpanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
-              {isExpanded ? (zh ? '收起' : 'Collapse') : `+${hiddenCount} ${zh ? '台' : 'more'}`}
+              {isExpanded ? (zh ? '收起' : 'Collapse') : `+${total - 4} ${zh ? '台' : 'more'}`}
             </button>
           )}
         </div>
@@ -3539,12 +3549,52 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         </span>
       );
     }
+    if (tab === 'credentials' && fd.key === 'credential_name') {
+      const ctype = String(row.credential_type || '').toLowerCase();
+      const isSnmp = ctype.startsWith('snmp');
+      return (
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border ${isSnmp
+            ? 'border-violet-200/80 bg-violet-50 text-violet-600 dark:border-violet-800/60 dark:bg-violet-950/40 dark:text-violet-300'
+            : 'border-blue-200/80 bg-blue-50 text-blue-600 dark:border-blue-800/60 dark:bg-blue-950/40 dark:text-blue-300'}`}
+          >
+            {isSnmp ? <Radio size={14} /> : <KeyRound size={14} />}
+          </div>
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100" title={String(row.credential_name || '')}>
+              {row.credential_name || '—'}
+            </div>
+            <div className="truncate text-[11px] text-slate-400 dark:text-slate-500">
+              {isSnmp
+                ? (ctype === 'snmpv3' ? 'SNMP v3' : (zh ? 'SNMP v2c 团体字' : 'SNMP v2c Community'))
+                : (zh ? 'CLI 登录认证' : 'CLI Authentication')}
+            </div>
+          </div>
+        </div>
+      );
+    }
     if (fd.key === 'credential_type') {
       const val = row[fd.key];
       if (!val) return <span className="text-black/30 dark:text-white/30">—</span>;
       return (
-        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full border text-[11px] font-medium tracking-wide shadow-sm/5 ${getCredTypeStyle(val)}`}>
+        <span className="inline-flex items-center rounded-md border border-slate-200/90 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-300">
           {getCredTypeLabel(val)}
+        </span>
+      );
+    }
+    if (tab === 'credentials' && fd.key === 'username') {
+      const val = String(row.username || '').trim();
+      const isSnmp = String(row.credential_type || '').toLowerCase().startsWith('snmp');
+      if (!val) {
+        return (
+          <span className="text-xs text-slate-400 dark:text-slate-500">
+            {isSnmp ? (zh ? '团体字认证' : 'Community') : '—'}
+          </span>
+        );
+      }
+      return (
+        <span className="font-mono text-xs font-medium text-slate-700 dark:text-slate-200 bg-slate-100/80 dark:bg-white/5 px-2 py-0.5 rounded-md border border-slate-200/60 dark:border-white/10">
+          {val}
         </span>
       );
     }
@@ -3576,19 +3626,47 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     return <span className="text-sm font-medium text-black/75 dark:text-white/85">{displayValue}</span>;
   };
 
+  const credentialStats = useMemo(() => {
+    if (tab !== 'credentials') {
+      return { total: 0, ssh: 0, snmp: 0, unbound: 0 };
+    }
+    let ssh = 0;
+    let snmp = 0;
+    let unbound = 0;
+    for (const row of rows) {
+      const t = String(row.credential_type || '').toLowerCase();
+      if (t.startsWith('snmp')) snmp += 1;
+      else ssh += 1;
+      const devCount = Number(row.device_count ?? (Array.isArray(row.devices) ? row.devices.length : 0));
+      if (devCount <= 0) unbound += 1;
+    }
+    return { total: rows.length, ssh, snmp, unbound };
+  }, [rows, tab]);
+
   const filteredRows = useMemo(() => {
     if (serverPaginatedTab) return rows;
-    if (!search.trim()) return rows;
+    let list = rows;
+    if (tab === 'credentials' && credentialFilter !== 'all') {
+      list = list.filter(row => {
+        const t = String(row.credential_type || '').toLowerCase();
+        const devCount = Number(row.device_count ?? (Array.isArray(row.devices) ? row.devices.length : 0));
+        if (credentialFilter === 'ssh') return !t.startsWith('snmp');
+        if (credentialFilter === 'snmp') return t.startsWith('snmp');
+        if (credentialFilter === 'unbound') return devCount <= 0;
+        return true;
+      });
+    }
+    if (!search.trim()) return list;
     const q = search.toLowerCase();
     const cols = fieldDefs[tab];
-    return rows.filter(row => {
+    return list.filter(row => {
       return cols.some(c => {
         const val = row[c.key];
         if (val === '' || val == null) return false;
         return String(val).toLowerCase().includes(q);
       });
     });
-  }, [rows, tab, search, fieldDefs, serverPaginatedTab]);
+  }, [rows, tab, search, fieldDefs, serverPaginatedTab, credentialFilter]);
 
   // Compute pagination values
   const totalForTab = tab === 'vlans'
@@ -3858,11 +3936,38 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                   className="hidden"
                   onChange={event => { void handleCredentialImportFile(event.target.files?.[0]); }}
                 />
-                <ActionIconGroup label={zh ? '凭据导入导出' : 'Credential import and export'}>
-                  <ActionIconButton icon={FileSpreadsheet} label={zh ? '下载凭据导入模板' : 'Download credential import template'} variant="accent" disabled={credentialTemplateDownloading} iconClassName={credentialTemplateDownloading ? 'animate-pulse' : undefined} onClick={downloadCredentialImportTemplate} />
-                  <ActionIconButton ref={credentialImportTriggerRef} icon={Upload} label={zh ? '上传凭据' : 'Upload credentials'} variant="accent" onClick={() => credentialImportInputRef.current?.click()} />
-                  <ActionIconButton icon={Download} label={zh ? '导出凭据（密码为空）' : 'Export credentials (passwords blank)'} variant="accent" disabled={credentialExporting} iconClassName={credentialExporting ? 'animate-pulse' : undefined} onClick={exportCredentialInventory} />
-                </ActionIconGroup>
+                <div className="inline-flex items-center gap-1.5" role="group" aria-label={zh ? '凭据导入导出' : 'Credential import and export'}>
+                  <button
+                    type="button"
+                    disabled={credentialTemplateDownloading}
+                    onClick={downloadCredentialImportTemplate}
+                    title={zh ? '下载凭据导入模板' : 'Download credential import template'}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition-colors hover:border-blue-300 hover:bg-blue-50/60 hover:text-blue-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-500/50"
+                  >
+                    <FileSpreadsheet size={13} className={credentialTemplateDownloading ? 'animate-pulse text-blue-500' : 'text-slate-400'} />
+                    {zh ? '模板' : 'Template'}
+                  </button>
+                  <button
+                    ref={credentialImportTriggerRef}
+                    type="button"
+                    onClick={() => credentialImportInputRef.current?.click()}
+                    title={zh ? '批量上传凭据' : 'Upload credentials'}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition-colors hover:border-blue-300 hover:bg-blue-50/60 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-500/50"
+                  >
+                    <Upload size={13} className="text-slate-400" />
+                    {zh ? '导入' : 'Import'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={credentialExporting}
+                    onClick={exportCredentialInventory}
+                    title={zh ? '导出凭据清单（密码为空）' : 'Export credentials (passwords blank)'}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition-colors hover:border-blue-300 hover:bg-blue-50/60 hover:text-blue-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-500/50"
+                  >
+                    <Download size={13} className={credentialExporting ? 'animate-pulse text-blue-500' : 'text-slate-400'} />
+                    {zh ? '导出' : 'Export'}
+                  </button>
+                </div>
                 <span className="mx-1 h-6 w-px bg-slate-200" aria-hidden="true" />
                 <div className="relative w-52 shrink-0 xl:w-60">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
@@ -4394,15 +4499,87 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
             </section>
           </div>
         ) : (
-        <div className={`min-w-0 max-w-full overflow-hidden rounded-[28px] border border-black/5 bg-white shadow-[0_16px_36px_rgba(11,35,64,0.06)] ${tab === 'credentials' ? 'mx-auto w-full max-w-[1480px]' : ''}`}>
+        <div className={tab === 'credentials' ? 'mx-auto w-full max-w-[1480px] space-y-4' : ''}>
+        {tab === 'credentials' && (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {[
+              {
+                key: 'all' as const,
+                label: zh ? '全部凭据' : 'All Credentials',
+                value: credentialStats.total,
+                hint: zh ? 'SSH 与 SNMP 凭据总计' : 'Total SSH & SNMP entries',
+                icon: ShieldCheck,
+                activeClass: 'border-blue-500/70 bg-blue-50/60 ring-2 ring-blue-500/15 dark:border-blue-500/60 dark:bg-blue-950/30',
+                iconClass: 'bg-blue-100/80 text-blue-600 dark:bg-blue-950/60 dark:text-blue-300',
+              },
+              {
+                key: 'ssh' as const,
+                label: zh ? 'SSH 登录凭据' : 'SSH Login',
+                value: credentialStats.ssh,
+                hint: zh ? '密码 / 密钥 / API 登录' : 'Password / Key / API',
+                icon: KeyRound,
+                activeClass: 'border-sky-500/70 bg-sky-50/60 ring-2 ring-sky-500/15 dark:border-sky-500/60 dark:bg-sky-950/30',
+                iconClass: 'bg-sky-100/80 text-sky-600 dark:bg-sky-950/60 dark:text-sky-300',
+              },
+              {
+                key: 'snmp' as const,
+                label: zh ? 'SNMP 采集凭据' : 'SNMP Collection',
+                value: credentialStats.snmp,
+                hint: zh ? '监控与发现只读采集' : 'Telemetry & discovery',
+                icon: Radio,
+                activeClass: 'border-violet-500/70 bg-violet-50/60 ring-2 ring-violet-500/15 dark:border-violet-500/60 dark:bg-violet-950/30',
+                iconClass: 'bg-violet-100/80 text-violet-600 dark:bg-violet-950/60 dark:text-violet-300',
+              },
+              {
+                key: 'unbound' as const,
+                label: zh ? '未绑定闲置' : 'Unbound / Idle',
+                value: credentialStats.unbound,
+                hint: zh ? '尚未关联任何设备' : 'Not linked to any device',
+                icon: Server,
+                activeClass: 'border-amber-500/70 bg-amber-50/60 ring-2 ring-amber-500/15 dark:border-amber-500/60 dark:bg-amber-950/30',
+                iconClass: 'bg-amber-100/80 text-amber-600 dark:bg-amber-950/60 dark:text-amber-300',
+              },
+            ].map(card => {
+              const Icon = card.icon;
+              const isActive = credentialFilter === card.key;
+              return (
+                <button
+                  key={card.key}
+                  type="button"
+                  onClick={() => {
+                    setCredentialFilter(prev => (prev === card.key && card.key !== 'all' ? 'all' : card.key));
+                    setPage(1);
+                  }}
+                  className={`flex items-center justify-between rounded-2xl border p-3.5 text-left transition-all cursor-pointer ${
+                    isActive
+                      ? card.activeClass
+                      : 'border-slate-200/80 bg-white hover:border-slate-300 hover:shadow-xs dark:border-slate-800 dark:bg-slate-900/70 dark:hover:border-slate-700'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-slate-500 dark:text-slate-400">{card.label}</div>
+                    <div className="mt-1 flex items-baseline gap-2">
+                      <span className="text-2xl font-bold tracking-tight tabular-nums text-slate-900 dark:text-white">{card.value}</span>
+                      <span className="truncate text-[11px] text-slate-400 dark:text-slate-500">{card.hint}</span>
+                    </div>
+                  </div>
+                  <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${card.iconClass}`}>
+                    <Icon size={16} />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <div className="min-w-0 max-w-full overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_8px_28px_rgba(15,23,42,0.05)] dark:border-slate-800 dark:bg-slate-900/80">
           <div className="min-w-0 max-w-full overflow-x-auto">
             <table ref={managementTableRef} className={`nx-data-table text-left ${tab === 'interfaces' ? 'min-w-[2200px]' : ''} ${tab === 'credentials' ? 'table-fixed min-w-[960px]' : ''}`}>
               {tab === 'credentials' && (
                 <colgroup>
-                  <col style={{ width: '18%' }} />
-                  <col style={{ width: '13%' }} />
-                  <col style={{ width: '12%' }} />
-                  <col style={{ width: '13%' }} />
+                  <col style={{ width: '23%' }} />
+                  <col style={{ width: '11%' }} />
+                  <col style={{ width: '11%' }} />
+                  <col style={{ width: '11%' }} />
                   <col style={{ width: hasTableActions ? '36%' : '44%' }} />
                   {hasTableActions && <col style={{ width: '8%' }} />}
                 </colgroup>
@@ -4484,6 +4661,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
             pageUnitLabel={tab === 'interfaces' ? (zh ? '接口/页' : 'interfaces/page') : undefined}
             language={zh ? 'zh' : 'en'}
           />
+        </div>
         </div>
         )}
       </div>

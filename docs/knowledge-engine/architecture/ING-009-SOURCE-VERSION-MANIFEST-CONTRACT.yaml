@@ -1,0 +1,61 @@
+task_id: ING-009
+priority: P0
+owner: BE
+milestone: M2
+status: frozen_for_implementation
+depends_on: [ING-001, ING-002, ING-003, ING-004, ING-005, ING-006, ING-007, ING-008, DB-008]
+decision:
+  choice: one_server_owned_immutable_source_version_manifest
+  summary: >-
+    Every source collection or local import writes through the existing source
+    registry boundary and embeds one server-owned manifest containing original
+    Source identity, SHA-256 content hash, byte size, capture time, HTTP
+    metadata, parser identity and hash-only raw-content reference.
+  invariants:
+    - source_registry_id_tenant_id_and_canonical_url_are_recorded
+    - content_hash_is_lowercase_sha256_and_matches_retained_bytes_or_reference
+    - byte_size_is_non_negative_and_matches_content_or_verified_reference
+    - fetched_at_is_timezone_aware_iso8601_capture_time
+    - etag_last_modified_content_type_and_http_status_are_bounded_and_redacted
+    - parser_name_and_parser_version_are_required_and_pinned
+    - raw_content_body_is_never_in_manifest_metadata_or_api_result
+    - raw_content_reference_cannot_be_a_filesystem_path
+    - manifest_facts_are_append_only_and_deduplicated_by_source_hash
+    - tenant_scope_and_source_registry_permissions_apply_to_every_write
+
+implementation:
+  canonical_service: backend/services/source_version_manifest_service.py
+  write_boundary: backend/services/source_registry_service.py::record_source_version
+  result_path: kb_source_version.metadata_json.source_manifest
+  manifest_identity: [manifest_version, 1.0]
+  source_fields: [registry_id, tenant_id, canonical_url]
+  capture_fields: [fetched_at, content_hash, byte_size]
+  http_fields: [fetch_url, status, content_type, etag, last_modified]
+  parser_fields: [name, version]
+  raw_content_fields: [reference, storage]
+
+database_contract:
+  migration: existing_m0116_knowledge_v2_source_registry
+  production_ddl: none
+  immutable_columns: [source_registry_id, fetched_at, content_hash, byte_size, parser_name, parser_version, source_etag, source_last_modified, fetch_url, raw_content_ref]
+  unique_key: [tenant_id, source_registry_id, content_hash]
+  retention: hash_only_memory_boundary_unless_explicit_reviewed_reference
+
+failure_contract:
+  codes: [MANIFEST_FIELD_INVALID, MANIFEST_CAPTURE_TIME_INVALID, MANIFEST_SOURCE_URL_INVALID, MANIFEST_HASH_INVALID, MANIFEST_BYTE_SIZE_INVALID, MANIFEST_HTTP_STATUS_INVALID, MANIFEST_RAW_REFERENCE_FORBIDDEN, MANIFEST_STATUS_INVALID]
+  redaction: no_raw_body_no_filesystem_path_no_dependency_exception_no_secret_metadata
+
+security_and_audit:
+  network: none_in_manifest_builder
+  authorization: source_registry_create_and_tenant_scope
+  audit: fetch_started_fetch_completed_fetch_failed_with_hash_size_parser_metadata_only
+  rollback: disable_collection_writes_preserve_immutable_versions_and_restore_v1_source_hints
+
+acceptance:
+  focused_tests: backend/tests/catalog/test_ing009_source_version_manifest.py
+  required_checks:
+    - local_and_http_collection_manifest_fields_persist
+    - hash_size_capture_http_parser_and_source_identity_are_consistent
+    - unsafe_timestamp_http_status_and_filesystem_reference_fail_closed
+    - no_body_or_secret_in_manifest_api_or_audit_payload
+    - AI_catalog_database_V1_compile_yaml_secret_diff_lint_build_gates

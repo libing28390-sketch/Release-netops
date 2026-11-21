@@ -3,40 +3,16 @@ import { Ban, Brackets, Layers, Plus, Search, Tag, X } from 'lucide-react';
 import type { TagCategory, TagDefinition } from '../types';
 import { TAG_CATEGORY_LABELS } from '../types';
 
-export type TagBooleanOperator = 'and' | 'or';
+import {
+  emptyTagExpression as emptyExpression,
+  EMPTY_TAG_FILTER,
+  type TagBooleanOperator,
+  type TagExpressionGroup,
+  type TagFilterConfig,
+} from '../types/tagFilter';
 
-export interface TagExpressionGroup {
-  operator: TagBooleanOperator;
-  negated: boolean;
-  tag_ids: string[];
-  groups: TagExpressionGroup[];
-}
-
-interface LegacyTagConditionGroup {
-  tag_ids: string[];
-  operator?: 'and' | 'or' | 'not';
-}
-
-export interface TagFilterConfig {
-  expression: TagExpressionGroup;
-  /** Kept for callers that still hold an old in-memory filter. */
-  groups: LegacyTagConditionGroup[];
-  /** Kept for callers that still hold an old in-memory filter. */
-  exclude_tag_ids: string[];
-}
-
-const emptyExpression = (): TagExpressionGroup => ({
-  operator: 'and',
-  negated: false,
-  tag_ids: [],
-  groups: [],
-});
-
-export const EMPTY_TAG_FILTER: TagFilterConfig = {
-  expression: emptyExpression(),
-  groups: [],
-  exclude_tag_ids: [],
-};
+export { EMPTY_TAG_FILTER };
+export type { TagBooleanOperator, TagExpressionGroup, TagFilterConfig };
 
 const uniqueIds = (values: unknown): string[] => (
   Array.isArray(values)

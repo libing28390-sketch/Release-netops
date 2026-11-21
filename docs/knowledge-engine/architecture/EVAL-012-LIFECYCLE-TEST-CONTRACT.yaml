@@ -1,0 +1,50 @@
+task_id: EVAL-012
+title: Source, Document, Version, Chunk and Reindex lifecycle coverage
+priority: P0
+status: executable
+authority: PostgreSQL
+scope:
+  source:
+    probe: scripts/knowledge_engine_v2_kui015_pg_probe.py
+    cases: [registry_refresh_status, bounded_observations, tenant_isolation, no_raw_detail_leak, repeatable_run]
+  document:
+    probe: scripts/knowledge_engine_v2_kui012_pg_probe.py
+    cases: [impact_preview, confirmation_gate, disable_enable, delete_atomicity, action_ledger, tenant_isolation]
+  version:
+    probe: scripts/knowledge_engine_v2_kui014_pg_probe.py
+    cases: [metadata_only_compare, publish_pointer, supersede, rollback, idempotency, immutable_source_facts]
+  chunk:
+    probe: scripts/knowledge_engine_v2_chk015_pg_probe.py
+    cases: [parent_relation, neighbor_relation, source_locator, version_lineage, metadata_redaction, tenant_isolation]
+  reindex:
+    probe: scripts/knowledge_engine_v2_chk013_pg_probe.py
+    cases: [changed_projection, original_content_preservation, dry_run, provider_failure_atomicity, concurrent_edit_cas, rollback]
+database_policy:
+  required_database: PostgreSQL
+  sqlite: forbidden
+  transaction_or_cleanup: required
+  production_write: false
+  external_network: forbidden
+verification:
+  coverage_validator: scripts/knowledge_engine_v2_eval012_lifecycle_check.py
+  focused_test: tests/knowledge_engine_v2/test_eval012_lifecycle.py
+  commands:
+    - "$env:DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/netops'; $env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_eval012_lifecycle_check.py"
+    - "$env:DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/netops'; $env:PYTHONPATH='backend'; .venv\\Scripts\\pytest.exe tests/knowledge_engine_v2/test_eval012_lifecycle.py -q -p no:cacheprovider"
+    - "$env:DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/netops'; $env:PYTHONPATH='backend'; .venv\\Scripts\\pytest.exe backend/tests/catalog/test_ing013_document_version.py backend/tests/catalog/test_ing014_source_merge.py backend/tests/catalog/test_ing015_document_lifecycle.py -q -p no:cacheprovider"
+    - "$env:DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/netops'; $env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_v1_baseline_pg.py"
+    - "git diff --check"
+required_results:
+  - source_probe: PASS
+  - document_probe: PASS
+  - version_probe: PASS
+  - chunk_probe: PASS
+  - reindex_probe: PASS
+  - all_persistence_evidence_database: PostgreSQL
+  - sqlite_acceptance_evidence: false
+  - rollback_or_cleanup: true
+  - v1_baseline: unchanged
+rollback:
+  application: disable_v2_lifecycle_actions_and_keep_v1_projection
+  database: every probe rolls back or removes uniquely named fixture rows
+  data_loss: forbidden

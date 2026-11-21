@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "dataset_id": "nexora-ai-live-provider-v1-20260901",
+  "purpose": "Reviewed non-sensitive prompts for a small opt-in live Provider intent measurement.",
+  "data_classification": "INTERNAL",
+  "cases": [
+    {
+      "id": "LIVE-INT-001",
+      "prompt": "Explain how an operator should summarize a recurring service symptom after a maintenance window.",
+      "expected_intent": "general_qa"
+    },
+    {
+      "id": "LIVE-INT-002",
+      "prompt": "Review active alerts within a specified time window and summarize their current state.",
+      "expected_intent": "alarm_search"
+    },
+    {
+      "id": "LIVE-INT-003",
+      "prompt": "Diagnose intermittent packet loss using read-only observations and a defined time window.",
+      "expected_intent": "troubleshooting"
+    },
+    {
+      "id": "LIVE-INT-004",
+      "prompt": "Search the inventory record for a managed resource by its human-readable label.",
+      "expected_intent": "device_search"
+    },
+    {
+      "id": "LIVE-INT-005",
+      "prompt": "Explain what context is needed before a proposed change request can be assessed, without applying it.",
+      "expected_intent": "config_search"
+    },
+    {
+      "id": "LIVE-INT-006",
+      "prompt": "Give a plain-language overview of what this network operations assistant can help with.",
+      "expected_intent": "general_qa"
+    },
+    {
+      "id": "LIVE-INT-007",
+      "prompt": "Which evidence should be collected before reviewing a recurring monitoring notification?",
+      "expected_intent": "alarm_search"
+    },
+    {
+      "id": "LIVE-INT-008",
+      "prompt": "How should an operator frame a read-only investigation of an unexpected service interruption?",
+      "expected_intent": "troubleshooting"
+    }
+  ]
+}

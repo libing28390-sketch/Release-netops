@@ -1,0 +1,207 @@
+{
+  "schema_version": 1,
+  "manifest_id": "nexora-knowledge-eval-baseline-v1",
+  "generated_at": "2026-09-05T12:14:41+00:00",
+  "reproducibility": {
+    "git": {
+      "sha": "dba331b9855505a9442c39b57c54516b18c8f909",
+      "worktree_dirty": true,
+      "status_entry_count": 89
+    },
+    "dataset": {
+      "dataset_id": "nexora-kb-eval-anchors-50-v3-signed-20260905",
+      "status": "frozen",
+      "case_count": 50,
+      "path": "docs\\knowledge-engine\\eval\\eval-golden-anchors-50-v3-signed-20260905.yaml",
+      "sha256": "babb243e46d37ba9ab412d8bce3ba6a15cf7b57ba472e91f1b22a935c4575a64"
+    },
+    "source_hashes": {
+      "dataset": "babb243e46d37ba9ab412d8bce3ba6a15cf7b57ba472e91f1b22a935c4575a64",
+      "evaluator": "d5d05e237b54737a872e90322f7145c9b32085686584b304c12fa8b6f7db567d",
+      "review_auditor": "aa73ef31aafd9f5244bde412ab46c0bd67a89a069ee346213fc24474929cd878"
+    },
+    "rerun_command": ".venv\\Scripts\\python.exe scripts\\knowledge_eval_anchors_50_runner.py",
+    "database": "PostgreSQL",
+    "database_validation": "not_run_by_manifest_generator",
+    "external_network": false,
+    "production_write": false
+  },
+  "components": {
+    "prompt": {
+      "intent_prompt_version": "intent.v2",
+      "promptfoo_config_sha256": "7584b9c25c31dc677d15960d675cc3a3466fd4ab4b6156410d692de02a86d6f9"
+    },
+    "parser": {
+      "intent_parser_version": "intent.v2",
+      "query_normalizer_version": "query-normalizer-v1"
+    },
+    "chunker": {
+      "version": "network-structure-v2",
+      "parser_version": "markdown-network-parser-v2",
+      "config": {
+        "target_tokens": {
+          "code": 350,
+          "command": 220,
+          "command_output": 450,
+          "command_reference": 300,
+          "concept": 600,
+          "configuration": 360,
+          "faq": 300,
+          "procedure": 360,
+          "table": 450,
+          "troubleshooting": 450,
+          "verification": 240,
+          "warning": 180
+        },
+        "max_tokens": {
+          "code": 900,
+          "command": 500,
+          "command_output": 900,
+          "command_reference": 500,
+          "concept": 1000,
+          "configuration": 1800,
+          "faq": 800,
+          "procedure": 1500,
+          "table": 1000,
+          "troubleshooting": 1800,
+          "verification": 600,
+          "warning": 400
+        },
+        "min_tokens": 100,
+        "overlap_ratio": 0.1,
+        "parent_min_blocks": 2
+      },
+      "config_sha256": "0934c57bdcab627a20d800ed4275bc797120608c5bd4ba6dfed67c2e06a92920"
+    },
+    "embedding": {
+      "embedding_model": "local-hybrid-feature-v2",
+      "embedding_dimensions": 1536,
+      "embedding_version": "v2",
+      "embedding_mode": "local",
+      "embedding_contract_version": "local-hybrid-feature-v2:v2:1536",
+      "distance_algorithm": "cosine"
+    },
+    "reranker": {
+      "requested_mode": "legacy",
+      "version": "legacy-noop-v1",
+      "model": "not_configured"
+    },
+    "provider": {
+      "provider_id": "not_configured",
+      "model": "not_configured",
+      "external_live_call": false
+    }
+  },
+  "evaluation": {
+    "report_path": "docs\\knowledge-engine\\eval\\eval-anchors-50-v3-signed-report.json",
+    "status": "PASS",
+    "safety_status": "PASS",
+    "quality_status": "PASS",
+    "overall_status": "PASS",
+    "metrics": {
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "ndcg": 0.9563,
+      "citation_precision": 0.9643,
+      "citation_recall": 1.0,
+      "wrong_vendor_rate": 0.0,
+      "feature_pollution_rate": 0.0,
+      "platform_version_conflict_rate": null,
+      "latency_ms": {
+        "p50": 10.25,
+        "p95": 79.41,
+        "max": 583.7,
+        "sample_count": 50
+      },
+      "error_rate": 0.0,
+      "by_vendor": {
+        "Cisco": {
+          "case_count": 18,
+          "quality_case_count": 15,
+          "recall_at_5": 1.0,
+          "recall_at_10": 1.0,
+          "mean_reciprocal_rank_mrr": 1.0,
+          "wrong_vendor_cases": 0,
+          "wrong_vendor_rate": 0.0,
+          "feature_evaluated_cases": 15,
+          "feature_pollution_cases": 0,
+          "feature_pollution_rate": 0.0,
+          "feature_pollution_status": "measured"
+        },
+        "H3C": {
+          "case_count": 6,
+          "quality_case_count": 6,
+          "recall_at_5": 1.0,
+          "recall_at_10": 1.0,
+          "mean_reciprocal_rank_mrr": 1.0,
+          "wrong_vendor_cases": 0,
+          "wrong_vendor_rate": 0.0,
+          "feature_evaluated_cases": 6,
+          "feature_pollution_cases": 0,
+          "feature_pollution_rate": 0.0,
+          "feature_pollution_status": "measured"
+        },
+        "Huawei": {
+          "case_count": 16,
+          "quality_case_count": 15,
+          "recall_at_5": 1.0,
+          "recall_at_10": 1.0,
+          "mean_reciprocal_rank_mrr": 1.0,
+          "wrong_vendor_cases": 0,
+          "wrong_vendor_rate": 0.0,
+          "feature_evaluated_cases": 15,
+          "feature_pollution_cases": 0,
+          "feature_pollution_rate": 0.0,
+          "feature_pollution_status": "measured"
+        },
+        "Ruijie": {
+          "case_count": 6,
+          "quality_case_count": 6,
+          "recall_at_5": 1.0,
+          "recall_at_10": 1.0,
+          "mean_reciprocal_rank_mrr": 1.0,
+          "wrong_vendor_cases": 0,
+          "wrong_vendor_rate": 0.0,
+          "feature_evaluated_cases": 6,
+          "feature_pollution_cases": 0,
+          "feature_pollution_rate": 0.0,
+          "feature_pollution_status": "measured"
+        }
+      },
+      "quality_checks": {
+        "recall_at_5": {
+          "actual": 1.0,
+          "required": 0.95,
+          "passed": true
+        },
+        "recall_at_10": {
+          "actual": 1.0,
+          "required": 0.97,
+          "passed": true
+        },
+        "answer_case_gold_id_integrity": {
+          "actual": null,
+          "required": null,
+          "passed": true
+        },
+        "answer_case_target_hit": {
+          "actual": null,
+          "required": null,
+          "passed": true
+        }
+      }
+    }
+  },
+  "redaction": {
+    "contains_prompt_or_answer": false,
+    "contains_document_or_cli_content": false,
+    "contains_secrets_or_credentials": false,
+    "contains_tenant_or_user_identifiers": false
+  },
+  "limitations": [
+    "The current manifest records the measured 50-anchor run; it does not claim the 400-case retrieval-quality evaluation is complete. The 400-case source-provenance gate is tracked separately.",
+    "A dirty worktree or a not_run database validation is a reproducibility warning, not a quality pass.",
+    "Provider and sidecar fields report configured contracts only; no live external request is made by this generator."
+  ]
+}

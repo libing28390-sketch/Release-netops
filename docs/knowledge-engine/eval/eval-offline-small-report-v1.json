@@ -1,0 +1,217 @@
+{
+  "report_schema_version": 1,
+  "evaluation_run": "nexora-knowledge-offline-eval-v1",
+  "profile": "small",
+  "status": "PASS",
+  "component_count": 4,
+  "components": [
+    {
+      "task_id": "EVAL-001",
+      "status": "PASS",
+      "report": {
+        "status": "PASS",
+        "dataset_id": "nexora-kb-eval-v1-20260817",
+        "case_count": 120,
+        "sha256": "800c775cfb0371ef4751c7234de00c74cecc5d823b3f019d7631dcaeb20248c6",
+        "query_type_counts": {
+          "alias": 12,
+          "ambiguous": 12,
+          "exact": 12,
+          "no_match": 12,
+          "prefix": 12,
+          "product_conflict": 12,
+          "typo": 12,
+          "version_conflict": 12,
+          "version_exact": 12,
+          "wrong_vendor": 12
+        },
+        "intent_counts": {
+          "interface": 20,
+          "ntp": 20,
+          "ospf": 20,
+          "route": 20,
+          "ssh": 20,
+          "vlan": 20
+        },
+        "vendor_intent_counts": {
+          "Cisco:interface": 9,
+          "Cisco:ntp": 9,
+          "Cisco:ospf": 9,
+          "Cisco:route": 9,
+          "Cisco:ssh": 9,
+          "Cisco:vlan": 9,
+          "Huawei:interface": 9,
+          "Huawei:ntp": 9,
+          "Huawei:ospf": 9,
+          "Huawei:route": 9,
+          "Huawei:ssh": 9,
+          "Huawei:vlan": 9
+        },
+        "ambiguous_intent_counts": {
+          "interface": 2,
+          "ntp": 2,
+          "ospf": 2,
+          "route": 2,
+          "ssh": 2,
+          "vlan": 2
+        },
+        "database": "none",
+        "sqlite": "not_used",
+        "secrets": false
+      }
+    },
+    {
+      "task_id": "EVAL-003",
+      "status": "PASS",
+      "report": {
+        "status": "PASS",
+        "coverage_id": "nexora-kb-eval-query-type-coverage-v1-20260817",
+        "parent_dataset_id": "nexora-kb-eval-v1-20260817",
+        "type_counts": {
+          "alias": 12,
+          "ambiguous": 12,
+          "exact": 12,
+          "prefix": 12,
+          "product_conflict": 12,
+          "typo": 12,
+          "wrong_vendor": 12
+        },
+        "outcome_counts": {
+          "alias": {
+            "answer": 12
+          },
+          "ambiguous": {
+            "clarify": 12
+          },
+          "exact": {
+            "answer": 12
+          },
+          "prefix": {
+            "answer": 12
+          },
+          "product_conflict": {
+            "no_match": 12
+          },
+          "typo": {
+            "answer": 12
+          },
+          "wrong_vendor": {
+            "no_match": 12
+          }
+        },
+        "sample_case_ids": {
+          "alias": [
+            "EVAL-Q002",
+            "EVAL-Q012"
+          ],
+          "ambiguous": [
+            "EVAL-Q004",
+            "EVAL-Q014"
+          ],
+          "exact": [
+            "EVAL-Q001",
+            "EVAL-Q011"
+          ],
+          "prefix": [
+            "EVAL-Q003",
+            "EVAL-Q013"
+          ],
+          "product_conflict": [
+            "EVAL-Q007",
+            "EVAL-Q017"
+          ],
+          "typo": [
+            "EVAL-Q005",
+            "EVAL-Q015"
+          ],
+          "wrong_vendor": [
+            "EVAL-Q006",
+            "EVAL-Q016"
+          ]
+        },
+        "dataset_sha256": "800c775cfb0371ef4751c7234de00c74cecc5d823b3f019d7631dcaeb20248c6",
+        "coverage_sha256": "90d46811d9e827e8742115ed3f0f94e271029c4acdb6150b1e7321fad32cfa0a",
+        "database": "none",
+        "sqlite": "not_used",
+        "external_network": "not_used",
+        "secrets": false
+      }
+    },
+    {
+      "task_id": "EVAL-005",
+      "status": "PASS",
+      "report": {
+        "status": "PASS",
+        "metrics": [
+          "recall_at_k",
+          "precision_at_k",
+          "mrr",
+          "ndcg_at_k",
+          "entity_resolution_accuracy"
+        ],
+        "retrieval_case_count": 3,
+        "entity_resolution_case_count": 3,
+        "retrieval_report": {
+          "case_count": 3,
+          "recall_at_k": {
+            "1": 0.333333,
+            "3": 0.666667
+          },
+          "precision_at_k": {
+            "1": 0.333333,
+            "3": 0.555556
+          },
+          "mrr": 0.5,
+          "ndcg_at_k": {
+            "1": 0.333333,
+            "3": 0.564475
+          }
+        },
+        "entity_resolution_accuracy": 0.666667,
+        "database": "none",
+        "sqlite": "not_used",
+        "external_network": "not_used",
+        "secrets": false,
+        "module_sha256": "8b80563cfdc80505ade29c16b2bc96ba2bdb9b9061c010afef78ebaea6f33127"
+      }
+    },
+    {
+      "task_id": "EVAL-007",
+      "status": "PASS",
+      "report": {
+        "status": "PASS",
+        "fixture_id": "nexora-kb-eval-security-cases-v1-20260817",
+        "class_counts": {
+          "authorization": 2,
+          "outbound": 3,
+          "prompt_injection": 2,
+          "secret_leakage": 2
+        },
+        "report": {
+          "case_count": 9,
+          "secret_leakage_rate": 0.5,
+          "prompt_injection_block_rate": 1.0,
+          "authorization_violation_rate": 0.5,
+          "outbound_policy_compliance_rate": 0.6666666666666666
+        },
+        "database": "none",
+        "sqlite": "not_used",
+        "external_network": "not_used",
+        "secrets": false,
+        "fixture_sha256": "38c763824b95ce56857bbf46cba278e791ca34744c96955b398ff2521bdbb345",
+        "module_sha256": "700508c01d5fc32e1540f74191e3128638c177616b65058796bdd977681dabfa"
+      }
+    }
+  ],
+  "database": "none",
+  "sqlite": "not_used",
+  "external_network": "not_used",
+  "production_write": false,
+  "reproducibility": {
+    "deterministic_inputs": true,
+    "generated_at": null,
+    "random_seed": null,
+    "command_version": "knowledge_eval_offline_v1"
+  },
+  "report_sha256": "6478911bdf6353a328edbe6c30ccfc70f4e140ab6cdcb490ed5a1aefdba963d9"
+}

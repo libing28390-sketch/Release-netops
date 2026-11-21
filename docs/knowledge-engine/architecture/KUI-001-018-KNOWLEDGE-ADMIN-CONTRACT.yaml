@@ -1,0 +1,274 @@
+contract: KUI-001-018-knowledge-admin
+version: 1
+authority: PostgreSQL
+scope:
+  completed_in_this_slice:
+    - KUI-001
+    - KUI-002
+    - KUI-003
+    - KUI-004
+    - KUI-005
+    - KUI-006
+    - KUI-007
+    - KUI-008
+    - KUI-009
+    - KUI-010
+    - KUI-011
+    - KUI-012
+    - KUI-013
+    - KUI-014
+    - KUI-015
+    - KUI-016
+    - KUI-017
+    - KUI-018
+  later_tasks: []
+principles:
+  business_entity_first: true
+  internal_storage_path_is_never_user_metadata: true
+  list_payload_excludes_body_and_chunks: true
+  detail_is_explicit_and_on_demand: true
+  tenant_filter_is_server_owned: true
+  database_authority: postgresql
+filters:
+  server_side:
+    - vendor
+    - product_family
+    - product_series
+    - product_model
+    - os_family
+    - software_release
+    - feature_domain
+    - document_category
+    - knowledge_source_type
+    - status
+    - directory_path
+    - knowledge_scope
+  knowledge_scope:
+    official:
+      - official_vendor
+      - official_url
+      - official_local
+    enterprise:
+      - internal_sop
+      - internal_standard
+      - case
+      - user_document
+      - sample
+ingestion_forms:
+  official:
+    endpoint: /api/knowledge-v2/ingestion/official-url
+    transport: json
+    required: [url, vendor, product_family, version_scope, terms_review_status]
+    validation: [https_only, source_registry_allowlist, terms_approved]
+  enterprise:
+    endpoint: /api/knowledge-v2/ingestion/enterprise-sop
+    transport: multipart
+    required: [file, title, owner, department]
+    validation: [max_20mb, classification_forced_internal, tenant_scoped]
+batch_upload:
+  metadata_preview_per_file: true
+  editable_fields: [vendor, cli_platform, source_type]
+  inferred_directory_vendor_mismatch: blocking
+  missing_directory_vendor: explicit_warning
+  submit_uses_each_file_preview: true
+  pagination:
+    max_page_size: 100
+    default_page_size: 20
+  search:
+    fields:
+      - name
+      - vendor
+      - platform
+      - metadata_json
+    case_insensitive: true
+actions:
+  confirmation_required: true
+  endpoint_template: /api/ai/assistant/documents/{document_id}/actions/{action}
+  impact_preview_endpoint: /api/ai/assistant/documents/{document_id}/actions/impact
+  impact_preview:
+    read_only: true
+    fields: [documents, chunks, indexes, references, reference_details, reference_scope]
+    recovery_required: true
+    server_calculated: true
+  actions:
+    delete:
+      permission: ai.knowledge.manage
+      mode: synchronous
+      impact: [documents, chunks, indexes, references]
+      recovery: approved_postgresql_backup_restore_only
+    disable:
+      permission: ai.knowledge.manage
+      mode: synchronous
+      recovery: enable_action
+    enable:
+      permission: ai.knowledge.manage
+      mode: synchronous
+      recovery: disable_action
+    reparse:
+      permission: ai.knowledge.manage
+      mode: tenant_scoped_job
+      mutation: metadata_only
+    rechunk:
+      permission: ai.knowledge.manage
+      mode: tenant_scoped_job
+      mutation: transactional_chunk_replace
+    reindex:
+      permission: ai.knowledge.manage
+      mode: tenant_scoped_job
+      mutation: transactional_metadata_chunk_embedding_replace
+  ledger:
+    table: ai_knowledge_document_action
+    tenant_scoped: true
+    metadata_only: true
+    operation_column: ai_knowledge_reindex_job.operation
+    job_link_column: ai_knowledge_reindex_job.action_id
+  errors:
+    confirmation_required: KNOWLEDGE_ACTION_CONFIRMATION_REQUIRED
+    not_found: KNOWLEDGE_DOCUMENT_NOT_FOUND
+    input_invalid: KNOWLEDGE_ACTION_INPUT_INVALID
+    job_create_failed: KNOWLEDGE_ACTION_JOB_CREATE_FAILED
+version_management:
+  authority: kb_document_version
+  endpoints:
+    list: /api/knowledge-v2/documents/{document_id}/versions
+    compare: /api/knowledge-v2/documents/{document_id}/versions/compare
+    publish: /api/knowledge-v2/documents/{document_id}/versions/{version_id}/publish
+    supersede: /api/knowledge-v2/documents/{document_id}/versions/{version_id}/supersede
+    rollback: /api/knowledge-v2/documents/{document_id}/versions/{version_id}/rollback
+  compare:
+    tenant_scoped: true
+    returns: [hashes, metadata_keys, parser, trust_level, byte_size, bounded_line_counts]
+    raw_content_included: false
+  mutations:
+    confirmation_required: true
+    audit_required: true
+    immutable_source_facts: true
+    publish_updates_current_version_id: true
+    supersede_requires_published_replacement: true
+    rollback_atomic: true
+    rollback_preserves_version_facts: true
+  permissions:
+    read: knowledge_source.read
+    mutate: knowledge_source.update
+source_registry_management:
+  endpoints:
+    list: /api/knowledge-v2/sources
+    refresh_status: /api/knowledge-v2/sources/{source_id}/refresh-status
+    refresh_observations: /api/knowledge-v2/sources/{source_id}/refresh-observations
+    validate: /api/knowledge-v2/sources/{source_id}/validate
+    fetch: /api/knowledge-v2/sources/{source_id}/fetch
+  list:
+    server_tenant_scope: true
+    status_filters: [all, draft, active, disabled, quarantined]
+    response_excludes: [raw_body, credentials, internal_storage_path]
+  refresh_status:
+    states: [healthy, failed, attention, never_checked, not_configured]
+    fields: [last_checked_at, last_outcome, last_detection_type, last_error_code, observation_count, counts, latest_version]
+    history_limit: 200
+    stable_error_codes_only: true
+  operations:
+    validate_requires: knowledge_source.read
+    refresh_requires: knowledge_source.create
+    audit_required: true
+    append_only_observations: true
+evaluation_management:
+  suite: v1_baseline_postgresql
+  endpoints:
+    status: /api/knowledge-v2/evaluation
+    run: /api/knowledge-v2/evaluation/run
+  permissions:
+    read: knowledge_source.read
+    run: knowledge_source.read
+  execution:
+    database: PostgreSQL
+    temporary_transaction: true
+    production_database_write: false
+    external_network_call: false
+    rollback: transaction_rollback
+    serialized_runs: true
+  metrics:
+    higher_is_better: [retrieval_accuracy, citation_accuracy, citation_recall]
+    lower_is_better: [wrong_vendor_rate, version_conflict_rate]
+    release_thresholds:
+      retrieval_accuracy: '>= 0.95'
+      citation_accuracy: '>= 0.95'
+      citation_recall: '>= 0.95'
+      wrong_vendor_rate: '<= 0.01'
+      version_conflict_rate: '<= 0.01'
+  response_excludes: [raw_sql, debug_plan, chunk_body, expected_document_ids, returned_document_ids, provider_credentials]
+  case_limit: 200
+  lifecycle: [not_run, passed, failed]
+retrieval_trace_management:
+  endpoints:
+    list: /api/knowledge-v2/retrieval-traces
+    detail: /api/knowledge-v2/retrieval-traces/{trace_id}
+  permissions:
+    read: knowledge_source.read
+  tenant_scope: strict_server_owned
+  storage:
+    mode: bounded_in_process_read_model
+    max_traces: 200
+    durable_db_migration: deferred_to_DB-012_MIG
+  list_fields: [trace_id, tenant_id, actor_hash, query_hash, created_at, source, status, candidate_count, final_document_count, clarification_required, cross_platform_search]
+  detail_fields: [request, resolution, retrieval_stage_counts, citation_summary, citation_warning_count, redaction]
+  response_excludes: [raw_query, raw_chunk, raw_sql, raw_url, document_id, chunk_id, provider_credentials, actor_username]
+  redaction:
+    default: true
+    query: sha256_only
+    citations: metadata_summary_only
+    cross_tenant_lookup: 404
+  lifecycle: [hit, no_match, not_run]
+ui_validation:
+  language:
+    supported: [zh, en]
+    pagination_labels: [items, per_page, first_page, previous_page, next_page, last_page]
+  theme:
+    supported: [light, dark]
+    dark_mode_selector: 'html[data-theme="dark"]'
+  responsive:
+    narrow_viewport: '360px'
+    requirements: [no_horizontal_page_overflow, table_horizontal_scroll, controls_wrap]
+  tables:
+    knowledge_documents: [sticky_header, horizontal_scroll]
+    evaluation_cases: [sticky_header, horizontal_scroll]
+  pagination:
+    knowledge_documents:
+      default_page_size: 20
+      max_page_size: 100
+      clamp_page_bounds: true
+request_lifecycle:
+  list_requests:
+    cancel_previous_request: true
+    stale_response_must_not_update_state: true
+    states:
+      - initial_loading
+      - filter_loading
+      - empty
+      - no_result
+      - permission_denied
+      - failed
+      - retryable
+  detail_requests:
+    body_loaded_only_after_selection: true
+    stale_response_must_not_replace_current_document: true
+    fields:
+      - original_content
+      - normalized_content
+      - raw_source
+      - source_version_history
+      - chunks
+    missing_v2_lineage_returns_empty_history: true
+security:
+  authorization: server_side_tenant_and_permission
+  response_redaction:
+    - internal_import_prefix
+    - credentials
+    - raw_acl_secrets
+  failure_behavior: stable_safe_message_with_request_id
+verification:
+  unit_test: backend/tests/ai/test_kui_001_008_knowledge_admin.py
+  postgresql_probe: scripts/knowledge_engine_v2_kui_pg_probe.py
+  frontend_checks:
+    - npm.cmd run lint
+    - npm.cmd run build
+    - npm.cmd run test:frontend -- --run src/pages/ai/Knowledge/KnowledgeAdminResponsive.test.tsx

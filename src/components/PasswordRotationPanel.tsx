@@ -79,12 +79,49 @@ const isServer = (p: string): boolean => {
   return platform.includes('linux') || platform.includes('ubuntu') || platform.includes('centos') || platform.includes('server') || platform.includes('debian');
 };
 
-const rotationStatus = (account: { currentExpired?: boolean; currentDays?: number | null; currentLastRotated?: string | null }, zh: boolean) => {
+interface RotationPolicy {
+  auto_rotate_enabled: boolean;
+  interval_days: number;
+  notify_days: number;
+  schedule_hour: number;
+  schedule_minute: number;
+  included_roles: Array<'normal' | 'admin' | 'enable'>;
+  updated_by: string;
+  updated_at: string | null;
+  next_scheduled_run_at: string | null;
+}
+
+interface RotationPolicyImpact {
+  total_devices: number;
+  included_roles: string[];
+  expired_accounts_count: number;
+  expiring_soon_accounts_count: number;
+  unconfigured_accounts_count: number;
+  schedule_window: string;
+}
+
+const DEFAULT_POLICY: RotationPolicy = {
+  auto_rotate_enabled: false,
+  interval_days: 90,
+  notify_days: 14,
+  schedule_hour: 2,
+  schedule_minute: 0,
+  included_roles: ['admin'],
+  updated_by: '',
+  updated_at: null,
+  next_scheduled_run_at: null,
+};
+
+const rotationStatus = (
+  account: { currentExpired?: boolean; currentDays?: number | null; currentLastRotated?: string | null },
+  zh: boolean,
+  notifyDays = 14,
+) => {
   const days = typeof account.currentDays === 'number' ? account.currentDays : null;
   if (account.currentExpired || (days !== null && days < 0)) {
     return { label: zh ? '已过期' : 'Expired', className: 'border-rose-200 bg-rose-50 text-rose-700' };
   }
-  if (days !== null && days <= 14) {
+  if (days !== null && days <= notifyDays) {
     return { label: zh ? `剩余 ${days} 天` : `${days}d left`, className: 'border-amber-200 bg-amber-50 text-amber-700' };
   }
   if (days !== null) {
@@ -96,7 +133,11 @@ const rotationStatus = (account: { currentExpired?: boolean; currentDays?: numbe
   };
 };
 
-const roleRotationStatus = (accounts: Array<{ currentExpired?: boolean; currentDays?: number | null; currentLastRotated?: string | null }>, zh: boolean) => {
+const roleRotationStatus = (
+  accounts: Array<{ currentExpired?: boolean; currentDays?: number | null; currentLastRotated?: string | null }>,
+  zh: boolean,
+  notifyDays = 14,
+) => {
   const remainingDays = accounts.reduce<number | null>((nearest, account) => {
     if (typeof account.currentDays !== 'number') return nearest;
     return nearest === null ? account.currentDays : Math.min(nearest, account.currentDays);
@@ -105,7 +146,7 @@ const roleRotationStatus = (accounts: Array<{ currentExpired?: boolean; currentD
     currentExpired: accounts.some(account => account.currentExpired || (typeof account.currentDays === 'number' && account.currentDays < 0)),
     currentDays: remainingDays,
     currentLastRotated: accounts.some(account => Boolean(account.currentLastRotated)) ? accounts[0]?.currentLastRotated : null,
-  }, zh);
+  }, zh, notifyDays);
 };
 
 type StatusFilter = 'all' | 'healthy' | 'expiring' | 'expired' | 'unconfigured';
@@ -155,6 +196,18 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
   useEscapeClose(Boolean(editingCredential) && !credentialSaving, () => setEditingCredential(null));
   useEscapeClose(Boolean(deviceDrawerGroup), () => setDeviceDrawerGroup(null));
   const [bulkProgress, setBulkProgress] = useState<any | null>(null);
+  const [policy, setPolicy] = useState<RotationPolicy>(DEFAULT_POLICY);
+  const [policySaving, setPolicySaving] = useState(false);
+  const [showEnableAutoConfirm, setShowEnableAutoConfirm] = useState(false);
+  const [policyImpact, setPolicyImpact] = useState<RotationPolicyImpact | null>(null);
+  const [showPolicyEditor, setShowPolicyEditor] = useState(false);
+  const [policyDraft, setPolicyDraft] = useState<{
+    interval_days: number;
+    notify_days: number;
+    included_roles: Array<'normal' | 'admin' | 'enable'>;
+  }>({ interval_days: 90, notify_days: 14, included_roles: ['admin'] });
+  useEscapeClose(showEnableAutoConfirm && !policySaving, () => setShowEnableAutoConfirm(false));
+  useEscapeClose(showPolicyEditor && !policySaving, () => setShowPolicyEditor(false));
 
   const credentialRoleFor = (account: any): string => {
     if (account.roleKey === 'admin' || account.roleKey === 'enable') {
@@ -415,12 +468,20 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
     setError(null);
     try {
       const token = localStorage.getItem('netops_token') || '';
-      const resp = await fetch(`${API_BASE}/api/devices/rotation/status`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const headers = { Authorization: `Bearer ${token}` };
+      const [resp, policyResp] = await Promise.all([
+        fetch(`${API_BASE}/api/devices/rotation/status`, { headers }),
+        fetch(`${API_BASE}/api/devices/rotation/policy`, { headers }).catch(() => null),
+      ]);
       const data = await resp.json();
       if (data.success) {
         setDevices(data.data || []);
+      }
+      if (policyResp && policyResp.ok) {
+        const policyPayload = await policyResp.json().catch(() => null);
+        if (policyPayload?.success && policyPayload?.data) {
+          setPolicy({ ...DEFAULT_POLICY, ...policyPayload.data });
+        }
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
@@ -428,6 +489,108 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
       setLoading(false);
     }
   }, []);
+
+  const openEnableAutoDialog = async () => {
+    if (!isAdministrator || policySaving) return;
+    setCredentialError('');
+    setPolicyImpact(null);
+    setShowEnableAutoConfirm(true);
+    try {
+      const token = localStorage.getItem('netops_token') || '';
+      const resp = await fetch(`${API_BASE}/api/devices/rotation/policy/impact`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const payload = await resp.json().catch(() => null);
+      if (resp.ok && payload?.success && payload?.data) {
+        setPolicyImpact(payload.data);
+      }
+    } catch {
+      // Impact preview is advisory; user can still cancel or confirm.
+    }
+  };
+
+  const openPolicyEditor = () => {
+    setPolicyDraft({
+      interval_days: policy.interval_days,
+      notify_days: policy.notify_days,
+      included_roles: [...policy.included_roles],
+    });
+    setCredentialError('');
+    setShowPolicyEditor(true);
+  };
+
+  const toggleDraftRole = (role: 'normal' | 'admin' | 'enable') => {
+    setPolicyDraft((prev) => {
+      const exists = prev.included_roles.includes(role);
+      const next = exists
+        ? prev.included_roles.filter((r) => r !== role)
+        : [...prev.included_roles, role];
+      return { ...prev, included_roles: next };
+    });
+  };
+
+  const savePolicyDraft = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!isAdministrator || policySaving) return;
+    if (policyDraft.included_roles.length === 0) {
+      setCredentialError(zh ? '请至少选择一种纳入轮换的账号角色。' : 'Select at least one account role.');
+      return;
+    }
+    setPolicySaving(true);
+    setCredentialError('');
+    setNotice('');
+    try {
+      const token = localStorage.getItem('netops_token') || '';
+      const resp = await fetch(`${API_BASE}/api/devices/rotation/policy`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          interval_days: Number(policyDraft.interval_days),
+          notify_days: Number(policyDraft.notify_days),
+          included_roles: policyDraft.included_roles,
+        }),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok || !payload.success) {
+        throw new Error(payload.detail || payload.message || (zh ? '保存轮换策略失败' : 'Failed to save rotation policy'));
+      }
+      setPolicy({ ...DEFAULT_POLICY, ...payload.data });
+      setShowPolicyEditor(false);
+      setNotice(zh ? '凭据轮换周期与账号范围策略已保存并生效。' : 'Rotation interval and role scope policy saved.');
+    } catch (policyError: any) {
+      setCredentialError(policyError.message || String(policyError));
+    } finally {
+      setPolicySaving(false);
+    }
+  };
+
+  const toggleAutoRotation = async (nextEnabled: boolean) => {
+    if (!isAdministrator || policySaving) return;
+    setPolicySaving(true);
+    setCredentialError('');
+    setNotice('');
+    try {
+      const token = localStorage.getItem('netops_token') || '';
+      const resp = await fetch(`${API_BASE}/api/devices/rotation/policy`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ auto_rotate_enabled: nextEnabled }),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok || !payload.success) {
+        throw new Error(payload.detail || payload.message || (zh ? '更新自动轮换策略失败' : 'Failed to update rotation policy'));
+      }
+      setPolicy({ ...DEFAULT_POLICY, ...payload.data });
+      setShowEnableAutoConfirm(false);
+      setNotice(nextEnabled
+        ? (zh ? '已开启定时自动轮换；系统将在每日调度窗口自动处理到期账号。' : 'Automatic password rotation enabled for the daily schedule window.')
+        : (zh ? '已关闭定时自动轮换；到期提醒与手动轮换保持有效。' : 'Automatic password rotation disabled; expiry reminders and manual rotation remain active.'));
+    } catch (policyError: any) {
+      setCredentialError(policyError.message || String(policyError));
+    } finally {
+      setPolicySaving(false);
+    }
+  };
 
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
   useEffect(() => { setPage(1); }, [roleFilter, search, statusFilter, targetFilter]);
@@ -659,7 +822,7 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
     },
     {
       key: 'expiring', value: stats.expiring,
-      label: zh ? '即将过期' : 'Expiring', sub: '≤14D',
+      label: zh ? '即将过期' : 'Expiring', sub: `≤${policy.notify_days}D`,
       Icon: ShieldAlert, filter: 'expiring' as StatusFilter, tone: 'expiring',
     },
     {
@@ -723,6 +886,138 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
       />
 
       <div className="min-h-0 flex-1 space-y-4 overflow-auto px-4 py-4 sm:px-6 sm:py-5 lg:px-8">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs shadow-sm" role="region" aria-label={zh ? '自动轮换生效策略' : 'Effective rotation policy'}>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-slate-600">
+          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${
+            policy.auto_rotate_enabled
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+              : 'border-amber-200 bg-amber-50 text-amber-800'
+          }`}>
+            {policy.auto_rotate_enabled
+              ? (zh ? '定时自动更新：已开启' : 'Auto Rotation: ON')
+              : (zh ? '定时自动更新：已关闭（到期后需手动轮换）' : 'Auto Rotation: OFF (manual rotation required)')}
+          </span>
+          <span>{zh ? `轮换周期：${policy.interval_days} 天` : `Interval: ${policy.interval_days}d`}</span>
+          <span>{zh ? `提醒提前量：${policy.notify_days} 天` : `Notify: ${policy.notify_days}d ahead`}</span>
+          <span>{zh ? `纳入账号：${policy.included_roles.join(' / ')}` : `Roles: ${policy.included_roles.join(', ')}`}</span>
+          <span>
+            {policy.auto_rotate_enabled
+              ? (zh ? `调度窗口：每日 ${String(policy.schedule_hour).padStart(2, '0')}:${String(policy.schedule_minute).padStart(2, '0')} UTC` : `Window: Daily ${String(policy.schedule_hour).padStart(2, '0')}:${String(policy.schedule_minute).padStart(2, '0')} UTC`)
+              : (zh ? '提醒仍按日扫描' : 'Daily expiry reminder active')}
+          </span>
+        </div>
+        {isAdministrator && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={policySaving}
+              onClick={openPolicyEditor}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+            >
+              {zh ? '策略配置' : 'Configure Policy'}
+            </button>
+            <button
+              type="button"
+              disabled={policySaving}
+              onClick={() => (policy.auto_rotate_enabled ? void toggleAutoRotation(false) : void openEnableAutoDialog())}
+              className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition disabled:opacity-50 ${
+                policy.auto_rotate_enabled
+                  ? 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
+                  : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+              }`}
+            >
+              {policy.auto_rotate_enabled
+                ? (zh ? '关闭自动更新' : 'Disable Auto Rotation')
+                : (zh ? '开启自动更新' : 'Enable Auto Rotation')}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {showPolicyEditor && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4" role="presentation">
+          <section role="dialog" aria-modal="true" aria-label={zh ? '配置凭据轮换策略' : 'Configure rotation policy'} className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+            <h3 className="text-sm font-bold text-slate-900">{zh ? '凭据轮换策略配置' : 'Credential Rotation Policy'}</h3>
+            <form onSubmit={savePolicyDraft} className="mt-3 space-y-3 text-xs">
+              <label className="block space-y-1">
+                <span className="font-semibold text-slate-700">{zh ? '密码轮换周期（天）' : 'Rotation interval (days)'}</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={3650}
+                  value={policyDraft.interval_days}
+                  onChange={(e) => setPolicyDraft((prev) => ({ ...prev, interval_days: Math.max(1, Number(e.target.value) || 90) }))}
+                  className="h-9 w-full rounded-lg border border-slate-200 px-3 text-xs text-slate-800"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="font-semibold text-slate-700">{zh ? '到期前提醒提前量（天）' : 'Expiry reminder window (days)'}</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={365}
+                  value={policyDraft.notify_days}
+                  onChange={(e) => setPolicyDraft((prev) => ({ ...prev, notify_days: Math.max(1, Number(e.target.value) || 14) }))}
+                  className="h-9 w-full rounded-lg border border-slate-200 px-3 text-xs text-slate-800"
+                />
+              </label>
+              <fieldset className="space-y-1.5">
+                <legend className="font-semibold text-slate-700">{zh ? '纳入定时扫描与轮换的账号角色' : 'Included account roles'}</legend>
+                <div className="flex flex-wrap gap-3 pt-1">
+                  {(['normal', 'admin', 'enable'] as const).map((roleKey) => (
+                    <label key={roleKey} className="inline-flex items-center gap-1.5 text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={policyDraft.included_roles.includes(roleKey)}
+                        onChange={() => toggleDraftRole(roleKey)}
+                      />
+                      <span>{roleKey === 'normal' ? (zh ? '普通账号' : 'Normal') : roleKey === 'admin' ? (zh ? '特权账号' : 'Admin') : 'Enable'}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" disabled={policySaving} onClick={() => setShowPolicyEditor(false)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+                  {zh ? '取消' : 'Cancel'}
+                </button>
+                <button type="submit" disabled={policySaving || policyDraft.included_roles.length === 0} className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-700 disabled:opacity-50">
+                  {policySaving ? (zh ? '保存中…' : 'Saving…') : (zh ? '保存策略' : 'Save Policy')}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {showEnableAutoConfirm && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4" role="presentation">
+          <section role="dialog" aria-modal="true" aria-label={zh ? '确认开启自动更新密码' : 'Confirm automatic password rotation'} className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+            <h3 className="text-sm font-bold text-slate-900">{zh ? '确认开启定时自动更新密码？' : 'Enable scheduled automatic password rotation?'}</h3>
+            <p className="mt-2 text-xs leading-5 text-slate-600">
+              {zh
+                ? '开启后，系统将在每日调度窗口对纳入范围内已到期的设备账号执行实际改密并校验新密码登录。'
+                : 'When enabled, the scheduler will actively change expired device passwords and verify login during the daily schedule window.'}
+            </p>
+            {policyImpact && (
+              <div className="mt-3 space-y-1 rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-xs text-amber-900">
+                <div>{zh ? `纳管设备总数：${policyImpact.total_devices}` : `Managed devices: ${policyImpact.total_devices}`}</div>
+                <div>{zh ? `纳入账号角色：${policyImpact.included_roles.join(' / ')}` : `Included roles: ${policyImpact.included_roles.join(', ')}`}</div>
+                <div className="font-bold">{zh ? `当前已过期账号数：${policyImpact.expired_accounts_count}` : `Currently expired accounts: ${policyImpact.expired_accounts_count}`}</div>
+                <div>{zh ? `执行窗口：每日 ${policyImpact.schedule_window}` : `Schedule window: Daily ${policyImpact.schedule_window}`}</div>
+              </div>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" disabled={policySaving} onClick={() => setShowEnableAutoConfirm(false)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+                {zh ? '取消' : 'Cancel'}
+              </button>
+              <button type="button" disabled={policySaving} onClick={() => void toggleAutoRotation(true)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
+                {policySaving ? (zh ? '保存中…' : 'Saving…') : (zh ? '确认开启' : 'Confirm Enable')}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
       <div className="flex items-center gap-2.5 rounded-xl border border-cyan-100 bg-cyan-50/60 px-3.5 py-2.5 text-xs leading-5 text-slate-600" role="note">
         <ShieldAlert size={15} className="shrink-0 text-cyan-700" />
         <p className="min-w-0"><span className="font-semibold text-slate-700">{zh ? '密码周期与同步状态：' : 'Rotation and sync: '}</span>{zh ? '绑定设备按凭据分组；更新共享凭据会创建同步任务。' : 'Bound devices are grouped by credential; updating one creates a synchronization job.'}</p>

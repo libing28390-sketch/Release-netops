@@ -1,0 +1,61 @@
+task_id: EVAL-008
+title: human Golden Answer applicability and citation annotation workflow
+priority: P0
+status: executable
+authority: human_reviewed_offline_fixture
+scope:
+  - freeze reviewed Golden Answers for a balanced Huawei/Cisco × six-intent sample
+  - capture applicable vendor, product, OS, train and release relation
+  - link each answer claim to an official Gold fixture and bounded locator
+  - define clarification/no-match labeling rules for future annotation batches
+workflow:
+  stages: [draft, peer_review, adjudication, frozen]
+  primary_annotator: writes_answer_and_applicability
+  citation_annotator: verifies_document_locator_version_and_official_flag
+  reviewer: checks_vendor_product_os_version_claims_and_citations
+  adjudication: required_for_disagreement; new frozen revision after decision
+  freeze_rule: frozen_annotations_are_immutable; changes require_new_annotation_set_id
+annotation_schema:
+  required: [annotation_id, case_id, golden_answer, applicability, citations, annotator, reviewer, status]
+  applicability: [vendor, product_model, os_family, software_train, release_relation, release]
+  citation: [document_id, source_version, locator, claim_ids, official]
+  status: frozen
+coverage:
+  fixture: docs/knowledge-engine/eval/eval-golden-annotations-v1.yaml
+  report: docs/knowledge-engine/eval/eval-golden-annotations-v1.manifest.json
+  parent_dataset: docs/knowledge-engine/eval/eval-query-dataset-v1.yaml
+  parent_dataset_id: nexora-kb-eval-v1-20260817
+  annotation_set_id: nexora-kb-eval-golden-v1-20260817
+  annotation_count: 12
+  matrix: Huawei/Cisco × VLAN/Interface/OSPF/SSH/NTP/Route exactly once
+label_rules:
+  answer: golden_answer_and_applicability_and_official_citation_required
+  clarify: ask_for_missing_identity; no_citation; candidate_ids_are_separate_from_citations
+  no_match: fail_closed; no_citation; record_missing_or_conflicting_identity
+safety:
+  database: none
+  sqlite: not_used
+  external_network: forbidden
+  secrets: forbidden
+  raw_source_text: not_embedded; locator_and_claim_id_only
+  tenant_acl_identity: forbidden
+verification:
+  validator: scripts/knowledge_engine_v2_eval_golden_annotation_check.py
+  focused_test: tests/knowledge_engine_v2/test_eval008_golden_annotations.py
+  commands:
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_eval_golden_annotation_check.py"
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe -m pytest tests/knowledge_engine_v2/test_eval008_golden_annotations.py -q -p no:cacheprovider"
+    - ".venv\\Scripts\\python.exe -m py_compile scripts/knowledge_engine_v2_eval_golden_annotation_check.py tests/knowledge_engine_v2/test_eval008_golden_annotations.py"
+    - "git diff --check"
+  required_results:
+    - status: PASS
+    - annotation_count: 12
+    - citation_count: 12
+    - all_status: frozen
+    - database: none
+    - sqlite: not_used
+rollback:
+  runtime: remove EVAL-008 annotation set from evaluation selection
+  data: delete fixture, report, validator, test and workflow documentation; retain parent dataset
+  database: none; no migration or persistent rows
+  compatibility: no V1 retrieval/API behavior changes

@@ -1,0 +1,58 @@
+schema_version: 1
+project: Nexora Knowledge Engine V2
+scope_id: GOV-010
+v1_must_remain_available: true
+in_scope:
+  vendors:
+    - vendor: Huawei
+      product_family: CloudEngine 6800
+      os: VRP8
+      primary_version: V300R024C10SPC500
+      compatibility_version: V300R023C00SPC500
+    - vendor: Cisco
+      product_family: Catalyst 9300
+      os: IOS-XE
+      primary_version: 17.9.x
+      compatibility_version: 17.18.x
+  journeys: [UJ-001, UJ-002, UJ-003, UJ-004]
+  modes:
+    consultation: readonly
+    troubleshooting: readonly
+    configuration_generation: candidate_only
+    knowledge_retrieval: acl_filtered
+  required_capabilities:
+    - official_and_enterprise_knowledge_domains
+    - product_os_software_version_metadata
+    - exact_alias_prefix_fts_vector_retrieval
+    - citations_and_abstention
+    - multi_provider_multi_model_gateway_routing
+    - rbac_tenant_scope_dlp_audit
+    - migration_and_v1_fallback
+out_of_scope:
+  vendors:
+    - H3C
+    - Ruijie
+  prohibited_modes:
+    - direct_network_write
+    - unapproved_playbook_execution
+    - production_device_batch_discovery
+    - full_vendor_model_coverage
+  prohibited_changes:
+    - remove_or_disable_v1
+    - bypass_security_gateway
+    - bypass_change_governance
+    - replace_postgresql_authority
+scope_change_approvers: [PM, ARCH, NET, SEC, DBA, QA, OPS]
+scope_change_requires_adr_when:
+  - adding_vendor_or_platform
+  - enabling_network_write
+  - changing_v1_fallback
+  - changing_database_authority
+  - adding_external_egress
+gates:
+  - two_vendor_version_fixture_sets
+  - four_user_journeys_demo
+  - actual_provider_model_provenance
+  - security_rbac_tenant_audit
+  - migration_rollback_and_v1_regression
+  - h3c_ruijie_excluded_from_poc_acceptance

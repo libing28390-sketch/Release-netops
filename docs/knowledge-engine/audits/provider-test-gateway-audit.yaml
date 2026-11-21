@@ -1,0 +1,64 @@
+task_id: AUD-017
+milestone: M0
+priority: P0
+scope: provider_connection_test_security_gateway
+public_route:
+  method: POST
+  path: /api/ai/providers/{provider_id}/test
+  permission: ai.provider.manage
+  handler: backend/ai/api/providers.py::test_provider_connection
+  fixed_probe: "Reply with one short word: ok"
+  max_tokens: 16
+  direct_provider_test_call: false
+  direct_http_client_call: false
+gateway_sequence:
+  - external_ai_and_kill_switch_gate
+  - model_and_provider_resolve
+  - provider_type_allowlist
+  - security_gateway_protect
+  - final_dlp_and_payload_size
+  - provider_chat
+  - output_resolve_and_metadata_audit
+route_call_contract:
+  gateway_method: llm_gateway.chat
+  scene: provider_test
+  model_source: enabled_ai_model_for_provider
+  user_source: authenticated_user_username_or_provider-test
+  tenant_source: authenticated_user_tenant_or_tenant-default
+  response_fields:
+    - success
+    - latency_ms
+    - message
+    - model_tested
+    - sample_response_truncated_150
+    - stable_error_code
+direct_method_scan:
+  provider_test_connection_definitions:
+    - backend/ai/providers/openai_compatible.py::test_connection
+    - backend/ai/providers/deepseek.py::test_connection
+  api_or_service_callers: []
+  bypass_status: latent_internal_only
+policy_fail_closed:
+  external_ai_enabled_false: AI_SECURITY_BLOCKED
+  kill_switch_true: AI_SECURITY_BLOCKED
+  provider_not_allowlisted: SecurityBlocked
+  prohibited_payload: SecurityBlocked
+verification:
+  route_fake_gateway: PASS
+  disabled_gateway_seam: PASS
+  source_caller_scan: PASS
+  production_external_call: false
+  production_database_changed: false
+findings:
+  - id: AUD017-F01
+    severity: P1
+    status: OPEN
+    summary: unused Provider.test_connection methods remain a future Gateway bypass seam
+  - id: AUD017-F02
+    severity: P2
+    status: OBSERVED
+    summary: test response exposes a bounded 150-character sample after output resolution
+conclusion:
+  audit_status: PASS
+  public_provider_test_gateway_compliant: true
+  p0_blockers: 0

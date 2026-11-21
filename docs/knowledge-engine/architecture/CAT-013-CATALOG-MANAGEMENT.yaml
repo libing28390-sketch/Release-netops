@@ -1,0 +1,53 @@
+task_id: CAT-013
+priority: P1
+owner: FE+BE
+milestone: M2
+status: frozen_read_only_management_boundary
+depends_on: [CAT-005, CAT-006, CAT-009, CAT-010, CAT-011, CAT-012, DB-006]
+
+purpose:
+  product_catalog: browse_reviewed_vendor_family_series_model_hierarchy
+  alias_management: inspect_conflicts_and_run_dry_run_resolution
+  persistence_status: contract_only_read_only_seed
+
+read_contract:
+  catalog_endpoint: GET /api/knowledge-v2/catalog
+  alias_endpoint: GET /api/knowledge-v2/catalog/aliases
+  resolve_endpoint: POST /api/knowledge-v2/catalog/resolve
+  supported_filters: [vendor_id, family_code, series_code, model, status, alias, alias_kind, conflict_status]
+  tenant_scope: request_user_tenant_only
+  source_artifacts:
+    - CAT-005-HUAWEI-CE6800.yaml
+    - CAT-006-CISCO-C9300.yaml
+    - CAT-010-ALIAS-SAMPLES.yaml
+
+ui_contract:
+  surfaces: [product_hierarchy, alias_review_queue, alias_dry_run_resolver]
+  must_show_read_only_state: true
+  must_show_persistence_status: true
+  draft_seed_must_not_be_presented_as_published: true
+  ambiguity_requires_clarification: true
+  driver_selection_allowed: false
+
+authorization:
+  read: knowledge_catalog/read
+  resolve: knowledge_catalog/resolve
+  review: knowledge_catalog/review
+  writes_exposed_by_CAT013: false
+  tenant_crossing: forbidden
+
+database:
+  production_ddl: none_in_CAT-013
+  physical_catalog_migration: gated_by_DB-006_and_CAT-015
+  v1_data_mutation: forbidden
+
+security:
+  control_characters_and_bounds: fail_closed
+  secret_or_credential_fields: not accepted
+  dry_run_only: true
+  catalog_seed_failure: explicit_503
+
+rollback:
+  runtime: remove_CAT013_router_and_management_tab
+  data: no_catalog_write_and_no_database_rollback_required
+  preserve: CAT-005_to_CAT-012_contracts_and_V1_paths

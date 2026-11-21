@@ -1,0 +1,48 @@
+task_id: EVAL-014
+title: PostgreSQL migration, fresh install, repeat, backfill, constraints, rollback and recovery coverage
+priority: P0
+status: executable
+authority: PostgreSQL
+scope:
+  fresh_install:
+    isolation: temporary_postgresql_database
+    cases: [baseline_bootstrap, all_discovered_migrations, complete_history, V1_tables_preserved]
+  repeated_execution:
+    cases: [zero_pending_migrations, idempotent_runner, unchanged_v1_counts]
+  backfill:
+    migration: m0148_ai_provider_tags_json_normalization
+    cases: [object_to_array, null_to_array, valid_array_preserved, repeated_upgrade, transaction_rollback]
+  constraints:
+    cases: [source_type_check, tenant_canonical_unique, nonnegative_byte_size, tenant_source_fk, immutable_source_fact]
+  rollback:
+    cases: [failed_migration_ddl_and_rows_rolled_back, no_higher_version_after_failure]
+  recovery:
+    cases: [corrected_migration_retry, migration_history_drift_fail_closed, retry_history_complete]
+database_policy:
+  required_database: PostgreSQL
+  sqlite: forbidden
+  temporary_database: required
+  production_database_write: false
+  external_network: forbidden
+verification:
+  coverage_validator: scripts/knowledge_engine_v2_eval014_migration_check.py
+  focused_test: tests/knowledge_engine_v2/test_eval014_migration.py
+  commands:
+    - "$env:DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/netops'; $env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_eval014_migration_check.py"
+    - "$env:DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/netops'; $env:PYTHONPATH='backend'; .venv\\Scripts\\pytest.exe tests/knowledge_engine_v2/test_eval014_migration.py -q -p no:cacheprovider"
+    - "$env:DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/netops'; $env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_v1_baseline_pg.py"
+    - "git diff --check"
+required_results:
+  - fresh_install: PASS
+  - repeated_execution: PASS
+  - backfill: PASS
+  - constraints: PASS
+  - rollback: PASS
+  - recovery: PASS
+  - all_persistence_evidence_database: PostgreSQL
+  - sqlite_acceptance_evidence: false
+  - production_database_write: false
+rollback:
+  application: keep migration runner and V1 bootstrap unchanged on gate failure
+  database: drop only the uniquely named temporary PostgreSQL database
+  data_loss: production data loss forbidden; no production database is opened for writes

@@ -1,0 +1,173 @@
+task_id: DB-005
+priority: P0
+owner: DBA
+status: frozen_for_implementation
+authority: PostgreSQL
+
+decision:
+  choice: create_kb_vendor_and_reuse_platform_profiles_for_execution_identity
+  summary: >-
+    Keep the V2 knowledge/catalog vendor as the canonical kb_vendor entity and
+    keep platform_profiles as the existing network execution registry. Bind
+    them only through an explicit tenant-scoped mapping; never join on free
+    text, driver, parser, or an AI provider name.
+  rationale:
+    - DB-001 already freezes kb_vendor as the parent of product and software catalog entities.
+    - platform_profiles already owns platform_code, connection_driver, parser_platform, releases, and action safety.
+    - One vendor can own many concrete platform profiles and one platform profile must have one canonical vendor mapping per scope.
+    - AI provider identity is an integration concern and is not a manufacturer or network platform identity.
+
+canonical_kb_vendor:
+  table: kb_vendor
+  api_resource: kb_vendors
+  aggregate: catalog
+  authority: PostgreSQL
+  scope: tenant_scoped
+  required_columns:
+    - id
+    - tenant_id
+    - code
+    - name
+    - status
+    - created_at
+    - updated_at
+    - created_by
+    - updated_by
+  optional_columns:
+    - name_en
+    - aliases_json
+    - source_kind
+    - canonical_source
+    - metadata_json
+  identity_rules:
+    code: lowercase_ascii_slug_3_to_64_characters
+    unique_key: [tenant_id, code]
+    display_name: not_an_identity_key
+    aliases: exact_aliases_only_and_never_authorization
+  lifecycle:
+    allowed_statuses: [draft, active, disabled, archived, deleted, quarantined, purged]
+    default_status: draft
+    visibility: active_only_for_catalog_and_retrieval
+    purge_requires: legal_hold_and_reference_checks
+
+existing_network_registry:
+  table: platform_profiles
+  migration_source: backend/database/migrations/m0072_platform_registry_p0.py
+  owner: network_execution
+  authoritative_fields:
+    - platform_code
+    - connection_driver
+    - parser_platform
+    - source
+    - status
+    - current_release_id
+  scope_rules:
+    system: tenant_id_is_null_and_source_is_SYSTEM
+    tenant_custom: tenant_id_is_not_null_and_source_is_CUSTOM_or_FORKED
+    unique_keys:
+      - system_platform_code
+      - tenant_id_and_platform_code
+  vendor_column:
+    name: vendor
+    current_type: free_text_not_foreign_key
+    role: legacy_display_hint_only_until_explicit_mapping_is_approved
+    forbidden_uses:
+      - authorization
+      - foreign_key_resolution
+      - command_or_driver_inference
+      - retrieval_filter_without_kb_vendor_mapping
+
+explicit_mapping:
+  table: kb_vendor_platform
+  purpose: explicit_catalog_vendor_to_network_platform_identity
+  status: planned_schema_contract_no_production_ddl_in_db_005
+  columns:
+    - id
+    - tenant_id
+    - kb_vendor_id
+    - platform_profile_id
+    - platform_code_snapshot
+    - mapping_kind
+    - confidence
+    - evidence_json
+    - status
+    - created_at
+    - updated_at
+    - created_by
+    - updated_by
+  foreign_keys:
+    - kb_vendor_id_to_kb_vendor_id
+    - platform_profile_id_to_platform_profiles_id
+  mapping_kinds: [system_seed, reviewed_backfill, tenant_override, manual]
+  statuses: [pending_review, active, rejected, superseded, archived]
+  constraints:
+    - one_active_mapping_per_tenant_vendor_and_platform_profile
+    - platform_code_snapshot_must_match_profile_at_write_time
+    - confidence_between_zero_and_one
+    - pending_or_rejected_mapping_cannot_drive_retrieval_or_execution
+    - tenant_mapping_cannot_cross_tenant_boundaries
+  resolution:
+    input: normalized_platform_vendor_hint_and_optional_platform_code
+    deterministic_order:
+      - exact_canonical_vendor_code
+      - reviewed_alias
+      - exact_system_profile_vendor_and_platform_code
+      - manual_review_queue
+    ambiguous_result: quarantined_no_implicit_first_match
+    unknown_result: quarantined_no_silent_vendor_creation
+
+seed_and_backfill:
+  system_profile_source: "services/platform_registry_service.py: SYSTEM_PROFILES"
+  deterministic_vendor_codes:
+    Cisco: cisco
+    Huawei: huawei
+    H3C: h3c
+    Juniper: juniper
+    Arista: arista
+    ZTE: zte
+    Ruijie: ruijie
+    DPtech: dptech
+    Maipu: maipu
+  rules:
+    - one kb_vendor per normalized system vendor name
+    - create one reviewed mapping for every system platform_profile
+    - preserve platform_code and profile_id; do not rewrite commands or releases
+    - custom profile vendor text is never auto-promoted without tenant review
+    - collisions and missing evidence become pending_review
+  gate: no_catalog_foreign_key_backfill_until_duplicate_and_reference_report_is_approved
+
+separation_contract:
+  ai_provider_table: ai_provider
+  ai_provider_role: model_service_endpoint_and_credential_owner
+  prohibited_reuse:
+    - ai_provider_as_kb_vendor
+    - ai_provider_provider_type_as_platform_code
+    - provider_name_as_network_authorization_scope
+  enforcement: callers must resolve kb_vendor and platform_profile independently
+
+implementation_boundary:
+  db_005_deliverables:
+    - freeze this mapping contract and audit current registry
+    - add contract tests and evidence
+    - do_not_modify_production_schema_before_migration_task_and_snapshot_gate
+  next_tasks:
+    - DB-006_product_catalog_tables_reference_kb_vendor
+    - DB-008_source_registry_may_reference_kb_vendor_but_not_platform_profiles
+    - API_and_UI_must_expose_kb_vendors_as_a_separate_resource
+
+migration_and_rollback:
+  preconditions:
+    - PostgreSQL snapshot and schema revision are available
+    - duplicate_vendor_report_is_reviewed
+    - tenant_and_actor_authorization_contract_is_implemented
+  forward_steps:
+    - create_kb_vendor_and_kb_vendor_platform_with_constraints
+    - seed_system_vendors_and_reviewed_system_mappings
+    - quarantine_ambiguous_custom_vendor_values
+    - backfill_catalog_foreign_keys_only_after_gate
+  rollback:
+    - disable_new_mapping_writes
+    - retain_platform_profiles_and_original_vendor_text
+    - remove_only_unreferenced_mapping_rows_in_a_transaction
+    - restore_catalog_reads_to_pre_mapping_path
+  data_loss_policy: no_destructive_delete_and_no_platform_profile_rewrite

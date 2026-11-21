@@ -1,0 +1,87 @@
+task_id: DB-020
+priority: P0
+owner: DBA+QA
+milestone: M1
+status: implemented_failure_matrix_contract
+authority: PostgreSQL_with_SQLite_compatibility_fixture
+contract_version: v2.0
+depends_on: [DB-017, DB-018, DB-019]
+
+decision:
+  choice: destructive_free_fresh_repeat_failure_and_transaction_matrix
+  summary: >-
+    Fresh install, repeat initialization, partial module failure, and data
+    transaction rollback are tested as separate failure domains. A fresh
+    isolated database must converge to the complete discovered legacy schema;
+    a second bootstrap and migration run must be a no-op. A failed module may
+    leave compatibility DDL metadata on SQLite, but it must not leak data or a
+    schema_migrations row; PostgreSQL transactional DDL must roll back both.
+    Higher modules cannot run after a failure, and a corrected retry resumes
+    the untracked version without changing earlier history.
+  invariants:
+    - fresh_install_is_complete_and_contains_required_V1_tables
+    - second_bootstrap_and_runner_are_idempotent
+    - failure_does_not_mark_module_applied_or_run_higher_versions
+    - current_data_transaction_rolls_back_on_module_exception
+    - corrected_retry_is_repeatable_and_preserves_prior_tracking_rows
+    - test_never_mutates_production_database_or_deletes_history
+    - SQLite_compatibility_limit_is_explicit_not_misreported_as_PostgreSQL
+
+test_matrix:
+  fresh_install:
+    setup: isolated_empty_database_and_normal_schema_init
+    assertions: [schema_migrations_all_discovered, VERSION_1_present, VERSION_115_present, required_V1_tables, contract_docs_target, no_pending_plan]
+  repeated_execution:
+    setup: capture_tracking_schema_and_counts_then_call_init_and_runner_again
+    assertions: [init_returns_without_duplicate_seed, runner_returns_zero, snapshots_equal, no_new_tracking_rows]
+  partial_failure:
+    setup: fake_versioned_modules_with_failure_then_higher_module
+    assertions: [failed_version_untracked, higher_version_not_called, prior_rows_unchanged, safe_error_logged]
+  transaction_rollback:
+    setup: failed_module_inserts_data_then_raises
+    assertions: [inserted_data_absent_after_rollback, tracking_row_absent, corrected_retry_inserts_once]
+  history_drift:
+    setup: unknown_or_renamed_tracking_record
+    assertions: [strict_plan_unsafe, runner_returns_zero, no_new_module_applied]
+
+fresh_contract:
+  baseline: backend/database/schema.py::_init_db_logic
+  runner: backend/database/migrations/__init__.py::run_migrations
+  highest_version: 115
+  required_tables: [schema_migrations, users, devices, ai_document, ai_document_chunk]
+  convergence: fresh_schema_and_highest_upgrade_have_same_tracking_and_required_object_snapshots
+  seed_safety: stable_keys_and_IF_NOT_EXISTS_or_ON_CONFLICT
+
+failure_recovery:
+  module_boundary: one_module_upgrade_and_tracking_insert_are_one_logical_unit
+  rollback: connection.rollback_on_exception; preserve_prior_commits
+  halt: no_higher_version_execution_after_failure
+  retry: correct_module_then_replan_and_apply_once
+  SQLite_note: CREATE_TABLE_metadata_may_survive_Python_SQLite_DDL_rollback; data_and_tracking_rollback_are_required
+  PostgreSQL_gate: transactional_DDL_and_lock_behavior_must_be_verified_in_DB-020_production_like_fixture
+
+evidence:
+  artifacts: [fresh_tracking_snapshot, repeated_tracking_snapshot, schema_object_hash, seed_counts, failure_version, higher_version_calls, rollback_row_count, retry_count]
+  redaction: [no_DSN, no_password, no_api_key, no_device_credential, no_raw_prompt, no_raw_document]
+  audit_events: [fresh_start, fresh_success, repeat_noop, module_failure, rollback, retry_success, drift_block]
+
+security_and_governance:
+  authorization: test_database_is_ephemeral_and_production_maintenance_requires_approved_identity
+  data_scope: fixtures_use_synthetic_or_existing_isolated_V1_rows_only
+  rollback: discard_test_database; production_restore_point_required_for_real_rollback
+
+migration_contract:
+  status: contract_and_isolated_tests_no_production_DDL_in_db_020
+  fresh: run_baseline_then_strict_migrations_once
+  repeat: run_again_with_no_pending_and_equal_snapshots
+  partial_failure: rollback_current_module_and_halt_higher_versions
+  downgrade: not_automatic; restore_last_verified_backup_or_module_specific_operation
+  production_gate: PostgreSQL_fresh_failure_and_lock_fixture_before_M1_exit
+
+verification:
+  contract_tests: backend/tests/database/test_db020_fresh_failure_rollback.py
+  required_checks: [fresh_install, repeat, partial_failure, data_rollback, corrected_retry, history_drift, V1_preservation, report_markers]
+  local_result: SQLite_isolated_and_in_memory_matrix
+  production_result: PostgreSQL_required_for_transactional_DDL_confirmation
+
+next_tasks: [DB-021, DB-022, DB-023, DB-024, MIG-001]

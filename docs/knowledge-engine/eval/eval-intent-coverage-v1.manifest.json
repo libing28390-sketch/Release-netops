@@ -1,0 +1,39 @@
+{
+  "status": "PASS",
+  "coverage_id": "nexora-kb-eval-intent-coverage-v1-20260817",
+  "parent_dataset_id": "nexora-kb-eval-v1-20260817",
+  "track_count": 12,
+  "query_example_count": 36,
+  "track_case_counts": {
+    "Cisco:interface": 9,
+    "Cisco:ntp": 9,
+    "Cisco:ospf": 9,
+    "Cisco:route": 9,
+    "Cisco:ssh": 9,
+    "Cisco:vlan": 9,
+    "Huawei:interface": 9,
+    "Huawei:ntp": 9,
+    "Huawei:ospf": 9,
+    "Huawei:route": 9,
+    "Huawei:ssh": 9,
+    "Huawei:vlan": 9
+  },
+  "vendor_track_counts": {
+    "Cisco": 6,
+    "Huawei": 6
+  },
+  "intent_track_counts": {
+    "interface": 2,
+    "ntp": 2,
+    "ospf": 2,
+    "route": 2,
+    "ssh": 2,
+    "vlan": 2
+  },
+  "dataset_sha256": "800c775cfb0371ef4751c7234de00c74cecc5d823b3f019d7631dcaeb20248c6",
+  "coverage_sha256": "33dce858bfc5f9b7db74cf0e486e8c9a796f6006c08d0fae6d1c5fa070788179",
+  "database": "none",
+  "sqlite": "not_used",
+  "external_network": "not_used",
+  "secrets": false
+}

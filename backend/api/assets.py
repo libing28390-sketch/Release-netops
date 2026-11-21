@@ -6019,3 +6019,114 @@ def batch_takeover(body: BatchTakeoverRequest, _user=require_role("Administrator
         'triggered_count': sum(1 for item in results if item['status'] == 'triggered'),
         'blocked_count': sum(1 for item in results if item['status'] == 'blocked_credential'),
     }
+
+
+# ── Stack Member Inventory & Reconciliation ───────────────────────────────────
+
+class StackMemberImportRow(BaseModel):
+    row_number: Optional[int] = None
+    stack_asset_tag: str = Field(..., min_length=1, max_length=128)
+    member_number: int = Field(..., ge=1, le=64)
+    physical_asset_tag: str = Field(default='', max_length=128)
+    serial_number: str = Field(default='', max_length=128)
+    model: str = Field(default='', max_length=128)
+    rack_id: Optional[str] = None
+    rack_name: str = Field(default='', max_length=128)
+    u_start: Optional[int] = Field(default=None, ge=1, le=60)
+    u_height: int = Field(default=1, ge=1, le=48)
+    notes: str = Field(default='', max_length=500)
+
+
+class StackMemberImportRequest(BaseModel):
+    rows: list[StackMemberImportRow] = Field(..., min_length=1, max_length=1000)
+
+
+class StackMemberReplaceRequest(BaseModel):
+    new_serial_number: str = Field(..., min_length=1, max_length=128)
+    new_physical_asset_tag: str = Field(default='', max_length=128)
+    new_model: str = Field(default='', max_length=128)
+    notes: str = Field(default='', max_length=500)
+
+
+@router.get('/assets/{asset_id}/stack-members')
+def api_list_stack_members(
+    asset_id: str,
+    include_history: bool = Query(default=False),
+    user=require_role("Viewer"),
+):
+    """List physical chassis members registered under a logical stack asset."""
+    del user
+    from services.stack_member_service import list_stack_members
+    return {'items': list_stack_members(asset_id, include_history=include_history)}
+
+
+@router.post('/assets/stack-members/import-preview')
+def api_preview_stack_member_import(
+    body: StackMemberImportRequest,
+    user=require_role("Operator"),
+):
+    """Preview stack member sheet rows with conflict detection before commit."""
+    from services.stack_member_service import preview_stack_member_import
+    tenant_id = tenant_id_for_write(user=user)
+    return preview_stack_member_import(
+        [row.model_dump() for row in body.rows],
+        tenant_id=tenant_id,
+    )
+
+
+@router.post('/assets/stack-members/import-commit', status_code=201)
+def api_commit_stack_member_import(
+    body: StackMemberImportRequest,
+    user=require_role("Operator"),
+):
+    """Idempotently commit validated stack member rows linked to logical stack assets."""
+    from services.stack_member_service import commit_stack_member_import
+    tenant_id = tenant_id_for_write(user=user)
+    try:
+        return commit_stack_member_import(
+            [row.model_dump() for row in body.rows],
+            tenant_id=tenant_id,
+            audit_context={
+                'actor_username': user.get('username', ''),
+                'actor_role': user.get('role', ''),
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post('/assets/{asset_id}/stack-members/reconcile-snmp')
+def api_reconcile_stack_members(
+    asset_id: str,
+    user=require_role("Operator"),
+):
+    """Reconcile active stack members against SNMP chassis observations without overwriting operator data."""
+    del user
+    from services.stack_member_service import reconcile_stack_members_with_snmp
+    return reconcile_stack_members_with_snmp(asset_id)
+
+
+@router.post('/assets/stack-members/{member_id}/replace')
+def api_replace_stack_member(
+    member_id: str,
+    body: StackMemberReplaceRequest,
+    user=require_role("Operator"),
+):
+    """Retire a chassis member and install a replacement at the same stack slot and rack position."""
+    from services.stack_member_service import replace_stack_member
+    try:
+        return replace_stack_member(
+            member_id,
+            new_serial_number=body.new_serial_number,
+            new_physical_asset_tag=body.new_physical_asset_tag,
+            new_model=body.new_model,
+            notes=body.notes,
+            audit_context={
+                'actor_username': user.get('username', ''),
+                'actor_role': user.get('role', ''),
+            },
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

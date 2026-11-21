@@ -1,0 +1,74 @@
+task_id: REL-003
+priority: P0
+milestone: M2
+status: active
+authority: repository_configuration_contract
+sqlite: forbidden_for_acceptance
+production_database_write: false
+
+objective: >-
+  Keep the active AI Security Gateway, embedding, and sidecar release controls
+  discoverable in the Docker environment example with safe defaults and no real secrets.
+
+required_sections:
+  provider_security:
+    - AI_ENABLED
+    - EXTERNAL_AI_ENABLED
+    - AI_KILL_SWITCH
+    - AI_WEB_SEARCH_ENABLED
+    - AI_MODEL_HEALTH_MONITOR_ENABLED
+    - AI_PROVIDER_ALLOWLIST
+    - AI_DEBUG_PAYLOAD
+  embedding_retrieval:
+    - AI_EMBEDDING_MODE
+    - AI_EMBEDDING_DIMENSIONS
+    - AI_CONFIG_CLARIFICATION_ENABLED
+    - AI_CONFIG_CLARIFICATION_ROLLOUT_PERCENT
+  feature_flags:
+    - NETWORK_WRITE_ENABLED
+    - PRODUCTION_CREDENTIALS_ALLOWED
+    - AI_GATEWAY_MODE
+    - DATA_CLASSIFICATION
+    - DEVICE_CREDENTIAL_SOURCE
+  retrieval_sidecars_observability:
+    - AI_RERANKER_MODE
+    - AI_RERANKER_ENDPOINT
+    - AI_RERANKER_TIMEOUT_MS
+    - AI_PARSER_MODE
+    - AI_DOCUMENT_PARSER_MODE
+    - AI_DOCLING_BASE_URL
+    - AI_DOCLING_TIMEOUT_SECONDS
+    - AI_DOCLING_MAX_PAGES
+    - AI_OBSERVABILITY_MODE
+    - LANGFUSE_METADATA_ENDPOINT
+    - LANGFUSE_TIMEOUT_SECONDS
+
+safe_defaults:
+  disabled_or_zero: [AI_ENABLED, EXTERNAL_AI_ENABLED, AI_KILL_SWITCH, AI_WEB_SEARCH_ENABLED, AI_MODEL_HEALTH_MONITOR_ENABLED, AI_DEBUG_PAYLOAD, NETWORK_WRITE_ENABLED, PRODUCTION_CREDENTIALS_ALLOWED]
+  protective_guards_enabled: [AI_CONFIG_CLARIFICATION_ENABLED]
+  protective_guard_rollout_percent: 100
+  embedding_mode: local
+  embedding_dimensions: 1536
+  gateway_mode: offline
+  data_classification: synthetic
+  credential_source: fixture
+  reranker_mode: legacy
+  parser_mode: legacy
+  docling_base_url: ""
+  observability_mode: off
+
+secret_rules:
+  forbidden_keys: [OPENAI_API_KEY, DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, API_KEY, PROVIDER_API_KEY, VAULT_TOKEN]
+  empty_in_docker_example: [POSTGRES_PASSWORD, POSTGRES_EXPORTER_PASSWORD, SECRET_KEY, CREDENTIAL_ENCRYPTION_KEY, GRAFANA_ADMIN_PASSWORD, ALERT_NOTIFICATION_BROKER_PASSWORD, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY]
+  no_real_secret_patterns: [sk_live_, sk-proj-, Bearer_, gho_, github_pat_]
+  provider_keys: injected_by_secret_manager_or_encrypted_provider_ui
+
+verification:
+  runner: scripts/ai_rag_release_config_check.py
+  tests: backend/tests/ai/test_release_config_contract.py
+  source_of_truth: [.env.example, backend/core/config.py, scripts/ai_rag_release_config_check.py]
+  required: [release_gate_keys, safe_disabled_defaults, bounded_values, endpoint_host_allowlist, secret_pattern_scan]
+
+rollback:
+  method: restore_last_verified_env_example
+  runtime: AI_and_external_egress_off_by_default

@@ -1,0 +1,139 @@
+task_id: CAT-008
+priority: P0
+owner: NET+AI
+milestone: M2
+status: reviewed_boundary_pending_os_catalog_migration
+authority:
+  vendor_scope: GOV-008
+  os_software_contract: DB-007
+  product_hierarchy: CAT-006
+  platform_registry: DB-005
+  source_taxonomy: CAT-002
+
+vendor:
+  vendor_id: cisco
+  display_name: Cisco
+  catalog_scope: tenant-default-reviewed-seed
+
+os_families:
+  - code: ios
+    display_name: Cisco IOS
+    status: draft
+    generation_scope: classic_ios
+    release_train_examples: [ios_15]
+    version_pattern: '^15\.[0-9]+(?:\([0-9A-Z]+\))?.*$'
+    explicit_platform_mapping:
+      platform_code: cisco_ios
+      connection_driver: cisco_ios
+      parser_platform: cisco_ios
+      driver_authority: false
+    c9300_applicability: forbidden
+    boundary_note: Classic IOS is not an IOS-XE C9300 applicability match.
+  - code: ios_xe
+    display_name: Cisco IOS XE
+    status: active
+    generation_scope: ios_xe
+    release_train_examples: [ios_xe_17]
+    version_pattern: '^17\.[0-9]+(?:\.[0-9]+)?(?:\.[A-Za-z0-9._-]+)?$'
+    explicit_platform_mapping:
+      platform_code: cisco_ios
+      accepted_aliases: [cisco_iosxe, cisco_xe]
+      connection_driver: cisco_ios
+      parser_platform: cisco_ios
+      driver_authority: false
+    c9300_applicability: supported
+    c9300_version_scope: [17.9.x, 17.18.x]
+    boundary_note: >-
+      The current system platform profile is cisco_ios; IOS-XE aliases are
+      accepted only through this explicit reviewed mapping and never inferred
+      from an arbitrary version string.
+  - code: nx_os
+    display_name: Cisco NX-OS
+    status: draft
+    generation_scope: nx_os
+    release_train_examples: [nx_os_9]
+    version_pattern: '^9\.[0-9]+(?:\.[0-9]+).*$'
+    explicit_platform_mapping:
+      platform_code: cisco_nxos
+      connection_driver: cisco_nxos
+      parser_platform: cisco_nxos
+      driver_authority: false
+    c9300_applicability: forbidden
+    boundary_note: NX-OS belongs to Nexus products and is not a C9300 match.
+  - code: ios_xr
+    display_name: Cisco IOS XR
+    status: draft
+    generation_scope: ios_xr
+    release_train_examples: [ios_xr_7]
+    version_pattern: '^(?:7|24)\.[0-9]+(?:\.[0-9]+).*$'
+    explicit_platform_mapping:
+      platform_code: cisco_iosxr
+      accepted_aliases: [cisco_xr]
+      connection_driver: cisco_iosxr
+      parser_platform: cisco_iosxr
+      driver_authority: false
+    c9300_applicability: forbidden
+    boundary_note: IOS XR is a separate routing-platform OS and is not a C9300 match.
+
+product_applicability:
+  product_family: catalyst_9300
+  product_series: c9300
+  vendor_required: cisco
+  supported_os_family: ios_xe
+  supported_version_scope: [17.9.x, 17.18.x]
+  supported_platform_mapping: cisco_ios
+  applicability_kind: explicit_reviewed_os_product_relation
+  unknown_os_behavior: candidate_list_and_clarification
+  unknown_version_behavior: UNKNOWN_and_require_source_or_clarification
+  forbidden_os_families: [ios, nx_os, ios_xr]
+  forbidden_inference:
+    - model_string_must_not_select_os_family_without_evidence
+    - os_or_version_must_not_select_driver_without_explicit_mapping
+    - c9300_must_not_be_reclassified_as_nexus_or_ios_xr
+
+resolution_boundary:
+  input_fields: [tenant_id, vendor_id, product_series, product_model, os_family_code, software_version, cli_platform]
+  order:
+    - exact_vendor_and_product_series
+    - exact_reviewed_os_family
+    - exact_active_version_scope
+    - explicit_platform_mapping
+    - candidate_list_and_manual_clarification
+  rules:
+    c9300_without_os_family: series_candidate_only_and_clarify
+    c9300_with_ios_xe: eligible_if_version_scope_matches
+    c9300_with_ios: reject_incompatible_os_family
+    c9300_with_nx_os: reject_incompatible_os_family
+    c9300_with_ios_xr: reject_incompatible_os_family
+    unknown_os_or_version: preserve_original_return_UNKNOWN
+    no_first_match_fallback: true
+
+legacy_compatibility:
+  preserved_v1_fields: [ai_document.os_family, ai_document.software_train, ai_document.software_release, devices.platform, devices.version]
+  cisco_ios_default: retained_as_v1_compatibility_only
+  no_original_rewrite: true
+  fallback: v1_metadata_with_ambiguity_signal
+
+security:
+  driver_authority_from_catalog: false
+  write_authority_from_catalog: false
+  credential_selection_from_catalog: false
+  tenant_scope_required: true
+  audit_source_evidence_required: true
+
+activation_gate:
+  catalog_rows: reviewed_boundary_only_until_DB007_migration
+  required_before_active:
+    - explicit_platform_profile_mapping_review
+    - version_scheme_and_conflict_report
+    - c9300_applicability_evidence
+    - CAT-009_alias_conflict_result
+  forbidden:
+    - silent_ios_to_ios_xe_conversion
+    - infer_nx_os_or_ios_xr_from_model_prefix
+    - rewrite_v1_platform_or_version_strings
+
+rollback:
+  runtime: disable_cat008_os_product_applicability_and_use_v1_explicit_platform_guard
+  data: preserve_boundary_artifact_and_v1_metadata
+  production_ddl: none_in_CAT-008

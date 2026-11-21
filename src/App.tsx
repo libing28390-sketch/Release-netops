@@ -1,25 +1,20 @@
 import React, { Suspense, lazy, useState, useEffect, useMemo, useCallback } from 'react';
 import { motion } from 'motion/react';
 import { Routes, Route, useLocation, useNavigate, Navigate } from 'react-router-dom';
-import { Plus, Server, CheckCircle, CheckCircle2, XCircle, RotateCcw, Play, Activity, LayoutDashboard, Database, Zap, ShieldCheck, History, LogOut, Search, Bell, Settings, Upload, FileText, ChevronLeft, ChevronRight, Filter, Globe, TrendingUp, PieChart as PieChartIcon, Clock, AlertCircle, FolderOpen, Eye, EyeOff, Sun, Moon, User as UserIcon, ChevronDown, Menu, PanelLeftClose, Monitor, ExternalLink, Wrench, Maximize2, Minimize2, BarChart3, GitCompareArrows, Cpu, Network, Pin, AlertTriangle, X } from 'lucide-react';
+import { Plus, History, Sun } from 'lucide-react';
 import { useUiStore } from './store/uiStore';
 import { useConfigStore } from './store/configStore';
 import { useAutomationStore } from './store/automationStore';
 import { useI18n } from './i18n.tsx';
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell } from 'recharts';
+import { useShallow } from 'zustand/react/shallow';
 import type { ConfigVersion, Device, Job, AuditEvent, ComplianceFinding, ComplianceRunPoint, ComplianceOverview, ScheduledTask, Script, ConfigTemplate, ConfigSnapshot, DiffLine, User as UserType, ThemeMode, SessionUser, NotificationItem, HostResourceSnapshot } from './types';
 import { PLATFORM_LABELS, getPlatformLabel, getVendorFromPlatform } from './types';
 import { sectionHeaderRowClass, sectionToolbarClass, primaryActionBtnClass, secondaryActionBtnClass, darkActionBtnClass, severityBadgeClass, complianceStatusBadgeClass, auditStatusBadgeClass } from './components/shared';
 import Pagination from './components/Pagination';
-import CustomCommandModal from './components/CustomCommandModal';
-import AddScenarioModal from './components/AddScenarioModal';
 import AppLayout from './components/AppLayout';
 import AppMainContent from './components/AppMainContent';
 import { AppRuntimeBoundary } from './components/AppRuntimeBoundary';
 import type { ToastState } from './components/ToastNotification';
-import CommandPreviewModal from './components/CommandPreviewModal';
-import LoginScreen from './components/LoginScreen';
-import SetupWizard from './components/SetupWizard';
 import { buildConnectionTestMessage, buildConnectionTestHint, buildConnectionCheckStatus, connectionCheckBadgeMeta, formatConnectionCheckTime } from './utils/connectionHelpers';
 import { useConfigDiff } from './hooks/useConfigDiff';
 import { useTheme } from './hooks/useTheme';
@@ -48,6 +43,7 @@ import {
   formatTopologyLastSeen as formatTopologyLastSeenValue,
 } from './utils/topologyFormatters';
 import { getRouteContext } from './utils/routeContext';
+import { preloadRouteChunk } from './utils/routePreload';
 import { avatarPresets, renderAvatarContent } from './utils/avatarPresets';
 import { usePageTitle } from './hooks/usePageTitle';
 import { useCommandPalette } from './hooks/useCommandPalette';
@@ -66,6 +62,11 @@ import { authHeaders } from './api/http';
 const TerminalWindow = lazy(() => import('./components/access/TerminalWindow'));
 const AppModals = lazy(() => import('./components/modals/AppModals').then(({ AppModals: Component }) => ({ default: Component })));
 const TicketsPage = lazy(() => import('./pages/Tickets'));
+const CustomCommandModal = lazy(() => import('./components/CustomCommandModal'));
+const AddScenarioModal = lazy(() => import('./components/AddScenarioModal'));
+const CommandPreviewModal = lazy(() => import('./components/CommandPreviewModal'));
+const SetupWizard = lazy(() => import('./components/SetupWizard'));
+const LoginScreen = lazy(() => import('./components/LoginScreen'));
 
 // Types imported from ./types — re-export User as UserType to avoid clash with lucide-react User icon
 
@@ -330,7 +331,15 @@ const App: React.FC = () => {
     cmdPaletteOpen, setCmdPaletteOpen,
     isMobile, setIsMobile,
     showAddScenarioModal, setShowAddScenarioModal
-  } = useUiStore();
+  } = useUiStore(useShallow((s) => ({
+    sidebarCollapsed: s.sidebarCollapsed, setSidebarCollapsed: s.setSidebarCollapsed,
+    showSetupWizard: s.showSetupWizard, setShowSetupWizard: s.setShowSetupWizard,
+    showUserMenu: s.showUserMenu, setShowUserMenu: s.setShowUserMenu,
+    showNotifications: s.showNotifications, setShowNotifications: s.setShowNotifications,
+    cmdPaletteOpen: s.cmdPaletteOpen, setCmdPaletteOpen: s.setCmdPaletteOpen,
+    isMobile: s.isMobile, setIsMobile: s.setIsMobile,
+    showAddScenarioModal: s.showAddScenarioModal, setShowAddScenarioModal: s.setShowAddScenarioModal,
+  })));
 
   const {
     retentionDays, setRetentionDays,
@@ -349,7 +358,24 @@ const App: React.FC = () => {
     scheduleEnabled, setScheduleEnabled,
     scheduleCron, setScheduleCron,
     scheduleLoading, setScheduleLoading
-  } = useConfigStore();
+  } = useConfigStore(useShallow((s) => ({
+    retentionDays: s.retentionDays, setRetentionDays: s.setRetentionDays,
+    retentionMaxPerDevice: s.retentionMaxPerDevice, setRetentionMaxPerDevice: s.setRetentionMaxPerDevice,
+    configSnapshots: s.configSnapshots, setConfigSnapshots: s.setConfigSnapshots,
+    configSnapshotsLoading: s.configSnapshotsLoading, setConfigSnapshotsLoading: s.setConfigSnapshotsLoading,
+    configCenterDevice: s.configCenterDevice, setConfigCenterDevice: s.setConfigCenterDevice,
+    configViewContent: s.configViewContent, setConfigViewContent: s.setConfigViewContent,
+    configViewSnapshot: s.configViewSnapshot, setConfigViewSnapshot: s.setConfigViewSnapshot,
+    configSnapshotKeyword: s.configSnapshotKeyword, setConfigSnapshotKeyword: s.setConfigSnapshotKeyword,
+    configSearchQuery: s.configSearchQuery, setConfigSearchQuery: s.setConfigSearchQuery,
+    configSearchResults: s.configSearchResults, setConfigSearchResults: s.setConfigSearchResults,
+    configSearchLoading: s.configSearchLoading, setConfigSearchLoading: s.setConfigSearchLoading,
+    isTakingSnapshot: s.isTakingSnapshot, setIsTakingSnapshot: s.setIsTakingSnapshot,
+    activeBackupRunId: s.activeBackupRunId, setActiveBackupRunId: s.setActiveBackupRunId,
+    scheduleEnabled: s.scheduleEnabled, setScheduleEnabled: s.setScheduleEnabled,
+    scheduleCron: s.scheduleCron, setScheduleCron: s.setScheduleCron,
+    scheduleLoading: s.scheduleLoading, setScheduleLoading: s.setScheduleLoading,
+  })));
 
   const {
     playbookHistoryPage, setPlaybookHistoryPage,
@@ -369,7 +395,25 @@ const App: React.FC = () => {
     newScenarioVariables, setNewScenarioVariables,
     scenarioDraftOrigin, setScenarioDraftOrigin,
     isSavingScenario, setIsSavingScenario
-  } = useAutomationStore();
+  } = useAutomationStore(useShallow((s) => ({
+    playbookHistoryPage: s.playbookHistoryPage, setPlaybookHistoryPage: s.setPlaybookHistoryPage,
+    playbookHistoryTotal: s.playbookHistoryTotal, setPlaybookHistoryTotal: s.setPlaybookHistoryTotal,
+    playbookHistoryStatusFilter: s.playbookHistoryStatusFilter, setPlaybookHistoryStatusFilter: s.setPlaybookHistoryStatusFilter,
+    playbookHistoryScenarioSearch: s.playbookHistoryScenarioSearch, setPlaybookHistoryScenarioSearch: s.setPlaybookHistoryScenarioSearch,
+    selectedExecDevices: s.selectedExecDevices, setSelectedExecDevices: s.setSelectedExecDevices,
+    selectedExecDevicesTotal: s.selectedExecDevicesTotal, setSelectedExecDevicesTotal: s.setSelectedExecDevicesTotal,
+    selectedExecDevicesPage: s.selectedExecDevicesPage, setSelectedExecDevicesPage: s.setSelectedExecDevicesPage,
+    selectedExecDevicesStatusFilter: s.selectedExecDevicesStatusFilter, setSelectedExecDevicesStatusFilter: s.setSelectedExecDevicesStatusFilter,
+    selectedExecDevicesLoading: s.selectedExecDevicesLoading, setSelectedExecDevicesLoading: s.setSelectedExecDevicesLoading,
+    selectedExecutionDetail: s.selectedExecutionDetail, setSelectedExecutionDetail: s.setSelectedExecutionDetail,
+    selectedExecutionLoading: s.selectedExecutionLoading, setSelectedExecutionLoading: s.setSelectedExecutionLoading,
+    selectedDeviceDetail: s.selectedDeviceDetail, setSelectedDeviceDetail: s.setSelectedDeviceDetail,
+    selectedDeviceDetailLoading: s.selectedDeviceDetailLoading, setSelectedDeviceDetailLoading: s.setSelectedDeviceDetailLoading,
+    newScenarioForm: s.newScenarioForm, setNewScenarioForm: s.setNewScenarioForm,
+    newScenarioVariables: s.newScenarioVariables, setNewScenarioVariables: s.setNewScenarioVariables,
+    scenarioDraftOrigin: s.scenarioDraftOrigin, setScenarioDraftOrigin: s.setScenarioDraftOrigin,
+    isSavingScenario: s.isSavingScenario, setIsSavingScenario: s.setIsSavingScenario,
+  })));
   const { t, language, setLanguage } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
@@ -424,6 +468,13 @@ const App: React.FC = () => {
 
   const routeContext = useMemo(() => getRouteContext(location.pathname), [location.pathname]);
   const { activeTab, configPage, automationPage, inventorySubPage, changeOrderPage, ipamPage, cmdbPage } = routeContext;
+
+  // Preload active route chunk in parallel with initial /api/session validation
+  useEffect(() => {
+    if (localStorage.getItem('netops_token')) {
+      preloadRouteChunk(location.pathname);
+    }
+  }, [location.pathname]);
 
 
 
@@ -541,7 +592,7 @@ const App: React.FC = () => {
     handleDiscardChanges,
     handleValidateTemplateWorkspace,
     handleSaveTemplate,
-  } = useConfigWorkspace({ devices, language, showToast, currentUser, extractVars });
+  } = useConfigWorkspace({ devices, language, showToast, currentUser, extractVars, enabled: activeTab === 'config' || activeTab === 'change-orders' });
 
   const findMatchingPlatform = useCallback((devicePlatform: string, platforms: string[] | Record<string, any>) => {
     if (!devicePlatform) return undefined;
@@ -940,29 +991,40 @@ const App: React.FC = () => {
     handleAddUser, handleEditUser,
   } = useUserManagement({ currentUser, setCurrentUser, language, showToast });
 
-  // Fetch actual users for account switching AFTER setUsers is initialized
+  // Fetch actual users lazily only for Administrators when entering Users/Tickets or opening account switcher
+  const usersLoadedForTokenRef = React.useRef<string>('');
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated) {
+      usersLoadedForTokenRef.current = '';
+      return;
+    }
     const token = localStorage.getItem('netops_token');
-    // ``isAuthenticated`` can briefly lead localStorage during startup,
-    // cross-tab logout, or token rotation. Never issue an anonymous request
-    // to the administrator-only users endpoint in that window.
     if (!token) return;
+    if (currentUser.role !== 'Administrator') return;
+    const needsUsersList = activeTab === 'users' || activeTab === 'tickets' || showUserMenu;
+    if (!needsUsersList || usersLoadedForTokenRef.current === token) return;
+    usersLoadedForTokenRef.current = token;
     fetch('/api/users', { headers: authHeaders() })
       .then(async response => {
         const data = await response.json().catch(() => ({}));
         if (response.status === 401) {
+          usersLoadedForTokenRef.current = '';
           window.dispatchEvent(new Event('netops:auth-expired'));
           return null;
         }
-        if (!response.ok) return null;
+        if (!response.ok) {
+          usersLoadedForTokenRef.current = '';
+          return null;
+        }
         return data;
       })
       .then(data => {
         if (Array.isArray(data)) setUsers(data);
       })
-      .catch(() => {});
-  }, [isAuthenticated, setUsers]);
+      .catch(() => {
+        usersLoadedForTokenRef.current = '';
+      });
+  }, [isAuthenticated, currentUser.role, activeTab, showUserMenu, setUsers]);
   const [trendDays, setTrendDays] = useState<7 | 30>(7);
   const [dashBannerCollapsed, setDashBannerCollapsed] = useState(false);
   const [dashLastRefresh, setDashLastRefresh] = useState<Date>(new Date());
@@ -1562,6 +1624,7 @@ const App: React.FC = () => {
   if (!isAuthenticated) {
     const isDark = resolvedTheme === 'dark';
     return (
+      <Suspense fallback={<div className="min-h-screen bg-[#00172D] flex items-center justify-center"><div className="w-8 h-8 border-2 border-[#00bceb] border-t-transparent rounded-full animate-spin" /></div>}>
       <LoginScreen
         isDark={isDark}
         t={t}
@@ -1594,17 +1657,20 @@ const App: React.FC = () => {
         onRefreshCaptcha={refreshCaptcha}
         onSubmit={handleLogin}
       />
+      </Suspense>
     );
   }
 
   if (showSetupWizard) {
     return (
-      <SetupWizard
-        language={language}
-        onComplete={() => setShowSetupWizard(false)}
-        onLanguageChange={handleLanguagePreferenceChange}
-        showToast={showToast}
-      />
+      <Suspense fallback={<div className="min-h-screen bg-[#00172D] flex items-center justify-center"><div className="w-8 h-8 border-2 border-[#00bceb] border-t-transparent rounded-full animate-spin" /></div>}>
+        <SetupWizard
+          language={language}
+          onComplete={() => setShowSetupWizard(false)}
+          onLanguageChange={handleLanguagePreferenceChange}
+          showToast={showToast}
+        />
+      </Suspense>
     );
   }
 
@@ -1935,6 +2001,7 @@ const App: React.FC = () => {
 
       {/* ── Command Preview Modal ── */}
       {showCustomCommandModal && (
+        <Suspense fallback={null}>
         <CustomCommandModal
           language={language}
           t={t}
@@ -1959,6 +2026,7 @@ const App: React.FC = () => {
           onToggleFavorites={() => setShowFavorites((prev) => !prev)}
           onUseFavorite={setCustomCommand}
         />
+        </Suspense>
       )}
 
       {/* ── Save Quick Query Modal ── */}
@@ -2029,6 +2097,8 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {showCmdPreviewModal && (
+      <Suspense fallback={null}>
       <CommandPreviewModal
         open={showCmdPreviewModal}
         language={language}
@@ -2051,8 +2121,11 @@ const App: React.FC = () => {
           showToast(copied ? (language === 'zh' ? '命令已复制' : 'Copied') : (language === 'zh' ? '复制失败' : 'Copy failed'), copied ? 'success' : 'error');
         }}
       />
+      </Suspense>
+      )}
 
       {showAddScenarioModal && (
+        <Suspense fallback={null}>
         <AddScenarioModal
           open={showAddScenarioModal}
           language={language}
@@ -2066,8 +2139,10 @@ const App: React.FC = () => {
           onSubmit={createScenario}
           onFormChange={setNewScenarioForm}
         />
+        </Suspense>
       )}
 
+      {(showProfileModal || showTestResult || showImportModal || showDiff || showConfigModal || showScheduleModal || showRemediationModal || showDeleteModal || showEditModal || showLifecycleConfirm || showDetailsModal || Boolean(selectedAuditEvent) || Boolean(selectedFinding) || Boolean(selectedJob)) && (
       <Suspense fallback={null}>
         <AppModals
           {...{
@@ -2098,6 +2173,7 @@ const App: React.FC = () => {
           }}
         />
       </Suspense>
+      )}
 
       {/* Toast Notification */}
         </AppLayout>

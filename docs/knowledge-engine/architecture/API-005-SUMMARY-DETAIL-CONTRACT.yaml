@@ -1,0 +1,98 @@
+task_id: API-005
+title: Summary-only lists with independently loaded document, source, log, and trace details
+status: verified
+contract_version: nxa.api.summary-detail.v1
+list_contract:
+  rule: Lists return explicit summary projections only; newly added service columns are not public by default.
+  document_summary_fields:
+    - id
+    - knowledge_base_id
+    - name
+    - source
+    - vendor
+    - platform
+    - semantic_metadata
+    - status
+    - knowledge_source_type
+    - tenant_id
+    - acl
+    - source_trust_level
+    - created_at
+    - chunk_count
+  source_summary_fields:
+    - id
+    - tenant_id
+    - source_type
+    - source_kind
+    - name
+    - description
+    - canonical_url
+    - allowed_host
+    - trust_level
+    - status
+    - fetch_enabled
+    - validation_status
+    - created_at
+    - updated_at
+  source_version_summary_fields:
+    - id
+    - tenant_id
+    - source_registry_id
+    - fetched_at
+    - content_hash
+    - byte_size
+    - parser_name
+    - parser_version
+    - validator_and_http_facts
+    - error_code
+    - status
+    - created_at
+    - updated_at
+  refresh_observation_summary_fields:
+    - id
+    - tenant_id
+    - source_registry_id
+    - source_version_id
+    - checked_at
+    - request_method
+    - http_status
+    - outcome
+    - content_hash
+    - byte_size
+    - error_code
+    - detection_type
+    - replacement_url
+  forbidden_list_fields:
+    - content
+    - original_content
+    - normalized_content
+    - chunks
+    - logs
+    - trace
+    - raw_content_ref
+    - raw_content_storage
+    - error
+    - metadata
+    - collection_policy
+    - validation
+detail_contract:
+  document: GET /api/ai/assistant/documents/{doc_id}
+  source_registry: GET /api/v2/kb/sources/{source_id}
+  refresh_status: GET /api/v2/kb/sources/{source_id}/refresh-status
+  refresh_history: GET /api/v2/kb/sources/{source_id}/refresh-observations
+  retrieval_trace_list: GET /api/v2/kb/retrieval-traces
+  retrieval_trace: GET /api/v2/kb/retrieval-traces/{trace_id}
+  rules:
+    - detail endpoints remain tenant-scoped and permission-protected
+    - document detail may load body and ordered chunks on demand
+    - retrieval traces remain redacted and bounded
+    - source refresh and version lists expose only bounded operational facts
+implementation:
+  projection_module: backend/api/knowledge_v2_response.py
+  routes:
+    - backend/ai/api/assistant.py
+    - backend/api/knowledge_sources.py
+verification:
+  contract_tests: backend/tests/ai/test_api005_summary_detail.py
+  postgres_probe: scripts/knowledge_engine_v2_api005_pg_probe.py
+  result: PASS

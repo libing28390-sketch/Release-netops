@@ -1,0 +1,66 @@
+task_id: API-006
+title: Versioned SSE meta, progress, token, citation, done, and error events
+status: verified
+contract_version: nxa.sse.v1
+transport:
+  media_type: text/event-stream
+  event_version_field: event_version
+  event_version_value: nxa.sse.v1
+  ordering:
+    - progress may announce preparation before meta
+    - meta precedes token and citation events for a response
+    - citation events follow meta and are bounded to 20 per response
+    - done is terminal for a stream
+    - error is safe and may be followed by a terminal done event
+events:
+  meta:
+    required: [event_version]
+    fields:
+      intent: string
+      facts_retrieved: boolean
+      citations: array
+      retrieval: bounded_object
+      copilot: bounded_object
+  progress:
+    required: [event_version, id, label, status]
+    status: [running, completed, error]
+    fields:
+      detail: safe_string
+      operation: safe_operation_name
+      command: safe_read_only_command_label
+  token:
+    required: [event_version, content]
+    fields:
+      content: text_delta
+  citation:
+    required: [event_version, index, citation]
+    fields:
+      index: nonnegative_integer
+      citation: bounded_citation_projection
+  done:
+    required: [event_version, status, duration_ms]
+    status: [completed, cancelled, error]
+    fields:
+      duration_ms: nonnegative_integer
+  error:
+    required: [event_version, code, message]
+    fields:
+      code: stable_machine_code
+      message: safe_user_message
+      retryable: boolean
+security:
+  - event payloads must not contain credentials, raw SQL, provider errors, or unbounded source bodies
+  - citation payloads use the existing grounded citation projection
+  - security blocks are terminal and are never retried through another provider
+compatibility:
+  - existing token/meta/progress/done/error callbacks remain valid
+  - citation consumption is additive through an optional frontend callback
+implementation:
+  backend: backend/ai/services/assistant.py
+  backend_route: backend/ai/api/assistant.py
+  frontend_parser: src/api/ai.ts
+  frontend_consumer: src/pages/ai/Copilot/AssistantTab.tsx
+verification:
+  backend_contract_tests: backend/tests/ai/test_api006_sse_contract.py
+  frontend_contract_tests: src/api/ai.test.ts
+  result: PASS

@@ -1,0 +1,93 @@
+{
+  "report_id": "nexora-ai-live-provider-report-20260901",
+  "dataset_id": "nexora-ai-live-provider-v1-20260901",
+  "status": "measured",
+  "database": "postgresql",
+  "collection_mode": "opt_in_live_provider",
+  "external_network": "reviewed_non_sensitive_prompts_only; explicit_flag_and_persisted_policy_required",
+  "provider_matrix": [
+    {
+      "provider_type": "deepseek",
+      "model_code": "deepseek-v4-flash",
+      "enabled": true,
+      "model_enabled": true,
+      "health_status": "healthy"
+    }
+  ],
+  "security_policy": {
+    "external_ai_enabled": true,
+    "kill_switch": false,
+    "allowed_provider_types": ["deepseek"],
+    "allowed_classifications": ["PUBLIC", "INTERNAL", "CONFIDENTIAL"],
+    "allowed_data_regions": ["unknown", "global", "cn", "us", "eu"],
+    "policy_version": "1"
+  },
+  "comparison": {
+    "same_dataset_case_count": 8,
+    "pre_prompt_change": {
+      "intent_prompt_version": "intent.v1",
+      "started_at": "2026-09-01T12:37:17+00:00",
+      "completed_at": "2026-09-01T12:38:12+00:00",
+      "structured_first_pass_success_rate": 1.0,
+      "structured_correction_success_rate": null,
+      "correction_observed_case_count": 0,
+      "provider_intent_accuracy": 0.5,
+      "provider_backed_case_count": 8,
+      "provider_requests": 8,
+      "provider_errors": 0,
+      "provider_avg_latency_ms": 6772.62,
+      "provider_p95_latency_ms": 8620,
+      "input_tokens": 4846,
+      "output_tokens": 5753,
+      "estimated_cost_usd": 0.0,
+      "cases": [
+        {"case_id": "LIVE-INT-001", "expected_intent": "general_qa", "predicted_intent": "knowledge", "parse_status": "llm_success", "correct": false, "elapsed_ms": 8892.35},
+        {"case_id": "LIVE-INT-002", "expected_intent": "alarm_search", "predicted_intent": "alarm_search", "parse_status": "llm_success", "correct": true, "elapsed_ms": 8672.44},
+        {"case_id": "LIVE-INT-003", "expected_intent": "troubleshooting", "predicted_intent": "troubleshooting", "parse_status": "llm_success", "correct": true, "elapsed_ms": 5708.47},
+        {"case_id": "LIVE-INT-004", "expected_intent": "device_search", "predicted_intent": "device_search", "parse_status": "llm_success", "correct": true, "elapsed_ms": 3943.75},
+        {"case_id": "LIVE-INT-005", "expected_intent": "config_search", "predicted_intent": "knowledge", "parse_status": "llm_success", "correct": false, "elapsed_ms": 8318.25},
+        {"case_id": "LIVE-INT-006", "expected_intent": "general_qa", "predicted_intent": "general_qa", "parse_status": "llm_success", "correct": true, "elapsed_ms": 4742.62},
+        {"case_id": "LIVE-INT-007", "expected_intent": "alarm_search", "predicted_intent": "knowledge", "parse_status": "llm_success", "correct": false, "elapsed_ms": 9279.59},
+        {"case_id": "LIVE-INT-008", "expected_intent": "troubleshooting", "predicted_intent": "knowledge", "parse_status": "llm_success", "correct": false, "elapsed_ms": 5720.02}
+      ]
+    },
+    "post_prompt_change": {
+      "intent_prompt_version": "intent.v2",
+      "started_at": "2026-09-01T12:39:51+00:00",
+      "completed_at": "2026-09-01T12:40:33+00:00",
+      "structured_first_pass_success_rate": 1.0,
+      "structured_correction_success_rate": null,
+      "correction_observed_case_count": 0,
+      "provider_intent_accuracy": 0.625,
+      "provider_backed_case_count": 8,
+      "provider_requests": 8,
+      "provider_errors": 0,
+      "provider_avg_latency_ms": 5099.88,
+      "provider_p95_latency_ms": 5936,
+      "input_tokens": 5534,
+      "output_tokens": 3912,
+      "estimated_cost_usd": 0.0,
+      "cases": [
+        {"case_id": "LIVE-INT-001", "expected_intent": "general_qa", "predicted_intent": "general_qa", "parse_status": "llm_success", "correct": true, "elapsed_ms": 6734.31},
+        {"case_id": "LIVE-INT-002", "expected_intent": "alarm_search", "predicted_intent": "alarm_search", "parse_status": "llm_success", "correct": true, "elapsed_ms": 4949.31},
+        {"case_id": "LIVE-INT-003", "expected_intent": "troubleshooting", "predicted_intent": "troubleshooting", "parse_status": "llm_success", "correct": true, "elapsed_ms": 6034.14},
+        {"case_id": "LIVE-INT-004", "expected_intent": "device_search", "predicted_intent": "device_search", "parse_status": "llm_success", "correct": true, "elapsed_ms": 6127.49},
+        {"case_id": "LIVE-INT-005", "expected_intent": "config_search", "predicted_intent": "general_qa", "parse_status": "llm_success", "correct": false, "elapsed_ms": 5773.05},
+        {"case_id": "LIVE-INT-006", "expected_intent": "general_qa", "predicted_intent": "general_qa", "parse_status": "llm_success", "correct": true, "elapsed_ms": 4033.84},
+        {"case_id": "LIVE-INT-007", "expected_intent": "alarm_search", "predicted_intent": "general_qa", "parse_status": "llm_success", "correct": false, "elapsed_ms": 5986.64},
+        {"case_id": "LIVE-INT-008", "expected_intent": "troubleshooting", "predicted_intent": "general_qa", "parse_status": "llm_success", "correct": false, "elapsed_ms": 2948.59}
+      ]
+    }
+  },
+  "interpretation": [
+    "The bounded structured-output budget change removed the observed truncation failure: both live runs completed all 8 cases with first-pass success 1.0 and zero Provider errors.",
+    "The intent.v2 boundary guidance improved labeled accuracy from 0.5 to 0.625 on the same sample; the remaining three misses are broad operational wording classified as general_qa.",
+    "The measured correction-success rate is null, not zero, because no case required a schema retry in either run.",
+    "The two runs are process-scoped observations; latency and Token totals are not a production-wide SLO or cost baseline."
+  ],
+  "not_measured": [
+    "Qwen and Ollama: no enabled healthy model is configured on this installation.",
+    "Production-corpus retrieval Top-5 recall: requires a labeled corpus and retrieval evaluation run.",
+    "Instructor versus internal Pydantic live comparison: intentionally not run because Instructor is not an approved dependency and no separate approved experiment Provider exists."
+  ]
+}

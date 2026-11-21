@@ -1,0 +1,78 @@
+{
+  "status": "PASS",
+  "task_id": "EVAL-012",
+  "database": "postgresql",
+  "sqlite": "not_used",
+  "probe_count": 5,
+  "probes": [
+    "source",
+    "document",
+    "version",
+    "chunk",
+    "reindex"
+  ],
+  "production_write": false,
+  "source_sha256": {
+    "contract": "49b67cef225daf95612b59aea1af6a569cc4441af48d57d00622fe27167f1e8d",
+    "reindex_contract": "f5dcdcb75158f12b8f4c7a3af67ddc11a1d53def13d85fc2b51af3ac3ea0954e",
+    "reindex_service": "aa2744a832e6d15b3cca45d3061e37df5a267e80ad809cb2bbb5fcf52dea4ca2"
+  },
+  "probe_results": {
+    "source": {
+      "bounded_observation_history": true,
+      "migration_0120_0121": true,
+      "no_raw_body_or_metadata_leak": true,
+      "postgresql": true,
+      "recovery_cleanup": true,
+      "status_projection": true,
+      "tenant_isolation": true
+    },
+    "document": {
+      "confirmation": true,
+      "delete_atomicity": true,
+      "disable_enable_recovery": true,
+      "impact_preview": true,
+      "independent_operations": true,
+      "metadata_only_ledger": true,
+      "migration_0145": true,
+      "postgresql": true,
+      "tenant_isolation": true
+    },
+    "version": {
+      "compare_metadata_only": true,
+      "migration_0117_0119": true,
+      "postgresql": true,
+      "publish_pointer": true,
+      "rollback_atomic": true,
+      "rollback_idempotent": true,
+      "source_facts_immutable": true,
+      "supersede": true,
+      "tenant_scoped": true
+    },
+    "chunk": {
+      "status": "PASS",
+      "database": "PostgreSQL",
+      "chunk_count": 3,
+      "parent_relation": true,
+      "neighbor_relation": true,
+      "metadata_redacted": true,
+      "source_locator": true,
+      "version_lineage": true,
+      "tenant_isolation": true,
+      "v1_preserved": true,
+      "rollback": true
+    },
+    "reindex": {
+      "status": "PASS",
+      "database": "PostgreSQL",
+      "initial_chunks": 1,
+      "changed_projection": true,
+      "original_content_preserved": true,
+      "dry_run_unchanged": true,
+      "provider_failure_atomic": true,
+      "concurrent_edit_rejected": true,
+      "rollback": true
+    }
+  },
+  "rollback_or_cleanup": true
+}

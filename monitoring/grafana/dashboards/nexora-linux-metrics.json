@@ -6,7 +6,104 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "全网总览",
+      "tooltip": "切换到 全网总览",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-overview/nexora-network-overview"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "单设备详情",
+      "tooltip": "切换到 单设备详情",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-device/nexora-network-device"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "接口全景",
+      "tooltip": "切换到 接口全景",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-interface/nexora-network-interface"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "无线专网",
+      "tooltip": "切换到 无线专网",
+      "type": "link",
+      "url": "/grafana/d/nexora-network-wireless/nexora-network-wireless"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "出口质量",
+      "tooltip": "切换到 出口质量",
+      "type": "link",
+      "url": "/grafana/d/nexora-outbound-probe-quality/nexora-outbound-probe-quality"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "采集健康",
+      "tooltip": "切换到 采集健康",
+      "type": "link",
+      "url": "/grafana/d/nexora-monitoring-health/nexora-monitoring-health"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Telemetry 实时",
+      "tooltip": "切换到 Telemetry 实时",
+      "type": "link",
+      "url": "/grafana/d/nexora-telemetry-realtime/nexora-telemetry-realtime"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": true,
+      "title": "返回 Nexora 监控",
+      "tooltip": "在新标签页打开 Nexora 网络监控页面",
+      "type": "link",
+      "url": "/monitor/network"
+    }
+  ],
   "panels": [
     {
       "id": 900,
@@ -77,8 +174,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -88,7 +185,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -154,8 +256,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -165,7 +267,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -178,7 +285,7 @@
     {
       "id": 3,
       "title": "平均 CPU 使用率",
-      "type": "stat",
+      "type": "gauge",
       "datasource": {
         "type": "prometheus",
         "uid": "victoriametrics"
@@ -234,14 +341,13 @@
                 }
               }
             }
-          ]
+          ],
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -250,7 +356,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "minVizWidth": 75,
+        "minVizHeight": 75
       },
       "targets": [
         {
@@ -263,7 +373,7 @@
     {
       "id": 4,
       "title": "平均物理内存利用率",
-      "type": "stat",
+      "type": "gauge",
       "datasource": {
         "type": "prometheus",
         "uid": "victoriametrics"
@@ -319,14 +429,13 @@
                 }
               }
             }
-          ]
+          ],
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -335,7 +444,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "minVizWidth": 75,
+        "minVizHeight": 75
       },
       "targets": [
         {
@@ -401,8 +514,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -412,7 +525,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -486,8 +604,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
+        "colorMode": "background",
+        "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
@@ -497,7 +615,12 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 28
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -543,11 +666,12 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
+            "fillOpacity": 24,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -615,10 +739,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "list",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -671,11 +799,12 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
+            "fillOpacity": 24,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -758,10 +887,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "list",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -832,11 +965,12 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
+            "fillOpacity": 24,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -904,10 +1038,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "list",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -960,11 +1098,12 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
+            "fillOpacity": 24,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -995,6 +1134,10 @@
                   "mode": "fixed",
                   "fixedColor": "#3B82F6"
                 }
+              },
+              {
+                "id": "custom.transform",
+                "value": "negative-Y"
               }
             ]
           }
@@ -1002,10 +1145,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "list",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -1029,444 +1176,490 @@
       "id": 903,
       "title": "磁盘空间、网络与会话",
       "type": "row",
-      "collapsed": false,
+      "collapsed": true,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
         "y": 23
       },
-      "panels": []
-    },
-    {
-      "id": 11,
-      "title": "主机磁盘空间利用率 Top 10",
-      "type": "table",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 24
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "thresholds"
+      "panels": [
+        {
+          "id": 11,
+          "title": "主机磁盘空间利用率 Top 10",
+          "type": "table",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
           },
-          "custom": {
-            "filterable": true
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "磁盘使用率"
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 1
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "filterable": true
+              }
             },
-            "properties": [
+            "overrides": [
               {
-                "id": "unit",
-                "value": "percent"
-              },
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "gauge",
-                  "mode": "gradient"
-                }
-              },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "#22C55E",
-                      "value": null
-                    },
-                    {
-                      "color": "#F59E0B",
-                      "value": 70
-                    },
-                    {
-                      "color": "#F43F5E",
-                      "value": 85
+                "matcher": {
+                  "id": "byName",
+                  "options": "磁盘使用率"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "percent"
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "gauge",
+                      "mode": "gradient"
                     }
-                  ]
-                }
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "#22C55E",
+                          "value": null
+                        },
+                        {
+                          "color": "#F59E0B",
+                          "value": 70
+                        },
+                        {
+                          "color": "#F43F5E",
+                          "value": 85
+                        }
+                      ]
+                    }
+                  }
+                ]
               }
             ]
-          }
-        ]
-      },
-      "options": {
-        "cellHeight": "sm",
-        "showHeader": true,
-        "footer": {
-          "show": false
-        },
-        "enablePagination": true
-      },
-      "targets": [
-        {
-          "expr": "topk(10, max by (hostname, mountpoint) ((1 - (node_filesystem_avail_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",fstype!~\"tmpfs|iso9660|squashfs\",fstype!=\"\"} / node_filesystem_size_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"})) * 100))",
-          "format": "table",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "transformations": [
-        {
-          "id": "organize",
+          },
           "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "ifIndex": true,
-              "asset_id": true,
-              "nexora_asset_id": true,
-              "nexora_hostname": true,
-              "nexora_module": true,
-              "nexora_platform": true,
-              "nexora_role": true,
-              "nexora_site_id": true,
-              "nexora_site_name": true,
-              "nexora_tenant_id": true,
-              "nexora_vendor": true,
-              "job": true,
-              "tenant_id": true,
-              "site_id": true,
-              "platform": true,
-              "sysName": true,
-              "nexora_interface_role": true
+            "cellHeight": "sm",
+            "showHeader": true,
+            "footer": {
+              "show": false
             },
-            "indexByName": {
-              "site_name": 0,
-              "hostname": 1,
-              "instance": 2,
-              "ifName": 3,
-              "ifDescr": 4,
-              "vendor": 5,
-              "role": 6,
-              "interface_role": 7,
-              "utilization_warn_pct": 8,
-              "utilization_high_pct": 9,
-              "utilization_critical_pct": 10,
-              "Value": 11
-            },
-            "renameByName": {
-              "sysName": "设备名称",
-              "hostname": "设备名称",
-              "instance": "采集目标",
-              "site_name": "站点",
-              "ifName": "接口全称",
-              "ifDescr": "接口描述",
-              "vendor": "厂商",
-              "role": "角色",
-              "interface_role": "接口用途",
-              "utilization_warn_pct": "预警阈值 (%)",
-              "utilization_high_pct": "高位阈值 (%)",
-              "utilization_critical_pct": "严重阈值 (%)",
-              "Value": "磁盘使用率",
-              "mountpoint": "挂载点"
+            "enablePagination": true
+          },
+          "targets": [
+            {
+              "expr": "topk(10, max by (hostname, mountpoint) ((1 - (node_filesystem_avail_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",fstype!~\"tmpfs|iso9660|squashfs\",fstype!=\"\"} / node_filesystem_size_bytes{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"})) * 100))",
+              "format": "table",
+              "instant": true,
+              "refId": "A"
             }
-          }
-        }
-      ]
-    },
-    {
-      "id": 12,
-      "title": "服务器网卡流量走势 (bps)",
-      "type": "timeseries",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 24
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bps",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": ".*接收.*"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#22D3EE"
+          ],
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true,
+                  "__name__": true,
+                  "ifIndex": true,
+                  "asset_id": true,
+                  "nexora_asset_id": true,
+                  "nexora_hostname": true,
+                  "nexora_module": true,
+                  "nexora_platform": true,
+                  "nexora_role": true,
+                  "nexora_site_id": true,
+                  "nexora_site_name": true,
+                  "nexora_tenant_id": true,
+                  "nexora_vendor": true,
+                  "job": true,
+                  "tenant_id": true,
+                  "site_id": true,
+                  "platform": true,
+                  "sysName": true,
+                  "nexora_interface_role": true
+                },
+                "indexByName": {
+                  "site_name": 0,
+                  "hostname": 1,
+                  "instance": 2,
+                  "ifName": 3,
+                  "ifDescr": 4,
+                  "vendor": 5,
+                  "role": 6,
+                  "interface_role": 7,
+                  "utilization_warn_pct": 8,
+                  "utilization_high_pct": 9,
+                  "utilization_critical_pct": 10,
+                  "Value": 11
+                },
+                "renameByName": {
+                  "sysName": "设备名称",
+                  "hostname": "设备名称",
+                  "instance": "采集目标",
+                  "site_name": "站点",
+                  "ifName": "接口全称",
+                  "ifDescr": "接口描述",
+                  "vendor": "厂商",
+                  "role": "角色",
+                  "interface_role": "接口用途",
+                  "utilization_warn_pct": "预警阈值 (%)",
+                  "utilization_high_pct": "高位阈值 (%)",
+                  "utilization_critical_pct": "严重阈值 (%)",
+                  "Value": "磁盘使用率",
+                  "mountpoint": "挂载点"
                 }
               }
-            ]
+            }
+          ]
+        },
+        {
+          "id": 12,
+          "title": "服务器网卡流量走势 (bps)",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
           },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": ".*发送.*"
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 1
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bps",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "lineWidth": 2,
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
+              }
             },
-            "properties": [
+            "overrides": [
               {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#3B82F6"
-                }
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": ".*接收.*"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#22D3EE"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": ".*发送.*"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#3B82F6"
+                    }
+                  },
+                  {
+                    "id": "custom.transform",
+                    "value": "negative-Y"
+                  }
+                ]
               }
             ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "expr": "sum by (hostname, device) (rate(node_network_receive_bytes_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",device!~\"lo|docker.*|veth.*|br-.*\"}[5m]) * 8)",
-          "legendFormat": "{{site_name}} / {{hostname}} - {{device}} 接收 (bps)",
-          "refId": "A"
-        },
-        {
-          "expr": "sum by (hostname, device) (rate(node_network_transmit_bytes_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",device!~\"lo|docker.*|veth.*|br-.*\"}[5m]) * 8)",
-          "legendFormat": "{{site_name}} / {{hostname}} - {{device}} 发送 (bps)",
-          "refId": "B"
-        }
-      ]
-    },
-    {
-      "id": 13,
-      "title": "主机 TCP 活跃连接数 Top 10",
-      "type": "table",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 32
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "thresholds"
           },
-          "custom": {
-            "filterable": true
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "活跃连接数"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "none"
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "cellHeight": "sm",
-        "showHeader": true,
-        "footer": {
-          "show": false
-        },
-        "enablePagination": true
-      },
-      "targets": [
-        {
-          "expr": "topk(10, sum by (hostname) (node_netstat_Tcp_CurrEstab{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}))",
-          "format": "table",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "transformations": [
-        {
-          "id": "organize",
           "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "ifIndex": true,
-              "asset_id": true,
-              "nexora_asset_id": true,
-              "nexora_hostname": true,
-              "nexora_module": true,
-              "nexora_platform": true,
-              "nexora_role": true,
-              "nexora_site_id": true,
-              "nexora_site_name": true,
-              "nexora_tenant_id": true,
-              "nexora_vendor": true,
-              "job": true,
-              "tenant_id": true,
-              "site_id": true,
-              "platform": true,
-              "sysName": true,
-              "nexora_interface_role": true
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max",
+                "mean"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
             },
-            "indexByName": {
-              "site_name": 0,
-              "hostname": 1,
-              "instance": 2,
-              "ifName": 3,
-              "ifDescr": 4,
-              "vendor": 5,
-              "role": 6,
-              "interface_role": 7,
-              "utilization_warn_pct": 8,
-              "utilization_high_pct": 9,
-              "utilization_critical_pct": 10,
-              "Value": 11
-            },
-            "renameByName": {
-              "sysName": "设备名称",
-              "hostname": "设备名称",
-              "instance": "采集目标",
-              "site_name": "站点",
-              "ifName": "接口全称",
-              "ifDescr": "接口描述",
-              "vendor": "厂商",
-              "role": "角色",
-              "interface_role": "接口用途",
-              "utilization_warn_pct": "预警阈值 (%)",
-              "utilization_high_pct": "高位阈值 (%)",
-              "utilization_critical_pct": "严重阈值 (%)",
-              "Value": "活跃连接数"
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
             }
-          }
-        }
-      ]
-    },
-    {
-      "id": 14,
-      "title": "系统进程调度与阻塞情况",
-      "type": "timeseries",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "victoriametrics"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 32
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "noValue": "暂无采集数据",
-          "color": {
-            "mode": "palette-classic"
           },
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "fillOpacity": 12,
-            "gradientMode": "none",
-            "showPoints": "never"
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": ".*正在运行进程数$"
+          "targets": [
+            {
+              "expr": "sum by (hostname, device) (rate(node_network_receive_bytes_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",device!~\"lo|docker.*|veth.*|br-.*\"}[5m]) * 8)",
+              "legendFormat": "{{site_name}} / {{hostname}} - {{device}} 接收 (bps)",
+              "refId": "A"
             },
-            "properties": [
+            {
+              "expr": "sum by (hostname, device) (rate(node_network_transmit_bytes_total{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\",device!~\"lo|docker.*|veth.*|br-.*\"}[5m]) * 8)",
+              "legendFormat": "{{site_name}} / {{hostname}} - {{device}} 发送 (bps)",
+              "refId": "B"
+            }
+          ]
+        },
+        {
+          "id": 13,
+          "title": "主机 TCP 活跃连接数 Top 10",
+          "type": "table",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 9
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "filterable": true
+              }
+            },
+            "overrides": [
               {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#3B82F6"
-                }
+                "matcher": {
+                  "id": "byName",
+                  "options": "活跃连接数"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "none"
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "gauge",
+                      "mode": "gradient"
+                    }
+                  },
+                  {
+                    "id": "min",
+                    "value": 0
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "#3B82F6",
+                          "value": null
+                        },
+                        {
+                          "color": "#F59E0B",
+                          "value": 2000
+                        },
+                        {
+                          "color": "#EF4444",
+                          "value": 5000
+                        }
+                      ]
+                    }
+                  }
+                ]
               }
             ]
           },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": ".*阻塞/等待I/O进程数$"
+          "options": {
+            "cellHeight": "sm",
+            "showHeader": true,
+            "footer": {
+              "show": false
             },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#F59E0B"
+            "enablePagination": true
+          },
+          "targets": [
+            {
+              "expr": "topk(10, sum by (hostname) (node_netstat_Tcp_CurrEstab{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}))",
+              "format": "table",
+              "instant": true,
+              "refId": "A"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true,
+                  "__name__": true,
+                  "ifIndex": true,
+                  "asset_id": true,
+                  "nexora_asset_id": true,
+                  "nexora_hostname": true,
+                  "nexora_module": true,
+                  "nexora_platform": true,
+                  "nexora_role": true,
+                  "nexora_site_id": true,
+                  "nexora_site_name": true,
+                  "nexora_tenant_id": true,
+                  "nexora_vendor": true,
+                  "job": true,
+                  "tenant_id": true,
+                  "site_id": true,
+                  "platform": true,
+                  "sysName": true,
+                  "nexora_interface_role": true
+                },
+                "indexByName": {
+                  "site_name": 0,
+                  "hostname": 1,
+                  "instance": 2,
+                  "ifName": 3,
+                  "ifDescr": 4,
+                  "vendor": 5,
+                  "role": 6,
+                  "interface_role": 7,
+                  "utilization_warn_pct": 8,
+                  "utilization_high_pct": 9,
+                  "utilization_critical_pct": 10,
+                  "Value": 11
+                },
+                "renameByName": {
+                  "sysName": "设备名称",
+                  "hostname": "设备名称",
+                  "instance": "采集目标",
+                  "site_name": "站点",
+                  "ifName": "接口全称",
+                  "ifDescr": "接口描述",
+                  "vendor": "厂商",
+                  "role": "角色",
+                  "interface_role": "接口用途",
+                  "utilization_warn_pct": "预警阈值 (%)",
+                  "utilization_high_pct": "高位阈值 (%)",
+                  "utilization_critical_pct": "严重阈值 (%)",
+                  "Value": "活跃连接数"
                 }
               }
+            }
+          ]
+        },
+        {
+          "id": 14,
+          "title": "系统进程调度与阻塞情况",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 9
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "noValue": "暂无采集数据",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "lineWidth": 2,
+                "fillOpacity": 24,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": ".*正在运行进程数$"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#3B82F6"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": ".*阻塞/等待I/O进程数$"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#F59E0B"
+                    }
+                  }
+                ]
+              }
             ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "expr": "node_procs_running{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
-          "legendFormat": "{{site_name}} / {{hostname}} 正在运行进程数",
-          "refId": "A"
-        },
-        {
-          "expr": "node_procs_blocked{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
-          "legendFormat": "{{site_name}} / {{hostname}} 阻塞/等待I/O进程数",
-          "refId": "B"
+          },
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max",
+                "mean"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "expr": "node_procs_running{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+              "legendFormat": "{{site_name}} / {{hostname}} 正在运行进程数",
+              "refId": "A"
+            },
+            {
+              "expr": "node_procs_blocked{job=\"linux_servers\",site_name=~\"$site\",hostname=~\"$device\"}",
+              "legendFormat": "{{site_name}} / {{hostname}} 阻塞/等待I/O进程数",
+              "refId": "B"
+            }
+          ]
         }
       ]
     }
@@ -1540,5 +1733,6 @@
   "timezone": "browser",
   "title": "07 Linux 服务器监控 (Linux Server Metrics)",
   "uid": "nexora-linux-metrics",
-  "version": 30
+  "version": 33,
+  "description": "Linux 服务器核心性能大盘：覆盖主机 CPU 负载、内存与 Swap 分布、磁盘吞吐与容量热点、网卡收发流量及 TCP 活跃会话。"
 }

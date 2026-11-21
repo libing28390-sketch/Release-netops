@@ -1,0 +1,50 @@
+schema_version: 1
+task_id: AUD-005
+runtime:
+  database: data/netops.db
+  access: read_only
+  ai_tables_present: false
+  documents: 0
+  chunks: 0
+  embeddings: 0
+  quality_status: NOT_APPLICABLE
+  reason: V2 AI migrations are not applied to the local runtime database.
+metrics:
+  - id: documents
+    table: ai_document
+    dimensions: [tenant_id, status, knowledge_source_type]
+    required_columns: [id]
+  - id: chunks
+    table: ai_document_chunk
+    dimensions: [document_id, chunk_role, chunk_type, is_retrieval_candidate]
+    required_columns: [id, document_id, content]
+  - id: embeddings
+    table: ai_document_chunk
+    dimensions: [embedding_model, embedding_dimensions, embedding_version]
+    validity: non_empty_parseable_vector_and_contract_dimension_match
+  - id: orphan_chunks
+    query_shape: left_join_document_then_document_id_is_null
+    severity: P0
+  - id: duplicate_documents
+    query_shape: group_by_non_null_document_id_and_content_hash
+    severity: P1
+  - id: duplicate_chunks
+    query_shape: group_by_document_and_content_or_embedding_hash
+    severity: P1
+  - id: empty_metadata
+    query_shape: null_empty_json_non_object_or_missing_required_fields
+    severity: P0
+  - id: failed_embeddings
+    query_shape: reindex_failure_counters_or_active_rows_without_valid_vector
+    severity: P0
+evidence_dimensions: [observed_at, environment, db_revision, tenant_scope, query_version]
+forbidden_evidence_values: [raw_provider_payload, api_key, user_identifier, full_document_content]
+findings:
+  - id: AUD005-F01
+    severity: P0
+    status: OPEN
+    description: Local runtime has no AI tables, so real data quality cannot be proven.
+  - id: AUD005-F02
+    severity: P1
+    status: OPEN
+    description: Duplicate/orphan/metadata rules need PostgreSQL target snapshot after migrations.

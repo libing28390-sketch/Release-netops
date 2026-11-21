@@ -171,3 +171,28 @@ export interface TelemetryActionAccepted {
 }
 
 export type TelemetrySubscriptionAction = 'enable' | 'disable' | 'retry';
+
+export interface TelemetrySimulatedFrame {
+  sensor_path: string;
+  wire_bytes: number;
+  sample_count: number;
+  encoding?: string;
+  producer?: string;
+  device?: string;
+  request_id?: number;
+}
+
+export interface TelemetrySimulationResult {
+  subscription_id: string;
+  device_id: string;
+  hostname: string;
+  vendor: string;
+  protocol_profile: string;
+  wire_format: string;
+  simulated_paths: string[];
+  decoded_frames: TelemetrySimulatedFrame[];
+  active_series: number;
+  sample_rate: number;
+  normalized_samples: string[];
+  runtime: TelemetrySubscriptionStatus;
+}

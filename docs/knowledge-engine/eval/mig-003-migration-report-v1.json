@@ -1,0 +1,49 @@
+{
+  "status": "PASS",
+  "task_id": "MIG-003",
+  "authority": "PostgreSQL",
+  "sqlite": "forbidden",
+  "duration_seconds": 0.251,
+  "manifest_version": "nexora-knowledge-engine-v2-migration-manifest/v1",
+  "manifest_sha256": "f9bfde17943cf3420a2b273e5d6f1d1dacb22f12fc7a6c9a6783c9c931aca551",
+  "mapping_entries": 156,
+  "counts": {
+    "legacy_documents": 156,
+    "trusted": 0,
+    "conditional_reconciliation": 156,
+    "untrusted_or_quarantined": 0,
+    "source_registry_resolved": 0,
+    "source_registry_unresolved": 156,
+    "v2_id_collisions": 0
+  },
+  "probe": {
+    "status": "PASS",
+    "database": "PostgreSQL",
+    "transaction_read_only": true,
+    "legacy_document_rows": 156,
+    "source_registry_rows": 3,
+    "production_database_write": false,
+    "rollback": "read_only_transaction_rollback",
+    "sqlite": "forbidden"
+  },
+  "mapping_strategy": "deterministic_uuid5_tenant_scoped_legacy_key",
+  "production_database_write": false,
+  "rollback": "discard_artifact_without_target_mutation",
+  "report_redacted": true,
+  "contract_sha256": "0dc634190efd8de569293368b26e1f22ee6a7bf6973486430c73b74fee100065",
+  "contract_layers": [
+    "acceptance",
+    "admissibility",
+    "authority",
+    "evidence",
+    "identity",
+    "manifest",
+    "original_requirement",
+    "production_database_write",
+    "source_registry",
+    "sqlite",
+    "status",
+    "task_id",
+    "title"
+  ]
+}

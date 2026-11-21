@@ -1,0 +1,539 @@
+{
+  "baseline_id": "nexora-kb-v1-20260809",
+  "system_under_test": "current-local-rag-retrieval-path",
+  "case_count": 10,
+  "metrics": {
+    "retrieval_accuracy": 1.0,
+    "wrong_vendor_rate": 0.0,
+    "version_conflict_rate": 0.0,
+    "citation_accuracy": 1.0,
+    "citation_recall": 1.0,
+    "latency_ms": {
+      "average": 0.9154,
+      "p50": 0.8519,
+      "p95": 1.5748,
+      "max": 1.704
+    }
+  },
+  "cases": [
+    {
+      "id": "Q01",
+      "query": "S5735-L-V2 V600 ARP",
+      "expected_ids": [
+        "arp-v600"
+      ],
+      "returned_ids": [
+        "arp-v600"
+      ],
+      "retrieval_correct": true,
+      "citation_precision": 1.0,
+      "vendor_mismatch": false,
+      "version_conflict": false,
+      "latency_ms": 1.704,
+      "debug": {
+        "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.software_train, '')) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND (LOWER(COALESCE(d.product_series, '')) = LOWER(?) OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?)) AND LOWER(d.cli_platform) = LOWER(?)",
+        "metadata_candidate_documents": 1,
+        "candidate_count": 1,
+        "vector_top_n": 1,
+        "fts_stage": "not_applicable",
+        "trgm_stage": "not_applicable",
+        "vector_stage": "not_applicable",
+        "fts_candidates": 0,
+        "trgm_candidates": 0,
+        "vector_candidates": 0,
+        "capability_degraded": [
+          "POSTGRES_ACCELERATORS_NOT_APPLICABLE"
+        ],
+        "dedup_document_count": 1,
+        "incompatible_embedding_chunks": 0,
+        "version_conflict_count": 0,
+        "wrong_vendor_count": 0,
+        "expanded_context_chunks": 1,
+        "final_document_ids": [
+          "huawei.yunshan.v600.display_arp.command"
+        ],
+        "reranker": {
+          "stage": "applied",
+          "name": "none",
+          "timeout_ms": 120,
+          "candidate_count": 1,
+          "cost_units": 1,
+          "latency_ms": 0
+        },
+        "cache": {
+          "hit": false,
+          "key": "997727096e147b3438862af5079527463e39e986201f7353a036f7d460721735",
+          "enabled": false
+        },
+        "outcome": "matched"
+      }
+    },
+    {
+      "id": "Q02",
+      "query": "S5735-L-V2 V600 VLAN config",
+      "expected_ids": [
+        "vlan-v600"
+      ],
+      "returned_ids": [
+        "vlan-v600"
+      ],
+      "retrieval_correct": true,
+      "citation_precision": 1.0,
+      "vendor_mismatch": false,
+      "version_conflict": false,
+      "latency_ms": 1.4169,
+      "debug": {
+        "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.software_train, '')) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND (LOWER(COALESCE(d.product_series, '')) = LOWER(?) OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?)) AND LOWER(d.cli_platform) = LOWER(?)",
+        "metadata_candidate_documents": 1,
+        "candidate_count": 1,
+        "vector_top_n": 1,
+        "fts_stage": "not_applicable",
+        "trgm_stage": "not_applicable",
+        "vector_stage": "not_applicable",
+        "fts_candidates": 0,
+        "trgm_candidates": 0,
+        "vector_candidates": 0,
+        "capability_degraded": [
+          "POSTGRES_ACCELERATORS_NOT_APPLICABLE"
+        ],
+        "dedup_document_count": 1,
+        "incompatible_embedding_chunks": 0,
+        "version_conflict_count": 0,
+        "wrong_vendor_count": 0,
+        "expanded_context_chunks": 1,
+        "final_document_ids": [
+          "huawei.yunshan.v600.vlan_access.configuration"
+        ],
+        "reranker": {
+          "stage": "applied",
+          "name": "none",
+          "timeout_ms": 120,
+          "candidate_count": 1,
+          "cost_units": 1,
+          "latency_ms": 0
+        },
+        "cache": {
+          "hit": false,
+          "key": "d2877a9756e547ed88d75370c29a031adf6f45df9c497c06caff8815e316ae62",
+          "enabled": false
+        },
+        "outcome": "matched"
+      }
+    },
+    {
+      "id": "Q03",
+      "query": "Huawei V300 OSPF output",
+      "expected_ids": [
+        "ospf-v300"
+      ],
+      "returned_ids": [
+        "ospf-v300"
+      ],
+      "retrieval_correct": true,
+      "citation_precision": 1.0,
+      "vendor_mismatch": false,
+      "version_conflict": false,
+      "latency_ms": 1.0908,
+      "debug": {
+        "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.software_train, '')) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND LOWER(d.cli_platform) = LOWER(?)",
+        "metadata_candidate_documents": 1,
+        "candidate_count": 1,
+        "vector_top_n": 1,
+        "fts_stage": "not_applicable",
+        "trgm_stage": "not_applicable",
+        "vector_stage": "not_applicable",
+        "fts_candidates": 0,
+        "trgm_candidates": 0,
+        "vector_candidates": 0,
+        "capability_degraded": [
+          "POSTGRES_ACCELERATORS_NOT_APPLICABLE"
+        ],
+        "dedup_document_count": 1,
+        "incompatible_embedding_chunks": 0,
+        "version_conflict_count": 0,
+        "wrong_vendor_count": 0,
+        "expanded_context_chunks": 1,
+        "final_document_ids": [
+          "huawei.yunshan.v300.display_ospf_peer.output.001"
+        ],
+        "reranker": {
+          "stage": "applied",
+          "name": "none",
+          "timeout_ms": 120,
+          "candidate_count": 1,
+          "cost_units": 1,
+          "latency_ms": 0
+        },
+        "cache": {
+          "hit": false,
+          "key": "a2dfdce1e1d8a759eb7dc8605a6accfbc16cee32ced2fabb1e334261e284c532",
+          "enabled": false
+        },
+        "outcome": "matched"
+      }
+    },
+    {
+      "id": "Q04",
+      "query": "Huawei V600 OSPF output",
+      "expected_ids": [
+        "ospf-v600"
+      ],
+      "returned_ids": [
+        "ospf-v600"
+      ],
+      "retrieval_correct": true,
+      "citation_precision": 1.0,
+      "vendor_mismatch": false,
+      "version_conflict": false,
+      "latency_ms": 0.7338,
+      "debug": {
+        "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.software_train, '')) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND LOWER(d.cli_platform) = LOWER(?)",
+        "metadata_candidate_documents": 1,
+        "candidate_count": 1,
+        "vector_top_n": 1,
+        "fts_stage": "not_applicable",
+        "trgm_stage": "not_applicable",
+        "vector_stage": "not_applicable",
+        "fts_candidates": 0,
+        "trgm_candidates": 0,
+        "vector_candidates": 0,
+        "capability_degraded": [
+          "POSTGRES_ACCELERATORS_NOT_APPLICABLE"
+        ],
+        "dedup_document_count": 1,
+        "incompatible_embedding_chunks": 0,
+        "version_conflict_count": 0,
+        "wrong_vendor_count": 0,
+        "expanded_context_chunks": 1,
+        "final_document_ids": [
+          "huawei.yunshan.v600.display_ospf_peer_brief.output.001"
+        ],
+        "reranker": {
+          "stage": "applied",
+          "name": "none",
+          "timeout_ms": 120,
+          "candidate_count": 1,
+          "cost_units": 1,
+          "latency_ms": 0
+        },
+        "cache": {
+          "hit": false,
+          "key": "a4420732a01453e17af53faa03cbd56cb3bdecbcc7750b3bf3c5382952162bdd",
+          "enabled": false
+        },
+        "outcome": "matched"
+      }
+    },
+    {
+      "id": "Q05",
+      "query": "display ospf peer meaning",
+      "expected_ids": [
+        "ospf-v300",
+        "ospf-v600"
+      ],
+      "returned_ids": [
+        "ospf-v300",
+        "ospf-v600"
+      ],
+      "retrieval_correct": true,
+      "citation_precision": 1.0,
+      "vendor_mismatch": false,
+      "version_conflict": false,
+      "latency_ms": 0.9591,
+      "debug": {
+        "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?)",
+        "metadata_candidate_documents": 2,
+        "candidate_count": 2,
+        "vector_top_n": 2,
+        "fts_stage": "not_applicable",
+        "trgm_stage": "not_applicable",
+        "vector_stage": "not_applicable",
+        "fts_candidates": 0,
+        "trgm_candidates": 0,
+        "vector_candidates": 0,
+        "capability_degraded": [
+          "POSTGRES_ACCELERATORS_NOT_APPLICABLE"
+        ],
+        "dedup_document_count": 2,
+        "incompatible_embedding_chunks": 0,
+        "version_conflict_count": 0,
+        "wrong_vendor_count": 0,
+        "expanded_context_chunks": 2,
+        "final_document_ids": [
+          "huawei.yunshan.v300.display_ospf_peer.output.001",
+          "huawei.yunshan.v600.display_ospf_peer_brief.output.001"
+        ],
+        "reranker": {
+          "stage": "applied",
+          "name": "none",
+          "timeout_ms": 120,
+          "candidate_count": 2,
+          "cost_units": 2,
+          "latency_ms": 0
+        },
+        "cache": {
+          "hit": false,
+          "key": "4998d49bdce43e5944c8da2dff46e4a403ae36cbb355a5f760cb24098c651459",
+          "enabled": false
+        },
+        "outcome": "matched"
+      }
+    },
+    {
+      "id": "Q06",
+      "query": "CloudEngine 6800 hardware",
+      "expected_ids": [
+        "hw-ce-series",
+        "hw-ce-model"
+      ],
+      "returned_ids": [
+        "hw-ce-series",
+        "hw-ce-model"
+      ],
+      "retrieval_correct": true,
+      "citation_precision": 1.0,
+      "vendor_mismatch": false,
+      "version_conflict": false,
+      "latency_ms": 0.9427,
+      "debug": {
+        "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND (LOWER(COALESCE(d.product_series, '')) = LOWER(?) OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?))",
+        "metadata_candidate_documents": 2,
+        "candidate_count": 2,
+        "vector_top_n": 2,
+        "fts_stage": "not_applicable",
+        "trgm_stage": "not_applicable",
+        "vector_stage": "not_applicable",
+        "fts_candidates": 0,
+        "trgm_candidates": 0,
+        "vector_candidates": 0,
+        "capability_degraded": [
+          "POSTGRES_ACCELERATORS_NOT_APPLICABLE"
+        ],
+        "dedup_document_count": 2,
+        "incompatible_embedding_chunks": 0,
+        "version_conflict_count": 0,
+        "wrong_vendor_count": 0,
+        "expanded_context_chunks": 2,
+        "final_document_ids": [
+          "huawei.cloudengine-6800.product_registry.series",
+          "huawei.cloudengine-6800.ce6885.product_registry.model"
+        ],
+        "reranker": {
+          "stage": "applied",
+          "name": "none",
+          "timeout_ms": 120,
+          "candidate_count": 2,
+          "cost_units": 2,
+          "latency_ms": 0
+        },
+        "cache": {
+          "hit": false,
+          "key": "7d9dee9ca26bb485115130e58a6ebaf2e57042a74500edcde5f4dfd2bfa15219",
+          "enabled": false
+        },
+        "outcome": "matched"
+      }
+    },
+    {
+      "id": "Q07",
+      "query": "CloudEngine 6800 OSPF config",
+      "expected_ids": [],
+      "returned_ids": [],
+      "retrieval_correct": true,
+      "citation_precision": 1.0,
+      "vendor_mismatch": false,
+      "version_conflict": false,
+      "latency_ms": 0.3514,
+      "debug": {
+        "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND (LOWER(COALESCE(d.product_series, '')) = LOWER(?) OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?))",
+        "metadata_candidate_documents": 0,
+        "candidate_count": 0,
+        "vector_top_n": 0,
+        "fts_stage": "not_applicable",
+        "trgm_stage": "not_applicable",
+        "vector_stage": "not_applicable",
+        "fts_candidates": 0,
+        "trgm_candidates": 0,
+        "vector_candidates": 0,
+        "capability_degraded": [
+          "POSTGRES_ACCELERATORS_NOT_APPLICABLE"
+        ],
+        "dedup_document_count": 0,
+        "incompatible_embedding_chunks": 0,
+        "version_conflict_count": 0,
+        "wrong_vendor_count": 0,
+        "expanded_context_chunks": 0,
+        "final_document_ids": [],
+        "reranker": {
+          "stage": "skipped",
+          "reason": "no_candidates",
+          "cost_units": 0
+        },
+        "cache": {
+          "hit": false,
+          "key": "04e7252e74dbd4458be6a7e3ad2a13d356190f077806469b2cd44ffa19eedfba",
+          "enabled": false
+        },
+        "outcome": "no_match"
+      }
+    },
+    {
+      "id": "Q08",
+      "query": "Cisco ARP",
+      "expected_ids": [
+        "cisco-arp"
+      ],
+      "returned_ids": [
+        "cisco-arp"
+      ],
+      "retrieval_correct": true,
+      "citation_precision": 1.0,
+      "vendor_mismatch": false,
+      "version_conflict": false,
+      "latency_ms": 0.6146,
+      "debug": {
+        "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?)",
+        "metadata_candidate_documents": 1,
+        "candidate_count": 1,
+        "vector_top_n": 1,
+        "fts_stage": "not_applicable",
+        "trgm_stage": "not_applicable",
+        "vector_stage": "not_applicable",
+        "fts_candidates": 0,
+        "trgm_candidates": 0,
+        "vector_candidates": 0,
+        "capability_degraded": [
+          "POSTGRES_ACCELERATORS_NOT_APPLICABLE"
+        ],
+        "dedup_document_count": 1,
+        "incompatible_embedding_chunks": 0,
+        "version_conflict_count": 0,
+        "wrong_vendor_count": 0,
+        "expanded_context_chunks": 1,
+        "final_document_ids": [
+          "cisco.iosxe.show_arp.command"
+        ],
+        "reranker": {
+          "stage": "applied",
+          "name": "none",
+          "timeout_ms": 120,
+          "candidate_count": 1,
+          "cost_units": 1,
+          "latency_ms": 0
+        },
+        "cache": {
+          "hit": false,
+          "key": "0493a7540280b36f7ba8189f93bd00a8ebe7e07c365f0ed3c4b3e3dc829eb4ef",
+          "enabled": false
+        },
+        "outcome": "matched"
+      }
+    },
+    {
+      "id": "Q09",
+      "query": "H3C OSPF command",
+      "expected_ids": [
+        "h3c-ospf"
+      ],
+      "returned_ids": [
+        "h3c-ospf"
+      ],
+      "retrieval_correct": true,
+      "citation_precision": 1.0,
+      "vendor_mismatch": false,
+      "version_conflict": false,
+      "latency_ms": 0.5798,
+      "debug": {
+        "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?)",
+        "metadata_candidate_documents": 1,
+        "candidate_count": 1,
+        "vector_top_n": 1,
+        "fts_stage": "not_applicable",
+        "trgm_stage": "not_applicable",
+        "vector_stage": "not_applicable",
+        "fts_candidates": 0,
+        "trgm_candidates": 0,
+        "vector_candidates": 0,
+        "capability_degraded": [
+          "POSTGRES_ACCELERATORS_NOT_APPLICABLE"
+        ],
+        "dedup_document_count": 1,
+        "incompatible_embedding_chunks": 0,
+        "version_conflict_count": 0,
+        "wrong_vendor_count": 0,
+        "expanded_context_chunks": 1,
+        "final_document_ids": [
+          "h3c.comware.display_ospf_peer.command"
+        ],
+        "reranker": {
+          "stage": "applied",
+          "name": "none",
+          "timeout_ms": 120,
+          "candidate_count": 1,
+          "cost_units": 1,
+          "latency_ms": 0
+        },
+        "cache": {
+          "hit": false,
+          "key": "c3531f8fdc7513423c12383eec7d8976b37975d8b990c8c9ef8889b42a54dc56",
+          "enabled": false
+        },
+        "outcome": "matched"
+      }
+    },
+    {
+      "id": "Q10",
+      "query": "S5735-L-V2 V600 ARP no vendor",
+      "expected_ids": [
+        "arp-v600"
+      ],
+      "returned_ids": [
+        "arp-v600"
+      ],
+      "retrieval_correct": true,
+      "citation_precision": 1.0,
+      "vendor_mismatch": false,
+      "version_conflict": false,
+      "latency_ms": 0.7611,
+      "debug": {
+        "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.software_train, '')) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND (LOWER(COALESCE(d.product_series, '')) = LOWER(?) OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?)) AND LOWER(d.cli_platform) = LOWER(?)",
+        "metadata_candidate_documents": 1,
+        "candidate_count": 1,
+        "vector_top_n": 1,
+        "fts_stage": "not_applicable",
+        "trgm_stage": "not_applicable",
+        "vector_stage": "not_applicable",
+        "fts_candidates": 0,
+        "trgm_candidates": 0,
+        "vector_candidates": 0,
+        "capability_degraded": [
+          "POSTGRES_ACCELERATORS_NOT_APPLICABLE"
+        ],
+        "dedup_document_count": 1,
+        "incompatible_embedding_chunks": 0,
+        "version_conflict_count": 0,
+        "wrong_vendor_count": 0,
+        "expanded_context_chunks": 1,
+        "final_document_ids": [
+          "huawei.yunshan.v600.display_arp.command"
+        ],
+        "reranker": {
+          "stage": "applied",
+          "name": "none",
+          "timeout_ms": 120,
+          "candidate_count": 1,
+          "cost_units": 1,
+          "latency_ms": 0
+        },
+        "cache": {
+          "hit": false,
+          "key": "8de13c18ca330077740a1659421680c2069e9710f801cbcff50b4aef88270f0f",
+          "enabled": false
+        },
+        "outcome": "matched"
+      }
+    }
+  ],
+  "external_network_call": false,
+  "production_database_write": false
+}

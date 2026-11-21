@@ -1,0 +1,47 @@
+task_id: REL-009
+priority: P0
+owner: OPS+SEC
+milestone: M2
+status: executable_production_security_gate
+contract_version: v1.0
+authority: PostgreSQL
+depends_on: [REL-003, REL-006]
+
+decision:
+  choice: fail_closed_production_secrets_private_paths_redacted_logs
+  summary: >-
+    Production startup must receive non-placeholder SECRET_KEY,
+    CREDENTIAL_ENCRYPTION_KEY, POSTGRES_PASSWORD and PostgreSQL DATABASE_URL
+    from the environment or secret manager. Compose must not contain known
+    defaults. Runtime data/logs and backup paths stay below the project-owned
+    directories, are not exposed by static serving, and logs redact secrets.
+
+required_checks:
+  secrets:
+    tracked_examples: placeholders_only
+    runtime_production: non_placeholder_and_length_at_least_16
+    compose_defaults: forbidden
+  permissions:
+    runtime_user: non_root
+    configuration_archive: 0600
+    backup_directory: private_acl_or_0750
+    network_write_and_production_credentials: disabled_by_default
+  paths:
+    log_directory: project_data_logs_only
+    config_backup_root: project_backup_only
+    traversal: rejected_by_commonpath_boundary
+    static_exposure: logs_data_backup_not_mounted_as_public_static
+  logging:
+    sanitizer: credentials_tokens_bearer_private_keys_redacted
+    raw_exception_values: forbidden
+
+failure_policy:
+  placeholder_or_missing_runtime_secret: BLOCKED_AUTH_REQUIRED
+  invalid_path_or_permission: FAILED_then_FIXING
+  production_database_write: forbidden
+  sqlite_acceptance: forbidden
+
+verification:
+  runner: scripts/knowledge_engine_v2_rel009_security_gate.py
+  focused_tests: tests/knowledge_engine_v2/test_rel009_security_gate.py
+  report: docs/knowledge-engine/eval/rel-009-security-path-v1.json

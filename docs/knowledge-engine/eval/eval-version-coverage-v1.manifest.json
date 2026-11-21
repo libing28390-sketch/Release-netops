@@ -1,0 +1,45 @@
+{
+  "status": "PASS",
+  "coverage_id": "nexora-kb-eval-version-coverage-v1-20260817",
+  "parent_dataset_id": "nexora-kb-eval-v1-20260817",
+  "class_counts": {
+    "conflict": 12,
+    "specified": 12,
+    "unknown": 12,
+    "unspecified": 12
+  },
+  "unknown_vendor_intent_counts": {
+    "Cisco:interface": 1,
+    "Cisco:ntp": 1,
+    "Cisco:ospf": 1,
+    "Cisco:route": 1,
+    "Cisco:ssh": 1,
+    "Cisco:vlan": 1,
+    "Huawei:interface": 1,
+    "Huawei:ntp": 1,
+    "Huawei:ospf": 1,
+    "Huawei:route": 1,
+    "Huawei:ssh": 1,
+    "Huawei:vlan": 1
+  },
+  "unknown_case_ids": [
+    "EVAL-V004-U001",
+    "EVAL-V004-U002",
+    "EVAL-V004-U003",
+    "EVAL-V004-U004",
+    "EVAL-V004-U005",
+    "EVAL-V004-U006",
+    "EVAL-V004-U007",
+    "EVAL-V004-U008",
+    "EVAL-V004-U009",
+    "EVAL-V004-U010",
+    "EVAL-V004-U011",
+    "EVAL-V004-U012"
+  ],
+  "dataset_sha256": "800c775cfb0371ef4751c7234de00c74cecc5d823b3f019d7631dcaeb20248c6",
+  "coverage_sha256": "c55869beeb50158b6c0c33decb5b9a37fd3a82c34444bca07756831ceeae199a",
+  "database": "none",
+  "sqlite": "not_used",
+  "external_network": "not_used",
+  "secrets": false
+}

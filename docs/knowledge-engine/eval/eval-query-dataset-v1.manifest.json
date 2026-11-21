@@ -1,0 +1,51 @@
+{
+  "status": "PASS",
+  "dataset_id": "nexora-kb-eval-v1-20260817",
+  "case_count": 120,
+  "sha256": "800c775cfb0371ef4751c7234de00c74cecc5d823b3f019d7631dcaeb20248c6",
+  "query_type_counts": {
+    "alias": 12,
+    "ambiguous": 12,
+    "exact": 12,
+    "no_match": 12,
+    "prefix": 12,
+    "product_conflict": 12,
+    "typo": 12,
+    "version_conflict": 12,
+    "version_exact": 12,
+    "wrong_vendor": 12
+  },
+  "intent_counts": {
+    "interface": 20,
+    "ntp": 20,
+    "ospf": 20,
+    "route": 20,
+    "ssh": 20,
+    "vlan": 20
+  },
+  "vendor_intent_counts": {
+    "Cisco:interface": 9,
+    "Cisco:ntp": 9,
+    "Cisco:ospf": 9,
+    "Cisco:route": 9,
+    "Cisco:ssh": 9,
+    "Cisco:vlan": 9,
+    "Huawei:interface": 9,
+    "Huawei:ntp": 9,
+    "Huawei:ospf": 9,
+    "Huawei:route": 9,
+    "Huawei:ssh": 9,
+    "Huawei:vlan": 9
+  },
+  "ambiguous_intent_counts": {
+    "interface": 2,
+    "ntp": 2,
+    "ospf": 2,
+    "route": 2,
+    "ssh": 2,
+    "vlan": 2
+  },
+  "database": "none",
+  "sqlite": "not_used",
+  "secrets": false
+}

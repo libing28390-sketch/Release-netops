@@ -800,7 +800,7 @@ def toggle_scheduled_job(
             expiry = datetime.fromisoformat(str(grant.get("valid_until") or "").replace("Z", "+00:00"))
             if expiry <= datetime.now(timezone.utc):
                 raise HTTPException(status_code=409, detail="作业授权已到期，请编辑作业并重新审批")
-            if int(grant.get("remaining_runs") or 0) <= 0:
+            if int(grant.get("max_runs") or 0) > 0 and int(grant.get("remaining_runs") or 0) <= 0:
                 raise HTTPException(status_code=409, detail="作业授权次数已用完，请编辑作业并重新审批")
         conn.execute(
             """UPDATE scheduled_jobs

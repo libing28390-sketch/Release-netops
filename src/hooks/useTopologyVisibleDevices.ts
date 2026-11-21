@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Device, TagDefinition } from '../types';
-import type { TagExpressionGroup, TagFilterConfig } from '../components/TagConditionPicker';
+import type { TagExpressionGroup, TagFilterConfig } from '../types/tagFilter';
 import { NETWORK_TOPOLOGY_ROLE_VALUES } from '../domain/topologyRoles';
 import { getTopologySiteKey } from '../utils/topologySiteOverview';
 

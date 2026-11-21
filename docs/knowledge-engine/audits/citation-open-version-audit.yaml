@@ -1,0 +1,97 @@
+task_id: AUD-013
+milestone: M0
+priority: P0
+scope: citation_navigation_provenance
+sources:
+  frontend:
+    - src/pages/ai/Copilot/AssistantTab.tsx
+    - src/pages/ai/Copilot/CopilotInspectorDrawer.tsx
+    - src/api/ai.ts
+    - src/pages/ai/Knowledge/KnowledgeManagementTab.tsx
+  backend:
+    - backend/ai/services/rag_retriever.py
+    - backend/ai/services/assistant.py
+    - backend/ai/chunking/engine.py
+    - backend/ai/api/assistant.py
+    - backend/ai/services/knowledge_service.py
+citation_shape:
+  rag_internal:
+    - chunk_id
+    - document_id
+    - storage_document_id
+    - section
+    - metadata
+    - ordinal
+  assistant_public:
+    - document
+    - document_id
+    - section
+    - trust
+  copilot_mapped:
+    - document
+    - section
+  missing_from_copilot:
+    - storage_document_id
+    - chunk_id
+    - page
+    - source_locator
+    - source_url
+    - verified_version
+    - relevance_score
+navigation_contract:
+  citation_endpoint: GET /api/ai/assistant/documents/{doc_id}
+  endpoint_key: ai_document.id
+  citation_key: semantic_document_id_or_storage_id
+  click_handler_present: false
+  href_present: false
+  url_contract_present: false
+  tenant_and_active_check_present: true
+runtime_probe:
+  database: sqlite_memory_only
+  storage_id: storage-1
+  semantic_id: semantic.doc.v1
+  citation_document_id: semantic.doc.v1
+  storage_endpoint_open: true
+  citation_id_endpoint_open: false
+  section: OSPF peers
+  page: 3
+  citation_has_url: false
+  citation_has_version: false
+findings:
+  - id: AUD013-F01
+    severity: P0
+    status: OPEN
+    summary: Copilot citation items are not clickable
+  - id: AUD013-F02
+    severity: P0
+    status: OPEN
+    summary: semantic citation id may not open storage-id detail endpoint
+  - id: AUD013-F03
+    severity: P0
+    status: OPEN
+    summary: no controlled citation URL contract
+  - id: AUD013-F04
+    severity: P0
+    status: OPEN
+    summary: citation and detail response omit knowledge version
+  - id: AUD013-F05
+    severity: P1
+    status: OPEN
+    summary: section is present without chunk/page/source locator binding
+  - id: AUD013-F06
+    severity: P1
+    status: OPEN
+    summary: tenant-safe detail endpoint exists but citation navigation is absent
+  - id: AUD013-F07
+    severity: P2
+    status: OPEN
+    summary: Inspector uses hard-coded relevance 88 percent
+verification:
+  production_database_changed: false
+  external_provider_called: false
+  source_assertions: PASS
+  detail_probe: PASS
+conclusion:
+  audit_status: PASS
+  citation_release_ready: false
+  p0_blockers: 4

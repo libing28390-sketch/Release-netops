@@ -1,0 +1,163 @@
+task_id: DB-017
+priority: P0
+owner: DBA
+milestone: M1
+status: frozen_for_execution
+authority: PostgreSQL
+contract_version: v2.0
+depends_on: [DB-001, DB-002, DB-003, DB-014, DB-015, DB-016]
+
+decision:
+  choice: nullable_expand_backfill_validate_enforce_contract
+  summary: >-
+    Any field added to a table that already contains rows is introduced as
+    nullable and without an enforcement constraint. A deterministic,
+    tenant-scoped backfill runs in bounded batches with checkpoints. Only
+    after null, type, uniqueness, foreign-key, tenant and security validation
+    is zero-risk may indexes/constraints be built and validated. NOT NULL,
+    CHECK, UNIQUE and FK enforcement is the final step. Fresh empty tables may
+    declare NOT NULL at creation, but the upgrade path must still be safe and
+    repeatable. Original values remain until the last verified release.
+  invariants:
+    - no_new_not_null_or_fk_constraint_before_legacy_rows_are_reconciled
+    - backfill_is_deterministic_bounded_idempotent_and_restartable
+    - validation_queries_are_tenant_aware_and_report_quarantine_rows
+    - indexes_and_unique_constraints_precede_enforcement_only_when_safe
+    - failed_phase_rolls_back_or_resumes_from_a_recorded_checkpoint
+    - original_source_and_V1_columns_are_retained_until_release_gate
+    - constraint_validation_never_widens_acl_or_cross_tenant_scope
+    - fresh_schema_and_highest_upgrade_converge_to_the_same_contract
+
+phase_order:
+  - phase: inventory
+    state: planned
+    actions: [snapshot_schema_revision, inventory_rows_nulls_duplicates_orphans_and_legacy_values, define_authoritative_source_and_mapping_version, estimate_lock_write_and_replication_budget]
+    gate: inventory_hash_and_row_counts_recorded; no_data_mutation
+  - phase: expand_nullable
+    state: planned
+    actions: [ADD_COLUMN_nullable_without_constraint, add_versioned_default_only_for_new_writes_after_compatibility_review, add_shadow_metadata_or_mapping_columns, deploy_dual_write_if_needed]
+    forbidden: [ADD_COLUMN_NOT_NULL_on_populated_table, destructive_type_rewrite, drop_legacy_column]
+    gate: schema_diff_is_additive_and_V1_reads_still_pass
+  - phase: backfill
+    state: planned
+    actions: [select_keyset_batches, write_only_missing_or_stale_targets, persist_checkpoint_cursor, persist_counts_and_hashes, quarantine_ambiguous_or_invalid_rows, commit_each_bounded_batch]
+    batch_contract: [stable_primary_key_order, max_rows_or_time_budget, tenant_scope, retry_count, lease_owner, heartbeat, idempotency_key]
+    gate: rerun_produces_zero_additional_changes_for_same_source_revision
+  - phase: validate
+    state: planned
+    checks: [null_count, invalid_enum_count, duplicate_key_count, orphan_fk_count, cross_tenant_fk_count, malformed_json_count, dimension_mismatch_count, source_target_hash_count, ACL_scope_count, V1_parallel_read_diff]
+    failure: keep_constraint_absent; quarantine_rows; emit_audit_event; return_failed_validation
+    gate: all_non_quarantined_rows_pass_and_quarantine_is_explicitly_approved
+  - phase: prepare_indexes_and_constraints
+    state: planned
+    actions: [CREATE_INDEX_CONCURRENTLY_for_large_tables, CREATE_UNIQUE_INDEX_CONCURRENTLY_after_duplicate_zero, ADD_CHECK_NOT_VALID, ADD_FK_NOT_VALID, ANALYZE, capture_EXPLAIN_and_lock_metrics]
+    postgres_rules: [concurrent_index_outside_transaction, constraint_not_valid_does_not_scan_table, no_unbounded_lock_wait]
+    gate: DB-015/DB-016_plan_and_write_budget_pass
+  - phase: validate_constraints
+    state: planned
+    actions: [VALIDATE_CONSTRAINT_in_bounded_maintenance_window, recheck_null_duplicate_orphan_and_cross_tenant_counts, compare_constraint_catalog_to_contract]
+    gate: all_constraints_validated_and_catalog_snapshot_saved
+  - phase: enforce
+    state: planned
+    actions: [SET_NOT_NULL_only_after_zero_nulls, attach_unique_constraint_to_verified_index, switch_read_authority_to_typed_column, make_new_writes_require_typed_field, set_safe_default_only_if_semantics_are_explicit]
+    forbidden: [silent_default_that_changes_scope, delete_original_values, bypass_gateway_or_RBAC]
+    gate: application_contract_and_V1_parallel_tests_pass
+  - phase: cleanup_deferred
+    state: planned
+    actions: [retain_legacy_column_until_release_plus_retention_window, remove_shadow_write_only_after_rollback_window, drop_obsolete_index_only_after_usage_zero, document_deprecation_and_restore_point]
+    gate: REL_release_approval_and_backup_restore_evidence
+
+field_classification:
+  identity_tenant_permission_scope:
+    expand: nullable
+    backfill: authoritative_mapping_or_quarantine
+    validate: [null, duplicate, orphan, cross_tenant, ACL_scope]
+    enforce: typed_not_null_and_fk_or_reviewed_nullable
+  lifecycle_status:
+    expand: nullable
+    backfill: explicit_mapping_no_implicit_active
+    validate: [allowed_enum, tenant_scope, terminal_purge_rule]
+    enforce: check_constraint_and_transition_service
+  high_frequency_query_field:
+    expand: nullable
+    backfill: normalized_deterministic_batch
+    validate: [normalization_hash, collision, V1_parallel_match]
+    enforce: typed_index_then_unique_or_check
+  JSONB_projection:
+    expand: nullable
+    backfill: registered_key_only_redacted
+    validate: [schema_version, size_depth, malformed, authority_boundary]
+    enforce: never_use_JSONB_alone_for_identity_tenant_acl_scope_or_uniqueness
+  vector_or_search_projection:
+    expand: nullable
+    backfill: model_and_generation_compatible
+    validate: [dimension, model_version, content_hash, index_version, ACL_scope]
+    enforce: index_visibility_after_EXPLAIN_and_recall_gate
+
+constraint_patterns:
+  not_null: [zero_null_report, SET_NOT_NULL_or_not_valid_check_then_set_not_null]
+  check: [ADD_CONSTRAINT_NOT_VALID, VALIDATE_CONSTRAINT, retain_error_quarantine]
+  foreign_key: [ADD_CONSTRAINT_NOT_VALID, VALIDATE_CONSTRAINT, tenant_match_check, no_cross_tenant_reference]
+  unique: [duplicate_report, quarantine_or_manual_resolution, CREATE_UNIQUE_INDEX_CONCURRENTLY, attach_constraint_or_keep_unique_index]
+  default: [new_write_semantics_review, backfill_before_default_when_existing_rows, no_default_that_converts_unknown_to_active]
+  jsonb: [malformed_payload_quarantine, redaction, registered_key_schema, typed_anchor_first]
+
+batch_and_checkpoint:
+  cursor: stable_primary_key_or_created_at_plus_id
+  page_size: tenant_policy_bounded_max_5000
+  time_budget: per_batch_statement_timeout_and_lock_timeout
+  job_fields: [migration_id, schema_revision, table_name, tenant_id, phase, cursor, scanned_count, changed_count, quarantined_count, error_count, retry_count, lease_owner, heartbeat_at, idempotency_key]
+  restart: resume_from_last_committed_checkpoint; never_replay_as_unbounded_full_table_update
+  audit: record_mapping_version_source_hash_target_hash_counts_and_actor
+
+failure_and_recovery:
+  ordinary_error: rollback_current_batch; record_safe_error; retry_with_bounded_backoff; continue_only_after_validation
+  validation_failure: leave_constraint_absent; mark_task_failed_or_quarantine; keep_legacy_read_path
+  lock_timeout: cancel_statement; no_force_kill_unrelated_sessions; reschedule_maintenance_window
+  partial_failure: migration_tracking_row_is_not_marked_applied_until_phase_gate_passes
+  repeated_failure: after_three_same_approach_attempts_reanalyse_root_cause_and_change_strategy
+  external_blocker: mark_BLOCKED_with_reason_attempts_unblock_condition_and_continue_independent_tasks
+
+legacy_audit:
+  migration_runner:
+    module: backend/database/migrations/__init__.py
+    observed: [ordered_discovery, schema_migrations_tracking, commit_per_migration, rollback_on_upgrade_exception, halt_higher_versions_after_failure]
+    decision: DB-017_phase_checkpoints_must_live_inside_future_migration_or_job; DB-018_adds_fresh_and_idempotent_orchestration
+  m0111_ai_chunking_v2:
+    module: backend/database/migrations/m0111_ai_chunking_v2.py
+    observed: [nullable_normalized_content, content_hash, chunking_version, ingestion_status, additive_chunk_columns]
+    decision: compatible_expand_pattern; later_constraints_follow_DB-017
+  m0113_rag_metadata_v2:
+    module: backend/database/migrations/m0113_rag_metadata_v2.py
+    observed: [additive_typed_columns, JSONB_conversion, legacy_index_creation, one_not_null_default_compatibility_field]
+    exception: exclude_from_rag_not_null_default_is_legacy_compatibility_behavior_and_not_a_template_for_populated_V2_fields
+  fresh_schema: new_empty_table_NOT_NULL_allowed_only_when_upgrade_equivalent_and_no_legacy_rows
+
+security_and_governance:
+  authorization: migration_actor_and_tenant_scope_are_checked_for_each_batch_and_constraint_operation
+  audit_events: [inventory, expand, backfill_batch, quarantine, validation, index_build, constraint_validate, enforce, rollback, cleanup]
+  secret_policy: no_password_api_key_device_credential_raw_prompt_or_raw_document_in_checkpoint_or_error
+  data_minimization: checkpoint_stores_hashes_counts_ids_and_redacted_error_codes_not_payloads
+  rollback: feature_flag_or_read_switch_before_schema_drop; restore_point_and_backup_required_for_cleanup
+
+migration_contract:
+  status: contract_only_no_production_DDL_in_db_017
+  fresh_install: schema_builder_must_emit_same_typed_authority_and_constraints_after_empty_table_creation
+  upgrade: expand_nullable_then_backfill_then_validate_then_enforce
+  idempotence: repeated_inventory_backfill_validation_and_constraint_catalog_check_are_safe
+  downgrade: disable_typed_read_switch_and_preserve_legacy_source_and_shadow_columns
+  production_gate: DB-018_DB-019_DB-020_and_V1_parallel_results_required
+
+verification:
+  contract_tests: backend/tests/database/test_db017_migration_order_contract.py
+  required_checks: [phase_order, field_classification, constraint_patterns, batch_checkpoint, failure_recovery, legacy_audit, security, fresh_upgrade_downgrade, report_markers]
+  test_database: SQLite_compatibility_contract_and_migration_runner_probes
+  production_database: PostgreSQL_catalog_and_lock_validation_required_in_DB-018_to_DB-020
+
+rollback:
+  runtime: keep_V1_read_path_and_disable_typed_projection_switch
+  schema: do_not_drop_legacy_columns_or_indexes_until_release_retention_gate
+  data: restore_from_checkpoint_or_backup; retain_quarantine_and_original_source_facts
+  audit: retain_all_phase_counts_validation_failures_and_actor_decisions
+
+next_tasks: [DB-018, DB-019, DB-020, DB-021, MIG-001]

@@ -27,6 +27,7 @@ interface UseConfigWorkspaceArgs {
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
   currentUser: SessionUser;
   extractVars: (input: string) => string[];
+  enabled?: boolean;
 }
 
 export const useConfigWorkspace = ({
@@ -35,6 +36,7 @@ export const useConfigWorkspace = ({
   showToast,
   currentUser,
   extractVars,
+  enabled = true,
 }: UseConfigWorkspaceArgs) => {
   const [globalVars, setGlobalVars] = useState<GlobalVar[]>([]);
   const [configTemplates, setConfigTemplates] = useState<ConfigTemplate[]>([]);
@@ -108,12 +110,13 @@ export const useConfigWorkspace = ({
   ), [editorContent, configVariableMap, serverValidation]);
 
   const configVendorScopedDevices = useMemo(() => {
+    if (!enabled) return [] as Device[];
     const vendor = (selectedConfigTemplate?.vendor || '').trim();
     if (!vendor || vendor.toLowerCase() === 'custom') return devices;
     return devices.filter(
       (device) => (device.vendor || getVendorFromPlatform(device.platform)).toLowerCase() === vendor.toLowerCase(),
     );
-  }, [devices, selectedConfigTemplate]);
+  }, [devices, enabled, selectedConfigTemplate]);
 
   const configPlatformOptions = useMemo(
     () => Array.from(new Set(configVendorScopedDevices.map((device) => device.platform).filter(Boolean))).sort(),

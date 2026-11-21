@@ -1,0 +1,94 @@
+task_id: AUD-019
+milestone: M0
+priority: P0
+scope: ai_retrieval_trace_conversation_audit_log_sensitive_data
+tables:
+  ai_request_log:
+    body_columns: false
+    provider_raw_columns: false
+    user_identifier: gateway_opaque_user_id
+    tenant_column: false
+    api_permission: ai.audit.view
+  ai_outbound_audits:
+    body_columns: false
+    tenant_id_plaintext: true
+    task_id_present: true
+    api_reader_found: false
+    retention_contract: false
+  ai_conversations:
+    tenant_id: true
+    user_id: user_id_opaque
+    title_sanitized: false
+    retention_contract: false
+  ai_messages:
+    content_column: content_safe
+    classification_before_write: true
+    tokenization_before_write: true
+    reasoning_internal_sanitized: false
+    citations_sanitized: false
+  ai_tasks:
+    tenant_id: true
+    user_id: user_id_opaque
+  ai_agent_run:
+    user_id_plaintext: true
+    tenant_id_column: false
+    question_safe_text: true
+    final_result_retokenized: false
+  ai_agent_step:
+    tool_input_keys_only: true
+    tool_output_minimized: true
+    tool_output_tokenized: false
+    trace_api_tenant_filter: false
+  ai_evidence_and_incidents:
+    extensible_json_fields: true
+    writer_found: false
+controls:
+  gateway_request_log_metadata_only: true
+  outbound_audit_metadata_only: true
+  conversation_owner_query_scoped: true
+  safe_tool_result_drop_keys: [raw, raw_output, raw_config, running_config, configuration, credential, credentials, password, private_key, secret, api_key, access_token, snmp_community]
+  agent_trace_permission: ai.view
+findings:
+  - id: AUD019-F01
+    severity: P0
+    status: OPEN
+    summary: agent run user_id is plaintext and trace/cancel lack tenant-owner predicates
+  - id: AUD019-F02
+    severity: P0
+    status: OPEN
+    summary: agent trace output is not uniformly tokenized or schema-bound against identifiers/config snippets
+  - id: AUD019-F03
+    severity: P1
+    status: OPEN
+    summary: reasoning/title/citations and retention are outside the common conversation sanitizer contract
+  - id: AUD019-F04
+    severity: P1
+    status: OPEN
+    summary: ai_request_log has no tenant scope in storage or audit API
+  - id: AUD019-F05
+    severity: P1
+    status: OPEN
+    summary: outbound audit tenant/task metadata has no retention or tenant deletion contract
+  - id: AUD019-F06
+    severity: P2
+    status: OBSERVED
+    summary: generic audit redactor is key-name based and does not minimize arbitrary config/identifier text
+  - id: AUD019-F07
+    severity: P1
+    status: OPEN-ADJACENT
+    summary: auth/PAM session token tables persist bearer/one-time tokens outside AI trace scope
+verification:
+  source_inventory: PASS
+  safe_message_secret_block: PASS
+  safe_message_identifier_tokenization: PASS
+  safe_tool_key_drop: PASS
+  opaque_user_id_contract: PASS
+  agent_plaintext_user_id_finding: PASS
+  trace_tenant_filter_finding: PASS
+  request_log_body_absence: PASS
+  production_database_changed: false
+  production_external_call: false
+conclusion:
+  audit_status: PASS
+  p0_blockers: 2
+  implementation_status: findings_open

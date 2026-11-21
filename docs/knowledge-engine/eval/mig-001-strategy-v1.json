@@ -1,0 +1,98 @@
+{
+  "status": "PASS",
+  "task_id": "MIG-001",
+  "authority": "PostgreSQL",
+  "sqlite": "forbidden",
+  "duration_seconds": 0.4,
+  "contract_sha256": "8fca633952e64217163cc71a0c30478a084219ee8a7fdb856e9d78222271841c",
+  "layers": {
+    "document": {
+      "confidence_grade": "C",
+      "strategy": "preserve_original_bytes_hash_first_then_append_immutable_version",
+      "rollback": "disable_v2_document_reads_and_restore_v1_adapter"
+    },
+    "metadata": {
+      "confidence_grade": "B",
+      "strategy": "validate_normalize_hash_and_quarantine_unknown",
+      "rollback": "retain_original_metadata_json_and_disable_typed_projection"
+    },
+    "chunk": {
+      "confidence_grade": "B",
+      "strategy": "rebuild_from_trusted_document_version_with_new_generation",
+      "rollback": "mark_new_generation_failed_or_superseded_and_restore_previous_ready_pointer"
+    },
+    "embedding": {
+      "confidence_grade": "C",
+      "strategy": "do_not_copy_legacy_vectors_recompute_under_pinned_contract",
+      "rollback": "restore_previous_ready_index_generation_or_local_lexical_fallback"
+    }
+  },
+  "execution_order": [
+    "W0_authoritative_postgresql_inventory",
+    "W1_document_source_and_version_lineage",
+    "W2_metadata_reconciliation_and_quarantine",
+    "W3_chunk_generation_rebuild_and_fidelity",
+    "W4_embedding_recompute_and_shadow_cutover",
+    "W5_release_retention_cleanup_after_explicit_approval"
+  ],
+  "automatic_migration_allowed": false,
+  "catalog_probe": {
+    "status": "PASS",
+    "database": "PostgreSQL",
+    "database_name_present": true,
+    "schema": "public",
+    "server_version": "18.4",
+    "transaction_read_only": true,
+    "tables": {
+      "ai_document": {
+        "exists": true,
+        "row_count": 156
+      },
+      "ai_document_chunk": {
+        "exists": true,
+        "row_count": 474
+      },
+      "ai_knowledge_base": {
+        "exists": true,
+        "row_count": 1
+      },
+      "kb_document": {
+        "exists": true,
+        "row_count": 0
+      },
+      "kb_document_version": {
+        "exists": true,
+        "row_count": 0
+      },
+      "kb_chunk_version": {
+        "exists": false,
+        "row_count": null
+      },
+      "kb_chunk": {
+        "exists": false,
+        "row_count": null
+      },
+      "kb_chunk_edge": {
+        "exists": false,
+        "row_count": null
+      },
+      "kb_embedding_model": {
+        "exists": false,
+        "row_count": null
+      },
+      "kb_chunk_embedding": {
+        "exists": false,
+        "row_count": null
+      },
+      "kb_index_version": {
+        "exists": false,
+        "row_count": null
+      }
+    },
+    "production_database_write": false,
+    "rollback": "read_only_transaction_rollback",
+    "sqlite": "forbidden"
+  },
+  "external_calls": false,
+  "report_redacted": true
+}

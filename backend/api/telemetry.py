@@ -232,6 +232,14 @@ def retry_telemetry_subscription(subscription_id: str, background_tasks: Backgro
         _raise_service_error(exc)
 
 
+@router.post("/subscriptions/{subscription_id}/simulate")
+def simulate_telemetry_subscription(subscription_id: str, _user=require_role("Operator")):
+    try:
+        return service.simulate_subscription_push(subscription_id, _user)
+    except service.TelemetryServiceError as exc:
+        _raise_service_error(exc)
+
+
 @router.delete("/subscriptions/{subscription_id}", status_code=202)
 def delete_telemetry_subscription(subscription_id: str, background_tasks: BackgroundTasks,
                                   _user=require_role("Operator")):

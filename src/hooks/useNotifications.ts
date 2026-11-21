@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { NotificationItem, SessionUser } from '../types';
 import { authHeaders } from '../api/http';
 
@@ -7,6 +7,10 @@ interface UseNotificationsProps {
   language: string;
   isAuthenticated: boolean;
 }
+
+const buildNotificationFingerprint = (items: NotificationItem[]): string => (
+  items.map((item) => `${item.id}|${item.time}|${item.severity}|${item.read ? '1' : '0'}|${item.title}`).join('\n')
+);
 
 export const useNotifications = ({ currentUser, language, isAuthenticated }: UseNotificationsProps) => {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -20,16 +24,22 @@ export const useNotifications = ({ currentUser, language, isAuthenticated }: Use
       return {};
     }
   });
+  const readMapRef = useRef(notificationReadMap);
+  readMapRef.current = notificationReadMap;
+  const lastFingerprintRef = useRef<string>('');
+  const inFlightRef = useRef(false);
 
   const loadNotifications = useCallback(async () => {
-    if (!isAuthenticated || !localStorage.getItem('netops_token')) return;
+    if (!isAuthenticated || !localStorage.getItem('netops_token') || inFlightRef.current) return;
+    inFlightRef.current = true;
     try {
       const userId = currentUser.id ? encodeURIComponent(String(currentUser.id)) : '';
       const url = userId ? `/api/notifications?limit=40&user_id=${userId}` : '/api/notifications?limit=40';
       const resp = await fetch(url, { headers: authHeaders() });
       if (!resp.ok) return;
       const data = await resp.json();
-      setNotifications((data || []).map((n: any) => ({
+      const readMap = readMapRef.current;
+      const mapped: NotificationItem[] = (Array.isArray(data) ? data : []).map((n: any) => ({
         id: String(n.id),
         title: n.source === 'system_resource'
           ? (language === 'zh' ? `平台资源告警: ${n.title}` : `Platform Resource Alert: ${n.title}`)
@@ -38,12 +48,19 @@ export const useNotifications = ({ currentUser, language, isAuthenticated }: Use
         time: n.time,
         source: n.source,
         severity: n.severity,
-        read: !!n.read || !!notificationReadMap[String(n.id)],
-      })));
+        read: !!n.read || !!readMap[String(n.id)],
+      }));
+      const nextFingerprint = buildNotificationFingerprint(mapped);
+      if (nextFingerprint !== lastFingerprintRef.current) {
+        lastFingerprintRef.current = nextFingerprint;
+        setNotifications(mapped);
+      }
     } catch {
       // ignore polling errors
+    } finally {
+      inFlightRef.current = false;
     }
-  }, [currentUser.id, language, notificationReadMap, isAuthenticated]);
+  }, [currentUser.id, language, isAuthenticated]);
 
   const markNotificationsAsRead = useCallback(async (ids: string[]) => {
     if (!isAuthenticated || !localStorage.getItem('netops_token') || !ids.length || !currentUser.id) return;
@@ -59,7 +76,11 @@ export const useNotifications = ({ currentUser, language, isAuthenticated }: Use
         ids.forEach(id => { next[id] = true; });
         return next;
       });
-      setNotifications(prev => prev.map(n => ids.includes(n.id) ? { ...n, read: true } : n));
+      setNotifications(prev => {
+        const next = prev.map(n => ids.includes(n.id) ? { ...n, read: true } : n);
+        lastFingerprintRef.current = buildNotificationFingerprint(next);
+        return next;
+      });
     } catch {
       // keep optimistic local UI state even on transient API errors
     }
@@ -77,14 +98,32 @@ export const useNotifications = ({ currentUser, language, isAuthenticated }: Use
   }, [notificationReadMap]);
 
   useEffect(() => {
-    if (isAuthenticated) {
-      loadNotifications();
-      const timer = setInterval(loadNotifications, 15000);
-      return () => clearInterval(timer);
+    if (!isAuthenticated) {
+      lastFingerprintRef.current = '';
+      return;
     }
+    void loadNotifications();
+    const timer = window.setInterval(() => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        void loadNotifications();
+      }
+    }, 15000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void loadNotifications();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [isAuthenticated, loadNotifications]);
 
-  const unreadNotifications = notifications.filter(n => !n.read);
+  const unreadNotifications = useMemo(
+    () => notifications.filter(n => !n.read),
+    [notifications],
+  );
   const unreadCount = unreadNotifications.length;
 
   return {
@@ -96,6 +135,6 @@ export const useNotifications = ({ currentUser, language, isAuthenticated }: Use
     unreadCount,
     loadNotifications,
     markNotificationsAsRead,
-    markAllNotificationsRead
+    markAllNotificationsRead,
   };
 };

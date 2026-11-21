@@ -1,0 +1,61 @@
+task_id: CAT-015
+priority: P1
+owner: BE+QA
+milestone: M2
+status: frozen_contract_only_version_boundary
+depends_on: [CAT-013, CAT-014, DB-006]
+
+purpose:
+  version_import: validate_and_stage_a_complete_catalog_snapshot
+  diff_preview: compare_candidate_against_tenant_active_snapshot
+  rollback: switch_to_an_existing_verified_snapshot_without_deleting_history
+
+persistence:
+  status: contract_only_ephemeral_version_registry
+  production_ddl: none_in_CAT-015
+  physical_repository: gated_by_DB-006_migration_and_release_review
+  restart_behavior: version_registry_is_not_durable_until_repository_gate
+
+bundle_contract:
+  required: [version, models, aliases]
+  model_limit: 5000
+  alias_limit: 10000
+  version_pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+  tenant_id: authenticated_request_tenant_only
+  model_identity: explicit_fields_only_no_id_parsing
+  software_scope: orthogonal_to_product_identity
+  aliases: explicit_complete_set_no_implicit_deletion
+
+api_contract:
+  list: GET /api/knowledge-v2/catalog/versions
+  preview: POST /api/knowledge-v2/catalog/versions/preview
+  import: POST /api/knowledge-v2/catalog/versions/import
+  rollback: POST /api/knowledge-v2/catalog/versions/{version_id}/rollback
+  import_confirmation: confirm_true_required
+  rollback_confirmation: confirm_true_required
+  optimistic_concurrency: expected_active_version_id
+
+diff_contract:
+  entities: [model, alias]
+  actions: [added, removed, changed]
+  max_returned_items: 200
+  truncated_flag: required
+  dry_run: true_for_preview
+
+security:
+  permissions:
+    read: knowledge_catalog/read
+    preview: knowledge_catalog/review
+    import: knowledge_catalog/import
+    rollback: knowledge_catalog/rollback
+  viewer_import: forbidden
+  cross_tenant: forbidden
+  secrets_and_control_characters: fail_closed
+  active_ambiguous_alias: forbidden
+  driver_or_write_authority: forbidden
+  audit: redacted_import_and_rollback_event_required
+
+rollback:
+  runtime: switch_active_version_pointer_to_previous_or_seed_snapshot
+  data: retain_all_version_history_and_V1_metadata
+  destructive_delete: forbidden
