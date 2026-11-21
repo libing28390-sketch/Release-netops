@@ -164,6 +164,9 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
     if (item.id === 'reports-interfaces' && (pathname === '/monitor/reports' || pathname === '/monitor/reports/')) {
       return true;
     }
+    if (item.id === 'telemetry-onboarding' && (pathname === '/monitor/telemetry-management' || pathname === '/monitor/telemetry-management/')) {
+      return true;
+    }
     if (item.activeMatch) {
       // Support comma-separated list of prefixes
       const prefixes = item.activeMatch.split(',');

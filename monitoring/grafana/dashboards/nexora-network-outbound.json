@@ -81,6 +81,18 @@
     },
     {
       "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Telemetry 实时",
+      "tooltip": "切换到 Telemetry 实时",
+      "type": "link",
+      "url": "/grafana/d/nexora-telemetry-realtime/nexora-telemetry-realtime"
+    },
+    {
+      "asDropdown": false,
       "icon": "external link",
       "includeVars": false,
       "keepTime": false,
@@ -162,9 +174,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -177,7 +189,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -243,9 +256,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -258,7 +271,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -271,7 +285,7 @@
     {
       "id": 3,
       "title": "出口最高入向利用率",
-      "type": "stat",
+      "type": "gauge",
       "datasource": {
         "type": "prometheus",
         "uid": "victoriametrics"
@@ -320,14 +334,13 @@
                 }
               }
             }
-          ]
+          ],
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -336,11 +349,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto",
-        "text": {
-          "titleSize": 13,
-          "valueSize": 28
-        }
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "minVizWidth": 75,
+        "minVizHeight": 75
       },
       "targets": [
         {
@@ -353,7 +366,7 @@
     {
       "id": 4,
       "title": "出口最高出向利用率",
-      "type": "stat",
+      "type": "gauge",
       "datasource": {
         "type": "prometheus",
         "uid": "victoriametrics"
@@ -402,14 +415,13 @@
                 }
               }
             }
-          ]
+          ],
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -418,11 +430,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto",
-        "text": {
-          "titleSize": 13,
-          "valueSize": 28
-        }
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "minVizWidth": 75,
+        "minVizHeight": 75
       },
       "targets": [
         {
@@ -496,9 +508,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -511,7 +523,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -577,9 +590,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -592,7 +605,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -640,9 +654,10 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -665,14 +680,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
           "calcs": [
             "lastNotNull",
             "max",
             "mean"
-          ]
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -712,9 +727,10 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -737,14 +753,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
           "calcs": [
             "lastNotNull",
             "max",
             "mean"
-          ]
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -797,9 +813,10 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -822,14 +839,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
           "calcs": [
             "lastNotNull",
             "max",
             "mean"
-          ]
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -869,9 +886,10 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -894,14 +912,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
           "calcs": [
             "lastNotNull",
             "max",
             "mean"
-          ]
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -950,12 +968,17 @@
                 "mode": "palette-classic"
               },
               "custom": {
-                "drawStyle": "line",
+                "drawStyle": "bars",
                 "lineInterpolation": "smooth",
-                "lineWidth": 2,
-                "fillOpacity": 18,
+                "lineWidth": 1,
+                "fillOpacity": 82,
                 "gradientMode": "opacity",
-                "showPoints": "never"
+                "showPoints": "never",
+                "barAlignment": 0,
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                }
               }
             },
             "overrides": [
@@ -993,10 +1016,14 @@
           },
           "options": {
             "legend": {
-              "displayMode": "list",
+              "calcs": [
+                "lastNotNull",
+                "max",
+                "mean"
+              ],
+              "displayMode": "table",
               "placement": "bottom",
-              "showLegend": true,
-              "calcs": []
+              "showLegend": true
             },
             "tooltip": {
               "mode": "multi",
@@ -1682,7 +1709,7 @@
   },
   "timezone": "browser",
   "title": "06 互联网出口与 WAN（需选择出口接口） (Select WAN Interface)",
-  "description": "此大盘必须先选择出口设备和一个或多个已确认的 WAN 接口；不会默认把全部设备或全部端口当作互联网出口。",
+  "description": "互联网出口与 WAN 专线专题视图：请先在顶部选择出口设备及确认的 WAN 端口，实时掌握出入口带宽波形、利用率水位与错包丢包。",
   "uid": "nexora-network-outbound",
   "version": 33
 }

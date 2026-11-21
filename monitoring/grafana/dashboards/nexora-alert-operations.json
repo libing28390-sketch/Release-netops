@@ -81,6 +81,18 @@
     },
     {
       "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Telemetry 实时",
+      "tooltip": "切换到 Telemetry 实时",
+      "type": "link",
+      "url": "/grafana/d/nexora-telemetry-realtime/nexora-telemetry-realtime"
+    },
+    {
+      "asDropdown": false,
       "icon": "external link",
       "includeVars": false,
       "keepTime": false,
@@ -170,9 +182,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -185,7 +197,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -255,9 +268,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -270,7 +283,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -340,9 +354,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -355,7 +369,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -425,9 +440,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -440,7 +455,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -510,9 +526,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -525,7 +541,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -538,7 +555,7 @@
     {
       "id": 6,
       "title": "24h 告警成功率",
-      "type": "stat",
+      "type": "gauge",
       "datasource": {
         "type": "prometheus",
         "uid": "victoriametrics"
@@ -603,14 +620,13 @@
                 }
               }
             }
-          ]
+          ],
+          "min": 0,
+          "max": 1
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -619,11 +635,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto",
-        "text": {
-          "titleSize": 13,
-          "valueSize": 28
-        }
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "minVizWidth": 75,
+        "minVizHeight": 75
       },
       "targets": [
         {
@@ -632,7 +648,7 @@
           "instant": true
         }
       ],
-      "description": "按已完成的通知尝试计算；无完成记录时显示无数据。"
+      "description": "近 24 小时已完成发送的通知中成功触达的比例，衡量告警通道可靠性。"
     },
     {
       "id": 901,
@@ -669,12 +685,17 @@
             "mode": "palette-classic"
           },
           "custom": {
-            "drawStyle": "line",
+            "drawStyle": "bars",
             "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "fillOpacity": 18,
+            "lineWidth": 1,
+            "fillOpacity": 82,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "barAlignment": 0,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
           }
         },
         "overrides": [
@@ -727,10 +748,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "list",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -758,7 +783,7 @@
     {
       "id": 8,
       "title": "当前未恢复告警严重度分布",
-      "type": "timeseries",
+      "type": "piechart",
       "datasource": {
         "type": "prometheus",
         "uid": "victoriametrics"
@@ -924,14 +949,28 @@
         ]
       },
       "options": {
+        "pieType": "donut",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "displayLabels": [
+          "percent"
+        ],
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
+          "displayMode": "table",
+          "placement": "right",
           "showLegend": true,
-          "calcs": []
+          "values": [
+            "value",
+            "percent"
+          ]
         },
         "tooltip": {
-          "mode": "multi",
+          "mode": "single",
           "sort": "desc"
         }
       },
@@ -1005,12 +1044,17 @@
             "mode": "palette-classic"
           },
           "custom": {
-            "drawStyle": "line",
+            "drawStyle": "bars",
             "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "fillOpacity": 18,
+            "lineWidth": 1,
+            "fillOpacity": 82,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "barAlignment": 0,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
           }
         },
         "overrides": [
@@ -1123,13 +1167,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true,
           "calcs": [
             "lastNotNull",
-            "max"
-          ]
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -1147,7 +1192,7 @@
     {
       "id": 10,
       "title": "通知 Outbox 当前状态",
-      "type": "timeseries",
+      "type": "piechart",
       "datasource": {
         "type": "prometheus",
         "uid": "victoriametrics"
@@ -1253,17 +1298,28 @@
         ]
       },
       "options": {
+        "pieType": "donut",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "displayLabels": [
+          "percent"
+        ],
         "legend": {
           "displayMode": "table",
           "placement": "right",
           "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
+          "values": [
+            "value",
+            "percent"
           ]
         },
         "tooltip": {
-          "mode": "multi",
+          "mode": "single",
           "sort": "desc"
         }
       },
@@ -1351,9 +1407,9 @@
             "overrides": []
           },
           "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "justifyMode": "center",
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
             "orientation": "auto",
             "reduceOptions": {
               "calcs": [
@@ -1366,7 +1422,8 @@
             "text": {
               "titleSize": 13,
               "valueSize": 28
-            }
+            },
+            "wideLayout": true
           },
           "targets": [
             {
@@ -1424,9 +1481,9 @@
             "overrides": []
           },
           "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "justifyMode": "center",
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
             "orientation": "auto",
             "reduceOptions": {
               "calcs": [
@@ -1439,7 +1496,8 @@
             "text": {
               "titleSize": 13,
               "valueSize": 28
-            }
+            },
+            "wideLayout": true
           },
           "targets": [
             {
@@ -1497,9 +1555,9 @@
             "overrides": []
           },
           "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "justifyMode": "center",
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
             "orientation": "auto",
             "reduceOptions": {
               "calcs": [
@@ -1512,7 +1570,8 @@
             "text": {
               "titleSize": 13,
               "valueSize": 28
-            }
+            },
+            "wideLayout": true
           },
           "targets": [
             {
@@ -1521,7 +1580,7 @@
               "instant": true
             }
           ],
-          "description": "告警创建到首次确认的平均时间。"
+          "description": "平均首次响应时间（MTTA）：从告警产生到运维人员首次确认的平均耗时。"
         },
         {
           "id": 14,
@@ -1571,9 +1630,9 @@
             "overrides": []
           },
           "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "justifyMode": "center",
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
             "orientation": "auto",
             "reduceOptions": {
               "calcs": [
@@ -1586,7 +1645,8 @@
             "text": {
               "titleSize": 13,
               "valueSize": 28
-            }
+            },
+            "wideLayout": true
           },
           "targets": [
             {
@@ -1595,7 +1655,7 @@
               "instant": true
             }
           ],
-          "description": "告警创建到恢复的平均时间。"
+          "description": "平均故障恢复时间（MTTR）：从告警产生到问题彻底恢复的平均耗时。"
         },
         {
           "id": 15,
@@ -1661,9 +1721,9 @@
             "overrides": []
           },
           "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "justifyMode": "center",
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
             "orientation": "auto",
             "reduceOptions": {
               "calcs": [
@@ -1676,7 +1736,8 @@
             "text": {
               "titleSize": 13,
               "valueSize": 28
-            }
+            },
+            "wideLayout": true
           },
           "targets": [
             {
@@ -1685,7 +1746,7 @@
               "instant": true
             }
           ],
-          "description": "相同告警未恢复时，重复记录超出 1 条的数量。"
+          "description": "同一故障在未恢复期间持续触发的重复告警数，过高说明存在告警风暴或抑制规则待优化。"
         },
         {
           "id": 16,
@@ -1751,9 +1812,9 @@
             "overrides": []
           },
           "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "justifyMode": "center",
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
             "orientation": "auto",
             "reduceOptions": {
               "calcs": [
@@ -1766,7 +1827,8 @@
             "text": {
               "titleSize": 13,
               "valueSize": 28
-            }
+            },
+            "wideLayout": true
           },
           "targets": [
             {
@@ -1801,9 +1863,10 @@
                 "drawStyle": "line",
                 "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 18,
+                "fillOpacity": 24,
                 "gradientMode": "opacity",
-                "showPoints": "never"
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -1871,13 +1934,14 @@
           },
           "options": {
             "legend": {
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true,
               "calcs": [
                 "lastNotNull",
-                "max"
-              ]
+                "max",
+                "mean"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
             },
             "tooltip": {
               "mode": "multi",
@@ -1932,9 +1996,10 @@
                 "drawStyle": "line",
                 "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 18,
+                "fillOpacity": 24,
                 "gradientMode": "opacity",
-                "showPoints": "never"
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -1972,13 +2037,14 @@
           },
           "options": {
             "legend": {
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true,
               "calcs": [
                 "lastNotNull",
-                "max"
-              ]
+                "max",
+                "mean"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
             },
             "tooltip": {
               "mode": "multi",
@@ -2018,7 +2084,7 @@
   },
   "timezone": "browser",
   "title": "12 告警处置与通知效果（Alert Operations & Notification Effectiveness）",
-  "description": "展示系统级告警持续时长、MTTA、MTTR、相同 dedupe key 的并发重复事件，以及通知终态投递成功/失败和重试；不包含租户、设备、告警标题、目标地址或收件人信息。",
+  "description": "告警运营效率与通知触达复盘：全面量化未恢复告警分布、24 小时告警生命周期、通知投递成功率及 MTTA/MTTR 响应处置效率。",
   "uid": "nexora-alert-operations",
   "version": 33
 }

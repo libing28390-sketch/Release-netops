@@ -81,6 +81,18 @@
     },
     {
       "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Telemetry 实时",
+      "tooltip": "切换到 Telemetry 实时",
+      "type": "link",
+      "url": "/grafana/d/nexora-telemetry-realtime/nexora-telemetry-realtime"
+    },
+    {
+      "asDropdown": false,
       "icon": "external link",
       "includeVars": false,
       "keepTime": false,
@@ -162,9 +174,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -177,7 +189,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -243,9 +256,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -258,7 +271,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -271,7 +285,7 @@
     {
       "id": 3,
       "title": "平均 CPU 使用率",
-      "type": "stat",
+      "type": "gauge",
       "datasource": {
         "type": "prometheus",
         "uid": "victoriametrics"
@@ -327,14 +341,13 @@
                 }
               }
             }
-          ]
+          ],
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -343,11 +356,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto",
-        "text": {
-          "titleSize": 13,
-          "valueSize": 28
-        }
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "minVizWidth": 75,
+        "minVizHeight": 75
       },
       "targets": [
         {
@@ -360,7 +373,7 @@
     {
       "id": 4,
       "title": "平均物理内存利用率",
-      "type": "stat",
+      "type": "gauge",
       "datasource": {
         "type": "prometheus",
         "uid": "victoriametrics"
@@ -416,14 +429,13 @@
                 }
               }
             }
-          ]
+          ],
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -432,11 +444,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto",
-        "text": {
-          "titleSize": 13,
-          "valueSize": 28
-        }
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "minVizWidth": 75,
+        "minVizHeight": 75
       },
       "targets": [
         {
@@ -502,9 +514,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -517,7 +529,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -591,9 +604,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -606,7 +619,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -654,9 +668,10 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -724,10 +739,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "list",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -782,9 +801,10 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -867,10 +887,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "list",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -943,9 +967,10 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -1013,10 +1038,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "list",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -1071,9 +1100,10 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -1104,6 +1134,10 @@
                   "mode": "fixed",
                   "fixedColor": "#3B82F6"
                 }
+              },
+              {
+                "id": "custom.transform",
+                "value": "negative-Y"
               }
             ]
           }
@@ -1111,10 +1145,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "list",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -1313,9 +1351,10 @@
                 "drawStyle": "line",
                 "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 18,
+                "fillOpacity": 24,
                 "gradientMode": "opacity",
-                "showPoints": "never"
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -1346,6 +1385,10 @@
                       "mode": "fixed",
                       "fixedColor": "#3B82F6"
                     }
+                  },
+                  {
+                    "id": "custom.transform",
+                    "value": "negative-Y"
                   }
                 ]
               }
@@ -1353,10 +1396,14 @@
           },
           "options": {
             "legend": {
-              "displayMode": "list",
+              "calcs": [
+                "lastNotNull",
+                "max",
+                "mean"
+              ],
+              "displayMode": "table",
               "placement": "bottom",
-              "showLegend": true,
-              "calcs": []
+              "showLegend": true
             },
             "tooltip": {
               "mode": "multi",
@@ -1411,6 +1458,37 @@
                   {
                     "id": "unit",
                     "value": "none"
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "gauge",
+                      "mode": "gradient"
+                    }
+                  },
+                  {
+                    "id": "min",
+                    "value": 0
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "#3B82F6",
+                          "value": null
+                        },
+                        {
+                          "color": "#F59E0B",
+                          "value": 2000
+                        },
+                        {
+                          "color": "#EF4444",
+                          "value": 5000
+                        }
+                      ]
+                    }
                   }
                 ]
               }
@@ -1515,9 +1593,10 @@
                 "drawStyle": "line",
                 "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 18,
+                "fillOpacity": 24,
                 "gradientMode": "opacity",
-                "showPoints": "never"
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -1555,10 +1634,14 @@
           },
           "options": {
             "legend": {
-              "displayMode": "list",
+              "calcs": [
+                "lastNotNull",
+                "max",
+                "mean"
+              ],
+              "displayMode": "table",
               "placement": "bottom",
-              "showLegend": true,
-              "calcs": []
+              "showLegend": true
             },
             "tooltip": {
               "mode": "multi",
@@ -1650,5 +1733,6 @@
   "timezone": "browser",
   "title": "07 Linux 服务器监控 (Linux Server Metrics)",
   "uid": "nexora-linux-metrics",
-  "version": 33
+  "version": 33,
+  "description": "Linux 服务器核心性能大盘：覆盖主机 CPU 负载、内存与 Swap 分布、磁盘吞吐与容量热点、网卡收发流量及 TCP 活跃会话。"
 }

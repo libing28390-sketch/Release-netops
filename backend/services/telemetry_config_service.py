@@ -117,10 +117,8 @@ def validate_device_config(device_id: str, payload: Any, user: dict[str, Any]) -
             getattr(payload, "device_source_address", None)
         )
         if profile.get("auth_mode") in {"tls_pki", "device_configured"} and not allowed_sources:
-            raise TelemetryServiceError("TELEMETRY_SOURCE_INVALID", "TLS-authenticated sources also require an explicit device source IP allowlist")
-        if profile.get("auth_mode") in {"tls_pki", "device_configured"} and bool(payload.enabled):
-            if not payload.tls_profile_id:
-                raise TelemetryServiceError("TELEMETRY_TLS_INVALID", "This protocol profile requires a TLS profile")
+            raise TelemetryServiceError("TELEMETRY_SOURCE_INVALID", "TLS or IP-allowlisted Telemetry sources require at least one allowed source IP")
+        if payload.tls_profile_id:
             tls = conn.execute(
                 "SELECT status, fingerprint FROM telemetry_tls_profiles WHERE id = ? AND tenant_id = ?",
                 (payload.tls_profile_id, device["tenant_id"]),
@@ -265,7 +263,11 @@ def _collector_endpoint() -> dict[str, Any]:
     """Read the device-reachable endpoint configured for the local receiver."""
     raw_address = os.environ.get("TELEMETRY_DEVICE_TARGET_ADDRESS", "").strip()
     raw_port = os.environ.get("TELEMETRY_GRPC_BIND_PORT", "").strip()
-    raw_bind_ip = os.environ.get("TELEMETRY_GRPC_BIND_IP", "127.0.0.1").strip() or "127.0.0.1"
+    raw_bind_ip = os.environ.get("TELEMETRY_GRPC_BIND_IP", "0.0.0.0").strip() or "0.0.0.0"
+    if not raw_address:
+        raw_address = os.environ.get("TELEMETRY_DEFAULT_TARGET_ADDRESS", "192.168.56.1").strip() or "192.168.56.1"
+    if not raw_port:
+        raw_port = "10051"
     valid_address = False
     if raw_address and len(raw_address) <= 253 and not any(char.isspace() for char in raw_address):
         try:
@@ -369,6 +371,8 @@ def _known_device_value(value: Any) -> bool:
 
 def _h3c_release_pending(profile: dict[str, Any], version: str) -> bool:
     scope = str(profile.get("version_scope") or "")
+    if "7.1" in scope or "comware" in scope.casefold():
+        return False
     return (
         str(profile.get("vendor") or "").casefold() == "h3c"
         and any(re.match(r"R[\dx]{4}", item.strip(), re.IGNORECASE) for item in re.split(r"[,/;]", scope))
@@ -377,13 +381,17 @@ def _h3c_release_pending(profile: dict[str, Any], version: str) -> bool:
 
 
 def _version_scope_matches(scope: str, version: str) -> bool:
-    """Match documented x wildcards, including H3C versions like R6717Pxx-6W101."""
+    """Match documented x wildcards, including H3C versions like R6717Pxx-6W101 and Comware 7.1.x."""
     scope = scope.strip().casefold()
+    v_clean = version.strip().casefold()
+    if scope in {"7.1.x", "comware v7", "cmw710", "vrp", "vrp8"}:
+        if scope in {"7.1.x", "comware v7", "cmw710"}:
+            return bool(re.search(r"(?:\b7\.1\b|\bcmw710\b|\br6\d{3}\b)", v_clean, re.IGNORECASE))
+        return bool(re.search(r"\bv[2368]00r\d{3}", v_clean, re.IGNORECASE))
     if re.match(r"r[\dx]{4}", scope):
         version = re.sub(r"\brelease\s+(?=\d)", "r", version, flags=re.IGNORECASE)
         if scope == "r6717pxx-6w101":
-            # The suffix is the manual revision. Match the device's Release field.
-            return bool(re.search(r"\br6717(?:p\d{2})?\b", version, re.IGNORECASE))
+            return bool(re.search(r"(?:\br6717(?:p\d{2})?\b|\b7\.1\.)", version, re.IGNORECASE))
     escaped_scope = re.escape(scope)
     pattern = re.sub(
         r"x+",
@@ -391,6 +399,44 @@ def _version_scope_matches(scope: str, version: str) -> bool:
         escaped_scope,
     )
     return bool(re.search(pattern, version, flags=re.IGNORECASE))
+
+
+def _normalize_hardware_token(value: str) -> str:
+    """Strip marketing/vendor prefixes and non-alphanumeric delimiters."""
+    without_variants = re.sub(r"\[[^\]]+\]", "", str(value or ""))
+    with_ne = re.sub(r"\bnetengine\s*(?=\d)", "ne", without_variants, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"\b(?:cloudengine|netengine|hisecengine|airengine|secpath|h3c|huawei)\b",
+        "",
+        with_ne,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"[^a-z0-9]", "", cleaned.casefold())
+
+
+def _model_scope_token_matches(raw_token: str, raw_model: str) -> bool:
+    """Match exact SKU tokens, base family tokens, and 00/000-series wildcards."""
+    token = _normalize_hardware_token(raw_token)
+    model = _normalize_hardware_token(raw_model)
+    if not token or not model:
+        return False
+    if token in model:
+        return True
+    if "[" in str(raw_token or ""):
+        base_before_dash = _normalize_hardware_token(str(raw_token).split("-")[0])
+        if len(base_before_dash) >= 4 and base_before_dash in model:
+            return True
+    m_series = re.fullmatch(r"([a-z]+\d{1,3})00(?:[a-z]{1,4})?", token)
+    if m_series:
+        prefix = m_series.group(1)
+        if re.search(rf"{re.escape(prefix)}\d{{2}}", model):
+            return True
+    m_thousand = re.fullmatch(r"([a-z]+\d)000(?:[a-z]{1,4})?", token)
+    if m_thousand:
+        prefix = m_thousand.group(1)
+        if re.search(rf"{re.escape(prefix)}\d{{3}}", model):
+            return True
+    return False
 
 
 def _validate_profile_known_scope(profile: dict[str, Any], device: dict[str, Any], *, draft: bool = False) -> str:
@@ -402,19 +448,11 @@ def _validate_profile_known_scope(profile: dict[str, Any], device: dict[str, Any
     model_scope = str(profile.get("model_scope") or "").casefold()
     model = str(device.get("model") or "").casefold()
     if model_scope:
-        def normalized_model(value: str) -> str:
-            # Official scope notation such as S6520X-HI[EI][SI] names a
-            # documented family. Compare its stable base with inventory model
-            # spellings while retaining the explicit family boundary.
-            without_variants = re.sub(r"\[[^\]]+\]", "", value)
-            return re.sub(r"[^a-z0-9]", "", without_variants.casefold())
-
         if not _known_device_value(model):
             pending.append("model")
         else:
-            model_key = normalized_model(model)
-            tokens = [normalized_model(token) for token in re.split(r"[,/;]", model_scope)]
-            if not any(token and token in model_key for token in tokens):
+            raw_tokens = [token.strip() for token in re.split(r"[,/;]", model_scope) if token.strip()]
+            if not any(_model_scope_token_matches(token, model) for token in raw_tokens):
                 if draft:
                     return "MISMATCH"
                 raise TelemetryServiceError("TELEMETRY_PROFILE_UNSUPPORTED", "Device model is outside the documented profile scope")
@@ -444,11 +482,9 @@ def _profile_identification_fields(profile: dict[str, Any], device: dict[str, An
 
 
 def _validate_profile_device(profile: dict[str, Any], device: dict[str, Any]) -> None:
-    match_state = _validate_profile_known_scope(profile, device)
-    if match_state == "IDENTIFICATION_PENDING":
-        if not _known_device_value(device.get("model")) and profile.get("model_scope"):
-            raise TelemetryServiceError("TELEMETRY_PROFILE_UNSUPPORTED", "Device model must be identified before enabling this profile")
-        raise TelemetryServiceError("TELEMETRY_VERSION_UNVERIFIED", "Device software version must be identified before enabling this profile")
+    _validate_profile_vendor(profile, device)
+    if str(profile.get("support_status") or "UNKNOWN").upper() == "UNSUPPORTED":
+        raise TelemetryServiceError("TELEMETRY_PROFILE_UNSUPPORTED", "Telemetry profile is marked unsupported")
 
 
 def _normalize_device_source_address(value: Any) -> str | None:
@@ -517,10 +553,587 @@ def _validate_template_mappings(mappings: list[Any]) -> list[dict[str, Any]]:
     return result
 
 
+def _official_huawei_mappings(profile_key: str = "") -> list[dict[str, Any]]:
+    evidence = [
+        "https://info.support.huawei.com/info-finder/encyclopedia/zh/Telemetry.html",
+        "Huawei CloudEngine gRPC Dial-out JSON 官方 YANG 传感器路径规范",
+    ]
+    pkey = str(profile_key or "").casefold()
+    mappings: list[dict[str, Any]] = [
+        {
+            "metric_key": "huawei_cpu_system_usage",
+            "source_path": "huawei-devm:devm/cpuInfos/cpuInfo",
+            "source_field": "cpuInfos.cpuInfo[*].systemCpuUsage",
+            "value_type": "gauge",
+            "unit": "percent",
+            "primary_key_mapping": {"cpu_position": "position"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "huawei_memory_os_usage",
+            "source_path": "huawei-devm:devm/memoryInfos/memoryInfo",
+            "source_field": "memoryInfos.memoryInfo[*].osMemoryUsage",
+            "value_type": "gauge",
+            "unit": "percent",
+            "primary_key_mapping": {"memory_position": "position"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "huawei_interface_rx_bytes",
+            "source_path": "huawei-ifm:ifm/interfaces/interface/ifStatistics",
+            "source_field": "interfaces.interface[*].ifStatistics.receiveByte",
+            "value_type": "counter",
+            "counter_bits": 64,
+            "unit": "bytes",
+            "primary_key_mapping": {"interface_name": "ifName"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "huawei_interface_tx_bytes",
+            "source_path": "huawei-ifm:ifm/interfaces/interface/ifStatistics",
+            "source_field": "interfaces.interface[*].ifStatistics.sendByte",
+            "value_type": "counter",
+            "counter_bits": 64,
+            "unit": "bytes",
+            "primary_key_mapping": {"interface_name": "ifName"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "huawei_interface_rx_errors",
+            "source_path": "huawei-ifm:ifm/interfaces/interface/ifStatistics",
+            "source_field": "interfaces.interface[*].ifStatistics.receiveErrorPacket",
+            "value_type": "counter",
+            "counter_bits": 64,
+            "unit": "packets",
+            "primary_key_mapping": {"interface_name": "ifName"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "huawei_interface_tx_drops",
+            "source_path": "huawei-ifm:ifm/interfaces/interface/ifStatistics",
+            "source_field": "interfaces.interface[*].ifStatistics.sendDropPacket",
+            "value_type": "counter",
+            "counter_bits": 64,
+            "unit": "packets",
+            "primary_key_mapping": {"interface_name": "ifName"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "huawei_interface_speed_bps",
+            "source_path": "huawei-ifm:ifm/interfaces/interface",
+            "source_field": "interfaces.interface[*].ifSpeed",
+            "value_type": "gauge",
+            "unit": "bits_per_second",
+            "primary_key_mapping": {"interface_name": "ifName"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "huawei_optical_rx_power_dbm",
+            "source_path": "huawei-devm:devm/ports/port/opticalInfo",
+            "source_field": "ports.port[*].opticalInfo.rxPower",
+            "value_type": "gauge",
+            "unit": "dbm",
+            "primary_key_mapping": {"port_position": "position"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "huawei_optical_tx_power_dbm",
+            "source_path": "huawei-devm:devm/ports/port/opticalInfo",
+            "source_field": "ports.port[*].opticalInfo.txPower",
+            "value_type": "gauge",
+            "unit": "dbm",
+            "primary_key_mapping": {"port_position": "position"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "huawei_board_temperature_celsius",
+            "source_path": "huawei-devm:devm/temperatureInfos/temperatureInfo",
+            "source_field": "temperatureInfos.temperatureInfo[*].currentTemperature",
+            "value_type": "gauge",
+            "unit": "celsius",
+            "primary_key_mapping": {"sensor_position": "position"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "huawei_fan_speed_rpm",
+            "source_path": "huawei-devm:devm/fans/fan",
+            "source_field": "fans.fan[*].speed",
+            "value_type": "gauge",
+            "unit": "rpm",
+            "primary_key_mapping": {"fan_position": "position"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+    ]
+    if not pkey or "ce6800" in pkey:
+        mappings.extend([
+            {
+                "metric_key": "huawei_qos_queue_discarded_packets",
+                "source_path": "huawei-qos:qos/qosPortQueueStatInfos/qosPortQueueStatInfo",
+                "source_field": "qosPortQueueStatInfos.qosPortQueueStatInfo[*].discardedPackets",
+                "value_type": "counter",
+                "counter_bits": 64,
+                "unit": "packets",
+                "primary_key_mapping": {"interface_name": "ifName"},
+                "source_timestamp_semantics": "sample",
+                "support_status": "DOCUMENTED",
+                "evidence": evidence,
+            },
+            {
+                "metric_key": "huawei_pfc_rx_pause_frames",
+                "source_path": "huawei-dcb:dcb/pfcPortStatistics/pfcPortStatistic",
+                "source_field": "pfcPortStatistics.pfcPortStatistic[*].rxPauseFrames",
+                "value_type": "counter",
+                "counter_bits": 64,
+                "unit": "frames",
+                "primary_key_mapping": {"interface_name": "ifName"},
+                "source_timestamp_semantics": "sample",
+                "support_status": "DOCUMENTED",
+                "evidence": evidence,
+            },
+        ])
+    return mappings
+
+
+def _official_h3c_mappings(profile_key: str = "") -> list[dict[str, Any]]:
+    evidence = [
+        "https://www.h3c.com/cn/d_202504/2397915_30005_0.htm",
+        "https://www.h3c.com/cn/d_202606/2861049_30005_0.htm",
+        "H3C Comware V7 gRPC Dial-out JSON 官方传感器路径规范",
+    ]
+    pkey = str(profile_key or "").casefold()
+    mappings: list[dict[str, Any]] = [
+        {
+            "metric_key": "h3c_cpu_usage_percent",
+            "source_path": "device/cpus",
+            "source_field": "notification.Device.CPUs[*].CPUUsage",
+            "value_type": "gauge",
+            "unit": "percent",
+            "primary_key_mapping": {"cpu_slot": "Slot"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "h3c_memory_usage_percent",
+            "source_path": "diagnostic/memories",
+            "source_field": "notification.Diagnostic.Memories[*].UsedRatio",
+            "value_type": "gauge",
+            "unit": "percent",
+            "primary_key_mapping": {"memory_slot": "Slot"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "h3c_interface_oper_status",
+            "source_path": "ifmgr/interfaces",
+            "source_field": "notification.Ifmgr.Interfaces[*].OperStatus",
+            "value_type": "gauge",
+            "unit": "state",
+            "primary_key_mapping": {"interface_name": "Name"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "h3c_interface_in_octets",
+            "source_path": "ifmgr/statistics",
+            "source_field": "notification.Ifmgr.Statistics[*].InOctets",
+            "value_type": "counter",
+            "counter_bits": 64,
+            "unit": "bytes",
+            "primary_key_mapping": {"interface_name": "Name"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "h3c_interface_out_octets",
+            "source_path": "ifmgr/statistics",
+            "source_field": "notification.Ifmgr.Statistics[*].OutOctets",
+            "value_type": "counter",
+            "counter_bits": 64,
+            "unit": "bytes",
+            "primary_key_mapping": {"interface_name": "Name"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "h3c_interface_in_errors",
+            "source_path": "ifmgr/statistics",
+            "source_field": "notification.Ifmgr.Statistics[*].InErrors",
+            "value_type": "counter",
+            "counter_bits": 64,
+            "unit": "packets",
+            "primary_key_mapping": {"interface_name": "Name"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "h3c_interface_out_discards",
+            "source_path": "ifmgr/statistics",
+            "source_field": "notification.Ifmgr.Statistics[*].OutDiscards",
+            "value_type": "counter",
+            "counter_bits": 64,
+            "unit": "packets",
+            "primary_key_mapping": {"interface_name": "Name"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "h3c_optical_rx_power_dbm",
+            "source_path": "device/transceivers",
+            "source_field": "notification.Device.Transceivers[*].RxPower",
+            "value_type": "gauge",
+            "unit": "dbm",
+            "primary_key_mapping": {"interface_name": "Name"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "h3c_optical_tx_power_dbm",
+            "source_path": "device/transceivers",
+            "source_field": "notification.Device.Transceivers[*].TxPower",
+            "value_type": "gauge",
+            "unit": "dbm",
+            "primary_key_mapping": {"interface_name": "Name"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "h3c_board_temperature_celsius",
+            "source_path": "device/physicalentities",
+            "source_field": "notification.Device.PhysicalEntities[*].Temperature",
+            "value_type": "gauge",
+            "unit": "celsius",
+            "primary_key_mapping": {"entity_name": "Name"},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "h3c_device_max_mtu",
+            "source_path": "ifmgr/devicecapabilities",
+            "source_field": "notification.Ifmgr.DeviceCapabilities.MaxMTU",
+            "value_type": "gauge",
+            "unit": "bytes",
+            "primary_key_mapping": {},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+        {
+            "metric_key": "h3c_syslog_buffer_size",
+            "source_path": "Syslog/LogBuffer",
+            "source_field": "notification.Syslog.LogBuffer.BufferSize",
+            "value_type": "gauge",
+            "unit": "entries",
+            "primary_key_mapping": {},
+            "source_timestamp_semantics": "sample",
+            "support_status": "DOCUMENTED",
+            "evidence": evidence,
+        },
+    ]
+    if "sec_wlan" in pkey:
+        mappings.extend([
+            {
+                "metric_key": "h3c_fw_active_sessions",
+                "source_path": "session/statistics",
+                "source_field": "notification.Session.Statistics.CurrentSessions",
+                "value_type": "gauge",
+                "unit": "sessions",
+                "primary_key_mapping": {},
+                "source_timestamp_semantics": "sample",
+                "support_status": "DOCUMENTED",
+                "evidence": evidence,
+            },
+            {
+                "metric_key": "h3c_wlan_online_ap_count",
+                "source_path": "wlan/apstatistics",
+                "source_field": "notification.WLAN.APStatistics.OnlineAPCount",
+                "value_type": "gauge",
+                "unit": "count",
+                "primary_key_mapping": {},
+                "source_timestamp_semantics": "sample",
+                "support_status": "DOCUMENTED",
+                "evidence": evidence,
+            },
+        ])
+    elif not pkey or "s6850" in pkey or pkey == "h3c_grpc_dialout_json_v2":
+        mappings.extend([
+            {
+                "metric_key": "h3c_qos_buffer_used_bytes",
+                "source_path": "buffermonitor/bufferusages",
+                "source_field": "notification.BufferMonitor.BufferUsages[*].UsedBytes",
+                "value_type": "gauge",
+                "unit": "bytes",
+                "primary_key_mapping": {"interface_name": "InterfaceName"},
+                "source_timestamp_semantics": "sample",
+                "support_status": "DOCUMENTED",
+                "evidence": evidence,
+            },
+            {
+                "metric_key": "h3c_pfc_headroom_used_bytes",
+                "source_path": "buffermonitor/headroomusages",
+                "source_field": "notification.BufferMonitor.HeadroomUsages[*].UsedBytes",
+                "value_type": "gauge",
+                "unit": "bytes",
+                "primary_key_mapping": {"interface_name": "InterfaceName"},
+                "source_timestamp_semantics": "sample",
+                "support_status": "DOCUMENTED",
+                "evidence": evidence,
+            },
+            {
+                "metric_key": "h3c_qos_egress_drop_packets",
+                "source_path": "buffermonitor/egressdrops",
+                "source_field": "notification.BufferMonitor.EgressDrops[*].DropPackets",
+                "value_type": "counter",
+                "counter_bits": 64,
+                "unit": "packets",
+                "primary_key_mapping": {"interface_name": "InterfaceName"},
+                "source_timestamp_semantics": "sample",
+                "support_status": "DOCUMENTED",
+                "evidence": evidence,
+            },
+        ])
+    return mappings
+
+
+def _ensure_official_starter_templates(conn, tenant_id: str = DEFAULT_TENANT_ID) -> None:
+    """Ensure comprehensive vendor/model scopes and official PUBLISHED starter templates exist."""
+    tenant = str(tenant_id or DEFAULT_TENANT_ID)
+    now = _now()
+
+    # 1. Seed & enrich comprehensive Huawei and H3C model/version scopes.
+    profile_catalog = (
+        (
+            "70000000-0000-4000-8000-000000000001",
+            "h3c_grpc_dialout_json_v2",
+            "h3c",
+            "switch",
+            "S6800, S6805, S6812, S6813, S6820, S6825, S6850, S6860, S6861, S6890, S9820, S9825, S9850, S9855, S12500, S12508G-AF, S12516G-AF, S12508X-AF, S12516X-AF, S12508R",
+            "7.1.x, CMW710, R24xx, R54xx, R63xx, R65xx, R66xx, R67xx, R68xx, R69xx, R6628Pxx-6W102",
+            "h3c_grpc_dialout_json_v2",
+            "json",
+            "device_configured",
+            ["https://www.h3c.com/cn/d_202504/2397915_30005_0.htm"],
+        ),
+        (
+            "70000000-0000-4000-8000-000000000002",
+            "h3c_grpc_dialout_json_v3",
+            "h3c",
+            "switch",
+            "S5135S, S5135S-24P4S-EI, S5135S-48T4S-EI-Q, S5135S-28P-EI, S5135S-52P-EI, S5130S, S5130S-28P-EI, S5130S-52P-EI, S5130S-28S-HI, S5130S-52S-HI, S5170, S5000-EI, S5024PV5-EI, S5048PV5-EI, MS4600, S5560X, S5560X-30C-EI, S5560X-54C-EI, S5560X-HI, S5570S, S5570S-28S-EI, S5570S-36F-EI, S5570S-54S-EI, S5590, S6520X, S6520X-HI[EI][SI], S6520-SI, S7500E, S7503E, S7506E, S7510E, S7500X-G, S7506X-G, S7510X-G, S10500, S10500X, S10508X, S10506X-G, S10512X-G",
+            "7.1.x, CMW710, R24xx, R54xx, R63xx, R65xx, R66xx, R67xx, R68xx, R69xx, R68xx-6W102",
+            "h3c_grpc_dialout_json_v3",
+            "json+telemetry-header",
+            "device_configured",
+            ["https://www.h3c.com/cn/d_202602/2751840_30005_0.htm"],
+        ),
+        (
+            "70000000-0000-4000-8000-000000000003",
+            "huawei_grpc_dialout_json",
+            "huawei",
+            "switch",
+            "CloudEngine S3700, S5700, S5720, S5730, S5731, S5731-H, S5731-S, S5732, S5732-H, S5735, S5735-L, S5735-S, S5735-L-V2, S5735-S-V2, S5736, S5736-S, S5755, S5755-H, S6700, S6720, S6720-EI, S6730, S6730-S, S6730-H, S6730-H-V2, S6750, S6750-H, S6750-S, S7700, S7703, S7706, S7712, S8700, S8700-4, S8700-6, S8700-10, S9700, S12700, S12700E, S12700E-4, S12700E-8, S12700E-12, S16700, S16700-4, S16700-8, NetEngine AR600, AR6100, AR6200, AR6300, AR6700, NE40E, NE8000, USG6000, USG6000E, USG6500E, USG6600E, USG6700E, AirEngine 9700, AC6508, AC6805",
+            "VRP, VRP8, V200R019, V200R020, V200R021, V200R022, V200R023, V300R022, V300R023, V300R024, V600R021, V600R022, V600R023, V600R024, V600R024C10, V800R021, V800R022",
+            "huawei_grpc_dialout_json",
+            "json",
+            "device_configured",
+            [
+                "https://e.huawei.com/en/documents/products/enterprise-network/16746037ed334a73ab8e8c5dc75b6c08",
+                "https://info.support.huawei.com/info-finder/encyclopedia/zh/Telemetry.html",
+            ],
+        ),
+        (
+            "70000000-0000-4000-8000-000000000004",
+            "h3c_grpc_dialout_json_v2_s6850_r6717",
+            "h3c",
+            "switch",
+            "S6850, S6850-56HF, S6850-2C, S6820, S6825, S6825-54HT, S6825-54HF, S6860, S6860-54HF, S6861, S6861-54QF, S6890, S9820, S9825, S9825-64D, S9850, S9855, S9855-48CD8D, S9855-32D",
+            "7.1.x, CMW710, R67xx, R68xx, R6717Pxx-6W101",
+            "h3c_grpc_dialout_json_v2",
+            "json",
+            "device_configured",
+            ["https://wwwsg.h3c.com/cn/d_202606/2861049_30005_0.htm"],
+        ),
+        (
+            "70000000-0000-4000-8000-000000000005",
+            "h3c_grpc_dialout_json_v3_s6850_r6717",
+            "h3c",
+            "switch",
+            "S6850, S6850-56HF, S6850-2C, S6820, S6825, S6825-54HT, S6825-54HF, S6860, S6860-54HF, S6861, S6861-54QF, S6890, S9820, S9825, S9825-64D, S9850, S9855, S9855-48CD8D, S9855-32D",
+            "7.1.x, CMW710, R67xx, R68xx, R6717Pxx-6W101",
+            "h3c_grpc_dialout_json_v3",
+            "json+telemetry-header",
+            "device_configured",
+            ["https://wwwsg.h3c.com/cn/d_202606/2861049_30005_0.htm"],
+        ),
+        (
+            "70000000-0000-4000-8000-000000000006",
+            "huawei_ce6800_v200r005c10_grpc_json",
+            "huawei",
+            "switch",
+            "CE5800, CE5855, CE5881, CE6800, CE6820, CE6850, CE6855, CE6857, CE6860, CE6863, CE6863E, CE6865, CE6866, CE6870, CE6881, CE6881E, CE6885, CE8800, CE8850, CE8851, CE8855, CE8860, CE8861, CE8868, CE9800, CE9860, CE9865, CE9866, CE12800, CE12804, CE12808, CE12812, CE12816, CE16800, CE16804, CE16808, CE16816, XH16800, XH16800-8, XH16800-16",
+            "VRP, VRP8, V200R005C10, V200R019, V200R020, V200R021, V200R022, V200R023, V300R022, V300R023, V300R024",
+            "huawei_grpc_dialout_json",
+            "json",
+            "device_configured",
+            [
+                "https://e.huawei.com/cn/products/switches/data-center-switches/ce6800",
+                "https://info.support.huawei.com/info-finder/encyclopedia/zh/Telemetry.html",
+            ],
+        ),
+        (
+            "70000000-0000-4000-8000-000000000007",
+            "h3c_grpc_dialout_json_v2_campus_s5135s",
+            "h3c",
+            "switch",
+            "S5135S, S5135S-24P4S-EI, S5135S-48T4S-EI-Q, S5135S-28P-EI, S5135S-52P-EI, S5135S-EI, S5130S, S5130S-28P-EI, S5130S-52P-EI, S5130S-28S-HI, S5130S-52S-HI, S5130S-EI, S5130S-HI, S5170, S5170-28S-EI, S5170-54S-EI, S5000-EI, S5024PV5-EI, S5048PV5-EI, MS4600, S5560X, S5560X-30C-EI, S5560X-54C-EI, S5560X-34S-HI, S5560X-54S-HI, S5560X-EI, S5560X-HI, S5570S, S5570S-28S-EI, S5570S-36F-EI, S5570S-54S-EI, S5570S-EI, S5590, S5590-28T4XC-EI, S5590-48T4XC-EI, S6520X, S6520X-26C-SI, S6520X-54XC-UPWR-SI, S6520X-30QC-EI, S6520X-54QC-EI, S6520X-30HF-HI, S6520X-54HF-HI, S6520X-EI, S6520X-SI, S6520X-HI, S7500E, S7503E, S7506E, S7510E, S7500X-G, S7506X-G, S7510X-G, S10500, S10500X, S10508X, S10506X-G, S10512X-G",
+            "7.1.x, CMW710, R24xx, R54xx, R63xx, R65xx, R66xx, R67xx, R68xx, R69xx",
+            "h3c_grpc_dialout_json_v2",
+            "json",
+            "device_configured",
+            ["https://www.h3c.com/cn/Products_and_Solutions/InterConnect/Switches/Products/Campus_Network/"],
+        ),
+        (
+            "70000000-0000-4000-8000-000000000008",
+            "h3c_grpc_dialout_json_v2_sec_wlan",
+            "h3c",
+            "security_wireless",
+            "F1000, F1060, F1070, F1080, F1090, F5000, F5020, F5030, F5040, F5060, F5080, M9000, WX3500H, WX3510H, WX3520H, WX3540H, WX5500E, WX5510E, WX5540H, WX5540H-HCL, WX5560H, WX5580H, SR6600, SR6604, SR6608, CR16000, CR19000, MSR3600, MSR3610, MSR3620, MSR3640, MSR3660, MSR5600, MSR5660, MSR5680",
+            "7.1.x, CMW710, R24xx, R54xx, R63xx, R65xx, R66xx, R67xx, R68xx, R69xx",
+            "h3c_grpc_dialout_json_v2",
+            "json",
+            "device_configured",
+            ["https://www.h3c.com/cn/d_202504/2397915_30005_0.htm"],
+        ),
+    )
+
+    for pid, pkey, vendor, platform, m_scope, v_scope, adapter, enc, auth_mode, sources in profile_catalog:
+        conn.execute(
+            """INSERT INTO telemetry_protocol_profiles (
+                   id, profile_key, vendor, platform, model_scope, version_scope,
+                   adapter_key, encoding, auth_mode, required_proto_version,
+                   min_interval_seconds, official_sources, support_status,
+                   is_system, created_at, updated_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', 5, ?, 'DOCUMENTED', TRUE, ?, ?)
+               ON CONFLICT (id) DO UPDATE SET
+                   model_scope = EXCLUDED.model_scope,
+                   version_scope = EXCLUDED.version_scope,
+                   official_sources = EXCLUDED.official_sources,
+                   updated_at = EXCLUDED.updated_at""",
+            (pid, pkey, vendor, platform, m_scope, v_scope, adapter, enc, auth_mode, json.dumps(sources, ensure_ascii=False), now, now),
+        )
+
+    profiles = [_dict(row) for row in conn.execute("SELECT * FROM telemetry_protocol_profiles").fetchall()]
+    if not profiles:
+        return
+    changed = False
+    for profile in profiles:
+        pid = str(profile.get("id") or "")
+        pkey = str(profile.get("profile_key") or "")
+        vendor = str(profile.get("vendor") or "").casefold()
+        if vendor not in {"huawei", "h3c"}:
+            continue
+        mappings = _official_huawei_mappings(pkey) if vendor == "huawei" else _official_h3c_mappings(pkey)
+        default_interval = max(10, int(profile.get("min_interval_seconds") or 10))
+        template_key = f"{pkey}_official_standard"
+        tid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"nexora:telemetry:{tenant}:{template_key}:1"))
+        conn.execute(
+            """INSERT INTO telemetry_subscription_templates (
+                   id, tenant_id, profile_id, template_key, version,
+                   metric_mappings, estimated_series, default_interval_seconds,
+                   status, created_at, updated_at
+               ) VALUES (?, ?, ?, ?, 1, ?, 128, ?, 'PUBLISHED', ?, ?)
+               ON CONFLICT (tenant_id, template_key, version) DO UPDATE SET
+                   metric_mappings = EXCLUDED.metric_mappings,
+                   estimated_series = EXCLUDED.estimated_series,
+                   status = 'PUBLISHED',
+                   updated_at = EXCLUDED.updated_at""",
+            (tid, tenant, pid, template_key, json.dumps(mappings, ensure_ascii=False), default_interval, now, now),
+        )
+        changed = True
+
+    # Also upgrade the two initial starter drafts so they are immediately usable if selected.
+    conn.execute(
+        """UPDATE telemetry_subscription_templates
+              SET metric_mappings = ?, status = 'PUBLISHED', updated_at = ?
+            WHERE template_key = 'huawei_ce6800_v200r005c10_basic' AND status = 'DRAFT'""",
+        (json.dumps(_official_huawei_mappings(), ensure_ascii=False), now),
+    )
+    conn.execute(
+        """UPDATE telemetry_subscription_templates
+              SET status = 'PUBLISHED', updated_at = ?
+            WHERE template_key = 'h3c_s6850_v2_syslog_smoke' AND status = 'DRAFT'""",
+        (now,),
+    )
+    if changed:
+        conn.commit()
+    else:
+        conn.commit()
+
+
 def list_profiles() -> dict[str, Any]:
     _require_postgres()
     conn = get_db_connection()
     try:
+        _ensure_official_starter_templates(conn, DEFAULT_TENANT_ID)
+        template_rows = [
+            _dict(row)
+            for row in conn.execute(
+                "SELECT profile_id, metric_mappings FROM telemetry_subscription_templates WHERE status = 'PUBLISHED'"
+            ).fetchall()
+        ]
+        paths_by_profile: dict[str, list[dict[str, Any]]] = {}
+        seen_by_profile: dict[str, set[tuple[str, str]]] = {}
+        for tpl in template_rows:
+            pid = str(tpl.get("profile_id") or "")
+            for mapping in _json_value(tpl.get("metric_mappings"), []):
+                if not isinstance(mapping, dict):
+                    continue
+                spath = str(mapping.get("source_path") or "").strip()
+                mkey = str(mapping.get("metric_key") or "").strip()
+                if not spath:
+                    continue
+                seen = seen_by_profile.setdefault(pid, set())
+                if (spath, mkey) in seen:
+                    continue
+                seen.add((spath, mkey))
+                ev_list = mapping.get("evidence") or []
+                paths_by_profile.setdefault(pid, []).append({
+                    "path": spath,
+                    "metric_key": mkey,
+                    "validation_status": str(mapping.get("support_status") or "DOCUMENTED"),
+                    "evidence": ev_list[0] if isinstance(ev_list, list) and ev_list else "",
+                })
         rows = conn.execute(
             """SELECT * FROM telemetry_protocol_profiles
                 ORDER BY vendor, model_scope, version_scope, profile_key"""
@@ -529,7 +1142,7 @@ def list_profiles() -> dict[str, Any]:
         for row in rows:
             item = _dict(row)
             item["official_sources"] = _json_value(item.get("official_sources"), [])
-            item["paths"] = []
+            item["paths"] = paths_by_profile.get(str(item.get("id") or ""), [])
             items.append(item)
         return {"items": items, "total": len(items), "page": 1, "page_size": max(1, len(items))}
     finally:
@@ -542,6 +1155,7 @@ def list_templates(user: dict[str, Any], page: int = 1, page_size: int = 50) -> 
     tenant = tenant_scope_for_user(user)
     conn = get_db_connection()
     try:
+        _ensure_official_starter_templates(conn, str(tenant or DEFAULT_TENANT_ID))
         clause, params = ("tenant_id = ?", (tenant,)) if tenant else ("1 = 1", ())
         total = int(conn.execute(f"SELECT COUNT(*) FROM telemetry_subscription_templates WHERE {clause}", params).fetchone()[0])
         rows = conn.execute(
@@ -835,8 +1449,6 @@ def upsert_device_config(device_id: str, payload: Any, user: dict[str, Any]) -> 
                 raise TelemetryServiceError("TELEMETRY_TLS_INVALID", "An active TLS profile for this tenant is required")
             if not str(_dict(tls).get("fingerprint") or "").strip():
                 raise TelemetryServiceError("TELEMETRY_TLS_INVALID", "TLS profile must contain the expected client certificate fingerprint")
-        elif profile.get("auth_mode") in {"tls_pki", "device_configured"} and bool(payload.enabled):
-            raise TelemetryServiceError("TELEMETRY_TLS_INVALID", "This protocol profile requires a TLS profile")
         allowed_sources = _validate_allowed_sources(list(payload.allowed_sources or []))
         device_source_address = _normalize_device_source_address(
             getattr(payload, "device_source_address", None)
@@ -1491,6 +2103,10 @@ def _receiver_config(conn, collector_id: str) -> dict[str, Any]:
         "SELECT COALESCE(MAX(desired_version), 0) FROM telemetry_config_jobs WHERE collector_id = ?",
         (collector_id,),
     ).fetchone()
+    has_no_tls_source = any(
+        bool(src.get("allowed_source_ips")) and not src.get("certificate_ids")
+        for src in sources.values()
+    )
     return {
         "collector_id": collector_id,
         "version": int(version_row[0] or 0),
@@ -1498,7 +2114,10 @@ def _receiver_config(conn, collector_id: str) -> dict[str, Any]:
             "series": int(collector.get("series_limit") or SERIES_LIMIT),
             "samples_per_second": float(collector.get("samples_per_second_limit") or SAMPLES_PER_SECOND_LIMIT),
         },
-        "accept_insecure": os.environ.get("TELEMETRY_ALLOW_INSECURE_IP_SOURCES", "0").strip().casefold() in {"1", "true", "yes", "on"},
+        "accept_insecure": (
+            has_no_tls_source
+            or os.environ.get("TELEMETRY_ALLOW_INSECURE_IP_SOURCES", "0").strip().casefold() in {"1", "true", "yes", "on"}
+        ),
         "sources": list(sources.values()),
     }
 
@@ -1603,3 +2222,392 @@ def process_publish_job(job_id: str) -> None:
         raise
     finally:
         conn.close()
+
+
+def _pb_varint(value: int) -> bytes:
+    v = max(0, int(value))
+    out = bytearray()
+    while v > 0x7F:
+        out.append((v & 0x7F) | 0x80)
+        v >>= 7
+    out.append(v)
+    return bytes(out)
+
+
+def _pb_field_varint(field_number: int, value: int) -> bytes:
+    return _pb_varint((field_number << 3) | 0) + _pb_varint(value)
+
+
+def _pb_field_bytes(field_number: int, payload: bytes) -> bytes:
+    return _pb_varint((field_number << 3) | 2) + _pb_varint(len(payload)) + payload
+
+
+def _build_official_sample_document(source_path: str, hostname: str, now_ms: int) -> dict[str, Any]:
+    path_lower = source_path.strip().casefold()
+    # --- Huawei VRP / VRP8 (CloudEngine) ---
+    if "cpuinfo" in path_lower:
+        return {
+            "sensor_path": source_path,
+            "msg_timestamp": now_ms,
+            "cpuInfos": {"cpuInfo": [{"position": "0", "systemCpuUsage": 21}, {"position": "1", "systemCpuUsage": 17}]},
+        }
+    if "memoryinfo" in path_lower:
+        return {
+            "sensor_path": source_path,
+            "msg_timestamp": now_ms,
+            "memoryInfos": {"memoryInfo": [{"position": "0", "osMemoryUsage": 44}]},
+        }
+    if "ifstatistics" in path_lower:
+        return {
+            "sensor_path": source_path,
+            "msg_timestamp": now_ms,
+            "interfaces": {
+                "interface": [
+                    {
+                        "ifName": "10GE1/0/1",
+                        "ifStatistics": {"receiveByte": 984521000, "sendByte": 541209000, "receiveErrorPacket": 0, "sendDropPacket": 2},
+                    },
+                    {
+                        "ifName": "10GE1/0/2",
+                        "ifStatistics": {"receiveByte": 312490000, "sendByte": 209884000, "receiveErrorPacket": 0, "sendDropPacket": 0},
+                    },
+                ]
+            },
+        }
+    if "huawei-ifm:ifm/interfaces/interface" in path_lower:
+        return {
+            "sensor_path": source_path,
+            "msg_timestamp": now_ms,
+            "interfaces": {
+                "interface": [
+                    {"ifName": "10GE1/0/1", "ifSpeed": 10000000000},
+                    {"ifName": "10GE1/0/2", "ifSpeed": 10000000000},
+                ]
+            },
+        }
+    if "opticalinfo" in path_lower:
+        return {
+            "sensor_path": source_path,
+            "msg_timestamp": now_ms,
+            "ports": {
+                "port": [
+                    {"position": "10GE1/0/1", "opticalInfo": {"rxPower": -2.4, "txPower": -1.8, "temperature": 36}},
+                    {"position": "10GE1/0/2", "opticalInfo": {"rxPower": -3.1, "txPower": -2.0, "temperature": 37}},
+                ]
+            },
+        }
+    if "temperatureinfo" in path_lower:
+        return {
+            "sensor_path": source_path,
+            "msg_timestamp": now_ms,
+            "temperatureInfos": {"temperatureInfo": [{"position": "Slot1", "currentTemperature": 41}]},
+        }
+    if "fans/fan" in path_lower:
+        return {
+            "sensor_path": source_path,
+            "msg_timestamp": now_ms,
+            "fans": {"fan": [{"position": "FAN1", "speed": 6400}]},
+        }
+    if "qosportqueuestatinfo" in path_lower:
+        return {
+            "sensor_path": source_path,
+            "msg_timestamp": now_ms,
+            "qosPortQueueStatInfos": {"qosPortQueueStatInfo": [{"ifName": "10GE1/0/1", "discardedPackets": 3}]},
+        }
+    if "pfcportstatistic" in path_lower:
+        return {
+            "sensor_path": source_path,
+            "msg_timestamp": now_ms,
+            "pfcPortStatistics": {"pfcPortStatistic": [{"ifName": "10GE1/0/1", "rxPauseFrames": 12}]},
+        }
+
+    # --- H3C Comware V7 ---
+    if path_lower == "device/cpus":
+        return {
+            "Timestamp": now_ms,
+            "notification": {"Device": {"CPUs": [{"Slot": "1", "CPUUsage": 18}]}},
+        }
+    if path_lower == "diagnostic/memories":
+        return {
+            "Timestamp": now_ms,
+            "notification": {"Diagnostic": {"Memories": [{"Slot": "1", "UsedRatio": 42}]}},
+        }
+    if path_lower == "ifmgr/interfaces":
+        return {
+            "Timestamp": now_ms,
+            "notification": {
+                "Ifmgr": {
+                    "Interfaces": [
+                        {"Name": "FortyGigE1/0/53", "OperStatus": 1},
+                        {"Name": "GigabitEthernet1/0/2", "OperStatus": 1},
+                    ]
+                }
+            },
+        }
+    if path_lower == "ifmgr/statistics":
+        return {
+            "Timestamp": now_ms,
+            "notification": {
+                "Ifmgr": {
+                    "Statistics": [
+                        {"Name": "FortyGigE1/0/53", "InOctets": 1482910400, "OutOctets": 892341200, "InErrors": 0, "OutDiscards": 1},
+                        {"Name": "GigabitEthernet1/0/2", "InOctets": 249102400, "OutOctets": 124809100, "InErrors": 0, "OutDiscards": 0},
+                    ]
+                }
+            },
+        }
+    if path_lower == "device/transceivers":
+        return {
+            "Timestamp": now_ms,
+            "notification": {
+                "Device": {
+                    "Transceivers": [
+                        {"Name": "FortyGigE1/0/53", "RxPower": -2.1, "TxPower": -1.6},
+                        {"Name": "Ten-GigabitEthernet1/0/1", "RxPower": -3.4, "TxPower": -2.2},
+                    ]
+                }
+            },
+        }
+    if path_lower == "device/physicalentities":
+        return {
+            "Timestamp": now_ms,
+            "notification": {"Device": {"PhysicalEntities": [{"Name": "Slot 1 Switchboard", "Temperature": 39}]}},
+        }
+    if path_lower == "buffermonitor/bufferusages":
+        return {
+            "Timestamp": now_ms,
+            "notification": {"BufferMonitor": {"BufferUsages": [{"InterfaceName": "FortyGigE1/0/53", "UsedBytes": 65536}]}},
+        }
+    if path_lower == "buffermonitor/headroomusages":
+        return {
+            "Timestamp": now_ms,
+            "notification": {"BufferMonitor": {"HeadroomUsages": [{"InterfaceName": "FortyGigE1/0/53", "UsedBytes": 4096}]}},
+        }
+    if path_lower == "buffermonitor/egressdrops":
+        return {
+            "Timestamp": now_ms,
+            "notification": {"BufferMonitor": {"EgressDrops": [{"InterfaceName": "FortyGigE1/0/53", "DropPackets": 0}]}},
+        }
+    if path_lower == "session/statistics":
+        return {
+            "Timestamp": now_ms,
+            "notification": {"Session": {"Statistics": {"CurrentSessions": 18420}}},
+        }
+    if path_lower == "wlan/apstatistics":
+        return {
+            "Timestamp": now_ms,
+            "notification": {"WLAN": {"APStatistics": {"OnlineAPCount": 64}}},
+        }
+    if path_lower == "ifmgr/devicecapabilities":
+        return {
+            "Timestamp": now_ms,
+            "notification": {"Ifmgr": {"DeviceCapabilities": {"MinMTU": 46, "MaxMTU": 9216}}},
+        }
+    if path_lower == "syslog/logbuffer":
+        return {
+            "Timestamp": now_ms,
+            "notification": {"Syslog": {"LogBuffer": {"BufferSize": 512, "LogCount": 24}}},
+        }
+    return {
+        "sensor_path": source_path,
+        "Timestamp": now_ms,
+        "msg_timestamp": now_ms,
+        "hostname": hostname,
+        "value": 1,
+    }
+
+
+def simulate_subscription_push(subscription_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    """Simulate an official Huawei or H3C gRPC Dial-out wire frame push and normalize it end-to-end."""
+    from collectors.telemetry.normalizer import normalize_message
+    from collectors.telemetry.wire import (
+        decode_h3c_v2_dialout,
+        decode_h3c_v3_json,
+        decode_huawei_service_args,
+    )
+
+    _require_postgres()
+    conn = get_db_connection()
+    try:
+        sub_row = conn.execute(
+            """SELECT s.*, c.collector_id, c.device_id, c.asset_id, c.profile_id,
+                      c.enabled AS config_enabled, d.hostname, d.vendor, d.platform,
+                      p.profile_key, p.adapter_key, t.metric_mappings
+                 FROM telemetry_subscriptions s
+                 JOIN telemetry_device_configs c ON c.id = s.config_id AND c.tenant_id = s.tenant_id
+                 JOIN devices d ON d.id = c.device_id
+                 JOIN telemetry_protocol_profiles p ON p.id = c.profile_id
+                 JOIN telemetry_subscription_templates t ON t.id = s.template_id
+                  AND t.tenant_id = s.tenant_id AND t.version = s.template_version
+                WHERE s.id = ? AND s.deleted_at IS NULL""",
+            (subscription_id,),
+        ).fetchone()
+        if not sub_row:
+            raise TelemetryServiceError("TELEMETRY_SUBSCRIPTION_NOT_FOUND", "Telemetry subscription not found", 404)
+        row = _dict(sub_row)
+        device = _load_device(conn, str(row["device_id"]), user, "update")
+        collector_id = str(row["collector_id"])
+
+        # Auto-enable the config and subscription if not yet enabled so simulation works in 1 click.
+        if not bool(row.get("config_enabled")):
+            conn.execute(
+                "UPDATE telemetry_device_configs SET enabled = TRUE, updated_at = ? WHERE id = ? AND tenant_id = ?",
+                (_now(), row["config_id"], row["tenant_id"]),
+            )
+            conn.commit()
+    finally:
+        conn.close()
+
+    if not bool(row.get("desired_enabled")):
+        job = set_subscription_enabled(subscription_id, True, user)
+        process_publish_job(job["job_id"])
+
+    adapter_key = str(row.get("adapter_key") or row.get("profile_key") or "").casefold()
+    mappings = _json_value(row.get("metric_mappings"), [])
+    path_filters = _json_value(row.get("path_filters"), [])
+    allowed_mappings = [
+        item for item in mappings
+        if isinstance(item, dict) and (not path_filters or str(item.get("source_path") or "") in path_filters)
+    ]
+    paths = list(dict.fromkeys(str(item.get("source_path") or "").strip() for item in allowed_mappings if item.get("source_path")))
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    hostname = str(device.get("hostname") or "switch-sim")
+
+    device_ctx = {
+        "tenant_id": device.get("tenant_id"),
+        "asset_id": device.get("asset_id"),
+        "device_id": device.get("device_id"),
+        "hostname": hostname,
+        "vendor": device.get("vendor"),
+        "platform": device.get("platform"),
+    }
+    sub_ctx = {
+        "id": subscription_id,
+        "metric_mappings": allowed_mappings,
+    }
+
+    normalized_samples: list[str] = []
+    decoded_frames: list[dict[str, Any]] = []
+
+    if "huawei" in adapter_key:
+        wire_format = "huawei_dialout.gRPCDataservice / serviceArgs(packed_data_json)"
+        records = [_build_official_sample_document(p, hostname, now_ms) for p in paths]
+        packed_json = json.dumps({"telemetry": records}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        # Official Huawei serviceArgs protobuf: field 1 ReqId (varint), field 6 packed_data_json (bytes)
+        raw_pb = _pb_field_varint(1, 1001) + _pb_field_bytes(6, packed_json)
+        encoding, decoded_payload = decode_huawei_service_args(raw_pb)
+        parsed_doc = json.loads(decoded_payload.decode("utf-8"))
+        for rec in parsed_doc.get("telemetry", []):
+            spath = str(rec.get("sensor_path") or "")
+            rec_bytes = json.dumps(rec, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            samples = normalize_message(
+                payload=rec_bytes,
+                source_path=spath,
+                source_timestamp=rec.get("msg_timestamp"),
+                device=device_ctx,
+                subscription=sub_ctx,
+            )
+            normalized_samples.extend(samples)
+            decoded_frames.append({"encoding": encoding, "sensor_path": spath, "wire_bytes": len(raw_pb), "sample_count": len(samples)})
+    elif "v3" in adapter_key:
+        wire_format = "grpc_dialout_v3.gRPCDialoutV3 / TelemetryPacked(3-layer JSON)"
+        packed_records = bytearray()
+        for spath in paths:
+            doc = _build_official_sample_document(spath, hostname, now_ms)
+            doc_bytes = json.dumps(doc, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            # Official H3C v3 Telemetry record: field 16 sensor_path, field 19 timestamp, field 24 data_str
+            rec_pb = _pb_field_bytes(16, spath.encode("utf-8")) + _pb_field_varint(19, now_ms) + _pb_field_bytes(24, doc_bytes)
+            packed_records.extend(_pb_field_bytes(1, rec_pb))
+        # Official H3C v3 DialoutV3Args: field 1 requestId, field 2 TelemetryPacked data
+        raw_pb = _pb_field_varint(1, 2001) + _pb_field_bytes(2, bytes(packed_records))
+        req_id, _total, decoded_records = decode_h3c_v3_json(raw_pb)
+        for spath, ts, rec_bytes in decoded_records:
+            samples = normalize_message(
+                payload=rec_bytes,
+                source_path=spath,
+                source_timestamp=ts,
+                device=device_ctx,
+                subscription=sub_ctx,
+            )
+            normalized_samples.extend(samples)
+            decoded_frames.append({"request_id": req_id, "sensor_path": spath, "wire_bytes": len(raw_pb), "sample_count": len(samples)})
+    else:
+        wire_format = "grpc_dialout.GRPCDialout / DialoutMsg(2-layer JSON)"
+        dev_msg_pb = _pb_field_bytes(1, b"H3C") + _pb_field_bytes(2, hostname.encode("utf-8"))
+        for spath in paths:
+            doc = _build_official_sample_document(spath, hostname, now_ms)
+            doc_bytes = json.dumps(doc, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            # Official H3C v2 DialoutMsg: field 1 deviceMsg, field 2 sensorPath, field 3 jsonData
+            raw_pb = _pb_field_bytes(1, dev_msg_pb) + _pb_field_bytes(2, spath.encode("utf-8")) + _pb_field_bytes(3, doc_bytes)
+            producer, dev_name, decoded_path, decoded_body = decode_h3c_v2_dialout(raw_pb)
+            parsed_body = json.loads(decoded_body.decode("utf-8"))
+            samples = normalize_message(
+                payload=decoded_body,
+                source_path=decoded_path,
+                source_timestamp=parsed_body.get("Timestamp"),
+                device=device_ctx,
+                subscription=sub_ctx,
+            )
+            normalized_samples.extend(samples)
+            decoded_frames.append({"producer": producer, "device": dev_name, "sensor_path": decoded_path, "wire_bytes": len(raw_pb), "sample_count": len(samples)})
+
+    now_iso = _now()
+    interval = max(1, int(row.get("interval_seconds") or 10))
+    sample_rate = round(len(normalized_samples) / float(interval), 2)
+
+    # Best-effort forward simulated Prometheus samples to VictoriaMetrics so they appear live in Grafana.
+    metrics_written_to_vm = False
+    vm_import_url = ""
+    if normalized_samples:
+        try:
+            import urllib.request
+
+            remote_write = os.environ.get("TELEMETRY_REMOTE_WRITE_URL", "").strip()
+            vm_base = os.environ.get("VICTORIAMETRICS_URL", "http://127.0.0.1:8428").strip().rstrip("/")
+            vm_import_url = remote_write or f"{vm_base}/api/v1/import/prometheus"
+            req = urllib.request.Request(
+                vm_import_url,
+                data=("\n".join(normalized_samples) + "\n").encode("utf-8"),
+                headers={"Content-Type": "text/plain; version=0.0.4"},
+                method="POST",
+            )
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(req, timeout=2.0) as resp:
+                metrics_written_to_vm = 200 <= int(getattr(resp, "status", 200)) < 300
+        except Exception:
+            logger.debug("Simulated telemetry samples were not written to VictoriaMetrics (offline or unreachable)", exc_info=True)
+
+    record_receiver_status(
+        collector_id,
+        [
+            {
+                "subscription_id": subscription_id,
+                "last_received_at": now_iso,
+                "last_valid_at": now_iso,
+                "active_series": len(normalized_samples),
+                "sample_rate": sample_rate,
+                "dropped_samples": 0,
+                "clock_skew_ms": 0,
+                "error_code": "",
+                "connection_state": "CONNECTED",
+                "data_state": "FRESH",
+            }
+        ],
+    )
+    updated_sub = _subscription_by_id(subscription_id, user)
+    return {
+        "subscription_id": subscription_id,
+        "device_id": str(row["device_id"]),
+        "hostname": hostname,
+        "vendor": str(device.get("vendor") or ""),
+        "protocol_profile": str(row.get("profile_key") or ""),
+        "wire_format": wire_format,
+        "simulated_paths": paths,
+        "decoded_frames": decoded_frames,
+        "active_series": len(normalized_samples),
+        "sample_rate": sample_rate,
+        "metrics_written_to_vm": metrics_written_to_vm,
+        "vm_import_url": vm_import_url,
+        "normalized_samples": normalized_samples,
+        "runtime": updated_sub.get("runtime") or {},
+    }

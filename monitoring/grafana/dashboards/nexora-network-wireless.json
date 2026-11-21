@@ -69,6 +69,18 @@
     },
     {
       "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Telemetry 实时",
+      "tooltip": "切换到 Telemetry 实时",
+      "type": "link",
+      "url": "/grafana/d/nexora-telemetry-realtime/nexora-telemetry-realtime"
+    },
+    {
+      "asDropdown": false,
       "icon": "external link",
       "includeVars": false,
       "keepTime": false,
@@ -150,9 +162,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -165,7 +177,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -174,7 +187,7 @@
           "instant": true
         }
       ],
-      "description": "只统计 up 值为 1 的无线控制器；目标存在但全部离线时显示 0。"
+      "description": "当前在线且通信正常的无线控制器（AC）数量。"
     },
     {
       "id": 14,
@@ -240,9 +253,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -255,7 +268,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -264,7 +278,7 @@
           "instant": true
         }
       ],
-      "description": "纳管 AC 数减去在线 AC 数；没有 AC 目标时显示无数据。"
+      "description": "当前离线或采集失联的无线控制器（AC）数量。"
     },
     {
       "id": 1,
@@ -322,9 +336,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -337,7 +351,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -346,7 +361,7 @@
           "instant": true
         }
       ],
-      "description": "按控制器 AP 清单及最近一次完整采集保留的纳管身份计数；单次缺行不会缩减总数。暂无数据不代表数量为 0。"
+      "description": "当前已纳管的无线 AP 总量，保持完整资产口径，避免因单次抖动造成总数虚降。"
     },
     {
       "id": 2,
@@ -404,9 +419,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -419,7 +434,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -428,7 +444,7 @@
           "instant": true
         }
       ],
-      "description": "优先按 AP 状态统计；覆盖不完整时采用 LibreNMS 规则采集的控制器上报数。"
+      "description": "当前正常在线提供无线接入服务的 AP 数量。"
     },
     {
       "id": 3,
@@ -490,9 +506,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -505,7 +521,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -514,7 +531,7 @@
           "instant": true
         }
       ],
-      "description": "统计明确断连，以及完整采集后仍纳管但未上报状态的 AP；未上报状态会单独标记，不以总数减在线数推算。"
+      "description": "当前处于断连或失联状态的 AP 数量，建议优先排查供电与上联链路。"
     },
     {
       "id": 4,
@@ -572,9 +589,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -587,7 +604,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -661,9 +679,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -676,7 +694,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -685,12 +704,12 @@
           "instant": true
         }
       ],
-      "description": "统计利用率达到 75% 的 Radio，仅用于定位热点。"
+      "description": "信道或空口利用率达到 75% 以上的高负载射频数，用于快速定位无线拥堵热点。"
     },
     {
       "id": 6,
       "title": "平均 Radio 利用率",
-      "type": "stat",
+      "type": "gauge",
       "datasource": {
         "type": "prometheus",
         "uid": "victoriametrics"
@@ -750,14 +769,13 @@
                 }
               }
             }
-          ]
+          ],
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -766,11 +784,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto",
-        "text": {
-          "titleSize": 13,
-          "valueSize": 28
-        }
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "minVizWidth": 75,
+        "minVizHeight": 75
       },
       "targets": [
         {
@@ -818,9 +836,10 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -858,10 +877,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "list",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -884,7 +907,7 @@
     {
       "id": 8,
       "title": "AP 状态分布",
-      "type": "bargauge",
+      "type": "piechart",
       "datasource": {
         "type": "prometheus",
         "uid": "victoriametrics"
@@ -969,18 +992,29 @@
         ]
       },
       "options": {
-        "displayMode": "gradient",
-        "orientation": "horizontal",
-        "valueMode": "color",
-        "namePlacement": "auto",
-        "showUnfilled": true,
-        "minVizWidth": 8,
-        "minVizHeight": 16,
+        "pieType": "donut",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
           ],
+          "fields": "",
           "values": false
+        },
+        "displayLabels": [
+          "percent"
+        ],
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "desc"
         }
       },
       "targets": [
@@ -1264,7 +1298,7 @@
           }
         }
       ],
-      "description": "展示最近一次完整 AP 清单中的纳管身份和状态；已知 AP 未上报时按离线显示。暂无数据不代表数量为 0。"
+      "description": "列出所有纳管 AP 的实时在线状态与基础信息，失联 AP 会高亮标出。"
     },
     {
       "id": 10,
@@ -1312,7 +1346,32 @@
               {
                 "id": "custom.cellOptions",
                 "value": {
-                  "type": "color-text"
+                  "type": "gauge",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#06B6D4",
+                      "value": null
+                    },
+                    {
+                      "color": "#3B82F6",
+                      "value": 40
+                    },
+                    {
+                      "color": "#F59E0B",
+                      "value": 80
+                    }
+                  ]
                 }
               }
             ]
@@ -1413,7 +1472,7 @@
           }
         }
       ],
-      "description": "按 AP 当前关联终端数从多到少排名；没有采集到终端数的 AP 不视为 0。"
+      "description": "按当前接入终端数由高到低排列，快速定位高密度接入区域。"
     },
     {
       "id": 22,
@@ -1562,7 +1621,7 @@
           }
         }
       ],
-      "description": "按在线 AP 时长排名（天）；H3C 为上电时长，Cisco 为加入控制器时长。"
+      "description": "按 AP 连续在线运行天数排名，快速识别刚重启或长期稳定运行的节点。"
     },
     {
       "id": 902,
@@ -1624,19 +1683,21 @@
             "overrides": []
           },
           "options": {
-            "displayMode": "gradient",
+            "displayMode": "lcd",
             "orientation": "horizontal",
-            "valueMode": "color",
-            "namePlacement": "auto",
-            "showUnfilled": true,
-            "minVizWidth": 8,
-            "minVizHeight": 16,
             "reduceOptions": {
               "calcs": [
                 "lastNotNull"
               ],
+              "fields": "",
               "values": false
-            }
+            },
+            "showUnfilled": true,
+            "valueMode": "color",
+            "namePlacement": "auto",
+            "minVizWidth": 8,
+            "minVizHeight": 16,
+            "sizing": "auto"
           },
           "targets": [
             {
@@ -1707,7 +1768,32 @@
                   {
                     "id": "custom.cellOptions",
                     "value": {
-                      "type": "color-text"
+                      "type": "gauge",
+                      "mode": "gradient"
+                    }
+                  },
+                  {
+                    "id": "min",
+                    "value": 0
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "#06B6D4",
+                          "value": null
+                        },
+                        {
+                          "color": "#3B82F6",
+                          "value": 40
+                        },
+                        {
+                          "color": "#F59E0B",
+                          "value": 80
+                        }
+                      ]
                     }
                   }
                 ]
@@ -1804,7 +1890,7 @@
               }
             }
           ],
-          "description": "按 AP 无线单元展示已采集的 BSS 客户端数；没有数据不代表数量为 0。"
+          "description": "按射频接入单元（BSS）统计实时终端连接数，辅助定位热点频段。"
         },
         {
           "id": 13,
@@ -1852,7 +1938,32 @@
                   {
                     "id": "custom.cellOptions",
                     "value": {
-                      "type": "color-text"
+                      "type": "gauge",
+                      "mode": "gradient"
+                    }
+                  },
+                  {
+                    "id": "min",
+                    "value": 0
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "#06B6D4",
+                          "value": null
+                        },
+                        {
+                          "color": "#3B82F6",
+                          "value": 80
+                        },
+                        {
+                          "color": "#8B5CF6",
+                          "value": 200
+                        }
+                      ]
                     }
                   }
                 ]
@@ -1935,7 +2046,7 @@
               }
             }
           ],
-          "description": "优先采用控制器 SSID 统计，缺失时按同名 BSS 汇总；暂无数据不代表数量为 0。"
+          "description": "按无线业务名称（SSID）汇总当前在线终端规模，直观反映各无线网段负载。"
         }
       ]
     },
@@ -2007,9 +2118,9 @@
             "overrides": []
           },
           "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "justifyMode": "center",
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
             "orientation": "auto",
             "reduceOptions": {
               "calcs": [
@@ -2022,7 +2133,8 @@
             "text": {
               "titleSize": 13,
               "valueSize": 28
-            }
+            },
+            "wideLayout": true
           },
           "targets": [
             {
@@ -2031,7 +2143,7 @@
               "instant": true
             }
           ],
-          "description": "按 AC 在线接口计数器汇总，不拆分单终端流量。"
+          "description": "无线控制器聚合上行/入向总流量速率。"
         },
         {
           "id": 18,
@@ -2089,9 +2201,9 @@
             "overrides": []
           },
           "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "justifyMode": "center",
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
             "orientation": "auto",
             "reduceOptions": {
               "calcs": [
@@ -2104,7 +2216,8 @@
             "text": {
               "titleSize": 13,
               "valueSize": 28
-            }
+            },
+            "wideLayout": true
           },
           "targets": [
             {
@@ -2113,7 +2226,7 @@
               "instant": true
             }
           ],
-          "description": "按 AC 在线接口计数器汇总，不拆分单终端流量。"
+          "description": "无线控制器聚合下行/出向总流量速率。"
         },
         {
           "id": 20,
@@ -2142,19 +2255,21 @@
             "overrides": []
           },
           "options": {
-            "displayMode": "gradient",
+            "displayMode": "lcd",
             "orientation": "horizontal",
-            "valueMode": "color",
-            "namePlacement": "auto",
-            "showUnfilled": true,
-            "minVizWidth": 8,
-            "minVizHeight": 16,
             "reduceOptions": {
               "calcs": [
                 "lastNotNull"
               ],
+              "fields": "",
               "values": false
-            }
+            },
+            "showUnfilled": true,
+            "valueMode": "color",
+            "namePlacement": "auto",
+            "minVizWidth": 8,
+            "minVizHeight": 16,
+            "sizing": "auto"
           },
           "targets": [
             {
@@ -2164,7 +2279,7 @@
               "refId": "A"
             }
           ],
-          "description": "按在线 AC 接口入向与出向吞吐之和排名。"
+          "description": "按 AC 端口实时收发总吞吐排名，快速识别无线汇聚链路瓶颈。"
         },
         {
           "id": 19,
@@ -2191,9 +2306,10 @@
                 "drawStyle": "line",
                 "lineInterpolation": "smooth",
                 "lineWidth": 2,
-                "fillOpacity": 18,
+                "fillOpacity": 24,
                 "gradientMode": "opacity",
-                "showPoints": "never"
+                "showPoints": "never",
+                "spanNulls": true
               }
             },
             "overrides": [
@@ -2224,6 +2340,10 @@
                       "mode": "fixed",
                       "fixedColor": "#3B82F6"
                     }
+                  },
+                  {
+                    "id": "custom.transform",
+                    "value": "negative-Y"
                   }
                 ]
               }
@@ -2231,10 +2351,14 @@
           },
           "options": {
             "legend": {
-              "displayMode": "list",
+              "calcs": [
+                "lastNotNull",
+                "max",
+                "mean"
+              ],
+              "displayMode": "table",
               "placement": "bottom",
-              "showLegend": true,
-              "calcs": []
+              "showLegend": true
             },
             "tooltip": {
               "mode": "multi",
@@ -2253,7 +2377,7 @@
               "refId": "B"
             }
           ],
-          "description": "按无线控制器 AC 汇总接口计数器，不表示单终端流量。"
+          "description": "无线控制器接口双向吞吐走势（入向上方、出向镜像下方），反映整体无线业务流量波峰。"
         }
       ]
     }
@@ -2376,5 +2500,6 @@
   "timezone": "browser",
   "title": "03 无线专网监控 (Wireless AP & Clients)",
   "uid": "nexora-network-wireless",
-  "version": 33
+  "version": 33,
+  "description": "企业无线专网全景监控：实时掌握 AC 与 AP 在线率、关联终端走势、AP 状态分布、高负载 Radio 热点及 SSID/BSS 业务分布。"
 }

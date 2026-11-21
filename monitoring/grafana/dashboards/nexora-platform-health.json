@@ -81,6 +81,18 @@
     },
     {
       "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Telemetry 实时",
+      "tooltip": "切换到 Telemetry 实时",
+      "type": "link",
+      "url": "/grafana/d/nexora-telemetry-realtime/nexora-telemetry-realtime"
+    },
+    {
+      "asDropdown": false,
       "icon": "external link",
       "includeVars": false,
       "keepTime": false,
@@ -162,9 +174,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -177,7 +189,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -186,7 +199,7 @@
           "instant": true
         }
       ],
-      "description": "统计可访问的监控端点，不代表容器数。"
+      "description": "当前正常响应指标抓取的监控服务端点总数。"
     },
     {
       "id": 2,
@@ -248,9 +261,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -263,7 +276,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -272,7 +286,7 @@
           "instant": true
         }
       ],
-      "description": "有端点采集样本时统计失败数；0 表示当前无失败，无样本时仍显示暂无数据。"
+      "description": "当前采集失败的平台端点数量；0 表示全部正常，无样本时仍显示暂无数据。"
     },
     {
       "id": 3,
@@ -330,9 +344,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -345,7 +359,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -419,9 +434,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -434,7 +449,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -504,9 +520,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
+        "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "center",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -519,7 +535,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -528,7 +545,7 @@
           "instant": true
         }
       ],
-      "description": "1 表示连接与查询成功，0 表示失败。"
+      "description": "监控后端核心数据库连通性状态，正常时显示在线。"
     },
     {
       "id": 6,
@@ -586,9 +603,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -601,7 +618,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -647,21 +665,26 @@
           },
           "custom": {
             "drawStyle": "line",
-            "lineInterpolation": "smooth",
+            "lineInterpolation": "stepAfter",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 35,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": []
       },
       "options": {
         "legend": {
-          "displayMode": "list",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -675,7 +698,7 @@
           "refId": "A"
         }
       ],
-      "description": "1 表示可达，0 表示不可达。"
+      "description": "各平台监控端点历史可达性阶梯走势，断崖下跌即代表服务短暂不可达。"
     },
     {
       "id": 8,
@@ -702,19 +725,24 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": []
       },
       "options": {
         "legend": {
-          "displayMode": "list",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true,
-          "calcs": []
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -836,7 +864,7 @@
           }
         }
       ],
-      "description": "只反映监控指标端点状态，不代表容器健康。"
+      "description": "列出所有平台组件采集端点的实时抓取状态与耗时，便于定位内部组件异常。"
     },
     {
       "id": 902,
@@ -915,9 +943,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -930,7 +958,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -939,7 +968,7 @@
           "instant": true
         }
       ],
-      "description": "显示等待写入的数据量；无数据时状态未知。"
+      "description": "采集代理等待推送至时序库的积压数据量，持续飙升说明写入出现瓶颈。"
     },
     {
       "id": 11,
@@ -1001,9 +1030,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -1016,7 +1045,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -1086,9 +1116,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -1101,7 +1131,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -1167,9 +1198,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -1182,7 +1213,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -1248,9 +1280,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -1263,7 +1295,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -1272,7 +1305,7 @@
           "instant": true
         }
       ],
-      "description": "显示监控数据量，不代表磁盘使用率。"
+      "description": "VictoriaMetrics 当前已占用的历史监控数据总容量。"
     },
     {
       "id": 15,
@@ -1334,9 +1367,9 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
+        "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "center",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -1349,7 +1382,8 @@
         "text": {
           "titleSize": 13,
           "valueSize": 28
-        }
+        },
+        "wideLayout": true
       },
       "targets": [
         {
@@ -1358,7 +1392,7 @@
           "instant": true
         }
       ],
-      "description": "0 表示可写，1 表示只读；无数据时状态未知。"
+      "description": "时序库当前写入状态：正常为可写，若触发只读请立即核查磁盘剩余空间。"
     },
     {
       "id": 16,
@@ -1385,22 +1419,24 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": []
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
           "calcs": [
             "lastNotNull",
-            "max"
-          ]
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -1440,22 +1476,24 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": []
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
           "calcs": [
             "lastNotNull",
-            "max"
-          ]
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -1495,9 +1533,10 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 18,
+            "fillOpacity": 24,
             "gradientMode": "opacity",
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           }
         },
         "overrides": [
@@ -1528,6 +1567,10 @@
                   "mode": "fixed",
                   "fixedColor": "#3B82F6"
                 }
+              },
+              {
+                "id": "custom.transform",
+                "value": "negative-Y"
               }
             ]
           }
@@ -1535,13 +1578,14 @@
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
           "calcs": [
             "lastNotNull",
-            "max"
-          ]
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -1629,9 +1673,9 @@
             "overrides": []
           },
           "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "justifyMode": "center",
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
             "orientation": "auto",
             "reduceOptions": {
               "calcs": [
@@ -1644,7 +1688,8 @@
             "text": {
               "titleSize": 13,
               "valueSize": 28
-            }
+            },
+            "wideLayout": true
           },
           "targets": [
             {
@@ -1653,7 +1698,7 @@
               "instant": true
             }
           ],
-          "description": "统计已观测到的容器，不代表容器健康。"
+          "description": "当前纳入资源观测的平台应用容器总数。"
         },
         {
           "id": 20,
@@ -1733,7 +1778,7 @@
               }
             }
           ],
-          "description": "最后观测时间不代表容器健康状态。"
+          "description": "展示各应用容器的最近观测时间戳与基础元数据。"
         }
       ]
     }
@@ -1755,7 +1800,7 @@
   },
   "timezone": "browser",
   "title": "10 监控平台健康（Monitoring Platform Health）",
-  "description": "覆盖平台服务可用性、remote-write 队列、VictoriaMetrics 存储和应用容器资源。数据库连接来自 API SELECT 1；Docker API 仅通过内网只读代理供 cAdvisor 获取容器元数据，cAdvisor 仅只读访问宿主 /sys cgroup，不挂载宿主根目录。",
+  "description": "Nexora 监控平台自身健康度看板：实时巡检采集端点可达性、数据写入队列、VictoriaMetrics 存储水位及核心容器资源占用。",
   "uid": "nexora-platform-health",
   "version": 33
 }

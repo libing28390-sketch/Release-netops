@@ -155,10 +155,16 @@ def test_catalog_covers_the_complete_v2_dashboard_set(catalog):
     ]
     row_count = sum(panel.get("type") == "row" for panel in panels)
     stat_count = sum(panel.get("type") == "stat" for panel in panels)
+    gauge_count = sum(panel.get("type") == "gauge" for panel in panels)
+    piechart_count = sum(panel.get("type") == "piechart" for panel in panels)
+    bargauge_count = sum(panel.get("type") == "bargauge" for panel in panels)
     assert len(panels) == 271
     assert row_count == 57
     assert len(panels) - row_count == 214
-    assert stat_count == 100
+    assert stat_count == 84
+    assert gauge_count == 18
+    assert piechart_count == 4
+    assert bargauge_count == 5
 
 
 def test_generated_catalog_uses_every_effective_source_field_config(
@@ -191,7 +197,7 @@ def test_all_stat_panels_render_null_and_nan_as_gray_no_data(catalog):
         for panel in iter_panels(dashboard.get("panels", []))
         if panel.get("type") == "stat"
     ]
-    assert len(stat_panels) == 100
+    assert len(stat_panels) == 84
 
     for panel in stat_panels:
         defaults = panel.get("fieldConfig", {}).get("defaults", {})
