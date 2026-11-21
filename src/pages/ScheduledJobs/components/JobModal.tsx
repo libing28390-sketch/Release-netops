@@ -43,7 +43,7 @@ interface JobModalProps {
   setScriptSearch: (val: string) => void;
   showScriptDropdown: boolean;
   setShowScriptDropdown: (val: boolean) => void;
-  availableScripts: Array<{ id: string; name: string; status: string; category: string; platform?: string; script_type?: string }>;
+  availableScripts: Array<{ id: string; name: string; status: string; category: string; platform?: string; script_type?: string; version?: string; parent_script_id?: string }>;
   fetchScripts: () => void;
   approverUsername: string;
   setApproverUsername: (val: string) => void;
@@ -57,6 +57,7 @@ interface JobModalProps {
   approvalDeadline: number;
   onApprovalCountdownExpire: () => void;
   approvalCode: string;
+  approvalSeq?: string;
   setApprovalCode: (val: string) => void;
   approvalError: string;
   setApprovalError: (val: string) => void;
@@ -140,6 +141,7 @@ export const JobModal: React.FC<JobModalProps> = ({
   approvalDeadline,
   onApprovalCountdownExpire,
   approvalCode,
+  approvalSeq,
   setApprovalCode,
   approvalError,
   setApprovalError,
@@ -186,12 +188,37 @@ export const JobModal: React.FC<JobModalProps> = ({
   const [cronPreviewError, setCronPreviewError] = useState('');
   const [cronPreviewRetry, setCronPreviewRetry] = useState(0);
 
+  const boundScriptBaseId = editingJob?.script_id || form.script_id || '';
+  const currentBoundScript = useMemo(
+    () => (availableScripts || []).find(s => s.id === form.script_id) || (availableScripts || []).find(s => s.id === boundScriptBaseId) || null,
+    [availableScripts, form.script_id, boundScriptBaseId],
+  );
+  const sameScriptVersions = useMemo(() => {
+    if (!boundScriptBaseId) return [];
+    const anchor = (availableScripts || []).find(s => s.id === boundScriptBaseId) || currentBoundScript;
+    if (!anchor) return [];
+    const rootId = (anchor.parent_script_id || anchor.id).trim();
+    const stripVerId = (id: string) => id.replace(/[_-]v\d+(?:[._]\d+)*$/i, '').trim();
+    const stripVerName = (name: string) => name.replace(/\s*(?:\(新版本\)|\(New Version\)|v\d+(?:\.\d+)*)\s*$/i, '').trim();
+    const baseId = stripVerId(anchor.id);
+    const baseName = stripVerName(anchor.name);
+    const matches = (availableScripts || []).filter(s => {
+      if (s.id === anchor.id) return true;
+      const sRoot = (s.parent_script_id || s.id).trim();
+      if (sRoot === rootId || s.parent_script_id === anchor.id || anchor.parent_script_id === s.id) return true;
+      if (baseId && stripVerId(s.id) === baseId) return true;
+      if (baseName && stripVerName(s.name) === baseName) return true;
+      return false;
+    });
+    return matches.sort((a, b) => String(b.version || 'v1.0.0').localeCompare(String(a.version || 'v1.0.0'), undefined, { numeric: true }));
+  }, [availableScripts, boundScriptBaseId, currentBoundScript]);
+
   React.useEffect(() => {
     if (isOpen) setFlowStep(0);
   }, [isOpen]);
 
   React.useEffect(() => {
-    if (!isOpen || flowStep !== 1) {
+    if (!isOpen) {
       setCronPreviewStatus('idle');
       return;
     }
@@ -210,7 +237,7 @@ export const JobModal: React.FC<JobModalProps> = ({
       void fetchCronPreview(expression, controller.signal)
         .then(occurrences => {
           if (controller.signal.aborted) return;
-          setCronOccurrences(occurrences.slice(0, 3));
+          setCronOccurrences(occurrences.slice(0, 10));
           setCronPreviewStatus('loaded');
         })
         .catch(error => {
@@ -225,7 +252,7 @@ export const JobModal: React.FC<JobModalProps> = ({
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [isOpen, flowStep, form.cron_expr, fetchCronPreview, cronPreviewRetry, zh]);
+  }, [isOpen, form.cron_expr, fetchCronPreview, cronPreviewRetry, zh]);
 
   React.useEffect(() => {
     if (isOpen && form.action_type === 'inspection') {
@@ -439,17 +466,22 @@ export const JobModal: React.FC<JobModalProps> = ({
         >
         <div className="h-1 shrink-0 bg-gradient-to-r from-cyan-500 via-sky-500 to-blue-600" />
 
-        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-white px-4 py-3 sm:px-5">
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-200/80 bg-white px-5 py-3.5 sm:px-6">
           <div className="flex items-center gap-3.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-cyan-100 bg-cyan-50 text-cyan-600 shadow-sm">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-500 to-blue-600 text-white shadow-sm shadow-blue-500/20">
               <CalendarClock size={19} />
             </div>
             <div>
-              <h2 id="scheduled-job-form-title" className="text-sm font-bold tracking-tight text-slate-900 sm:text-base">
-                {isEditMode ? (zh ? '编辑定时作业' : 'Edit Scheduled Job') : (zh ? '创建定时作业' : 'Create Scheduled Job')}
-              </h2>
+              <div className="flex items-center gap-2">
+                <h2 id="scheduled-job-form-title" className="text-sm font-bold tracking-tight text-slate-900 sm:text-base">
+                  {isEditMode ? (zh ? '编辑定时作业' : 'Edit Scheduled Job') : (zh ? '创建定时作业' : 'Create Scheduled Job')}
+                </h2>
+                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${isEditMode ? 'bg-blue-50 text-blue-700 border border-blue-200/70' : 'bg-emerald-50 text-emerald-700 border border-emerald-200/70'}`}>
+                  {isEditMode ? (zh ? '修改配置' : 'Editing') : (zh ? '新建任务' : 'New')}
+                </span>
+              </div>
               <p className="mt-0.5 hidden text-[11px] text-slate-400 sm:block">
-                {zh ? '配置作业内容、目标设备、执行周期和审批人' : 'Set the task, targets, schedule, and approver'}
+                {zh ? '统一配置作业信息、目标设备、执行周期与安全审批' : 'Configure task details, target fleet, schedule, and security approval'}
               </p>
             </div>
           </div>
@@ -458,7 +490,7 @@ export const JobModal: React.FC<JobModalProps> = ({
             onClick={onClose}
             aria-label={zh ? '关闭作业配置' : 'Close job setup'}
             disabled={approvalStatus === 'sending' || approvalStatus === 'verifying'}
-            className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"
+            className="rounded-xl p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"
           >
             <X size={18} />
           </button>
@@ -467,55 +499,23 @@ export const JobModal: React.FC<JobModalProps> = ({
         {/* The form body scrolls inside the compact dialog while the header and actions stay visible. */}
         <form className="flex min-h-0 flex-1 flex-col overflow-hidden" onSubmit={e => {
           e.preventDefault();
-          if (flowStep === 0) {
-            if (canAdvance) setFlowStep(step => step + 1);
-            return;
-          }
           if (isFormReady && approvalStatus === 'verified') submitForm();
         }}>
-          <div className="shrink-0 bg-white px-3 pt-3 sm:px-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" aria-label={zh ? '作业创建步骤' : 'Job setup steps'}>
-              {flowStepLabels.map((label, index) => {
-                const isCurrent = flowStep === index;
-                const isComplete = flowStep > index;
-                return (
-                  <button
-                    key={label}
-                    type="button"
-                    onClick={() => { if (index < flowStep) setFlowStep(index); }}
-                    disabled={index >= flowStep}
-                    className={`flex items-center gap-2.5 rounded-xl border px-3 py-2 text-left transition-colors ${
-                      isCurrent ? 'border-cyan-200 bg-cyan-50 text-cyan-800' :
-                      isComplete ? 'border-emerald-100 bg-emerald-50/60 text-emerald-700 hover:bg-emerald-50' :
-                      'border-slate-100 bg-slate-50 text-slate-400'
-                    }`}
-                    aria-current={isCurrent ? 'step' : undefined}
-                  >
-                    <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
-                      isCurrent ? 'bg-cyan-600 text-white' : isComplete ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-500'
-                    }`}>
-                      {isComplete ? <Check size={13} /> : index + 1}
-                    </span>
-                    <span className="text-xs font-semibold">{label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          <div className="grid min-h-0 flex-1 grid-cols-1 content-start gap-3 overflow-y-auto overscroll-contain bg-slate-50/40 p-3 sm:gap-4 sm:p-4 lg:grid-cols-12">
+          <div className="grid min-h-0 flex-1 grid-cols-1 content-start gap-4 overflow-y-auto overscroll-contain bg-slate-50/80 p-4 sm:p-5 lg:grid-cols-12">
             
             {/* ═══════════════════════════════════════════════════════════════════
                 Task setup and targets share a row on desktop.
                ═══════════════════════════════════════════════════════════════════ */}
-            {flowStep === 0 ? (
-            <div className="grid min-w-0 items-start gap-3 md:grid-cols-2 lg:col-span-12 sm:gap-4">
-              <div className="min-w-0 space-y-4 rounded-2xl border border-slate-200/90 bg-white p-4 shadow-2xs">
+            <div className="grid min-w-0 items-stretch gap-4 md:grid-cols-2 lg:col-span-12">
+              <div className="min-w-0 space-y-4 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_1px_3px_rgba(15,23,42,0.04)]">
               
               {/* Block 1: 基本属性 */}
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-cyan-500" />
-                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">{zh ? '基本信息' : 'Basic Info'}</h3>
+                  <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-cyan-50 text-cyan-600">
+                    <Sliders size={13} />
+                  </span>
+                  <h3 className="text-[13px] font-bold text-slate-800">{zh ? '基本信息' : 'Basic Info'}</h3>
                 </div>
 
                 <div className="space-y-1.5">
@@ -527,20 +527,23 @@ export const JobModal: React.FC<JobModalProps> = ({
                     type="text"
                     value={form.name}
                     onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-medium text-slate-800 bg-slate-50/50 hover:bg-white focus:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500 transition-all placeholder:text-slate-300"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium text-slate-800 bg-slate-50/40 hover:bg-white focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/15 focus:border-blue-500 transition-all placeholder:text-slate-300"
                     placeholder={zh ? '例如：每日凌晨核心交换机巡检' : 'e.g. Daily Core Switch Health Inspection'}
                   />
                 </div>
               </div>
 
               {/* Block 2: 执行动作与驱动协议 */}
-              <div className="space-y-3 border-t border-slate-100 pt-3">
+              <div className="space-y-3 border-t border-slate-100 pt-4">
                 <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-blue-500" />
-                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">{zh ? '执行动作与驱动策略' : 'Action & Driver Strategy'}</h3>
+                  <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                    <FileCode size={13} />
+                  </span>
+                  <h3 className="text-[13px] font-bold text-slate-800">{zh ? '执行动作与绑定脚本' : 'Action & Bound Script'}</h3>
                 </div>
 
-                {/* Action Types */}
+                {/* Action Types (only shown when creating a new job) */}
+                {!isEditMode && (
                 <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 sm:grid-cols-3 xl:grid-cols-6 [&>button]:whitespace-nowrap [&>button]:text-[11px] [&>button>svg]:shrink-0">
                   <button
                     type="button"
@@ -618,6 +621,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                     {zh ? '脚本执行' : 'Script Run'}
                   </button>
                 </div>
+                )}
                 {(form.action_type === 'bgp_neighbors' || form.action_type === 'ospf_neighbors') && (
                   <div className="rounded-xl border border-cyan-200 bg-cyan-50/60 px-3 py-2.5 text-[11px] leading-relaxed text-slate-600">
                     {form.action_type === 'bgp_neighbors'
@@ -804,7 +808,59 @@ export const JobModal: React.FC<JobModalProps> = ({
 
                 {/* Sub-Action: Script Run */}
                 {form.action_type === 'script_run' && (
-                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 space-y-3">
+                  isEditMode && form.script_id ? (
+                    <div className="rounded-xl border border-blue-100/90 bg-gradient-to-br from-slate-50/90 via-white to-blue-50/40 p-3.5 space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-400">
+                            <span>{zh ? '已绑定脚本' : 'Bound Script'}</span>
+                            {currentBoundScript?.platform && (
+                              <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">
+                                {currentBoundScript.platform}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <FileCode size={15} className="shrink-0 text-blue-600" />
+                            <span className="text-xs font-bold text-slate-800 break-words leading-snug">
+                              {currentBoundScript?.name || form.script_id}
+                            </span>
+                          </div>
+                        </div>
+                        <span className="shrink-0 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 font-mono text-[11px] font-bold text-blue-700">
+                          {currentBoundScript?.version || 'v1.0.0'}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5 border-t border-slate-100 pt-2.5 sm:flex-row sm:items-center sm:justify-between">
+                        <span className="text-[11px] text-slate-500">
+                          {sameScriptVersions.length > 1
+                            ? (zh ? '切换脚本版本（仅限同一脚本）' : 'Switch script version (same script only)')
+                            : (zh ? '仅支持切换同一脚本的不同版本，不支持更换为其他脚本' : 'Only versions of the same script can be switched')}
+                        </span>
+                        {sameScriptVersions.length > 1 ? (
+                          <select
+                            aria-label={zh ? '选择脚本版本' : 'Select script version'}
+                            value={form.script_id}
+                            onChange={e => setForm(f => ({ ...f, script_id: e.target.value }))}
+                            className="shrink-0 rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-blue-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
+                          >
+                            {sameScriptVersions.map(v => (
+                              <option key={v.id} value={v.id}>
+                                {(v.version || 'v1.0.0')} · {v.id}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="shrink-0 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">
+                            {zh ? '当前仅 1 个已发布版本' : 'Single released version'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                  <div className="p-3.5 rounded-xl bg-slate-50/80 border border-slate-200/80 space-y-3">
+                    <>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="space-y-1">
                         <label className="text-[10px] font-bold uppercase text-slate-400">{zh ? '目标资产类型' : 'Asset Category'}</label>
@@ -816,7 +872,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                               setScriptProtocolChannel('cli');
                               setForm(f => ({ ...f, script_id: '' }));
                             }}
-                            className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all flex items-center justify-center gap-1.5 ${
                               scriptAssetCategory === 'network' ? 'bg-cyan-50 text-cyan-700 shadow-2xs' : 'text-slate-500'
                             }`}
                           >
@@ -830,7 +886,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                               setScriptProtocolChannel('shell');
                               setForm(f => ({ ...f, script_id: '' }));
                             }}
-                            className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all flex items-center justify-center gap-1.5 ${
                               scriptAssetCategory === 'server' ? 'bg-emerald-50 text-emerald-700 shadow-2xs' : 'text-slate-500'
                             }`}
                           >
@@ -850,7 +906,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                                 setScriptProtocolChannel('cli');
                                 setForm(f => ({ ...f, script_id: '' }));
                               }}
-                              className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                              className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all flex items-center justify-center gap-1.5 ${
                                 scriptProtocolChannel === 'cli' ? 'bg-cyan-50 text-cyan-700 shadow-2xs' : 'text-slate-500'
                               }`}
                             >
@@ -863,7 +919,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                                 setScriptProtocolChannel('snmp');
                                 setForm(f => ({ ...f, script_id: '' }));
                               }}
-                              className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                              className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all flex items-center justify-center gap-1.5 ${
                                 scriptProtocolChannel === 'snmp' ? 'bg-indigo-50 text-indigo-700 shadow-2xs' : 'text-slate-500'
                               }`}
                             >
@@ -940,50 +996,32 @@ export const JobModal: React.FC<JobModalProps> = ({
                         )}
                       </AnimatePresence>
                     </div>
+                    </>
                   </div>
-                )}
-
-                {(form.action_type === 'command' || form.action_type === 'script_run') && (
-                  <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-                    <label className="flex cursor-pointer items-start gap-2.5 text-xs text-slate-700">
-                      <input
-                        type="checkbox"
-                        checked={form.is_config}
-                        onChange={event => setForm(current => ({
-                          ...current,
-                          is_config: event.target.checked,
-                          config_reason: event.target.checked ? current.config_reason : '',
-                        }))}
-                        className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
-                      />
-                      <span>
-                        <span className="font-semibold">{zh ? '标记为配置变更' : 'Mark as a configuration change'}</span>
-                        <span className="mt-0.5 block text-[10px] leading-relaxed text-slate-500">
-                          {zh ? '配置变更需填写原因并纳入本次审批清单。' : 'Configuration changes require a reason and are included in the approval manifest.'}
-                        </span>
-                      </span>
-                    </label>
-                    {form.is_config && (
-                      <textarea
-                        rows={2}
-                        value={form.config_reason}
-                        onChange={event => setForm(current => ({ ...current, config_reason: event.target.value }))}
-                        placeholder={zh ? '填写配置变更原因' : 'Enter the configuration change reason'}
-                        className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20"
-                      />
-                    )}
-                  </div>
+                  )
                 )}
               </div>
 
               </div>
 
               {/* Block 3: 目标资产范围设定 */}
-              <FormSection
-                title={zh ? '目标资产范围' : 'Target Fleet Scope'}
-                className="min-w-0 !mt-0 !rounded-2xl !border-slate-200/90 !bg-white shadow-2xs"
-                contentClassName="!space-y-3 !p-4"
-              >
+              <div className="min-w-0 flex flex-col rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_1px_3px_rgba(15,23,42,0.04)]">
+                <div className="mb-3.5 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+                      <Target size={13} />
+                    </span>
+                    <h3 className="text-[13px] font-bold text-slate-800">{zh ? '目标资产范围' : 'Target Fleet Scope'}</h3>
+                  </div>
+                  {deviceLoadStatus === 'loaded' && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600 tabular-nums">
+                      <span className={`h-1.5 w-1.5 rounded-full ${onlineCount > 0 ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                      {zh ? `${matchedDevices.length} 台匹配 · ${onlineCount} 在线` : `${matchedDevices.length} matched · ${onlineCount} online`}
+                    </span>
+                  )}
+                </div>
+
+                <div className="space-y-3 flex-1">
 
                 {deviceLoadStatus === 'loading' || deviceLoadStatus === 'idle' ? (
                   <p className="rounded-xl bg-slate-50 px-3 py-2 text-[11px] text-slate-500">{zh ? '正在加载设备清单，加载完成后可继续。' : 'Loading the device inventory. Continue when it finishes.'}</p>
@@ -1178,120 +1216,82 @@ export const JobModal: React.FC<JobModalProps> = ({
                     </div>
                   )}
                 </div>
-              </FormSection>
+                </div>
+              </div>
             </div>
-            ) : null}
 
-            {/* Keep schedule editing on the left and the target/approval checks together on the right. */}
-            {flowStep === 1 && (
-            <div className="lg:col-span-12 grid grid-cols-1 items-start gap-3 xl:grid-cols-12">
-              <FormSection
-                title={zh ? '目标设备预览' : 'Target preview'}
-                description={(
-                  <span className="font-semibold text-cyan-700">
-                    {deviceLoadStatus === 'loaded'
-                      ? `${matchedDevices.length} ${zh ? '台设备' : 'devices'} · ${onlineCount} ${zh ? '在线' : 'online'}`
-                      : deviceLoadStatus === 'error' ? (zh ? '加载失败' : 'Load failed') : (zh ? '加载中…' : 'Loading…')}
+            {/* Schedule & Approval sit right below on the same unified page */}
+            <div className="lg:col-span-12 grid grid-cols-1 items-stretch gap-4 xl:grid-cols-12">
+              {/* Cron schedule */}
+              <div className="order-1 flex flex-col rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_1px_3px_rgba(15,23,42,0.04)] xl:col-span-6">
+                <div className="mb-3.5 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+                      <CalendarClock size={13} />
+                    </span>
+                    <h3 className="text-[13px] font-bold text-slate-800">{zh ? '执行计划' : 'Schedule'}</h3>
+                  </div>
+                  <span className="inline-flex items-center rounded-full border border-cyan-200/80 bg-cyan-50/80 px-2.5 py-0.5 text-[11px] font-semibold text-cyan-700">
+                    {describeCron(form.cron_expr, zh)}
                   </span>
-                )}
-                className="order-2 !mt-0 !rounded-2xl !border-slate-200/90 !bg-white shadow-2xs xl:col-span-5 xl:col-start-8 xl:row-start-1"
-                contentClassName="!space-y-2 !p-3.5"
-              >
-                {deviceLoadStatus === 'error' ? (
-                  <div className="flex items-center justify-between gap-2 rounded-lg bg-rose-50 px-3 py-2 text-[11px] text-rose-700">
-                    <span>{zh ? '设备清单加载失败，无法计算目标数量。' : 'The inventory could not be loaded.'}</span>
-                    <button type="button" onClick={refreshDevices} className="shrink-0 font-semibold underline">{zh ? '重试' : 'Retry'}</button>
-                  </div>
-                ) : (deviceLoadStatus === 'loading' || deviceLoadStatus === 'idle') && matchedDevices.length === 0 ? (
-                  <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-500">{zh ? '正在加载完整设备清单…' : 'Loading the complete device inventory…'}</p>
-                ) : matchedDevices.length === 0 ? (
-                  <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-500">{zh ? '当前范围没有匹配设备。' : 'No devices match this scope.'}</p>
-                ) : (
-                  <div className="space-y-1">
-                    {matchedDevices.slice(0, 3).map(dev => (
-                      <div key={dev.id || dev.ip_address} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5 text-[11px]">
-                        <span className="min-w-0 truncate font-medium text-slate-700">{dev.hostname || dev.ip_address}</span>
-                        <span className="shrink-0 font-mono text-slate-500">{dev.ip_address}</span>
-                      </div>
-                    ))}
-                    {matchedDevices.length > 3 && (
-                      <p className="pt-0.5 text-right text-[10px] text-slate-400">{zh ? `另有 ${matchedDevices.length - 3} 台设备` : `and ${matchedDevices.length - 3} more`}</p>
-                    )}
-                  </div>
-                )}
-                {scriptIncompatibleCount > 0 && (
-                  <p className="text-[11px] text-amber-700">{zh ? `${scriptIncompatibleCount} 台设备与脚本平台不兼容，将被跳过。` : `${scriptIncompatibleCount} devices do not match the script platform and will be skipped.`}</p>
-                )}
-              </FormSection>
+                </div>
 
-              {/* Cron schedule and approval share the same final setup step. */}
-              <FormSection
-                title={zh ? '执行计划' : 'Schedule'}
-                className="order-1 !mt-0 !rounded-2xl !border-slate-200/90 !bg-white shadow-2xs xl:col-span-7 xl:col-start-1 xl:row-start-1"
-                contentClassName="!space-y-3 !p-3.5"
-              >
-                {/* Preset Dropdown Trigger */}
-                <div className="relative flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => setPresetOpen(!presetOpen)}
-                      className="inline-flex items-center gap-1 text-xs font-bold text-cyan-600 hover:text-cyan-700 transition-colors"
-                    >
-                      <Zap size={12} className="text-amber-500" />
-                      <span>{zh ? '常用预设' : 'Presets'}</span>
-                      <ChevronDown size={12} />
-                    </button>
-
-                    <AnimatePresence>
-                      {presetOpen && (
-                        <motion.div
-                          initial={{ opacity: 0, y: -4 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -4 }}
-                          className="absolute right-0 z-30 mt-1.5 w-60 rounded-xl border border-slate-200 bg-white shadow-xl overflow-hidden max-h-56 overflow-y-auto"
-                        >
-                          {CRON_PRESETS.map(p => (
-                            <button
-                              type="button"
-                              key={p.cron}
-                              onClick={() => {
-                                setForm(f => ({ ...f, cron_expr: p.cron }));
-                                setPresetOpen(false);
-                              }}
-                              className={`flex w-full items-center justify-between px-3.5 py-2 text-xs transition-colors hover:bg-cyan-50 ${form.cron_expr === p.cron ? 'bg-cyan-50 text-cyan-700 font-bold' : 'text-slate-600'}`}
-                            >
-                              <span>{zh ? p.label : p.labelEn}</span>
-                              <code className="text-[10px] font-mono text-slate-400">{p.cron}</code>
-                            </button>
-                          ))}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                <div className="space-y-3.5 flex-1">
+                {/* 1-Click Quick Cron Preset Pills (clean 4x2 grid) */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-400">
+                    <Zap size={11} className="text-amber-500" />
+                    <span>{zh ? '常用快捷周期' : 'Quick Presets'}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                    {[
+                      { cron: '*/5 * * * *', label: '每 5 分钟', labelEn: 'Every 5m' },
+                      { cron: '*/15 * * * *', label: '每 15 分钟', labelEn: 'Every 15m' },
+                      ...CRON_PRESETS,
+                    ]
+                      .filter((item, idx, arr) => arr.findIndex(x => x.cron === item.cron) === idx)
+                      .slice(0, 8)
+                      .map(p => {
+                        const active = form.cron_expr.trim() === p.cron;
+                        return (
+                          <button
+                            type="button"
+                            key={p.cron}
+                            onClick={() => setForm(f => ({ ...f, cron_expr: p.cron }))}
+                            title={p.cron}
+                            className={`rounded-xl border px-2 py-1.5 text-[11px] font-semibold whitespace-nowrap text-center transition-all ${
+                              active
+                                ? 'border-blue-600 bg-blue-600 text-white shadow-sm shadow-blue-600/20'
+                                : 'border-slate-200/90 bg-slate-50/70 text-slate-600 hover:border-blue-300 hover:bg-blue-50/60 hover:text-blue-700'
+                            }`}
+                          >
+                            {zh ? p.label : p.labelEn}
+                          </button>
+                        );
+                      })}
+                  </div>
                 </div>
 
                 {/* 5-Field Editor */}
-                <div className="grid grid-cols-5 gap-1.5">
+                <div className="grid grid-cols-5 gap-2">
                   {cronFields.map((val, idx) => (
-                    <div key={idx}>
+                    <div key={idx} className="space-y-1">
                       <input
                         type="text"
                         value={val}
                         onChange={e => updateCronField(idx, e.target.value)}
-                        className="w-full text-center py-2 rounded-xl border border-slate-200 text-xs font-mono font-bold bg-slate-50/50 hover:bg-white focus:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500 transition-all text-slate-800"
+                        className="w-full text-center py-2 rounded-xl border border-slate-200 text-xs font-mono font-bold bg-slate-50/50 hover:bg-white focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/15 focus:border-blue-500 transition-all text-slate-800"
                         placeholder="*"
                       />
-                      <span className="text-[9px] text-slate-400 block text-center mt-0.5">
+                      <span className="text-[10px] font-medium text-slate-400 block text-center">
                         {zh ? CRON_FIELD_LABELS_ZH[idx] : CRON_FIELD_LABELS_EN[idx]}
                       </span>
                     </div>
                   ))}
                 </div>
-                <div className="text-xs text-cyan-700 font-medium text-center bg-cyan-50/70 py-1 rounded-xl border border-cyan-100">
-                  {describeCron(form.cron_expr, zh)}
-                </div>
-                <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-2.5" aria-live="polite" aria-busy={cronPreviewStatus === 'loading'}>
+                <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-3" aria-live="polite" aria-busy={cronPreviewStatus === 'loading'}>
                   <div className="mb-2 flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-semibold text-slate-700">{zh ? '接下来 3 次执行时间' : 'Next 3 runs'}</span>
+                    <span className="text-[11px] font-bold text-slate-700">{zh ? '接下来 10 次执行时间' : 'Next 10 runs'}</span>
                     {cronPreviewStatus === 'loading' && <span className="text-[10px] text-slate-400">{zh ? '计算中…' : 'Calculating…'}</span>}
                   </div>
                   {cronPreviewStatus === 'invalid' || cronPreviewStatus === 'error' ? (
@@ -1304,11 +1304,11 @@ export const JobModal: React.FC<JobModalProps> = ({
                   ) : cronPreviewStatus === 'loaded' && cronOccurrences.length === 0 ? (
                     <p className="text-[11px] text-amber-700">{zh ? '该表达式没有可预览的执行时间。' : 'No upcoming execution time was returned for this expression.'}</p>
                   ) : cronOccurrences.length > 0 ? (
-                    <ol className={`grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-600 transition-opacity ${cronPreviewStatus === 'loading' ? 'opacity-50' : 'opacity-100'}`}>
+                    <ol className={`grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 text-[11px] text-slate-600 transition-opacity ${cronPreviewStatus === 'loading' ? 'opacity-50' : 'opacity-100'}`}>
                       {cronOccurrences.map((occurrence, index) => (
-                        <li key={`${occurrence}-${index}`} className="flex gap-2">
-                          <span className="w-4 shrink-0 text-right text-slate-400">{index + 1}.</span>
-                          <time dateTime={occurrence}>{new Date(occurrence).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false })}</time>
+                        <li key={`${occurrence}-${index}`} className="flex items-center gap-2 rounded-lg bg-white/80 px-2 py-1 border border-slate-100">
+                          <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-bold text-slate-500 tabular-nums">{index + 1}</span>
+                          <time dateTime={occurrence} className="font-mono text-[11px] tabular-nums text-slate-700">{new Date(occurrence).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false })}</time>
                         </li>
                       ))}
                     </ol>
@@ -1316,36 +1316,43 @@ export const JobModal: React.FC<JobModalProps> = ({
                     <p className="text-[11px] text-slate-400">{cronPreviewStatus === 'loading' ? (zh ? '计算中…' : 'Calculating…') : (zh ? '等待预览…' : 'Waiting for preview…')}</p>
                   ) : null}
                 </div>
-              </FormSection>
+                </div>
+              </div>
 
-              <FormSection
-                title={zh ? '审批验证' : 'Approval'}
-                description={approvalStatus === 'verified' ? (
-                  <span className="inline-flex items-center gap-1 rounded-full border border-emerald-100 bg-emerald-50 px-2 py-0.5 text-xs font-bold text-emerald-600">
-                    <Check size={12} />
-                    {zh ? '已授权通过' : 'Verified'}
-                  </span>
-                ) : approvalStatus === 'verifying' ? (
-                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-cyan-700">
-                    <RotateCcw size={12} className="animate-spin" />
-                    {zh ? '正在验证' : 'Verifying'}
-                  </span>
-                ) : undefined}
-                className="order-3 !mt-0 !rounded-2xl !border-slate-200/90 !bg-white shadow-2xs xl:col-span-5 xl:col-start-8 xl:row-start-2"
-                contentClassName="!p-3.5"
-              >
+              <div className="order-2 flex flex-col rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_1px_3px_rgba(15,23,42,0.04)] xl:col-span-6">
+                <div className="mb-3.5 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+                      <ShieldCheck size={13} />
+                    </span>
+                    <h3 className="text-[13px] font-bold text-slate-800">{zh ? '审批验证' : 'Approval'}</h3>
+                  </div>
+                  {approvalStatus === 'verified' ? (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-bold text-emerald-700">
+                      <Check size={12} />
+                      {zh ? '已授权通过' : 'Verified'}
+                    </span>
+                  ) : approvalStatus === 'verifying' ? (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700">
+                      <RotateCcw size={12} className="animate-spin" />
+                      {zh ? '正在验证' : 'Verifying'}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-medium text-slate-400">
+                      {zh ? '需安全审批人确认' : 'Requires approver verification'}
+                    </span>
+                  )}
+                </div>
 
-                <div className="space-y-2">
-                  <div className="space-y-2.5 rounded-xl border border-cyan-100 bg-cyan-50/60 p-3">
-                    <div>
-                      <h4 className="text-[11px] font-bold text-slate-800">{zh ? '本次授权清单' : 'Authorization grant'}</h4>
-                      <p className="mt-0.5 text-[10px] leading-relaxed text-slate-500">
-                        {zh ? '审批将绑定当前作业范围、有效期、执行额度和关联工单。范围按审批时配置授权，运行时仍由服务端校验。' : 'Approval binds this job scope, expiry, run and target limits, and linked ticket. The server enforces the approved scope at runtime.'}
-                      </p>
+                <div className="space-y-3 flex-1">
+                  <div className="space-y-2.5 rounded-xl border border-slate-200/80 bg-slate-50/70 p-3.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="text-[11px] font-bold text-slate-700">{zh ? '本次授权清单' : 'Authorization grant'}</h4>
+                      <span className="text-[10px] text-slate-400">{zh ? '运行时由服务端强制校验' : 'Server-enforced at runtime'}</span>
                     </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                      <label className="block text-[10px] font-semibold text-slate-600">
-                        {zh ? '授权有效至' : 'Valid until'} <span className="text-rose-600">*</span>
+                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-12">
+                      <label className="block text-[11px] font-semibold text-slate-600 sm:col-span-6">
+                        {zh ? '授权有效至' : 'Valid until'} <span className="text-rose-500">*</span>
                         <input
                           aria-label={zh ? '授权有效至' : 'Authorization valid until'}
                           type="datetime-local"
@@ -1353,97 +1360,86 @@ export const JobModal: React.FC<JobModalProps> = ({
                           min={toLocalDateTimeInput(new Date().toISOString())}
                           value={toLocalDateTimeInput(grant.valid_until)}
                           onChange={event => updateGrant('valid_until', toUtcIso(event.target.value))}
-                          className="mt-1 min-h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-[11px] font-normal text-slate-700 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/15"
+                          className="mt-1 min-h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-normal text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
                         />
                       </label>
-                      <label className="block text-[10px] font-semibold text-slate-600">
-                        {zh ? '最大执行次数' : 'Maximum runs'} <span className="text-rose-600">*</span>
+                      <label className="block text-[11px] font-semibold text-slate-600 sm:col-span-6">
+                        {zh ? '关联变更单 ID（选填）' : 'Change order ID (optional)'}
                         <input
-                          aria-label={zh ? '最大执行次数' : 'Maximum runs'}
-                          type="number"
-                          min={1}
-                          step={1}
-                          required
-                          value={grant.max_runs}
-                          onChange={event => updateGrant('max_runs', event.target.value)}
-                          className="mt-1 min-h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-[11px] font-normal text-slate-700 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/15"
-                        />
-                      </label>
-                      <label className="block text-[10px] font-semibold text-slate-600">
-                        {zh ? '最多目标设备' : 'Maximum targets'} <span className="text-rose-600">*</span>
-                        <input
-                          aria-label={zh ? '最多目标设备' : 'Maximum targets'}
-                          type="number"
-                          min={1}
-                          step={1}
-                          required
-                          value={grant.max_targets}
-                          onChange={event => updateGrant('max_targets', event.target.value)}
-                          className="mt-1 min-h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-[11px] font-normal text-slate-700 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/15"
+                          aria-label={zh ? '关联变更单 ID（选填）' : 'Change order ID (optional)'}
+                          maxLength={120}
+                          value={grant.change_order_id}
+                          onChange={event => updateGrant('change_order_id', event.target.value)}
+                          placeholder={zh ? '需要时填写 CO ID' : 'Enter a CO ID when applicable'}
+                          className="mt-1 min-h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-normal text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
                         />
                       </label>
                     </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      <label className="block text-[10px] font-semibold text-slate-600">
-                        {zh ? '关联工单类型' : 'Ticket type'} <span className="text-rose-600">*</span>
+                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-12">
+                      <label className="block text-[11px] font-semibold text-slate-600 sm:col-span-4">
+                        {zh ? '关联工单类型' : 'Ticket type'} <span className="text-rose-500">*</span>
                         <select
                           aria-label={zh ? '关联工单类型' : 'Ticket type'}
                           value={grant.ticket_source_type}
                           onChange={event => updateGrant('ticket_source_type', event.target.value as AuthorizationGrantForm['ticket_source_type'])}
-                          className="mt-1 min-h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-[11px] font-normal text-slate-700 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/15"
+                          className="mt-1 min-h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-normal text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
                         >
                           <option value="incident">{zh ? '故障工单' : 'Incident ticket'}</option>
                           <option value="service_request">{zh ? '服务申请' : 'Service request'}</option>
                         </select>
                       </label>
-                      <label className="block text-[10px] font-semibold text-slate-600">
-                        {zh ? '工单编号 / ID' : 'Ticket number / ID'} <span className="text-rose-600">*</span>
+                      <label className="block text-[11px] font-semibold text-slate-600 sm:col-span-8">
+                        {zh ? '工单编号 / ID' : 'Ticket number / ID'} <span className="text-rose-500">*</span>
                         <input
                           aria-label={zh ? '工单编号 / ID' : 'Ticket number / ID'}
                           required
                           maxLength={120}
                           value={grant.ticket_id}
                           onChange={event => updateGrant('ticket_id', event.target.value)}
-                          placeholder={zh ? '粘贴工单 ID' : 'Paste ticket ID'}
-                          className="mt-1 min-h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-[11px] font-normal text-slate-700 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/15"
+                          placeholder={zh ? '输入工单编号或 ID' : 'Paste ticket number or ID'}
+                          className="mt-1 min-h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 font-mono text-xs font-normal text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
                         />
                       </label>
                     </div>
-                    <label className="block text-[10px] font-semibold text-slate-600">
-                      {zh ? '关联变更单 ID（选填）' : 'Change order ID (optional)'}
-                      <input
-                        aria-label={zh ? '关联变更单 ID（选填）' : 'Change order ID (optional)'}
-                        maxLength={120}
-                        value={grant.change_order_id}
-                        onChange={event => updateGrant('change_order_id', event.target.value)}
-                        placeholder={zh ? '需要时填写 CO ID' : 'Enter a CO ID when applicable'}
-                        className="mt-1 min-h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-[11px] font-normal text-slate-700 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/15"
-                      />
-                    </label>
-                    <dl className="grid gap-1 border-t border-cyan-100 pt-2 text-[10px] sm:grid-cols-2">
-                      <div><dt className="inline text-slate-500">{zh ? '审批范围：' : 'Approved scope: '}</dt><dd className="inline break-words font-semibold text-slate-700">{grantScopeDescription || '—'}</dd></div>
-                      <div><dt className="inline text-slate-500">{zh ? '额度：' : 'Limits: '}</dt><dd className="inline font-semibold text-slate-700">{zh ? `最多 ${grant.max_runs || '—'} 次 · ${grant.max_targets || '—'} 台` : `Up to ${grant.max_runs || '—'} runs · ${grant.max_targets || '—'} targets`}</dd></div>
-                      <div><dt className="inline text-slate-500">{zh ? '关联工单：' : 'Ticket: '}</dt><dd className="inline break-all font-semibold text-slate-700">{grant.ticket_source_type}:{grant.ticket_id || '—'}</dd></div>
-                      <div><dt className="inline text-slate-500">{zh ? '变更单：' : 'Change order: '}</dt><dd className="inline break-all font-semibold text-slate-700">{grant.change_order_id || (zh ? '未关联' : 'Not linked')}</dd></div>
-                    </dl>
                   </div>
 
-                  <label className="flex items-start gap-2 rounded-lg border border-slate-200 px-3 py-2 text-[11px] text-slate-700">
-                    <input type="checkbox" checked={Boolean(form.enabled)} onChange={event => setForm(current => ({ ...current, enabled: event.target.checked }))} className="mt-0.5 accent-cyan-600" />
-                    <span>{zh ? '审批通过后立即启用作业' : 'Enable the job after approval'}</span>
-                  </label>
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-slate-600">{zh ? '安全审批人' : 'Approver'}</label>
+                      <select
+                        value={approverUsername}
+                        onChange={e => setApproverUsername(e.target.value)}
+                        disabled={approvalStatus === 'sending' || approvalStatus === 'verifying' || approvalStatus === 'verified'}
+                        className="w-full min-h-9 px-3 py-2 rounded-xl border border-slate-200 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/15 focus:border-blue-500 text-slate-700 font-medium transition-all disabled:opacity-60"
+                      >
+                        <option value="">{zh ? '请选择安全审批人...' : 'Select approver...'}</option>
+                        {approvers.map(a => (
+                          <option key={a.id} value={a.username}>{a.username}</option>
+                        ))}
+                      </select>
+                    </div>
 
-                  <select
-                    value={approverUsername}
-                    onChange={e => setApproverUsername(e.target.value)}
-                    disabled={approvalStatus === 'sending' || approvalStatus === 'verifying' || approvalStatus === 'verified'}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs bg-slate-50/50 hover:bg-white focus:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500 text-slate-700 font-medium transition-all"
-                  >
-                    <option value="">{zh ? '请选择安全审批人...' : 'Select approver...'}</option>
-                    {approvers.map(a => (
-                      <option key={a.id} value={a.username}>{a.username}</option>
-                    ))}
-                  </select>
+                    {approverUsername && availableApprovalMethods.length > 0 && (
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-semibold text-slate-600">{zh ? '验证方式' : 'Verification method'}</label>
+                        <select
+                          value={approvalMethod}
+                          onChange={e => setApprovalMethod(e.target.value as ApprovalVerificationMethod)}
+                          disabled={approvalStatus !== 'idle'}
+                          className="w-full min-h-9 px-3 py-2 rounded-xl border border-slate-200 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/15 focus:border-blue-500 text-slate-700 font-medium transition-all disabled:opacity-60"
+                        >
+                          {availableApprovalMethods.map(method => (
+                            <option key={method} value={method}>{verificationMethodLabel(method)}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+
+                  <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200/80 bg-slate-50/50 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 transition-colors">
+                    <input type="checkbox" checked={Boolean(form.enabled)} onChange={event => setForm(current => ({ ...current, enabled: event.target.checked }))} className="h-3.5 w-3.5 rounded accent-blue-600" />
+                    <span className="font-medium">{zh ? '审批通过后立即启用作业' : 'Enable the job after approval'}</span>
+                  </label>
 
                   {approverLoadStatus === 'loading' && (
                     <p className="text-[11px] text-slate-500">{zh ? '正在加载审批人…' : 'Loading approvers…'}</p>
@@ -1463,24 +1459,13 @@ export const JobModal: React.FC<JobModalProps> = ({
                     </div>
                   )}
 
-                  {approverUsername && availableApprovalMethods.length > 0 && (
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-semibold text-slate-500">{zh ? '验证方式' : 'Verification method'}</label>
-                      <select
-                        value={approvalMethod}
-                        onChange={e => setApprovalMethod(e.target.value as ApprovalVerificationMethod)}
-                        disabled={approvalStatus !== 'idle'}
-                        className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs bg-slate-50/50 hover:bg-white focus:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500 text-slate-700 font-medium transition-all disabled:opacity-60"
-                      >
-                        {availableApprovalMethods.map(method => (
-                          <option key={method} value={method}>{verificationMethodLabel(method)}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-
                   {approverUsername && (approvalStatus === 'sent' || approvalStatus === 'verifying') && (
                     <div className="flex items-center gap-2">
+                      {approvalSeq && (
+                        <span className="shrink-0 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold font-mono text-indigo-700" title={zh ? '请核对邮件中的对应序号，防止多人并发混淆' : 'Match this sequence number in the approval email'}>
+                          #{approvalSeq}
+                        </span>
+                      )}
                       <input
                         type="text"
                         inputMode="numeric"
@@ -1494,9 +1479,9 @@ export const JobModal: React.FC<JobModalProps> = ({
                           if (code.length === 6) verifyApproval(code);
                         }}
                         placeholder={zh ? '输入 6 位动态码/验证码' : 'Enter 6-digit code'}
-                        className="min-w-0 flex-1 px-3 py-2 rounded-xl border border-slate-200 text-xs font-mono bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 disabled:bg-slate-50"
+                        className="min-w-0 flex-1 px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/15 focus:border-blue-500 disabled:bg-slate-50"
                       />
-                      {approvalStatus === 'verifying' && <span className="shrink-0 text-[11px] text-cyan-700">{zh ? '正在验证…' : 'Verifying…'}</span>}
+                      {approvalStatus === 'verifying' && <span className="shrink-0 text-[11px] text-blue-700">{zh ? '正在验证…' : 'Verifying…'}</span>}
                     </div>
                   )}
                   {approverUsername && (approvalStatus === 'idle' || approvalStatus === 'sending' || (approvalStatus === 'sent' && approvalCountdown === 0)) && (
@@ -1504,7 +1489,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                       type="button"
                       onClick={requestApproval}
                       disabled={approvalStatus === 'sending'}
-                      className="w-full rounded-xl bg-slate-800 px-4 py-2 text-xs font-bold text-white hover:bg-slate-900 disabled:opacity-40"
+                      className="w-full rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-bold text-white shadow-xs transition-all hover:bg-slate-800 active:scale-[0.99] disabled:opacity-40"
                     >
                       {approvalStatus === 'sending'
                         ? (zh ? '正在发送…' : 'Sending…')
@@ -1516,18 +1501,17 @@ export const JobModal: React.FC<JobModalProps> = ({
                   {approvalStatus === 'sent' && approvalCountdown > 0 && (
                     <CountdownText deadline={approvalDeadline} onExpire={onApprovalCountdownExpire}>
                       {secondsRemaining => (
-                        <p className="text-[10px] text-slate-400">{zh ? `可在 ${secondsRemaining} 秒后重新发送` : `Resend available in ${secondsRemaining}s`}</p>
+                        <p className="text-[11px] text-slate-400">{zh ? `可在 ${secondsRemaining} 秒后重新发送` : `Resend available in ${secondsRemaining}s`}</p>
                       )}
                     </CountdownText>
                   )}
 
                   {approvalError && (
-                    <p className="text-[10px] text-rose-500 leading-tight">{approvalError}</p>
+                    <p className="text-[11px] text-rose-600 leading-tight">{approvalError}</p>
                   )}
                 </div>
-              </FormSection>
+              </div>
             </div>
-            )}
           </div>
 
           {/* ═══════════════════════════════════════════════════════════════════
@@ -1535,15 +1519,13 @@ export const JobModal: React.FC<JobModalProps> = ({
              ═══════════════════════════════════════════════════════════════════ */}
           <FormActionBar className="shrink-0 !flex-col !items-center !justify-between !gap-2 !border-slate-200 !bg-white !px-3 !py-3 sm:!flex-row sm:!px-4">
             <div className="text-xs text-slate-500" aria-live="polite">
-              {flowStep === 0
-                ? deviceLoadStatus === 'error'
-                  ? (zh ? '设备清单加载失败，请重试。' : 'Inventory failed to load. Retry.')
-                  : deviceLoadStatus !== 'loaded'
-                    ? (zh ? '设备清单加载中…' : 'Loading device inventory…')
-                    : (zh ? `当前范围匹配 ${matchedDevices.length} 台设备。` : `${matchedDevices.length} devices match this scope.`)
-                : approvalStatus === 'verified'
-                  ? null
-                  : (zh ? '完成审批验证后即可创建。' : 'Complete approval verification to create the job.')}
+              {deviceLoadStatus === 'error'
+                ? (zh ? '设备清单加载失败，请重试。' : 'Inventory failed to load. Retry.')
+                : deviceLoadStatus !== 'loaded'
+                  ? (zh ? '设备清单加载中…' : 'Loading device inventory…')
+                  : (zh
+                      ? `当前范围匹配 ${matchedDevices.length} 台设备（${onlineCount} 台在线）${approvalStatus === 'verified' ? '' : ' · 完成审批验证后即可保存'}`
+                      : `${matchedDevices.length} devices matched (${onlineCount} online)${approvalStatus === 'verified' ? '' : ' · Verify approval to save'}`)}
             </div>
 
             <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
@@ -1551,39 +1533,18 @@ export const JobModal: React.FC<JobModalProps> = ({
                 type="button"
                 onClick={onClose}
                 disabled={approvalStatus === 'sending' || approvalStatus === 'verifying'}
-                  className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition-all hover:bg-slate-50 disabled:opacity-40"
+                className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition-all hover:bg-slate-50 disabled:opacity-40"
               >
                 {zh ? '取消' : 'Cancel'}
               </button>
-              {flowStep > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setFlowStep(step => Math.max(0, step - 1))}
-                  className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition-all hover:bg-slate-50"
-                >
-                  {zh ? '上一步' : 'Back'}
-                </button>
-              )}
-              {flowStep === 0 ? (
-                <button
-                  type="button"
-                  onClick={() => setFlowStep(1)}
-                  disabled={!canAdvance}
-                  className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-cyan-500 via-sky-600 to-blue-600 px-4 py-2 text-xs font-bold text-white shadow-md shadow-cyan-500/20 transition-all disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {zh ? `下一步：${flowStepLabels[flowStep + 1]}` : `Next: ${flowStepLabels[flowStep + 1]}`}
-                  <ChevronRight size={14} />
-                </button>
-              ) : (
-                <button
-                  type="submit"
-                  disabled={!isFormReady || approvalStatus !== 'verified'}
-                  className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-cyan-500 via-sky-600 to-blue-600 px-4 py-2 text-xs font-bold text-white shadow-md shadow-cyan-500/20 transition-all hover:from-cyan-400 hover:to-blue-500 active:scale-98 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <CheckCircle2 size={16} />
-                  {isEditMode ? (zh ? '保存修改' : 'Save changes') : (zh ? '创建并启用' : 'Create & enable')}
-                </button>
-              )}
+              <button
+                type="submit"
+                disabled={!isFormReady || approvalStatus !== 'verified'}
+                className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-cyan-500 via-sky-600 to-blue-600 px-4 py-2 text-xs font-bold text-white shadow-md shadow-cyan-500/20 transition-all hover:from-cyan-400 hover:to-blue-500 active:scale-98 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <CheckCircle2 size={16} />
+                {isEditMode ? (zh ? '保存修改' : 'Save changes') : (zh ? '创建并启用' : 'Create & enable')}
+              </button>
             </div>
           </FormActionBar>
         </form>

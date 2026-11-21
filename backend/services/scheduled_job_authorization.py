@@ -81,14 +81,16 @@ def normalize_authorization_grant(value: Any) -> dict[str, Any]:
 
     def bounded_integer(name: str) -> int:
         raw = value.get(name)
+        if raw is None or str(raw).strip() == "":
+            return 0
         if isinstance(raw, bool):
-            raise ValueError(f"{name} 必须是 1 到 10000 之间的整数")
+            raise ValueError(f"{name} 必须是非负整数（0 表示不限制）")
         try:
             parsed = int(raw)
         except (TypeError, ValueError) as exc:
-            raise ValueError(f"{name} 必须是 1 到 10000 之间的整数") from exc
-        if str(raw).strip() != str(parsed) or not 1 <= parsed <= 10000:
-            raise ValueError(f"{name} 必须是 1 到 10000 之间的整数")
+            raise ValueError(f"{name} 必须是非负整数（0 表示不限制）") from exc
+        if str(raw).strip() != str(parsed) or parsed < 0:
+            raise ValueError(f"{name} 必须是非负整数（0 表示不限制）")
         return parsed
 
     source_type = _string(value.get("ticket_source_type"))
@@ -355,14 +357,14 @@ def validate_authorization_grant_ticket(
     source_type = normalized["ticket_source_type"]
     if source_type == "incident":
         row = conn.execute(
-            "SELECT id, ticket_number, title, tenant_id FROM incident_tickets WHERE id = ?",
-            (normalized["ticket_id"],),
+            "SELECT id, ticket_number, title, tenant_id FROM incident_tickets WHERE id = ? OR ticket_number = ?",
+            (normalized["ticket_id"], normalized["ticket_id"]),
         ).fetchone()
     else:
         row = conn.execute(
             "SELECT id, request_number AS ticket_number, title, tenant_id "
-            "FROM service_requests WHERE id = ?",
-            (normalized["ticket_id"],),
+            "FROM service_requests WHERE id = ? OR request_number = ?",
+            (normalized["ticket_id"], normalized["ticket_id"]),
         ).fetchone()
     if not row:
         raise ValueError("关联工单不存在")
@@ -374,21 +376,21 @@ def validate_authorization_grant_ticket(
     change_order_number = ""
     if change_order_id:
         order_row = conn.execute(
-            "SELECT id, order_number, tenant_id FROM change_orders WHERE id = ?",
-            (change_order_id,),
+            "SELECT id, order_number, tenant_id FROM change_orders WHERE id = ? OR order_number = ?",
+            (change_order_id, change_order_id),
         ).fetchone()
         if not order_row or _string(dict(order_row).get("tenant_id")) != _string(tenant_id):
             raise ValueError("关联变更单不存在或不属于计划作业的租户")
         if source_type == "incident":
             linked = conn.execute(
                 "SELECT 1 FROM incident_ticket_links WHERE ticket_id = ? AND change_order_id = ?",
-                (normalized["ticket_id"], change_order_id),
+                (_string(ticket.get("id")), _string(dict(order_row).get("id"))),
             ).fetchone()
         else:
             linked = conn.execute(
                 "SELECT 1 FROM service_request_change_order_links "
                 "WHERE service_request_id = ? AND change_order_id = ?",
-                (normalized["ticket_id"], change_order_id),
+                (_string(ticket.get("id")), _string(dict(order_row).get("id"))),
             ).fetchone()
         if not linked:
             raise ValueError("关联变更单必须已通过工单链接关系关联")

@@ -3,20 +3,30 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{% if report_type == 'playbook' %}{{ system_name }} 自动化执行报告{% else %}{{ system_name }} 网络巡检报告{% endif %} - {{ run_info.get('started_at', '')[:10] }}</title>
+<title>{% if report_type == 'playbook' %}{{ system_name }} 自动化巡检报告 · {{ job_name }}{% else %}{{ system_name }} 网络巡检报告{% endif %} - {{ run_info.get('started_at', '')[:10] }}</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #fff; color: #111827; line-height: 1.6; padding: 40px; }
 .container { max-width: 1200px; margin: 0 auto; }
-.header { text-align: center; padding: 32px 0; border-bottom: 1px solid #dbe3ec; margin-bottom: 24px; }
-.header h1 { font-size: 28px; color: #145b82; margin-bottom: 8px; font-weight: bold; }
-.header .meta { color: #475569; font-size: 14px; }
-.section { margin-bottom: 35px; }
-.section-title { font-size: 18px; color: #145b82; border-left: 4px solid #1684b8; padding-left: 12px; margin-bottom: 16px; font-weight: bold; }
-.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 24px; }
-.stat-card { background: #f8fafc; border-radius: 10px; padding: 16px; text-align: center; border: 1px solid #dbe3ec; }
-.stat-card .value { font-size: 32px; font-weight: bold; }
+.header { text-align: center; padding: 28px 0 24px; border-bottom: 1px solid #dbe3ec; margin-bottom: 24px; }
+.header h1 { font-size: 26px; color: #145b82; margin-bottom: 6px; font-weight: bold; }
+.header .subtitle { font-size: 15px; color: #0f172a; font-weight: 600; margin-bottom: 8px; }
+.header .meta { color: #475569; font-size: 13px; }
+.section { margin-bottom: 32px; }
+.section-title { font-size: 17px; color: #145b82; border-left: 4px solid #1684b8; padding-left: 12px; margin-bottom: 14px; font-weight: bold; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.stat-card { background: #f8fafc; border-radius: 10px; padding: 14px; text-align: center; border: 1px solid #dbe3ec; }
+.stat-card .value { font-size: 28px; font-weight: bold; }
 .stat-card .label { font-size: 12px; color: #475569; margin-top: 4px; }
+.ok-banner { background: #f0fdf4; padding: 16px 20px; border-radius: 10px; color: #166534; text-align: center; border: 1px solid #bbf7d0; font-size: 13px; font-weight: 600; }
+details.device-detail { border: 1px solid #dbe3ec; border-radius: 10px; margin-bottom: 12px; overflow: hidden; background: #fff; }
+details.device-detail > summary { padding: 12px 16px; background: #f8fafc; cursor: pointer; font-weight: 600; font-size: 13px; color: #0f172a; display: flex; align-items: center; justify-content: space-between; list-style: none; }
+details.device-detail > summary::-webkit-details-marker { display: none; }
+details.device-detail[open] > summary { border-bottom: 1px solid #e2e8f0; background: #edf4f8; }
+.cmd-block { border-top: 1px solid #e2e8f0; }
+.cmd-block:first-child { border-top: none; }
+.cmd-header { padding: 8px 16px; background: #f8fafc; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; font-weight: 700; color: #145b82; }
+.cmd-output { padding: 12px 16px; margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; background: #ffffff; color: #1e293b; max-height: 420px; overflow-y: auto; }
 .healthy { color: #15803d; }
 .warning { color: #b45309; }
 .critical { color: #c62828; }
@@ -40,14 +50,15 @@ tr:hover { background: #f8fafc; }
   <!-- 1. 报告头部 -->
   <div class="header">
     {% if report_type == 'playbook' %}
-        <h1>{{ system_name }} 自动化执行报告</h1>
+        <h1>{{ system_name }} 自动化巡检报告</h1>
+        {% if job_name %}<div class="subtitle">作业名称：{{ job_name }}</div>{% endif %}
     {% else %}
         <h1>{{ system_name }} 网络巡检报告</h1>
     {% endif %}
     <div class="meta">
       {% if customer_name %}客户: {{ customer_name }} | {% endif %}
       {% if engineer_name %}工程师: {{ engineer_name }} | {% endif %}
-      作业时间: {{ run_info.get('started_at', 'N/A') }} |
+      执行时间: {{ started_at_display }} |
       设备总数: {{ run_info.get('total_devices', total_devices) }}
     </div>
   </div>
@@ -85,8 +96,8 @@ tr:hover { background: #f8fafc; }
           </tbody>
         </table>
         {% else %}
-        <div style="background: #1e293b; padding: 24px; border-radius: 8px; color: #94a3b8; text-align: center; border: 1px solid #334155;">
-          🎉 所有覆盖设备均已成功完成既定自动化执行计划，未捕获异常。
+        <div class="ok-banner">
+          ✅ 所有覆盖设备均已成功完成既定自动化巡检任务，未捕获异常。
         </div>
         {% endif %}
       </div>
@@ -111,18 +122,52 @@ tr:hover { background: #f8fafc; }
       <div class="section">
         <h2 class="section-title">作业执行明细表</h2>
         <table>
-          <thead><tr><th width="30%">设备名称</th><th width="30%">管理 IP</th><th width="20%">状态</th><th width="20%">耗时</th></tr></thead>
+          <thead>
+            <tr>
+              <th width="16%">设备名称</th>
+              <th width="15%">管理 IP</th>
+              <th width="13%">硬件平台</th>
+              <th width="32%">核心巡检指标摘要</th>
+              <th width="10%">状态</th>
+              <th width="14%">耗时 / 命令</th>
+            </tr>
+          </thead>
           <tbody>
           {% for dev in all_devices %}
           <tr>
-            <td>{{ dev.hostname }}</td>
-            <td>{{ dev.ip_address }}</td>
+            <td><strong>{{ dev.hostname }}</strong></td>
+            <td><code>{{ dev.ip_address }}</code></td>
+            <td>{{ dev.platform or '-' }}</td>
+            <td>{{ dev.key_metrics or '已完成脚本采集（见下方回显明细）' }}</td>
             <td><span class="badge badge-{{ dev.health_status }}">{{ dev.status_label }}</span></td>
-            <td>{% if dev.duration_ms is not none %}{{ dev.duration_ms }} 毫秒{% else %}—{% endif %}</td>
+            <td>{% if dev.duration_ms is not none %}{{ dev.duration_ms }} ms{% else %}—{% endif %}{% if dev.command_count %} · {{ dev.command_count }} 项{% endif %}</td>
           </tr>
           {% endfor %}
           </tbody>
         </table>
+      </div>
+
+      <!-- 设备命令执行回显明细（可折叠展开） -->
+      <div class="section">
+        <h2 class="section-title">设备命令执行回显明细（点击设备展开）</h2>
+        {% for dev in all_devices %}
+        <details class="device-detail"{% if loop.first or dev.health_status in ('critical', 'warning') %} open{% endif %}>
+          <summary>
+            <span>{{ dev.hostname }}（{{ dev.ip_address }}）{% if dev.key_metrics %} — {{ dev.key_metrics }}{% endif %}</span>
+            <span class="badge badge-{{ dev.health_status }}">{{ dev.status_label }}</span>
+          </summary>
+          {% if dev.command_blocks %}
+            {% for blk in dev.command_blocks %}
+            <div class="cmd-block">
+              <div class="cmd-header">&gt; {{ blk.command }}</div>
+              <pre class="cmd-output">{{ blk.output or '（命令执行成功，无回显）' }}</pre>
+            </div>
+            {% endfor %}
+          {% else %}
+            <div class="cmd-output">（无详细命令回显）</div>
+          {% endif %}
+        </details>
+        {% endfor %}
       </div>
 
   {% else %}
