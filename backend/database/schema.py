@@ -4431,17 +4431,35 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
                 continue
 
             c_id = f"cred-{uuid.uuid4().hex[:12]}"
-            c_name = f"cred-{d_host}-{d_id[:8]}"
+            c_name = f"cred-{d_host}-{d_id}"
 
             if _USE_PG:
-                cursor.execute('''
-                    INSERT INTO credentials (id, credential_name, credential_type, username, encrypted_password, enable_password, snmp_community, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ''', (c_id, c_name, 'ssh_password', uname, pwd, d_en_pwd, d_snmp, now))
-                cursor.execute('UPDATE devices SET credential_id = %s WHERE id = %s', (c_id, d_id))
+                cursor.execute('SELECT 1 FROM credentials WHERE credential_name = %s LIMIT 1', (c_name,))
+                if cursor.fetchone():
+                    c_name = f"cred-{d_host}-{d_id}-{c_id[-6:]}"
+                use_savepoint = not bool(getattr(conn, 'autocommit', False))
+                if use_savepoint:
+                    cursor.execute('SAVEPOINT sp_cred_migrate')
+                try:
+                    cursor.execute('''
+                        INSERT INTO credentials (id, credential_name, credential_type, username, encrypted_password, enable_password, snmp_community, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (credential_name) DO NOTHING
+                    ''', (c_id, c_name, 'ssh_password', uname, pwd, d_en_pwd, d_snmp, now))
+                    if cursor.rowcount:
+                        cursor.execute('UPDATE devices SET credential_id = %s WHERE id = %s', (c_id, d_id))
+                    if use_savepoint:
+                        cursor.execute('RELEASE SAVEPOINT sp_cred_migrate')
+                except Exception as row_exc:
+                    if use_savepoint:
+                        cursor.execute('ROLLBACK TO SAVEPOINT sp_cred_migrate')
+                    logger.warning(f"[migration] Skipped credential migration for device {d_id}: {row_exc}")
             else:
+                cursor.execute('SELECT 1 FROM credentials WHERE credential_name = ? LIMIT 1', (c_name,))
+                if cursor.fetchone():
+                    c_name = f"cred-{d_host}-{d_id}-{c_id[-6:]}"
                 cursor.execute('''
-                    INSERT INTO credentials (id, credential_name, credential_type, username, encrypted_password, enable_password, snmp_community, created_at)
+                    INSERT OR IGNORE INTO credentials (id, credential_name, credential_type, username, encrypted_password, enable_password, snmp_community, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (c_id, c_name, 'ssh_password', uname, pwd, d_en_pwd, d_snmp, now))
                 cursor.execute('UPDATE devices SET credential_id = ? WHERE id = ?', (c_id, d_id))
