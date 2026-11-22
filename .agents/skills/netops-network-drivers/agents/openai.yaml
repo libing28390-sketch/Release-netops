@@ -1,4 +1,0 @@
-interface:
-  display_name: "NetOps Network Drivers"
-  short_description: "Integrate and troubleshoot network devices"
-  default_prompt: "Use $netops-network-drivers to add or troubleshoot a network device integration."

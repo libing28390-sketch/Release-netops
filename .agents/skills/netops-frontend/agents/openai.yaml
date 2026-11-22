@@ -1,4 +1,0 @@
-interface:
-  display_name: "NetOps Frontend"
-  short_description: "Build and review React frontend features"
-  default_prompt: "Use $netops-frontend to implement or review a NetOps frontend change."
