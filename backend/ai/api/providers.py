@@ -366,7 +366,7 @@ def update_provider(provider_id: str, payload: AIProviderUpdate, user=Depends(re
     now_iso = datetime.now(timezone.utc).isoformat()
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, api_key_encrypted, api_key_masked, provider_type, base_url FROM ai_provider WHERE id = ?", (provider_id,))
+        cursor.execute("SELECT id, api_key_encrypted, api_key_masked, provider_type, base_url, approved_endpoint_patterns_json FROM ai_provider WHERE id = ?", (provider_id,))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail=f"Provider '{provider_id}' not found.")
@@ -383,6 +383,23 @@ def update_provider(provider_id: str, payload: AIProviderUpdate, user=Depends(re
                 next_url,
                 payload.approved_endpoint_patterns,
             )
+        elif payload.base_url is not None and str(next_type).lower() not in {"local", "ollama"} and next_url:
+            raw_existing = row[5] if len(row) > 5 else None
+            if isinstance(raw_existing, (list, tuple)):
+                existing_patterns = [str(item).strip().rstrip("/") for item in raw_existing if str(item).strip()]
+            else:
+                try:
+                    parsed_existing = json.loads(str(raw_existing or "[]"))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    parsed_existing = []
+                existing_patterns = [str(item).strip().rstrip("/") for item in (parsed_existing if isinstance(parsed_existing, list) else []) if str(item).strip()]
+            normalized_next = str(next_url).strip().rstrip("/")
+            if not any(fnmatchcase(normalized_next, pattern) for pattern in existing_patterns):
+                approved_endpoint_patterns = _validate_endpoint_allowlist(
+                    next_type,
+                    next_url,
+                    [normalized_next],
+                )
         if payload.name is not None and cursor.execute("SELECT id FROM ai_provider WHERE name = ? AND id <> ?", (payload.name, provider_id)).fetchone():
             raise HTTPException(status_code=409, detail="Provider name already exists")
         enc_key = row[1]
@@ -415,7 +432,7 @@ def update_provider(provider_id: str, payload: AIProviderUpdate, user=Depends(re
         if payload.retention_days is not None: fields.append("retention_days = ?"); params.append(payload.retention_days)
         if payload.data_processing_agreement_ref is not None: fields.append("data_processing_agreement_ref = ?"); params.append(payload.data_processing_agreement_ref)
         if payload.agreement_reviewed_at is not None: fields.append("agreement_reviewed_at = ?"); params.append(payload.agreement_reviewed_at)
-        if payload.approved_endpoint_patterns is not None:
+        if approved_endpoint_patterns is not None:
             fields.append("approved_endpoint_patterns_json = ?")
             params.append(json.dumps(approved_endpoint_patterns or [], ensure_ascii=False))
 

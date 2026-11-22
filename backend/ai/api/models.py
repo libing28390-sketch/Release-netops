@@ -90,9 +90,15 @@ def list_models(user=Depends(require_ai_permission("ai.view"))):
         tenant_id = str(user.get("tenant_id") or "tenant-default")
         user_id = str(user.get("id") or user.get("username") or "")
         roles = {str(user.get("role") or "")}
+        acl_by_model: dict[str, list[tuple[str, str, bool]]] = {}
+        for acl_row in cursor.execute(
+            "SELECT model_id, subject_type, subject_id, allow_access FROM ai_model_acl WHERE tenant_id = ?",
+            (tenant_id,),
+        ).fetchall():
+            acl_by_model.setdefault(str(acl_row[0]), []).append((str(acl_row[1]), str(acl_row[2]), bool(acl_row[3])))
         for row in rows:
-            acl_rows = cursor.execute("SELECT subject_type, subject_id, allow_access FROM ai_model_acl WHERE model_id = ? AND tenant_id = ?", (row[0], tenant_id)).fetchall()
-            if not acl_rows or any(bool(a[2]) and ((a[0] == "role" and a[1] in roles) or (a[0] == "user" and a[1] == user_id) or (a[0] == "tenant" and a[1] == tenant_id)) for a in acl_rows):
+            acl_rows = acl_by_model.get(str(row[0]), [])
+            if not acl_rows or any(a[2] and ((a[0] == "role" and a[1] in roles) or (a[0] == "user" and a[1] == user_id) or (a[0] == "tenant" and a[1] == tenant_id)) for a in acl_rows):
                 visible.append(_model_from_row(row))
         return visible
 
@@ -200,14 +206,17 @@ def model_health_summary(
         tenant_id = str(user.get("tenant_id") or "tenant-default")
         user_id = str(user.get("id") or user.get("username") or "")
         roles = {str(user.get("role") or "")}
+        acl_by_model: dict[str, list[tuple[str, str, bool]]] = {}
+        for acl_row in cursor.execute(
+            "SELECT model_id, subject_type, subject_id, allow_access FROM ai_model_acl WHERE tenant_id = ?",
+            (tenant_id,),
+        ).fetchall():
+            acl_by_model.setdefault(str(acl_row[0]), []).append((str(acl_row[1]), str(acl_row[2]), bool(acl_row[3])))
         visible_rows = []
         for row in model_rows:
-            acl_rows = cursor.execute(
-                "SELECT subject_type, subject_id, allow_access FROM ai_model_acl WHERE model_id = ? AND tenant_id = ?",
-                (row[0], tenant_id),
-            ).fetchall()
+            acl_rows = acl_by_model.get(str(row[0]), [])
             if not acl_rows or any(
-                bool(a[2]) and (
+                a[2] and (
                     (a[0] == "role" and a[1] in roles)
                     or (a[0] == "user" and a[1] == user_id)
                     or (a[0] == "tenant" and a[1] == tenant_id)
@@ -531,3 +540,13 @@ def upsert_route(payload: AIModelRouteCreate, user=Depends(require_ai_permission
         priority=payload.priority, data_classification=payload.data_classification,
         created_at=now_iso, updated_at=now_iso
     )
+
+
+@router.delete("/routes/{scene}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_route(scene: str, user=Depends(require_ai_permission("ai.model.manage"))):
+    """Delete a scene route so the scene falls back to the global default model."""
+    del user
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM ai_model_route WHERE scene = ?", (scene,))
+        conn.commit()
+    return None

@@ -5,6 +5,7 @@ AI Rate Limiter supporting Redis sliding window / daily quota with in-memory fal
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Dict, Tuple
 from core.config import settings
@@ -13,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 # In-memory fallback tracking: key -> (count, reset_timestamp)
 _IN_MEMORY_QUOTA: Dict[str, Tuple[int, float]] = {}
+_IN_MEMORY_LOCK = threading.Lock()
 
 try:
     import redis
@@ -34,17 +36,12 @@ class AIRateLimiter:
         # 1. Try Redis
         if _redis_client:
             try:
-                current = _redis_client.get(key)
-                if current is None:
-                    _redis_client.set(key, 1, ex=86400)
-                    return True, max_per_day - 1
-                
-                val = int(current)
-                if val >= max_per_day:
+                new_val = int(_redis_client.incr(key))
+                if new_val == 1 or _redis_client.ttl(key) < 0:
+                    _redis_client.expire(key, 86400)
+                if new_val > max_per_day:
                     return False, 0
-                
-                _redis_client.incr(key)
-                return True, max_per_day - (val + 1)
+                return True, max(0, max_per_day - new_val)
             except Exception as exc:
                 # Redis errors can include a connection URL; never log the
                 # exception text or credentials.
@@ -55,16 +52,20 @@ class AIRateLimiter:
 
         # 2. In-memory fallback
         now = time.time()
-        if key in _IN_MEMORY_QUOTA:
-            cnt, expire_at = _IN_MEMORY_QUOTA[key]
-            if now > expire_at:
-                _IN_MEMORY_QUOTA[key] = (1, now + 86400)
-                return True, max_per_day - 1
-            if cnt >= max_per_day:
-                return False, 0
-            _IN_MEMORY_QUOTA[key] = (cnt + 1, expire_at)
-            return True, max_per_day - (cnt + 1)
-        else:
+        with _IN_MEMORY_LOCK:
+            if len(_IN_MEMORY_QUOTA) > 4096:
+                expired_keys = [k for k, (_, exp) in _IN_MEMORY_QUOTA.items() if now > exp]
+                for k in expired_keys:
+                    _IN_MEMORY_QUOTA.pop(k, None)
+            if key in _IN_MEMORY_QUOTA:
+                cnt, expire_at = _IN_MEMORY_QUOTA[key]
+                if now > expire_at:
+                    _IN_MEMORY_QUOTA[key] = (1, now + 86400)
+                    return True, max_per_day - 1
+                if cnt >= max_per_day:
+                    return False, 0
+                _IN_MEMORY_QUOTA[key] = (cnt + 1, expire_at)
+                return True, max_per_day - (cnt + 1)
             _IN_MEMORY_QUOTA[key] = (1, now + 86400)
             return True, max_per_day - 1
 

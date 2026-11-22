@@ -58,7 +58,7 @@ const formatBytes = (bytes: number) => {
 
 const decisionClass = (decision: string) => {
   if (decision === 'BLOCK') return 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/30 dark:text-rose-300';
-  if (decision === 'MINIMIZE') return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-300';
+  if (decision === 'MINIMIZE' || decision === 'TOKENIZE') return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-300';
   return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/30 dark:text-emerald-300';
 };
 
@@ -152,12 +152,15 @@ export const SecurityPolicyTab: React.FC = () => {
   const [incidentSearchApplied, setIncidentSearchApplied] = useState('');
   const [incidentStatus, setIncidentStatus] = useState('');
   const [incidentSeverity, setIncidentSeverity] = useState('');
+  const [maxPayloadKbInput, setMaxPayloadKbInput] = useState('250');
 
   const loadPolicy = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setPolicy(await getAISecurityPolicy());
+      const loaded = await getAISecurityPolicy();
+      setPolicy(loaded);
+      setMaxPayloadKbInput(String(Math.max(1, Math.round((loaded.max_payload_bytes || 256000) / 1024))));
     } catch (err) {
       setError(err instanceof Error ? err.message : '无法读取 AI 安全策略');
     } finally {
@@ -484,6 +487,42 @@ export const SecurityPolicyTab: React.FC = () => {
                   <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">管理员临时测试使用，最多 15 分钟，重启自动关闭。普通请求不再因数据分类被拦截，也不做最小化和 Token 化；仅保留凭据 DLP、Kill Switch、Provider/区域/租户权限、请求大小、危险工具/写入操作以及跨租户和凭据读取拦截。</p>
                 </div>
               )}
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-950/50">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-2"><EyeOff className="h-4 w-4 text-cyan-600" /><span className="text-sm font-semibold text-slate-800 dark:text-slate-100">敏感内容最小化</span></div>
+                  <SwitchButton
+                    checked={policy.allow_sensitive_minimization}
+                    disabled={saving}
+                    onClick={() => void save({ allow_sensitive_minimization: !policy.allow_sensitive_minimization })}
+                    label="切换敏感内容最小化"
+                  />
+                </div>
+                <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">开启时自动裁剪无关配置上下文；关闭则直接按分类与 DLP 拦截。</p>
+                <div className="mt-3 flex items-center gap-2 border-t border-slate-200/70 pt-3 dark:border-slate-800">
+                  <label htmlFor="ai-max-payload-kb" className="text-xs font-medium text-slate-500 dark:text-slate-400">单次 Payload 上限 (KB)</label>
+                  <input
+                    id="ai-max-payload-kb"
+                    type="number"
+                    min={16}
+                    max={4096}
+                    value={maxPayloadKbInput}
+                    onChange={(event) => setMaxPayloadKbInput(event.target.value)}
+                    className="w-24 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-mono text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => {
+                      const kb = Math.max(16, Math.min(4096, Number(maxPayloadKbInput) || 250));
+                      setMaxPayloadKbInput(String(kb));
+                      void save({ max_payload_bytes: kb * 1024 });
+                    }}
+                    className="ml-auto inline-flex items-center gap-1 rounded-lg bg-cyan-600 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-cyan-700 disabled:opacity-50"
+                  >
+                    <Save className="h-3 w-3" /> 保存上限
+                  </button>
+                </div>
+              </div>
             </div>
           </section>
 
@@ -579,7 +618,7 @@ export const SecurityPolicyTab: React.FC = () => {
           </div>
           <form onSubmit={(event) => { event.preventDefault(); setEventPage(1); setEventSearchApplied(eventSearch.trim()); }} className="mt-4 flex flex-wrap gap-2">
             <div className="relative min-w-[240px] flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input type="search" value={eventSearch} onChange={(event) => setEventSearch(event.target.value)} placeholder="搜索 Request ID、Provider、Model 或错误码" className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white" /></div>
-            <select value={eventDecision} onChange={(event) => { setEventDecision(event.target.value); setEventPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">全部决定</option><option value="ALLOW">ALLOW</option><option value="MINIMIZE">MINIMIZE</option><option value="BLOCK">BLOCK</option></select>
+            <select value={eventDecision} onChange={(event) => { setEventDecision(event.target.value); setEventPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">全部决定</option><option value="ALLOW">ALLOW</option><option value="MINIMIZE">MINIMIZE</option><option value="TOKENIZE">TOKENIZE</option><option value="BLOCK">BLOCK</option></select>
           </form>
           <div className="mt-4 overflow-x-auto">
             <DataTable unstyled exportConfig={{ filename: 'ai-security-events', language: 'zh', disabled: eventsLoading || eventTotal === 0, exportData: exportAllEvents }} className="min-w-[900px] text-left text-xs"><thead className="text-slate-400"><tr><th className="px-2 py-2">时间</th><th className="px-2 py-2">决定</th><th className="px-2 py-2">分类</th><th className="px-2 py-2">Provider ID</th><th className="px-2 py-2">Model ID</th><th className="px-2 py-2">发现项</th></tr></thead><tbody>
@@ -626,7 +665,7 @@ export const SecurityPolicyTab: React.FC = () => {
                     <div className="rounded-xl bg-white p-3 dark:bg-slate-900"><div className="text-slate-400">Payload</div><div className="mt-1 font-mono font-semibold text-slate-700 dark:text-slate-200">{dryRun.payload_bytes?.toLocaleString() || '—'} B</div></div>
                     <div className="rounded-xl bg-white p-3 dark:bg-slate-900"><div className="text-slate-400">Findings</div><div className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{dryRun.finding_categories.join('、') || '无'}</div></div>
                   </div>
-                  <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">{dryRun.reason || '策略检查完成，未发现需要额外处理的问题。'}</p>
+                  <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">{dryRun.user_message || dryRun.reason || dryRun.reason_code || '策略检查完成，未发现需要额外处理的问题。'}</p>
                 </div>
               ) : (
                 <div className="mt-8 text-center text-xs leading-5 text-slate-400"><ShieldCheck className="mx-auto mb-2 h-7 w-7 opacity-40" />输入内容后运行一次检查，结果会显示在这里。</div>

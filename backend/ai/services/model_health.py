@@ -308,7 +308,7 @@ async def check_model_health(
 
 
 def cleanup_model_health_history() -> None:
-    retention_days = max(1, int(getattr(settings, "AI_MODEL_HEALTH_RETENTION_DAYS", 30)))
+    retention_days = max(1, int(getattr(settings, "AI_MODEL_HEALTH_RETENTION_DAYS", 90)))
     cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
     with get_db_connection() as conn:
         conn.execute("DELETE FROM ai_model_health_check WHERE checked_at < ?", (cutoff,))

@@ -92,6 +92,7 @@ export const ProductCatalogManagementTab: React.FC = () => {
   const [panel, setPanel] = useState<CatalogPanel>('models');
   const [models, setModels] = useState<KnowledgeCatalogModel[]>([]);
   const [aliases, setAliases] = useState<KnowledgeCatalogAlias[]>([]);
+  const [totalConflictCount, setTotalConflictCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [vendorFilter, setVendorFilter] = useState('');
@@ -140,6 +141,7 @@ export const ProductCatalogManagementTab: React.FC = () => {
       } else {
         const aliasResponse = await getKnowledgeCatalogAliases({ alias: appliedSearch, alias_kind: kindFilter, page, page_size: pageSize });
         setAliases(aliasResponse.items);
+        setTotalConflictCount(Array.isArray(aliasResponse.conflicts) ? aliasResponse.conflicts.length : null);
         setTotal(aliasResponse.meta?.pagination.total ?? aliasResponse.total);
         if (aliasResponse.meta?.pagination.page && aliasResponse.meta.pagination.page !== page) setPage(aliasResponse.meta.pagination.page);
       }
@@ -161,7 +163,7 @@ export const ProductCatalogManagementTab: React.FC = () => {
   const selectedVendorNode = hierarchy.find((item) => item.vendor_id === vendorFilter);
   const selectedFamilyNode = selectedVendorNode?.families.find((item) => item.family_code === familyFilter);
   const selectedSeriesNode = selectedFamilyNode?.series.find((item) => item.series_code === seriesFilter);
-  const conflictCount = aliases.filter((item) => item.conflict_status === 'ambiguous_pending_review').length;
+  const conflictCount = totalConflictCount ?? aliases.filter((item) => item.conflict_status === 'ambiguous_pending_review').length;
 
   const applySearch = (event?: React.FormEvent) => {
     event?.preventDefault();

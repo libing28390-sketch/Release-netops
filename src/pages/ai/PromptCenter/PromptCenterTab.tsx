@@ -116,6 +116,11 @@ const PROMPT_FIELD_LABELS: Record<string, string> = {
   output_schema: 'ai.prompt.field.output',
   temperature: 'ai.prompt.field.temperature',
   max_tokens: 'ai.prompt.field.maxTokens',
+  name: 'ai.prompt.editor.name',
+  scene: 'ai.prompt.editor.scene',
+  vendor: 'ai.prompt.editor.vendor',
+  platform: 'ai.prompt.editor.platform',
+  enabled: 'ai.prompt.filter.enabled',
 };
 
 function promptDataLabel(tx: (key: string, variables?: TextVariables) => string, labels: Record<string, string>, value: string): string {
@@ -149,9 +154,9 @@ const PromptBlock: React.FC<{ label: string; value: string; compact?: boolean; c
 
 function extractVariables(template: string): string[] {
   const variables = new Set<string>();
-  const matcher = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}|\{([A-Za-z0-9_.-]+)\}/g;
+  const matcher = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
   let match: RegExpExecArray | null;
-  while ((match = matcher.exec(template)) !== null) variables.add(match[1] || match[2]);
+  while ((match = matcher.exec(template)) !== null) variables.add(match[1]);
   return Array.from(variables);
 }
 
@@ -161,10 +166,9 @@ function previewValue(value: unknown): string {
 }
 
 function renderPromptTemplate(template: string, variables: Record<string, unknown>, language: 'zh' | 'en'): string {
-  const matcher = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}|\{([A-Za-z0-9_.-]+)\}/g;
-  return template.replace(matcher, (_match, jinjaKey: string, simpleKey: string) => {
-    const key = jinjaKey || simpleKey;
-    return Object.prototype.hasOwnProperty.call(variables, key) ? previewValue(variables[key]) : aiAdminText('ai.prompt.preview.missing', language, { name: key });
+  const matcher = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
+  return template.replace(matcher, (_match, jinjaKey: string) => {
+    return Object.prototype.hasOwnProperty.call(variables, jinjaKey) ? previewValue(variables[jinjaKey]) : aiAdminText('ai.prompt.preview.missing', language, { name: jinjaKey });
   });
 }
 
@@ -190,6 +194,7 @@ export const PromptCenterTab: React.FC = () => {
   const localizedSampleVariables = useMemo(() => sampleVariables(language), [language]);
   const [prompts, setPrompts] = useState<AIPrompt[]>([]);
   const [total, setTotal] = useState(0);
+  const [facets, setFacets] = useState<{ total_all?: number; enabled_count?: number; max_version?: number; scene_counts?: Record<string, number> } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedPrompt, setSelectedPrompt] = useState<AIPrompt | null>(null);
@@ -251,6 +256,7 @@ export const PromptCenterTab: React.FC = () => {
       });
       setPrompts(result.items);
       setTotal(result.total);
+      setFacets(result.facets || null);
     } catch (err: unknown) {
       const message = getErrorMessage(err, tx('ai.prompt.error.list'));
       setError(message);
@@ -260,9 +266,9 @@ export const PromptCenterTab: React.FC = () => {
 
   useEffect(() => { void fetchPrompts(); }, [fetchPrompts]);
 
-  const enabledCount = prompts.filter((prompt) => prompt.enabled).length;
-  const sceneCount = new Set(prompts.map((prompt) => prompt.scene)).size;
-  const latestVersion = prompts.reduce((max, prompt) => Math.max(max, prompt.version || 0), 0);
+  const enabledCount = facets?.enabled_count ?? prompts.filter((prompt) => prompt.enabled).length;
+  const sceneCount = facets?.scene_counts ? Object.keys(facets.scene_counts).length : new Set(prompts.map((prompt) => prompt.scene)).size;
+  const latestVersion = facets?.max_version ?? prompts.reduce((max, prompt) => Math.max(max, prompt.version || 0), 0);
   const selectedScene = useMemo(() => selectedPrompt ? sceneMap[selectedPrompt.scene] : null, [selectedPrompt]);
   const createScene = sceneMap[scene] || sceneOptions[0];
   const formVariables = useMemo(() => extractVariables(userPromptTemplate), [userPromptTemplate]);
@@ -344,9 +350,13 @@ export const PromptCenterTab: React.FC = () => {
           system_prompt: normalizedSystem, user_prompt_template: normalizedUserTemplate, output_schema: normalizedSchema,
           temperature, max_tokens: maxTokens, enabled: formEnabled, change_reason: changeReason.trim() || tx('ai.prompt.reason.create'),
         });
+      const wasViewingSaved = selectedPrompt?.id === saved.id;
       setSelectedPrompt((current) => current?.id === saved.id ? saved : current);
       setEditorOpen(false);
       await fetchPrompts();
+      if (wasViewingSaved) {
+        void loadHistory(saved.id);
+      }
       showToast(editingPrompt ? tx('ai.prompt.toast.saved') : tx('ai.prompt.toast.created'), 'success');
     } catch (err: unknown) {
       setEditorError(getErrorMessage(err, editingPrompt ? tx('ai.prompt.error.save') : tx('ai.prompt.error.create')));
@@ -361,7 +371,12 @@ export const PromptCenterTab: React.FC = () => {
         change_reason: tx('ai.prompt.reason.toggle', { status: tx(prompt.enabled ? 'ai.prompt.status.disabled' : 'ai.prompt.status.enabled') }),
       });
       setPrompts((current) => current.map((item) => item.id === saved.id ? saved : item));
+      const wasViewingSaved = selectedPrompt?.id === saved.id;
       setSelectedPrompt((current) => current?.id === saved.id ? saved : current);
+      if (wasViewingSaved) {
+        void loadHistory(saved.id);
+      }
+      void fetchPrompts();
       showToast(tx('ai.prompt.toast.toggled', { name: prompt.name, status: tx(saved.enabled ? 'ai.prompt.status.enabled' : 'ai.prompt.status.disabled') }), 'success');
     } catch (err: unknown) {
       showToast(getErrorMessage(err, tx('ai.prompt.error.toggle')), 'error');
@@ -447,7 +462,7 @@ export const PromptCenterTab: React.FC = () => {
       <section className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-4 dark:border-indigo-900/60 dark:bg-indigo-950/20" aria-label={tx('ai.prompt.coverage.aria')}>
         <div className="mb-3 flex items-center gap-2"><SlidersHorizontal className="h-4 w-4 text-indigo-500" /><h3 className="text-sm font-bold text-indigo-950 dark:text-indigo-100">{tx('ai.prompt.coverage.title')}</h3></div>
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{sceneOptions.map((option) => {
-          const count = prompts.filter((prompt) => prompt.scene === option.value).length;
+          const count = facets ? (facets.scene_counts?.[option.value] ?? 0) : prompts.filter((prompt) => prompt.scene === option.value).length;
           return <button key={option.value} type="button" onClick={() => { setSceneFilter(option.value); setPage(1); }} className={cn('rounded-xl border bg-white/80 px-3 py-2 text-left transition hover:border-indigo-300 dark:border-indigo-900/50 dark:bg-slate-900/40', sceneFilter === option.value ? 'border-indigo-500 ring-2 ring-indigo-200 dark:ring-indigo-900' : 'border-indigo-100')}><div className="flex items-center justify-between gap-2"><span className="truncate text-xs font-semibold text-slate-800 dark:text-slate-100">{tx(option.labelKey)}</span><span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">{count}</span></div><p className="mt-1 truncate text-[10px] text-slate-500 dark:text-slate-400">{tx(option.descriptionKey)}</p></button>;
         })}</div>
       </section>

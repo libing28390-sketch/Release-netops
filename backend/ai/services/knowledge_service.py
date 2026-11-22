@@ -571,6 +571,18 @@ class KnowledgeService:
                             "UPDATE ai_knowledge_directory SET path = ?, updated_at = ? WHERE id = ?",
                             (replacement_path, now_iso, descendant_id),
                         )
+                    # Keep document metadata directory path aligned with the renamed directory.
+                    try:
+                        cursor.execute(
+                            """
+                            UPDATE ai_document
+                            SET metadata_json = jsonb_set(COALESCE(metadata_json, '{}'::jsonb), '{knowledge_directory_path}', to_jsonb(?::text), true)
+                            WHERE metadata_json ->> 'knowledge_directory_path' = ?
+                            """,
+                            (replacement_path, descendant_path),
+                        )
+                    except Exception:
+                        pass
             except Exception as exc:
                 conn.rollback()
                 raise ValueError("目录重命名失败，可能存在路径冲突") from exc
@@ -593,12 +605,14 @@ class KnowledgeService:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, knowledge_base_id, tenant_id, path FROM ai_knowledge_directory WHERE id = ?",
+                "SELECT id, knowledge_base_id, tenant_id, path, is_system FROM ai_knowledge_directory WHERE id = ?",
                 (directory_id,),
             )
             row = cursor.fetchone()
             if not row:
                 raise ValueError("目录不存在")
+            if bool(row[4]):
+                raise ValueError("系统内置目录不可删除")
             knowledge_base_id, tenant_id, directory_path = row[1], str(row[2] or "tenant-default"), str(row[3])
             cursor.execute(
                 "SELECT id FROM ai_knowledge_directory WHERE knowledge_base_id = ? AND tenant_id = ? AND (path = ? OR path LIKE ?) ORDER BY depth DESC",

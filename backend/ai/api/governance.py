@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from ai.security.permissions import require_ai_permission
+from ai.security.rate_limit import ai_rate_limiter
 from ai.services.config_generation import config_generation_service
 from ai.services.change_governance import change_governance_service
 
@@ -31,31 +32,56 @@ class CreateDraftRequest(BaseModel):
 @router.post("/generate-config")
 async def generate_config(req: GenerateConfigRequest, user=Depends(require_ai_permission("ai.use"))):
     """Generate vendor-aware configuration commands with safety inspection."""
-    user_id = user.get("username", "user")
+    user_id = str(user.get("username") or "user")
+    tenant_id = str(user.get("tenant_id") or "tenant-default")
+    roles = [str(user.get("role"))] if user.get("role") else []
+    allowed, _ = ai_rate_limiter.is_allowed(user_id, "change_plan")
+    if not allowed:
+        raise HTTPException(status_code=429, detail="Daily rate limit exceeded for configuration generation.")
     return await config_generation_service.generate_config(
         intent=req.intent,
         vendor=req.vendor,
         platform=req.platform,
-        user_id=user_id
+        user_id=user_id,
+        tenant_id=tenant_id,
+        roles=roles,
     )
 
 
 @router.post("/create-draft")
 def create_change_draft(req: CreateDraftRequest, user=Depends(require_ai_permission("ai.use"))):
     """Submit AI Generated Configuration as Change Order Draft."""
-    username = user.get("username", "ai_agent")
+    username = str(user.get("username") or "ai_agent")
+    requester_id = str(user.get("id") or username)
+    tenant_id = str(user.get("tenant_id") or "")
     return change_governance_service.create_change_draft(
         title=req.title,
         device_id=req.device_id,
         commands=req.commands,
         verification_commands=req.verification_commands,
         rollback_commands=req.rollback_commands,
-        created_by=username
+        created_by=username,
+        requester_id=requester_id,
+        tenant_id=tenant_id,
     )
 
 
 @router.post("/approve/{change_id}")
 def approve_change(change_id: str, user=Depends(require_ai_permission("ai.provider.manage"))):
     """Human approval gate for AI generated Change Order."""
-    username = user.get("username", "admin")
-    return change_governance_service.approve_change(change_id, approver=username)
+    username = str(user.get("username") or "admin")
+    approver_id = str(user.get("id") or username)
+    tenant_id = str(user.get("tenant_id") or "") or None
+    try:
+        return change_governance_service.approve_change(
+            change_id,
+            approver=username,
+            approver_id=approver_id,
+            tenant_id=tenant_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

@@ -1555,13 +1555,7 @@ export const KnowledgeManagementTab: React.FC = () => {
     if (!metadataPreview) return;
 
     setSubmitting(true);
-    setIndexingStep(1);
-
-    const steps = [1, 2, 3, 4, 5, 6];
-    for (const step of steps) {
-      setIndexingStep(step);
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
+    setIndexingStep(2);
 
     try {
       await addKnowledgeDocument({
@@ -1722,14 +1716,15 @@ export const KnowledgeManagementTab: React.FC = () => {
   };
 
   const compareSelectedVersions = async (versionId: string) => {
-    if (!selectedDocument?.document_id) return;
+    const targetDocId = selectedDocument?.id || selectedDocument?.document_id;
+    if (!targetDocId) return;
     const history = selectedDocument.source_version_history || [];
     const latest = history[0];
     if (!latest || latest.id === versionId) return;
     setVersionAdminBusy(`compare:${versionId}`);
     setVersionAdminNotice('');
     try {
-      const comparison = await compareKnowledgeDocumentVersions(selectedDocument.document_id, versionId, latest.id);
+      const comparison = await compareKnowledgeDocumentVersions(targetDocId, versionId, latest.id);
       setVersionCompareResult(comparison);
     } catch (err: any) {
       setVersionAdminNotice(err?.message || tx('ai.knowledge.error.versionCompare'));
@@ -1739,7 +1734,8 @@ export const KnowledgeManagementTab: React.FC = () => {
   };
 
   const runVersionAdminAction = async (action: 'publish' | 'supersede' | 'rollback', versionId: string, replacementVersionId?: string) => {
-    if (!selectedDocument?.document_id) return;
+    const targetDocId = selectedDocument?.id || selectedDocument?.document_id;
+    if (!targetDocId) return;
     const history = selectedDocument.source_version_history || [];
     const version = history.find((item) => item.id === versionId);
     const label = action === 'publish' ? tx('ai.knowledge.action.publish') : action === 'supersede' ? tx('ai.knowledge.action.supersede') : tx('ai.knowledge.action.rollback');
@@ -1754,9 +1750,9 @@ export const KnowledgeManagementTab: React.FC = () => {
     setVersionAdminBusy(`${action}:${versionId}`);
     setVersionAdminNotice('');
     try {
-      if (action === 'publish') await publishKnowledgeDocumentVersion(selectedDocument.document_id, versionId);
-      if (action === 'supersede') await supersedeKnowledgeDocumentVersion(selectedDocument.document_id, versionId, replacementVersionId || '');
-      if (action === 'rollback') await rollbackKnowledgeDocumentVersion(selectedDocument.document_id, versionId);
+      if (action === 'publish') await publishKnowledgeDocumentVersion(targetDocId, versionId);
+      if (action === 'supersede') await supersedeKnowledgeDocumentVersion(targetDocId, versionId, replacementVersionId || '');
+      if (action === 'rollback') await rollbackKnowledgeDocumentVersion(targetDocId, versionId);
       setVersionAdminNotice(tx('ai.knowledge.version.actionDone', { label }));
       setVersionCompareResult(null);
       await refreshSelectedDocument();
@@ -1971,7 +1967,7 @@ export const KnowledgeManagementTab: React.FC = () => {
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs shadow-xs dark:border-slate-700/80 dark:bg-slate-800">
         <div className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300" title={tx('ai.knowledge.stat.documentsHelp')}><FileText className="h-3.5 w-3.5 text-indigo-500" /><span>{tx('ai.knowledge.stat.documents')}</span><strong className="font-mono text-slate-900 dark:text-white">{stats.total_documents}</strong></div>
         <div className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300" title={tx('ai.knowledge.stat.chunksHelp')}><Layers className="h-3.5 w-3.5 text-emerald-500" /><span>{tx('ai.knowledge.stat.chunks')}</span><strong className="font-mono text-slate-900 dark:text-white">{stats.total_chunks}</strong></div>
-        <div className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300" title="Cisco / Huawei / H3C / Ruijie"><Server className="h-3.5 w-3.5 text-blue-500" /><span>{tx('ai.knowledge.stat.vendors')}</span><strong className="font-mono text-slate-900 dark:text-white">{stats.total_vendors || 4}</strong></div>
+        <div className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300" title="Cisco / Huawei / H3C / Ruijie / Juniper / Fortinet / Aruba"><Server className="h-3.5 w-3.5 text-blue-500" /><span>{tx('ai.knowledge.stat.vendors')}</span><strong className="font-mono text-slate-900 dark:text-white">{stats.total_vendors || 0}</strong></div>
         <div className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300" title={tx('ai.knowledge.stat.indexHelp')}><ShieldCheck className="h-3.5 w-3.5 text-amber-500" /><span>{tx('ai.knowledge.stat.index')}</span><strong className="font-mono text-emerald-600 dark:text-emerald-400">{stats.ready_indexes}</strong></div>
       </div>
 

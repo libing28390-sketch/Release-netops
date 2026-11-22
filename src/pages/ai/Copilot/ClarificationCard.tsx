@@ -22,6 +22,7 @@ const fieldLabels: Record<string, string> = {
   confirmation: '确认授权',
   feature: '功能',
   cli_platform: '平台',
+  platform_or_model: '平台或型号',
   target_device: '目标设备',
   product_model: '型号',
   software_version: '版本',

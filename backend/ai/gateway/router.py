@@ -71,25 +71,42 @@ class ModelRouter:
         
         return None, None
 
-    def resolve_route_with_reason(self, scene: str) -> tuple[Optional[str], Optional[str], str]:
-        """Resolve a route while preserving the precedence explanation."""
+    def resolve_route_policy(self, scene: str) -> tuple[Optional[str], Optional[str], str, Optional[str]]:
+        """Resolve a route with precedence reason and optional scene data classification."""
         try:
             with get_db_connection() as conn:
-                row = conn.execute(
-                    "SELECT model_id, fallback_model_id FROM ai_model_route WHERE scene = ? AND enabled = 1 ORDER BY priority DESC, updated_at DESC LIMIT 1",
-                    (scene,),
-                ).fetchone()
-                if row:
-                    return row[0], row[1], "scene_route"
+                try:
+                    row = conn.execute(
+                        "SELECT model_id, fallback_model_id, data_classification FROM ai_model_route WHERE scene = ? AND enabled = 1 ORDER BY priority DESC, updated_at DESC LIMIT 1",
+                        (scene,),
+                    ).fetchone()
+                    if row:
+                        return row[0], row[1], "scene_route", (str(row[2]) if row[2] else None)
+                except Exception:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    row = conn.execute(
+                        "SELECT model_id, fallback_model_id FROM ai_model_route WHERE scene = ? AND enabled = 1 ORDER BY priority DESC, updated_at DESC LIMIT 1",
+                        (scene,),
+                    ).fetchone()
+                    if row:
+                        return row[0], row[1], "scene_route", None
                 row = conn.execute("SELECT id FROM ai_model WHERE is_default = 1 AND enabled = 1 ORDER BY priority DESC LIMIT 1").fetchone()
                 if row:
-                    return row[0], None, "system_default"
+                    return row[0], None, "system_default", None
                 row = conn.execute("SELECT id FROM ai_model WHERE enabled = 1 ORDER BY priority DESC LIMIT 1").fetchone()
                 if row:
-                    return row[0], None, "system_default"
+                    return row[0], None, "system_default", None
         except Exception as exc:
-            logger.warning("Error resolving model route with reason for scene '%s': %s", scene, type(exc).__name__)
-        return None, None, "system_default"
+            logger.warning("Error resolving model route with reason for scene '%s': %s", sanitize_log_text(scene, limit=64), type(exc).__name__)
+        return None, None, "system_default", None
+
+    def resolve_route_with_reason(self, scene: str) -> tuple[Optional[str], Optional[str], str]:
+        """Resolve a route while preserving the precedence explanation."""
+        model_id, fallback_id, reason, _ = self.resolve_route_policy(scene)
+        return model_id, fallback_id, reason
 
 
 model_router = ModelRouter()

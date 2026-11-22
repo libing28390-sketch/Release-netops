@@ -8,11 +8,15 @@ never make an incompatible platform or document category eligible.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence
+
+logger = logging.getLogger(__name__)
+_APPLICABILITY_KEY_RE = re.compile(r"^[A-Za-z0-9_]{1,64}$")
 
 from database.core import get_db_connection
 from ai.providers.embedding import embedding_provider
@@ -156,7 +160,17 @@ class RAGRetriever:
         "qos": (r"(?<![a-z0-9])qos(?![a-z0-9])", r"服务质量"),
     }
 
-    def __init__(self, *, reranker: Any = None, cache_enabled: bool | None = None, candidate_pool_size: int | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        reranker: Any = None,
+        cache_enabled: bool | None = None,
+        candidate_pool_size: int | None = None,
+        connection_factory: Any = None,
+        embedder: Any = None,
+    ) -> None:
+        self._connection_factory = connection_factory
+        self._embedder = embedder
         self.last_debug: Dict[str, Any] = {}
         pool_size = int(
             candidate_pool_size
@@ -671,20 +685,30 @@ class RAGRetriever:
         # Additional applicability arrays are PostgreSQL JSONB hard
         # predicates evaluated before any chunks enter Python.
         for key, requested in (request.applicability or {}).items():
+            key_str = str(key or "").strip()
+            if not _APPLICABILITY_KEY_RE.fullmatch(key_str):
+                raise ValueError("Invalid applicability filter key")
             values = requested if isinstance(requested, (list, tuple, set)) else [requested]
             for value in values:
                 if value is None or "metadata_json" not in columns:
                     continue
-                where.append(f"COALESCE(d.metadata_json -> '{key}', '[]'::jsonb) @> jsonb_build_array(?)")
-                params.append(str(value))
+                where.append("COALESCE(d.metadata_json -> ?, '[]'::jsonb) @> jsonb_build_array(?)")
+                params.extend([key_str, str(value)])
         return " AND ".join(where), params
+
+    def _open_connection(self):
+        factory = self._connection_factory or get_db_connection
+        return factory()
+
+    def _active_embedder(self):
+        return self._embedder or embedding_provider
 
     def _query_rows(
         self,
         request: RetrievalRequest,
         vector_top_n: int,
     ) -> tuple[list[Any], int, Dict[str, Any]]:
-        with get_db_connection() as conn:
+        with self._open_connection() as conn:
             cursor = conn.cursor()
             columns = self._table_columns(cursor, "ai_document")
             chunk_columns = self._table_columns(cursor, "ai_document_chunk")
@@ -741,6 +765,8 @@ class RAGRetriever:
         self,
         request: RetrievalRequest,
         chunk_ids: Sequence[Any],
+        *,
+        query_vector: Optional[Sequence[float]] = None,
     ) -> tuple[dict[str, dict[str, float]], dict[str, Any]]:
         """Run bounded PostgreSQL FTS/trigram/vector scores.
 
@@ -763,7 +789,7 @@ class RAGRetriever:
         scores: dict[str, dict[str, float]] = {}
         placeholders = ", ".join("?" for _ in chunk_ids)
         try:
-            with get_db_connection() as conn:
+            with self._open_connection() as conn:
                 cursor = conn.cursor()
                 source_table = "ai_document_chunk"
                 columns = self._table_columns(cursor, source_table)
@@ -807,8 +833,17 @@ class RAGRetriever:
 
                 if "embedding_vector" in columns:
                     try:
-                        query_vector = embedding_provider.embed_query(request.query)
-                        vector_literal = "[" + ",".join(str(float(value)) for value in query_vector) + "]"
+                        active_embedder = self._active_embedder()
+                        resolved_vector = (
+                            list(query_vector)
+                            if query_vector is not None
+                            else (
+                                active_embedder.embed_query(request.query)
+                                if hasattr(active_embedder, "embed_query")
+                                else active_embedder.embed_text(request.query)
+                            )
+                        )
+                        vector_literal = "[" + ",".join(str(float(value)) for value in resolved_vector) + "]"
                         rows = cursor.execute(
                             "SELECT id, GREATEST(0.0, LEAST(1.0, 1 - (embedding_vector <=> CAST(? AS vector)))) "
                             f"FROM {source_table} WHERE {scope_sql}id IN ({placeholders}) AND embedding_vector IS NOT NULL",
@@ -872,15 +907,21 @@ class RAGRetriever:
                 return cached
         try:
             rows, _document_count, debug = self._query_rows(request, candidate_hint)
+            active_embedder = self._active_embedder()
+            try:
+                query_vector = (
+                    active_embedder.embed_query(request.query)
+                    if hasattr(active_embedder, "embed_query")
+                    else active_embedder.embed_text(request.query)
+                )
+            except Exception:
+                query_vector = []
             accelerator_scores, accelerator_debug = self._native_accelerator_scores(
                 request,
                 [row[0] for row in rows],
+                query_vector=query_vector if query_vector else None,
             )
             debug.update(accelerator_debug)
-            try:
-                query_vector = embedding_provider.embed_text(request.query)
-            except Exception:
-                query_vector = []
 
             scored: list[dict[str, Any]] = []
             chunks_by_document: Dict[str, list[dict[str, Any]]] = {}
@@ -888,7 +929,7 @@ class RAGRetriever:
             version_conflicts = 0
             wrong_vendor_rows = 0
             feature_scope_filtered = 0
-            current_model = str(getattr(embedding_provider, "model_id", "") or "")
+            current_model = str(getattr(active_embedder, "model_id", "") or "")
             for row in rows:
                 (
                     c_id, content, embedding_json, meta_json, section,
@@ -1087,6 +1128,7 @@ class RAGRetriever:
             # Never expose dependency/SQL/provider exception text through the
             # retrieval debug contract.  The stable code is sufficient for an
             # operator to correlate the request with server-side logs.
+            logger.exception("RAG retrieval execution failed")
             self.last_debug = {
                 "error_code": "RETRIEVAL_EXECUTION_FAILED",
                 "candidate_count": 0,

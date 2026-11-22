@@ -63,7 +63,8 @@ class IPTroubleshootingService:
                     cursor.execute(
                         """
                         SELECT a.mac_address, a.vlan_id, a.interface_name,
-                               a.device_id, a.last_updated
+                               a.device_id, a.last_updated,
+                               d.hostname, d.platform, d.vendor, d.status
                         FROM arp_table a
                         JOIN devices d ON d.id = a.device_id
                         WHERE a.ip_address = ?
@@ -80,7 +81,16 @@ class IPTroubleshootingService:
                             "interface": arp_row[2],
                             "device_id": arp_row[3],
                             "last_updated": arp_row[4],
+                            "device_hostname": arp_row[5],
                         }
+                        if not facts["device"] and arp_row[3]:
+                            facts["device"] = {
+                                "id": arp_row[3],
+                                "hostname": arp_row[5],
+                                "platform": arp_row[6],
+                                "vendor": arp_row[7],
+                                "status": arp_row[8],
+                            }
                 except Exception:
                     try:
                         # arp_cache predates tenant labels and remains a

@@ -29,10 +29,15 @@ class DevPassthroughController:
         self._expires_at: datetime | None = None
 
     def is_supported(self) -> bool:
-        return bool(
-            getattr(settings, "AI_ENABLED", False)
-            and getattr(settings, "EXTERNAL_AI_ENABLED", False)
-        )
+        if not bool(getattr(settings, "AI_ENABLED", False)):
+            return False
+        if bool(getattr(settings, "EXTERNAL_AI_ENABLED", False)):
+            return True
+        try:
+            from ai.security.gateway import ai_security_gateway
+            return bool(ai_security_gateway.policy.external_ai_enabled)
+        except Exception:
+            return False
 
     def is_active(self) -> bool:
         with self._lock:

@@ -52,8 +52,8 @@ def _agent_json_candidate(content: Any) -> str:
     raise ValueError("agent response is not a JSON object")
 
 
-def _resolve_agent_id(agent_code: str) -> str:
-    """Resolve the public Agent code to the primary key required by the FK."""
+def _resolve_agent_config(agent_code: str) -> Dict[str, Any]:
+    """Resolve the public Agent code to its DB configuration row."""
 
     code = str(agent_code or "").strip()
     if not code:
@@ -61,7 +61,7 @@ def _resolve_agent_id(agent_code: str) -> str:
 
     with get_db_connection() as conn:
         row = conn.execute(
-            "SELECT id, enabled FROM ai_agent WHERE code = ? LIMIT 1",
+            "SELECT id, enabled, system_prompt, allowed_tools, max_steps, timeout FROM ai_agent WHERE code = ? LIMIT 1",
             (code,),
         ).fetchone()
 
@@ -69,7 +69,27 @@ def _resolve_agent_id(agent_code: str) -> str:
         raise AgentNotFoundError(f"Agent '{code}' is not registered")
     if not bool(row[1]):
         raise AgentNotFoundError(f"Agent '{code}' is disabled")
-    return str(row[0])
+    raw_tools = row[3]
+    if isinstance(raw_tools, list):
+        allowed_tools = [str(item).strip() for item in raw_tools if str(item).strip()]
+    else:
+        try:
+            parsed = json.loads(str(raw_tools or "[]"))
+            allowed_tools = [str(item).strip() for item in parsed if str(item).strip()] if isinstance(parsed, list) else []
+        except (TypeError, ValueError, json.JSONDecodeError):
+            allowed_tools = []
+    return {
+        "id": str(row[0]),
+        "system_prompt": str(row[2] or "").strip(),
+        "allowed_tools": allowed_tools,
+        "max_steps": int(row[4] or 6),
+        "timeout": int(row[5] or 180),
+    }
+
+
+def _resolve_agent_id(agent_code: str) -> str:
+    """Resolve the public Agent code to the primary key required by the FK."""
+    return _resolve_agent_config(agent_code)["id"]
 
 
 def _safe_text(value: Any, *, tenant_id: str, task_id: str) -> str:
@@ -144,7 +164,12 @@ class AgentRunner:
         timeout_seconds: int = 180,
     ) -> Dict[str, Any]:
         agent_code = str(agent_code or "").strip()
-        agent_id = _resolve_agent_id(agent_code)
+        agent_config = _resolve_agent_config(agent_code)
+        agent_id = agent_config["id"]
+        if agent_config["max_steps"] > 0:
+            max_steps = min(max_steps, agent_config["max_steps"])
+        if agent_config["timeout"] > 0:
+            timeout_seconds = min(timeout_seconds, agent_config["timeout"])
         now_iso = datetime.now(timezone.utc).isoformat()
         run_id = f"run_{uuid.uuid4().hex[:12]}"
         tenant = tenant_id or "tenant-default"
@@ -196,14 +221,17 @@ class AgentRunner:
         # Agents only receive the read-only catalogue. Write-capable tools can
         # be planned by the registry, but are never offered as an autonomous
         # next step without the separate approval/change-order flow.
+        allowed_tool_names = set(agent_config.get("allowed_tools") or [])
         tools_catalog = [
             _public_tool_descriptor(item)
             for item in tool_registry.list_tools()
-            if item.get("read_only") is True
+            if item.get("read_only") is True and (not allowed_tool_names or item.get("name") in allowed_tool_names)
         ]
         tools_prompt_str = json.dumps(tools_catalog, ensure_ascii=False)
 
+        custom_prompt_prefix = f"{agent_config['system_prompt']}\n\n" if agent_config.get("system_prompt") else ""
         sys_prompt = (
+            f"{custom_prompt_prefix}"
             f"You are an Autonomous Network Troubleshooting Agent ('{agent_code}').\n"
             f"Available READ_ONLY Tools:\n{tools_prompt_str}\n\n"
             "Execution Workflow:\n"
@@ -487,13 +515,16 @@ class AgentRunner:
 
         ai_metrics.agent_finished(run_status)
 
+        resolved_question = _resolve_agent_tokens(safe_question, tenant_id=tenant, task_id=run_id)
+        resolved_final_result = _resolve_agent_tokens(final_result, tenant_id=tenant, task_id=run_id)
+
         return {
             "run_id": run_id,
             "agent_code": agent_code,
-            "question": safe_question,
+            "question": resolved_question,
             "status": run_status,
             "steps": steps_executed,
-            "final_result": final_result,
+            "final_result": resolved_final_result,
             "error_code": error_code,
         }
 

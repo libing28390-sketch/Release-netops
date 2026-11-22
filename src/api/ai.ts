@@ -208,6 +208,8 @@ export interface AISecurityDryRunResult {
   finding_categories: string[];
   payload_bytes?: number;
   reason?: string;
+  reason_code?: string;
+  user_message?: string;
   external_call_made: false;
   security_mode?: 'blacklist' | 'classification' | string;
 }
@@ -311,6 +313,7 @@ export interface AIUsageSummary {
   avg_latency_ms: number;
   scene_breakdown: Record<string, number>;
   estimated_cost_usd?: number;
+  daily_estimated_cost_usd?: number;
   budget_usd?: number;
   budget_percent?: number;
   budget_alert?: boolean;
@@ -644,6 +647,12 @@ export async function upsertAIModelRoute(data: Partial<AIModelRoute>): Promise<A
   });
 }
 
+export async function deleteAIModelRoute(scene: string): Promise<void> {
+  return apiRequest<void>(`/api/ai/models/routes/${encodeURIComponent(scene)}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function getAIPrompts(): Promise<AIPrompt[]> {
   return apiRequest<AIPrompt[]>('/api/ai/prompts');
 }
@@ -655,6 +664,12 @@ export interface AIPromptPage {
   page_size: number;
   total_pages: number;
   filters?: { search?: string; scene?: string; enabled?: boolean | null };
+  facets?: {
+    total_all?: number;
+    enabled_count?: number;
+    max_version?: number;
+    scene_counts?: Record<string, number>;
+  };
 }
 
 export async function getAIPromptsPage(query: { page?: number; page_size?: number; search?: string; scene?: string; enabled?: boolean } = {}): Promise<AIPromptPage> {
@@ -946,6 +961,8 @@ export interface AssistantStreamMeta {
   stream_id?: string;
   sequence?: number;
   intent?: string;
+  assistant_message_id?: string;
+  conversation_id?: string;
   citations?: any[];
   facts_retrieved?: boolean;
   retrieval?: AssistantRetrievalTrace;
@@ -1231,7 +1248,9 @@ export async function chatAssistantStream(
           }
         }
 
-        if (currentEvent === 'meta' && onMeta) {
+        if (parsed?.type === 'persisted' && parsed?.assistant_message_id && onMeta) {
+          onMeta(parsed);
+        } else if (currentEvent === 'meta' && onMeta) {
           onMeta(parsed);
         } else if (currentEvent === 'progress' && onProgress) {
           onProgress(parsed);
@@ -1268,6 +1287,24 @@ export async function locateMAC(mac: string): Promise<any> {
 }
 
 // P3 Agent APIs
+export interface RegisteredAgent {
+  id: string;
+  code: string;
+  name: string;
+  description: string;
+  system_prompt?: string;
+  allowed_tools: string[];
+  max_steps: number;
+  timeout: number;
+  enabled: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export async function getRegisteredAgents(): Promise<RegisteredAgent[]> {
+  return apiRequest<RegisteredAgent[]>('/api/ai/agents');
+}
+
 export async function getRegisteredTools(): Promise<any[]> {
   return apiRequest<any[]>('/api/ai/agents/tools');
 }
@@ -2461,12 +2498,18 @@ export async function getKnowledgeDocument(docId: string): Promise<KnowledgeDocu
 }
 
 export async function listKnowledgeDocumentVersions(docId: string): Promise<KnowledgeDocumentVersion[]> {
-  return apiRequest<KnowledgeDocumentVersion[]>(`/api/knowledge/documents/${encodeURIComponent(docId)}/versions`);
+  const payload = await apiRequest<KnowledgeDocumentVersion[] | { data?: { items?: KnowledgeDocumentVersion[] } }>(`/api/knowledge/documents/${encodeURIComponent(docId)}/versions`);
+  if (Array.isArray(payload)) return payload;
+  return Array.isArray(payload?.data?.items) ? payload.data.items : [];
 }
 
 export async function compareKnowledgeDocumentVersions(docId: string, leftVersionId: string, rightVersionId: string): Promise<KnowledgeDocumentVersionComparison> {
   const params = new URLSearchParams({ left_version_id: leftVersionId, right_version_id: rightVersionId });
-  return apiRequest<KnowledgeDocumentVersionComparison>(`/api/knowledge/documents/${encodeURIComponent(docId)}/versions/compare?${params.toString()}`);
+  const payload = await apiRequest<KnowledgeDocumentVersionComparison | { data?: KnowledgeDocumentVersionComparison }>(`/api/knowledge/documents/${encodeURIComponent(docId)}/versions/compare?${params.toString()}`);
+  if (payload && typeof payload === 'object' && 'data' in payload && payload.data) {
+    return payload.data;
+  }
+  return payload as KnowledgeDocumentVersionComparison;
 }
 
 export async function publishKnowledgeDocumentVersion(docId: string, versionId: string, reason = 'published by knowledge administrator'): Promise<Record<string, unknown>> {

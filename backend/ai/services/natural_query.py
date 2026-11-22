@@ -253,13 +253,21 @@ class NaturalQueryService:
                     """,
                     tuple(params),
                 ).fetchall()
-                alert_rows = conn.execute(
-                    """
-                    SELECT a.created_at, a.resolved_at, a.severity, a.device_id
-                    FROM alert_events a
-                    LEFT JOIN devices d ON d.id = a.device_id
-                    """,
-                ).fetchall()
+                matched_ids_list = sorted({str(_row_value(row, "id")) for row in rows if _row_value(row, "id")})
+                if matched_ids_list:
+                    placeholders = ", ".join("?" for _ in matched_ids_list)
+                    since_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+                    alert_rows = conn.execute(
+                        f"""
+                        SELECT a.created_at, a.resolved_at, a.severity, a.device_id
+                        FROM alert_events a
+                        WHERE a.device_id IN ({placeholders})
+                          AND (a.resolved_at IS NULL OR a.created_at >= ?)
+                        """,
+                        (*matched_ids_list, since_24h),
+                    ).fetchall()
+                else:
+                    alert_rows = []
         except Exception as exc:
             logger.exception("Deterministic CMDB asset analysis failed")
             error_analysis = {

@@ -61,6 +61,8 @@ class ScopedTokenVault:
                     break
             self._entries[(tenant, task, token)] = _VaultEntry(raw_value, now + self.ttl_seconds)
             self._reverse[reverse_key] = token
+            if len(self._entries) > self.max_entries:
+                self.purge(now=now)
             return token
 
     def resolve_token(self, token: str, *, tenant_id: str, task_id: str) -> str | None:
@@ -71,6 +73,9 @@ class ScopedTokenVault:
                 return None
             if entry.expires_at <= time.monotonic():
                 self._entries.pop((tenant, task, token), None)
+                for rev_key, rev_token in list(self._reverse.items()):
+                    if rev_token == token and rev_key[:2] == (tenant, task):
+                        self._reverse.pop(rev_key, None)
                 return None
             return entry.raw_value
 
@@ -85,14 +90,16 @@ class ScopedTokenVault:
         expired = [key for key, entry in self._entries.items() if entry.expires_at <= now]
         for key in expired:
             self._entries.pop(key, None)
-        if expired:
-            expired_tokens = {key[2] for key in expired}
-            for key, token in list(self._reverse.items()):
-                if token in expired_tokens:
-                    self._reverse.pop(key, None)
+        evicted: list[tuple[str, str, str]] = []
         if len(self._entries) > self.max_entries:
-            for key in sorted(self._entries, key=lambda item: self._entries[item].expires_at)[: len(self._entries) - self.max_entries]:
+            evicted = sorted(self._entries, key=lambda item: self._entries[item].expires_at)[: len(self._entries) - self.max_entries]
+            for key in evicted:
                 self._entries.pop(key, None)
+        removed_tokens = {key[2] for key in expired} | {key[2] for key in evicted}
+        if removed_tokens:
+            for key, token in list(self._reverse.items()):
+                if token in removed_tokens:
+                    self._reverse.pop(key, None)
 
     def clear_scope(self, *, tenant_id: str, task_id: str) -> None:
         scope = self._scope(tenant_id, task_id)
@@ -110,10 +117,12 @@ def tokenize_text(text: str, *, tenant_id: str, task_id: str, vault: ScopedToken
     if not text:
         return text
 
+    from ai.security.classification import IPV6_RE
+
     patterns: tuple[tuple[str, re.Pattern[str]], ...] = (
         ("EMAIL", re.compile(r"(?i)(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+(?![\w.-])")),
         ("IP", re.compile(r"(?<![\w.])(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}(?![\w.])")),
-        ("IPV6", re.compile(r"(?i)(?<![\w:])(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}(?![\w:])")),
+        ("IPV6", IPV6_RE),
         ("MAC", re.compile(r"(?i)(?<![\w])(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}(?![\w])")),
         ("PHONE", re.compile(r"(?<!\w)(?:\+?\d[\d ()-]{7,18}\d)(?!\w)")),
         ("HOST", re.compile(r"(?<![\w.-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}(?![\w.-])")),

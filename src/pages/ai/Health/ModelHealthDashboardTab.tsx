@@ -4,8 +4,6 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   Clock3,
   ExternalLink,
   RefreshCw,
@@ -212,8 +210,18 @@ export const ModelHealthDashboardTab: React.FC = () => {
     setCheckingModelId(service.model_id);
     try {
       const result = await checkAIModelHealth(service.model_id);
-      if (result.success) showToast(tx('ai.model.health.toast.success', { name: service.model_name, latency: result.latency_ms }), 'success');
-      else showToast(tx('ai.model.health.toast.failure', { name: service.model_name, code: result.error_code || 'unknown' }), 'error');
+      if (result.success) {
+        showToast(tx('ai.model.health.toast.success', { name: service.model_name, latency: result.latency_ms }), 'success');
+      } else if (result.error_code === 'AI_HEALTH_BACKOFF') {
+        showToast(
+          language === 'zh'
+            ? `${service.model_name} 当前处于健康探测退避窗口，请稍后再试`
+            : `${service.model_name} is in health-check backoff window; please retry shortly`,
+          'info'
+        );
+      } else {
+        showToast(tx('ai.model.health.toast.failure', { name: service.model_name, code: result.error_code || 'unknown' }), 'error');
+      }
       await fetchData(true);
     } catch (err: unknown) {
       showToast(err instanceof Error ? err.message : tx('ai.model.health.toast.error'), 'error');
@@ -244,7 +252,7 @@ export const ModelHealthDashboardTab: React.FC = () => {
         </section>
 
         <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex flex-col justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-800 sm:flex-row sm:items-center sm:px-6"><div className="flex items-center gap-2"><h3 className="text-[18px] font-medium text-slate-900 dark:text-white">{tx('ai.health.status.systemStatus')}</h3><span className="text-xs text-slate-400">{summary ? `${summary.service_count} ${tx('ai.health.status.services')}` : '—'}</span></div><div className="flex items-center gap-2"><button type="button" disabled className="rounded-md p-1 text-slate-300 dark:text-slate-700"><ChevronLeft className="h-4 w-4" /></button><span className="min-w-[170px] text-center text-sm text-slate-500 dark:text-slate-400">{rangeLabel}</span><button type="button" disabled className="rounded-md p-1 text-slate-300 dark:text-slate-700"><ChevronRight className="h-4 w-4" /></button><div className="ml-2 flex rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">{([30, 90] as WindowDays[]).map((days) => <button key={days} type="button" onClick={() => setWindowDays(days)} className={`rounded-md px-2 py-1 text-[11px] font-semibold ${windowDays === days ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'}`}>{days}{tx('ai.health.status.daysShort')}</button>)}</div></div></div>
+          <div className="flex flex-col justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-800 sm:flex-row sm:items-center sm:px-6"><div className="flex items-center gap-2"><h3 className="text-[18px] font-medium text-slate-900 dark:text-white">{tx('ai.health.status.systemStatus')}</h3><span className="text-xs text-slate-400">{summary ? `${summary.service_count} ${tx('ai.health.status.services')}` : '—'}</span></div><div className="flex items-center gap-2"><span className="min-w-[170px] text-center text-sm text-slate-500 dark:text-slate-400">{rangeLabel}</span><div className="ml-2 flex rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">{([30, 90] as WindowDays[]).map((days) => <button key={days} type="button" onClick={() => setWindowDays(days)} className={`rounded-md px-2 py-1 text-[11px] font-semibold ${windowDays === days ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'}`}>{days}{tx('ai.health.status.daysShort')}</button>)}</div></div></div>
           {loading && !summary ? <div className="space-y-4 px-5 py-8 sm:px-6">{[0, 1, 2, 3].map((item) => <div key={item} className="h-28 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" />)}</div> : services.length === 0 ? <div className="px-5 py-16 text-center text-sm text-slate-500 dark:text-slate-400"><Server className="mx-auto mb-3 h-8 w-8 opacity-40" />{tx('ai.health.status.noServices')}</div> : <div>{services.map((service) => <ServiceStatusRow key={service.model_id} service={service} windowDays={windowDays} expanded={expandedServices.has(service.model_id)} onToggle={() => setExpandedServices((current) => { const next = new Set(current); if (next.has(service.model_id)) next.delete(service.model_id); else next.add(service.model_id); return next; })} onCheck={() => void handleCheck(service)} checking={checkingModelId === service.model_id} tx={tx} language={language} />)}</div>}
           <div className="flex flex-col gap-2 border-t border-slate-200 px-5 py-4 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400 sm:flex-row sm:items-center sm:justify-between sm:px-6"><div className="flex flex-wrap items-center gap-x-4 gap-y-2"><span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#21c38e]" />{tx('ai.health.status.legendHealthy')}</span><span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#f4b53f]" />{tx('ai.health.status.legendDegraded')}</span><span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-[#ec5965]" />{tx('ai.health.status.legendUnhealthy')}</span><span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-slate-200" />{tx('ai.health.status.legendUnknown')}</span></div><span>{summary ? tx('ai.health.status.summary', { checks: summary.total_check_count, success: summary.total_success_count, failure: summary.total_failure_count }) : '—'}</span></div>
         </section>

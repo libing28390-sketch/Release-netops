@@ -45,11 +45,12 @@ def tool_search_mac(mac: str, tenant_id: str | None = None) -> Dict[str, Any]:
     """Search MAC address in ARP cache & MAC table."""
     del tenant_id
     result: Dict[str, Any] = {"mac": mac, "found": False, "vlan": None, "interface": None, "evidence": []}
+    compact_mac = re.sub(r"[^a-fA-F0-9]", "", str(mac or "")).lower()
     try:
         with get_db_connection() as conn:
             row = conn.execute(
-                "SELECT vlan_id, interface_name FROM mac_table WHERE lower(mac_address) = lower(?) LIMIT 1",
-                (mac,),
+                "SELECT vlan_id, interface_name FROM mac_table WHERE LOWER(REPLACE(REPLACE(REPLACE(COALESCE(mac_address, ''), ':', ''), '-', ''), '.', '')) = ? LIMIT 1",
+                (compact_mac,),
             ).fetchone()
             if row:
                 result.update({"found": True, "vlan": row[0], "interface": row[1], "evidence": [{"source_type": "mac_table"}]})
@@ -78,7 +79,12 @@ def tool_get_device_neighbors(device_id: str, tenant_id: str | None = None) -> D
             ).fetchall()
             for row in rows:
                 source = row[0]
-                neighbors.append({"local_port": row[2], "remote_device": row[1] if source == device_id else source, "remote_port": row[3]})
+                is_source = str(source) == str(device_id)
+                neighbors.append({
+                    "local_port": row[2] if is_source else row[3],
+                    "remote_device": row[1] if is_source else source,
+                    "remote_port": row[3] if is_source else row[2],
+                })
     except Exception:
         pass
     return sanitize_data({"device_id": device_id, "neighbors": neighbors, "evidence": [{"source_type": "topology_links"}] if neighbors else []})
@@ -116,11 +122,8 @@ def tool_get_active_alarms(device_id: Optional[str] = None, tenant_id: str | Non
 
 
 def tool_get_config_diff(device_id: str, tenant_id: str | None = None) -> Dict[str, Any]:
-    """Get latest configuration diff for device from Nexora Diff Engine."""
-    del tenant_id
-    # The read-only tool returns a summary/diff view only.  Raw configurations
-    # are intentionally not loaded into the agent context.
-    return sanitize_data({"device_id": device_id, "changes": [], "evidence": [], "freshness": "not_available"})
+    """Get latest configuration diff summary for device from Nexora Diff Engine."""
+    return tool_compare_config(device_id, tenant_id=tenant_id)
 
 
 def tool_get_asset(device_id: str, tenant_id: str | None = None) -> Dict[str, Any]:
@@ -237,10 +240,11 @@ def tool_get_mac_entry(mac: str, device_id: str | None = None, tenant_id: str | 
     """Locate MAC-table evidence; it is an endpoint hint, not a physical link."""
     del tenant_id
     entries: list[dict[str, Any]] = []
+    compact_mac = re.sub(r"[^a-fA-F0-9]", "", str(mac or "")).lower()
     try:
         with get_db_connection() as conn:
-            where = ["lower(m.mac_address) = lower(?)"]
-            params: list[Any] = [mac]
+            where = ["LOWER(REPLACE(REPLACE(REPLACE(COALESCE(m.mac_address, ''), ':', ''), '-', ''), '.', '')) = ?"]
+            params: list[Any] = [compact_mac]
             if device_id:
                 where.append("m.device_id = ?")
                 params.append(device_id)

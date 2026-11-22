@@ -333,6 +333,7 @@ class LLMGateway:
         )
 
     def _budget_exceeded(self, *, provider_id: str, model_id: str) -> bool:
+        del provider_id, model_id
         budget = float(getattr(settings, "AI_DAILY_BUDGET_USD", 0) or 0)
         if budget <= 0:
             return False
@@ -340,8 +341,8 @@ class LLMGateway:
         try:
             with get_db_connection() as conn:
                 row = conn.execute(
-                    "SELECT COALESCE(SUM(estimated_cost), 0) FROM ai_usage_daily WHERE date = ? AND provider_id = ? AND model_id = ?",
-                    (today, provider_id, model_id),
+                    "SELECT COALESCE(SUM(estimated_cost), 0) FROM ai_usage_daily WHERE date = ?",
+                    (today,),
                 ).fetchone()
             return float(row[0] or 0) >= budget if row else False
         except Exception:
@@ -426,23 +427,43 @@ class LLMGateway:
                     output_rate = float(price[1] or 0) if price else 0.0
                     cost = (max(0, int(input_tokens or 0)) / 1000.0) * input_rate + (max(0, int(output_tokens or 0)) / 1000.0) * output_rate
                     ai_metrics.provider_cost(provider_id, model_id, cost)
-                    row = usage_conn.execute(
-                        "SELECT id, requests, input_tokens, output_tokens, estimated_cost, success_count, error_count, avg_latency FROM ai_usage_daily WHERE date = ? AND provider_id = ? AND model_id = ? AND scene = ?",
-                        (date_key, provider_id, model_id, scene),
-                    ).fetchone()
-                    if row:
-                        requests = int(row[1] or 0) + 1
-                        successes = int(row[5] or 0) + (1 if status == "success" else 0)
-                        errors = int(row[6] or 0) + (0 if status == "success" else 1)
-                        usage_conn.execute(
-                            "UPDATE ai_usage_daily SET requests = ?, input_tokens = ?, output_tokens = ?, estimated_cost = ?, success_count = ?, error_count = ?, avg_latency = ?, created_at = ? WHERE id = ?",
-                            (requests, int(row[2] or 0) + max(0, int(input_tokens or 0)), int(row[3] or 0) + max(0, int(output_tokens or 0)), float(row[4] or 0) + cost, successes, errors, (float(row[7] or 0) * (requests - 1) + max(0, int(latency_ms or 0))) / requests, now_iso, row[0]),
-                        )
-                    else:
-                        usage_conn.execute(
-                            "INSERT INTO ai_usage_daily (id, date, provider_id, model_id, scene, requests, input_tokens, output_tokens, estimated_cost, success_count, error_count, avg_latency, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                            (f"usage_{uuid.uuid4().hex[:16]}", date_key, provider_id, model_id, scene, 1, max(0, int(input_tokens or 0)), max(0, int(output_tokens or 0)), cost, 1 if status == "success" else 0, 0 if status == "success" else 1, max(0, int(latency_ms or 0)), now_iso),
-                        )
+                    in_tok_val = max(0, int(input_tokens or 0))
+                    out_tok_val = max(0, int(output_tokens or 0))
+                    latency_val = max(0, int(latency_ms or 0))
+                    success_inc = 1 if status == "success" else 0
+                    error_inc = 0 if status == "success" else 1
+                    usage_conn.execute(
+                        """
+                        INSERT INTO ai_usage_daily (
+                            id, date, provider_id, model_id, scene,
+                            requests, input_tokens, output_tokens, estimated_cost,
+                            success_count, error_count, avg_latency, created_at
+                        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT (date, provider_id, model_id, scene) DO UPDATE SET
+                            requests = ai_usage_daily.requests + 1,
+                            input_tokens = ai_usage_daily.input_tokens + EXCLUDED.input_tokens,
+                            output_tokens = ai_usage_daily.output_tokens + EXCLUDED.output_tokens,
+                            estimated_cost = ai_usage_daily.estimated_cost + EXCLUDED.estimated_cost,
+                            success_count = ai_usage_daily.success_count + EXCLUDED.success_count,
+                            error_count = ai_usage_daily.error_count + EXCLUDED.error_count,
+                            avg_latency = ((ai_usage_daily.avg_latency * ai_usage_daily.requests) + EXCLUDED.avg_latency) / (ai_usage_daily.requests + 1),
+                            created_at = EXCLUDED.created_at
+                        """,
+                        (
+                            f"usage_{uuid.uuid4().hex[:16]}",
+                            date_key,
+                            provider_id,
+                            model_id,
+                            scene,
+                            in_tok_val,
+                            out_tok_val,
+                            cost,
+                            success_inc,
+                            error_inc,
+                            latency_val,
+                            now_iso,
+                        ),
+                    )
                     usage_conn.commit()
             except Exception:
                 logger.debug("Failed to update AI daily usage counters code=AI_USAGE_WRITE_FAILED")
@@ -602,12 +623,20 @@ class LLMGateway:
         target_model_id = model_id
         fallback_model_id = None
         if not target_model_id:
-            user_default = self._get_user_default_model(tenant_id=tenant_id or "tenant-default", user_id=user_id, roles=roles)
-            if user_default:
-                target_model_id = user_default
-                route_reason = "user_default_model"
+            scene_model_id, scene_fallback_id, scene_reason, scene_classification = model_router.resolve_route_policy(scene)
+            if scene_reason == "scene_route" and scene_model_id:
+                target_model_id = scene_model_id
+                fallback_model_id = scene_fallback_id
+                route_reason = "scene_route"
+                if data_classification is None and scene_classification:
+                    data_classification = scene_classification
             else:
-                target_model_id, fallback_model_id, route_reason = model_router.resolve_route_with_reason(scene)
+                user_default = self._get_user_default_model(tenant_id=tenant_id or "tenant-default", user_id=user_id, roles=roles)
+                if user_default:
+                    target_model_id = user_default
+                    route_reason = "user_default_model"
+                else:
+                    target_model_id, fallback_model_id, route_reason = scene_model_id, scene_fallback_id, scene_reason
 
         target_info = self._get_model_details(target_model_id)
         self._authorize_model(target_info, tenant_id=tenant_id or "tenant-default", user_id=user_id, roles=roles)
@@ -670,6 +699,7 @@ class LLMGateway:
                 department=department,
                 document_scope=document_scope,
                 user_role=(roles or [None])[0],
+                scene=scene,
             )
         except SecurityBlocked as exc:
             self._log_request(
@@ -1030,14 +1060,21 @@ class LLMGateway:
         route_reason = selection_source or ("message_explicit_model" if model_id else "scene_route_or_system_default")
         target_model_id = model_id
         if not target_model_id:
-            tenant_for_pref = tenant_id or "tenant-default"
-            user_default = self._get_user_default_model(tenant_id=tenant_for_pref, user_id=user_id, roles=roles)
-            if user_default:
-                target_model_id = user_default
-                route_reason = "user_default_model"
+            scene_model_id, scene_fallback_id, scene_reason, scene_classification = model_router.resolve_route_policy(scene)
+            if scene_reason == "scene_route" and scene_model_id:
+                target_model_id = scene_model_id
+                fallback_model_id = scene_fallback_id
+                route_reason = "scene_route"
+                if data_classification is None and scene_classification:
+                    data_classification = scene_classification
             else:
-                primary_id, fallback_model_id, route_reason = model_router.resolve_route_with_reason(scene)
-                target_model_id = primary_id
+                tenant_for_pref = tenant_id or "tenant-default"
+                user_default = self._get_user_default_model(tenant_id=tenant_for_pref, user_id=user_id, roles=roles)
+                if user_default:
+                    target_model_id = user_default
+                    route_reason = "user_default_model"
+                else:
+                    target_model_id, fallback_model_id, route_reason = scene_model_id, scene_fallback_id, scene_reason
 
         model_info = self._get_model_details(target_model_id)
         self._authorize_model(model_info, tenant_id=tenant_id or "tenant-default", user_id=user_id, roles=roles)
@@ -1096,6 +1133,7 @@ class LLMGateway:
                 department=department,
                 document_scope=document_scope,
                 user_role=(roles or [None])[0],
+                scene=scene,
             )
         except SecurityBlocked as exc:
             blocked = AISecurityBlockedException(

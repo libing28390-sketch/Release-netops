@@ -59,7 +59,7 @@ def api_get_evaluation(
 @router.post("/run")
 def api_run_evaluation(
     payload: EvaluationRunRequest,
-    user=require_permission("knowledge_source", "read"),
+    user=require_permission("knowledge_source", "update"),
 ):
     if payload.suite != "v1_baseline_postgresql":
         raise HTTPException(status_code=422, detail={"code": "EVAL_SUITE_NOT_SUPPORTED", "message": "Evaluation suite is not supported"})

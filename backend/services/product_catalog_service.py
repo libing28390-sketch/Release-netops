@@ -47,7 +47,7 @@ _CATALOG_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _CUSTOM_STATUSES = {"draft", "active", "disabled", "archived", "deleted"}
 
 _CUSTOM_MODEL_SELECT = """
-    SELECT m.id, m.tenant_id, v.id, v.name, f.code, f.name, s.code, s.name,
+    SELECT m.id, m.tenant_id, v.code, v.name, f.code, f.name, s.code, s.name,
            m.code, m.display_name, m.status, m.review_status, m.source_refs_json,
            m.software_scope_json, m.platform_binding_advisory_json, m.source_kind,
            m.description, m.created_at, m.updated_at
@@ -438,6 +438,64 @@ def _alias_records(model_rows: list[dict[str, Any]], *, tenant_id: str | None) -
         row["expected_outcome"] = sample.get("expected_outcome") or ""
         row["model"] = model_by_id[model_id]
         rows.append(row)
+
+    # Merge persisted custom aliases from kb_product_alias and synthesize exact
+    # canonical aliases for custom models so custom catalog entries resolve in
+    # dry-run testing and appear in the alias registry.
+    seen_model_alias: set[tuple[str, str]] = {(str(r.product_model_id), str(r.normalized_alias)) for r in records}
+    custom_models = [item for item in model_rows if item.get("mutable")]
+    if custom_models:
+        try:
+            with get_db_connection() as conn:
+                db_aliases = conn.execute(
+                    "SELECT id, tenant_id, product_model_id, alias, alias_kind, status FROM kb_product_alias WHERE status = 'active'"
+                ).fetchall()
+            for a_row in db_aliases:
+                m_id = str(a_row[2] or "")
+                if m_id not in model_by_id:
+                    continue
+                record = build_alias_record({
+                    "id": str(a_row[0]),
+                    "tenant_id": str(a_row[1] or tenant_id or _RUNTIME_DEFAULT_TENANT),
+                    "product_model_id": m_id,
+                    "alias": str(a_row[3] or ""),
+                    "alias_kind": str(a_row[4] or "exact"),
+                    "status": "active",
+                })
+                key = (m_id, record.normalized_alias)
+                if key in seen_model_alias:
+                    continue
+                seen_model_alias.add(key)
+                records.append(record)
+                row = record.to_dict()
+                row["seed_status"] = "active"
+                row["expected_outcome"] = "resolved"
+                row["model"] = model_by_id[m_id]
+                rows.append(row)
+        except Exception:
+            pass
+        for cm in custom_models:
+            m_id = str(cm["product_model_id"])
+            m_code = str(cm.get("model_code") or "").strip()
+            if not m_code:
+                continue
+            record = build_alias_record({
+                "id": f"custom_alias_{m_id}",
+                "tenant_id": str(cm.get("tenant_id") or tenant_id or _RUNTIME_DEFAULT_TENANT),
+                "product_model_id": m_id,
+                "alias": m_code,
+                "alias_kind": "exact",
+                "status": "active",
+            })
+            key = (m_id, record.normalized_alias)
+            if key not in seen_model_alias:
+                seen_model_alias.add(key)
+                records.append(record)
+                row = record.to_dict()
+                row["seed_status"] = "active"
+                row["expected_outcome"] = "resolved"
+                row["model"] = cm
+                rows.append(row)
     return rows, records, model_by_id
 
 
@@ -687,6 +745,35 @@ def create_custom_product_model(user: dict[str, Any], payload: dict[str, Any]) -
                 username, now_iso, username, now_iso,
             ),
         )
+        # Register canonical exact/canonical aliases for the custom model in kb_product_alias
+        # so query_normalizer and alias dry-run can resolve it immediately.
+        for alias_text, alias_kind in (
+            (values["model_code"], "exact"),
+            (values["display_name"], "canonical") if values["display_name"].casefold() != values["model_code"].casefold() else ("", ""),
+        ):
+            if not alias_text:
+                continue
+            alias_rec = build_alias_record({
+                "id": f"alias_{uuid.uuid4().hex[:12]}",
+                "tenant_id": tenant_id,
+                "product_model_id": model_id,
+                "alias": alias_text,
+                "alias_kind": alias_kind,
+                "status": "active",
+            })
+            cursor.execute(
+                """
+                INSERT INTO kb_product_alias (
+                    id, tenant_id, product_model_id, alias, normalized_alias,
+                    alias_kind, status, created_by, created_at, updated_by, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
+                ON CONFLICT (tenant_id, normalized_alias, alias_kind) DO NOTHING
+                """,
+                (
+                    alias_rec.id, tenant_id, model_id, alias_rec.alias, alias_rec.normalized_alias,
+                    alias_rec.alias_kind, username, now_iso, username, now_iso,
+                ),
+            )
         created_row = _custom_model_row(cursor, model_id, tenant_id)
         created = _custom_model_from_row(created_row)
         _write_catalog_model_audit(

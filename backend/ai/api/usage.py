@@ -4,6 +4,7 @@ FastAPI Router for AI Audit Logs & Token Usage Statistics
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, Query
 from database.core import get_db_connection
@@ -88,16 +89,29 @@ def get_usage_summary(user=Depends(require_ai_permission("ai.audit.view"))):
         scene_breakdown = {r[0]: r[1] for r in cursor.fetchall()}
 
         estimated_cost = 0.0
+        daily_estimated_cost = 0.0
+        today_key = datetime.now(timezone.utc).date().isoformat()
         provider_breakdown: dict[str, dict[str, Any]] = {}
         try:
             try:
-                cursor.execute("SELECT provider_id, model_id, SUM(requests), SUM(input_tokens), SUM(output_tokens), SUM(estimated_cost), AVG(avg_latency), SUM(success_count), SUM(error_count) FROM ai_usage_daily GROUP BY provider_id, model_id ORDER BY SUM(estimated_cost) DESC")
+                cursor.execute(
+                    "SELECT provider_id, model_id, SUM(requests), SUM(input_tokens), SUM(output_tokens), "
+                    "SUM(estimated_cost), "
+                    "COALESCE(SUM(avg_latency * requests) / NULLIF(SUM(requests), 0), 0), "
+                    "SUM(success_count), SUM(error_count) "
+                    "FROM ai_usage_daily GROUP BY provider_id, model_id ORDER BY SUM(estimated_cost) DESC"
+                )
                 usage_rows = cursor.fetchall()
             except Exception:
                 # Older installations may not have the additive success/error
                 # counters yet; keep the cost/latency view readable there.
                 conn.rollback()
-                cursor.execute("SELECT provider_id, model_id, SUM(requests), SUM(input_tokens), SUM(output_tokens), SUM(estimated_cost), AVG(avg_latency) FROM ai_usage_daily GROUP BY provider_id, model_id ORDER BY SUM(estimated_cost) DESC")
+                cursor.execute(
+                    "SELECT provider_id, model_id, SUM(requests), SUM(input_tokens), SUM(output_tokens), "
+                    "SUM(estimated_cost), "
+                    "COALESCE(SUM(avg_latency * requests) / NULLIF(SUM(requests), 0), 0) "
+                    "FROM ai_usage_daily GROUP BY provider_id, model_id ORDER BY SUM(estimated_cost) DESC"
+                )
                 usage_rows = [(*item, None, None) for item in cursor.fetchall()]
             for item in usage_rows:
                 cost = float(item[5] or 0)
@@ -114,6 +128,11 @@ def get_usage_summary(user=Depends(require_ai_permission("ai.audit.view"))):
                     "output_tokens": int(item[4] or 0), "estimated_cost_usd": round(cost, 6),
                     "avg_latency_ms": round(float(item[6] or 0), 2),
                 }
+            daily_row = cursor.execute(
+                "SELECT COALESCE(SUM(estimated_cost), 0) FROM ai_usage_daily WHERE date = ?",
+                (today_key,),
+            ).fetchone()
+            daily_estimated_cost = float((daily_row or [0])[0] or 0)
         except Exception:
             pass
         budget = float(getattr(settings, "AI_DAILY_BUDGET_USD", 0) or 0)
@@ -126,9 +145,10 @@ def get_usage_summary(user=Depends(require_ai_permission("ai.audit.view"))):
             "avg_latency_ms": round(avg_latency_ms, 2),
             "scene_breakdown": scene_breakdown,
             "estimated_cost_usd": round(estimated_cost, 6),
+            "daily_estimated_cost_usd": round(daily_estimated_cost, 6),
             "budget_usd": budget,
-            "budget_percent": round((estimated_cost / budget) * 100, 2) if budget > 0 else 0,
-            "budget_alert": bool(budget > 0 and estimated_cost >= budget * 0.8),
+            "budget_percent": round((daily_estimated_cost / budget) * 100, 2) if budget > 0 else 0,
+            "budget_alert": bool(budget > 0 and daily_estimated_cost >= budget * 0.8),
             "provider_breakdown": provider_breakdown,
         }
 

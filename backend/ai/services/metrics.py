@@ -51,7 +51,10 @@ class AIMetrics:
     def request_finished(self, scene: str, *, status: str, latency_ms: int = 0) -> None:
         with self._lock:
             self.requests[str(status or "unknown")] += 1
-            self.latencies_ms[str(scene or "unknown")].append(max(0, int(latency_ms or 0)))
+            bucket = self.latencies_ms[str(scene or "unknown")]
+            bucket.append(max(0, int(latency_ms or 0)))
+            if len(bucket) > 1000:
+                del bucket[:-1000]
 
     @staticmethod
     def _provider_key(provider_id: str | None, model_id: str | None) -> str:

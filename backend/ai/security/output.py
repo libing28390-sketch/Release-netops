@@ -49,7 +49,7 @@ def sanitize_output(value: Any, *, tenant_id: str, task_id: str, vault: ScopedTo
         clean = sanitize_text(clean)
         # Resolve only exact, scoped tokens. Unknown/fake tokens remain visible
         # as literal text and are never guessed or fuzzy-matched.
-        return vault.resolve_text(html.escape(clean, quote=False), tenant_id=tenant_id, task_id=task_id)
+        return vault.resolve_text(clean, tenant_id=tenant_id, task_id=task_id)
     if isinstance(value, list):
         return [sanitize_output(item, tenant_id=tenant_id, task_id=task_id, vault=vault) for item in value]
     if isinstance(value, dict):

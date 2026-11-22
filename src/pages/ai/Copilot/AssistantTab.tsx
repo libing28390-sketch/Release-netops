@@ -834,7 +834,8 @@ export const AssistantTab: React.FC = () => {
                   if (m.id === assistantMsgId) {
                     return {
                       ...m,
-                      stream_status: 'streaming',
+                      id: meta.assistant_message_id || m.id,
+                      stream_status: meta.assistant_message_id ? 'done' : 'streaming',
                       intent: meta.intent || m.intent,
                       sources: meta.citations || m.sources,
                       retrieval: meta.retrieval || m.retrieval,
@@ -1007,13 +1008,17 @@ export const AssistantTab: React.FC = () => {
   };
 
   const handleClarificationOption = (clarification: AssistantClarification, option: AssistantClarificationOption) => {
+    if (option.value === 'display_version') {
+      setEditDraft('请粘贴设备的 display version / show version 输出：\n');
+      return;
+    }
     const fallbackField = clarification.missing_fields?.includes('feature')
       ? 'feature'
       : clarification.missing_fields?.includes('target_device')
         ? 'target_device'
         : 'cli_platform';
     const field = option.field || fallbackField;
-    const values = option.value === 'display_version' ? {} : { [field]: option.value };
+    const values = { [field]: option.value };
     void handleSend(option.label || option.value, {
       state_id: clarification.state_id || undefined,
       revision: clarification.revision,
@@ -1134,7 +1139,8 @@ export const AssistantTab: React.FC = () => {
       return;
     }
     try {
-      const result = await runDiagnosticPlan({ plan: diagnosticPlan, authorized_steps: authorizedDiagnosticSteps, context: { ...copilotContext, case_id: activeSessionId } });
+      const targetCaseId = copilotContext.case_id || activeSession?.id || activeSessionId;
+      const result = await runDiagnosticPlan({ plan: diagnosticPlan, authorized_steps: authorizedDiagnosticSteps, context: { ...copilotContext, case_id: targetCaseId } });
       setDiagnosticPlan({ ...diagnosticPlan, ...result });
       setDiagnosticNotice('只读诊断已完成，结果已记录');
     } catch (error: any) {

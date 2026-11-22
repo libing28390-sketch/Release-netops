@@ -568,7 +568,7 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
                     payload = event_payload(part)
                     if isinstance(payload, dict):
                         for key in (
-                            "intent", "clarification", "requested_model_id", "model_id", "provider_id", "route_reason",
+                            "intent", "clarification", "citations", "requested_model_id", "model_id", "provider_id", "route_reason",
                             "fallback_used", "execution_mode", "external_egress", "input_tokens",
                             "output_tokens", "latency_ms", "duration_ms", "token_source",
                         ):
@@ -602,12 +602,13 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
 
             if req.conversation_id and stream_state.assistant_content and not stream_state.assistant_message_persisted:
                 try:
-                    append_message(
+                    persisted_msg = append_message(
                         conversation_id=req.conversation_id,
                         tenant_id=tenant_id,
                         user_id=user_id,
                         role="assistant",
                         content=stream_state.assistant_content,
+                        citations=route_meta.get("citations") if isinstance(route_meta.get("citations"), list) else [],
                         requested_model_id=route_meta.get("requested_model_id") or requested_model_id,
                         actual_model_id=route_meta.get("model_id"),
                         provider_id=route_meta.get("provider_id"),
@@ -621,6 +622,16 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
                         token_source=route_meta.get("token_source"),
                     )
                     stream_state.assistant_message_persisted = True
+                    if isinstance(persisted_msg, dict) and persisted_msg.get("id"):
+                        persisted_evt = json.dumps(
+                            {
+                                "type": "persisted",
+                                "assistant_message_id": persisted_msg["id"],
+                                "conversation_id": req.conversation_id,
+                            },
+                            ensure_ascii=False,
+                        )
+                        yield f"data: {persisted_evt}\n\n"
                 except (LookupError, ValueError):
                     pass
             sse_stream_registry.complete(stream_state)
@@ -1336,7 +1347,7 @@ def batch_delete_documents(payload: KnowledgeBatchDeleteRequest, user=Depends(re
                 "message": "explicit confirmation is required for batch deletion",
             },
         )
-    tenant_id = tenant_id_for_write(user=user)
+    tenant_id = None
     actions = []
     for doc_id in payload.doc_ids:
         try:

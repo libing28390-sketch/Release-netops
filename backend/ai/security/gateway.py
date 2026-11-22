@@ -237,6 +237,7 @@ class AISecurityGateway:
         provider_no_training_confirmed: bool = False,
         provider_retention_days: int | None = None,
         provider_data_processing_agreement_ref: str | None = None,
+        scene: str | None = None,
     ) -> SecurePayload:
         active_policy = policy or self.policy
         if self is ai_security_gateway and not active_policy.external_ai_enabled and policy is None:
@@ -268,6 +269,26 @@ class AISecurityGateway:
 
         combined = {"messages": messages, "tools": tools or [], "provider_options": provider_options or {}}
         level, findings = self._classify(combined)
+        normalized_scene = str(scene or "").strip().lower()
+        # In read-only configuration/diff/command analysis and change-draft
+        # generation scenes, CLI syntax tokens (e.g. ``system-view``,
+        # ``configure terminal``, ``running-config``, ``save``) are the subject
+        # matter being analyzed rather than an attempt to execute write tools.
+        # Real secrets, credentials, private keys, and unsafe tools remain
+        # strictly blocked.
+        if normalized_scene in {
+            "config_explain",
+            "config_diff",
+            "command_explain",
+            "alarm_analysis",
+            "change_plan",
+            "config_generation",
+        }:
+            findings = [
+                item for item in findings
+                if item.category not in {"change_command", "full_config", "full_configuration_or_topology"}
+            ]
+            level = max((item.level for item in findings), default=DataLevel.L0_PUBLIC)
         if _has_sensitive_field(combined):
             findings.append(Finding(DataLevel.L4_PROHIBITED, "sensitive_field"))
             level = max(level, DataLevel.L4_PROHIBITED)
@@ -280,6 +301,23 @@ class AISecurityGateway:
             findings.append(Finding(DataLevel.L4_PROHIBITED, "credential_field"))
             level = max(level, DataLevel.L4_PROHIBITED)
         request_findings = request_policy_findings(messages, tenant_id=tenant_id)
+        if normalized_scene in {
+            "config_explain",
+            "config_diff",
+            "command_explain",
+            "alarm_analysis",
+            "change_plan",
+            "config_generation",
+        }:
+            # Sanitized network config text naturally contains CLI headers like
+            # ``display current-configuration`` followed by redacted lines like
+            # ``password <REDACTED>``. Do not misclassify that as a user asking
+            # to exfiltrate credentials; cross-tenant scope requests and any
+            # unredacted secrets remain strictly blocked.
+            request_findings = [
+                item for item in request_findings
+                if item.category != "credential_request"
+            ]
         if request_findings:
             findings.extend(request_findings)
             level = max(level, max((item.level for item in request_findings), default=level))

@@ -21,7 +21,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { PasswordInputField } from '../../../components/ui/PasswordInputField';
-import { getAIProvidersPage, createAIProvider, updateAIProvider, deleteAIProvider, getAIProviderDeletePreview, testAIProvider, AIProvider, AIProviderDeletePreview } from '../../../api/ai';
+import { getAIProvidersPage, createAIProvider, updateAIProvider, rotateAIProviderKey, deleteAIProvider, getAIProviderDeletePreview, testAIProvider, AIProvider, AIProviderDeletePreview } from '../../../api/ai';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 import { useFocusTrap } from '../../../hooks/useFocusTrap';
@@ -289,8 +289,14 @@ export const ProviderManagementTab: React.FC = () => {
   const [showApiKey, setShowApiKey] = useState(false);
   const [defaultModelCode, setDefaultModelCode] = useState('deepseek-v4-flash');
   const [timeout, setTimeout] = useState(30);
+  const [maxRetries, setMaxRetries] = useState(2);
+  const [proxyUrl, setProxyUrl] = useState('');
+  const [tagsInput, setTagsInput] = useState('');
   const [dataRegion, setDataRegion] = useState('unknown');
   const [allowedDataClassification, setAllowedDataClassification] = useState('PUBLIC');
+  const [noTrainingConfirmed, setNoTrainingConfirmed] = useState(false);
+  const [retentionDays, setRetentionDays] = useState<string>('');
+  const [dpaRef, setDpaRef] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const fetchProviders = useCallback(async () => {
@@ -426,8 +432,14 @@ export const ProviderManagementTab: React.FC = () => {
     setShowApiKey(false);
     setDefaultModelCode('');
     setTimeout(provider.timeout || 30);
+    setMaxRetries(provider.max_retries ?? 2);
+    setProxyUrl(provider.proxy_url || '');
+    setTagsInput(Array.isArray(provider.tags) ? provider.tags.join(', ') : '');
     setDataRegion(provider.data_region || 'unknown');
     setAllowedDataClassification(provider.allowed_data_classification || 'PUBLIC');
+    setNoTrainingConfirmed(Boolean(provider.no_training_confirmed));
+    setRetentionDays(provider.retention_days != null ? String(provider.retention_days) : '');
+    setDpaRef(provider.data_processing_agreement_ref || '');
     setShowModal(true);
   };
 
@@ -435,10 +447,50 @@ export const ProviderManagementTab: React.FC = () => {
     e.preventDefault();
     setSubmitting(true);
     try {
+      const parsedTags = tagsInput
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
+      const parsedRetention = retentionDays.trim() !== '' ? Number(retentionDays) : undefined;
+      const complianceFields: Record<string, unknown> = {
+        max_retries: maxRetries,
+        ...(proxyUrl.trim() ? { proxy_url: proxyUrl.trim() } : {}),
+        ...(parsedTags.length > 0 ? { tags: parsedTags } : {}),
+        ...(allowedDataClassification !== 'PUBLIC'
+          ? {
+              ...(noTrainingConfirmed ? { no_training_confirmed: true } : {}),
+              ...(Number.isFinite(parsedRetention) ? { retention_days: parsedRetention } : {}),
+              ...(dpaRef.trim() ? { data_processing_agreement_ref: dpaRef.trim() } : {}),
+            }
+          : {}),
+      };
       if (editingId) {
-        await updateAIProvider(editingId, { name, provider_type: providerType, base_url: baseUrl || undefined, api_key: apiKey || undefined, timeout, data_region: dataRegion, allowed_data_classification: allowedDataClassification });
+        await updateAIProvider(editingId, {
+          name,
+          provider_type: providerType,
+          base_url: baseUrl || undefined,
+          api_key: undefined,
+          timeout,
+          data_region: dataRegion,
+          allowed_data_classification: allowedDataClassification,
+          ...complianceFields,
+        });
+        if (apiKey.trim()) {
+          await rotateAIProviderKey(editingId, apiKey.trim());
+        }
       } else {
-        await createAIProvider({ name, provider_type: providerType, base_url: baseUrl || undefined, api_key: apiKey || undefined, default_model_code: defaultModelCode || undefined, timeout, data_region: dataRegion, enabled: true, allowed_data_classification: allowedDataClassification });
+        await createAIProvider({
+          name,
+          provider_type: providerType,
+          base_url: baseUrl || undefined,
+          api_key: apiKey || undefined,
+          default_model_code: defaultModelCode || undefined,
+          timeout,
+          data_region: dataRegion,
+          enabled: true,
+          allowed_data_classification: allowedDataClassification,
+          ...complianceFields,
+        });
       }
       setShowModal(false);
       setEditingId(null);
@@ -448,8 +500,14 @@ export const ProviderManagementTab: React.FC = () => {
       setShowApiKey(false);
       setDefaultModelCode('deepseek-v4-flash');
       setTimeout(30);
+      setMaxRetries(2);
+      setProxyUrl('');
+      setTagsInput('');
       setDataRegion('unknown');
       setAllowedDataClassification('PUBLIC');
+      setNoTrainingConfirmed(false);
+      setRetentionDays('');
+      setDpaRef('');
       await fetchProviders();
       showToast(tx(editingId ? 'ai.provider.toast.updated' : 'ai.provider.toast.added'), 'success');
     } catch (err: unknown) {
@@ -709,7 +767,9 @@ export const ProviderManagementTab: React.FC = () => {
                     const next = e.target.value;
                     setProviderType(next);
                     if (next === 'deepseek') { setBaseUrl('https://api.deepseek.com'); setDefaultModelCode('deepseek-v4-flash'); }
-                    else if (next === 'openai' || next === 'azure_openai') { setBaseUrl('https://api.openai.com/v1'); setDefaultModelCode('gpt-4o'); }
+                    else if (next === 'openai') { setBaseUrl('https://api.openai.com/v1'); setDefaultModelCode('gpt-4o'); }
+                    else if (next === 'azure_openai') { setBaseUrl('https://<your-resource>.openai.azure.com'); setDefaultModelCode('gpt-4o'); }
+                    else if (next === 'qwen') { setBaseUrl('https://dashscope.aliyuncs.com/compatible-mode/v1'); setDefaultModelCode('qwen-plus'); }
                     else if (next === 'ollama' || next === 'local') { setBaseUrl('http://127.0.0.1:11434/v1'); setDefaultModelCode('llama3.1'); }
                     else { setBaseUrl(''); setDefaultModelCode(''); }
                   }} className="w-full rounded-xl border border-indigo-200 bg-indigo-50/70 px-3.5 py-2.5 text-sm font-semibold text-indigo-950 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-100">
@@ -748,15 +808,32 @@ export const ProviderManagementTab: React.FC = () => {
                   />
                 </div>
 
-                <div className="grid gap-4 sm:grid-cols-[1fr_150px]">
-                  <div>
-                    <label htmlFor="provider-model-code" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{tx('ai.provider.editor.model')} <span className="font-normal text-slate-400">(Model Code)</span></label>
-                    <input id="provider-model-code" type="text" placeholder="deepseek-v4-flash" value={defaultModelCode} onChange={(e) => setDefaultModelCode(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 font-mono text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
-                    <p className="mt-1.5 text-[11px] leading-4 text-slate-500 dark:text-slate-400">{tx('ai.provider.editor.modelHelp')}</p>
-                  </div>
+                <div className={`grid gap-4 ${editingId ? 'sm:grid-cols-2' : 'sm:grid-cols-[1fr_130px_110px]'}`}>
+                  {!editingId && (
+                    <div>
+                      <label htmlFor="provider-model-code" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{tx('ai.provider.editor.model')} <span className="font-normal text-slate-400">(Model Code)</span></label>
+                      <input id="provider-model-code" type="text" placeholder="deepseek-v4-flash" value={defaultModelCode} onChange={(e) => setDefaultModelCode(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 font-mono text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                      <p className="mt-1.5 text-[11px] leading-4 text-slate-500 dark:text-slate-400">{tx('ai.provider.editor.modelHelp')}</p>
+                    </div>
+                  )}
                   <div>
                     <label htmlFor="provider-timeout" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{tx('ai.provider.editor.timeout')}</label>
                     <input id="provider-timeout" type="number" min={5} max={300} value={timeout} onChange={(e) => setTimeout(Number(e.target.value) || 30)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                  </div>
+                  <div>
+                    <label htmlFor="provider-max-retries" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{language === 'zh' ? '最大重试' : 'Max Retries'}</label>
+                    <input id="provider-max-retries" type="number" min={0} max={5} value={maxRetries} onChange={(e) => setMaxRetries(Math.max(0, Math.min(5, Number(e.target.value) || 0)))} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                  </div>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="provider-proxy-url" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{language === 'zh' ? '代理地址 (可选)' : 'Proxy URL (Optional)'}</label>
+                    <input id="provider-proxy-url" type="url" placeholder="http://proxy.internal:8080" value={proxyUrl} onChange={(e) => setProxyUrl(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 font-mono text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                  </div>
+                  <div>
+                    <label htmlFor="provider-tags" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{language === 'zh' ? '标签 (逗号分隔)' : 'Tags (comma-separated)'}</label>
+                    <input id="provider-tags" type="text" placeholder="prod, cn-region" value={tagsInput} onChange={(e) => setTagsInput(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
                   </div>
                 </div>
 
@@ -774,6 +851,33 @@ export const ProviderManagementTab: React.FC = () => {
                   </select>
                   <p className="mt-1.5 text-[11px] leading-4 text-slate-500 dark:text-slate-400">{tx('ai.provider.editor.classificationHelp')}</p>
                 </div>
+
+                {allowedDataClassification !== 'PUBLIC' && (
+                  <div className="space-y-3 rounded-2xl border border-amber-200/80 bg-amber-50/50 p-3.5 dark:border-amber-900/60 dark:bg-amber-950/20">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
+                      {language === 'zh' ? '合规契约字段 (INTERNAL/CONFIDENTIAL 必填)' : 'Compliance Attestation (INTERNAL/CONFIDENTIAL)'}
+                    </div>
+                    <label className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
+                      <input
+                        type="checkbox"
+                        checked={noTrainingConfirmed}
+                        onChange={(e) => setNoTrainingConfirmed(e.target.checked)}
+                        className="h-4 w-4 rounded border-amber-300 text-indigo-600"
+                      />
+                      {language === 'zh' ? '已确认供应商承诺不将 API 数据用于模型训练 (Zero-Training)' : 'Confirmed provider does not train on API data'}
+                    </label>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <label htmlFor="provider-retention-days" className="mb-1 block text-[11px] font-semibold text-slate-600 dark:text-slate-300">{language === 'zh' ? '数据留存天数 (天)' : 'Data Retention (days)'}</label>
+                        <input id="provider-retention-days" type="number" min={0} max={365} placeholder="0" value={retentionDays} onChange={(e) => setRetentionDays(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                      </div>
+                      <div>
+                        <label htmlFor="provider-dpa-ref" className="mb-1 block text-[11px] font-semibold text-slate-600 dark:text-slate-300">{language === 'zh' ? 'DPA 协议编号/链接' : 'DPA Reference'}</label>
+                        <input id="provider-dpa-ref" type="text" placeholder="DPA-2026-001" value={dpaRef} onChange={(e) => setDpaRef(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                      </div>
+                    </div>
+                  </div>
+                )}
 
               </div>
 

@@ -33,7 +33,8 @@ class OpenAICompatibleProvider(BaseLLMProvider):
     only: it never logs request bodies and never follows provider redirects.
     """
 
-    def _get_endpoint(self) -> str:
+    def _get_endpoint(self, model: Optional[str] = None) -> str:
+        del model
         base = (self.base_url or "https://api.openai.com/v1").rstrip("/")
         if base.endswith("/chat/completions"):
             return base
@@ -72,7 +73,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         request_id: Optional[str] = None,
         stream: bool = False,
     ) -> Dict[str, Any]:
-        url = self._get_endpoint()
+        url = self._get_endpoint(model)
         self._validate_endpoint(url)
         payload: Dict[str, Any] = {"model": model, "messages": messages, "stream": bool(stream)}
         if temperature is not None:
@@ -171,7 +172,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         request_id: Optional[str] = None,
         usage_sink: Optional[Dict[str, int]] = None,
     ) -> AsyncIterator[str]:
-        url = self._get_endpoint()
+        url = self._get_endpoint(model)
         self._validate_endpoint(url)
         payload: Dict[str, Any] = {
             "model": model,

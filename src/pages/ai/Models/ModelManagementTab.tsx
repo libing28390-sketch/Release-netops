@@ -1,7 +1,7 @@
 import { DataTable } from '../../../components/DataTable';
 import React, { useEffect, useMemo, useState } from 'react';
-import { Activity, Cpu, Plus, RefreshCw, Trash2, GitBranch, Star, Power, Search, AlertTriangle, Info, ShieldCheck } from 'lucide-react';
-import { getAIModels, createAIModel, updateAIModel, setAIUserDefaultModel, deleteAIModel, getAIModelDeletePreview, checkAIModelHealth, getAIModelRoutes, upsertAIModelRoute, getAIProviders, AIModel, AIModelDeletePreview, AIModelRoute, AIProvider } from '../../../api/ai';
+import { Activity, Cpu, Pencil, Plus, RefreshCw, Trash2, GitBranch, Star, Power, Search, AlertTriangle, Info, ShieldCheck } from 'lucide-react';
+import { getAIModels, createAIModel, updateAIModel, setAIUserDefaultModel, deleteAIModel, getAIModelDeletePreview, checkAIModelHealth, getAIModelRoutes, upsertAIModelRoute, deleteAIModelRoute, getAIProviders, AIModel, AIModelDeletePreview, AIModelRoute, AIProvider } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
 import { ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
@@ -57,8 +57,9 @@ export const ModelManagementTab: React.FC = () => {
   const [bulkApplying, setBulkApplying] = useState(false);
   const [checkingModelId, setCheckingModelId] = useState<string | null>(null);
 
-  // Modal
+  // Modal (Create / Edit)
   const [showModal, setShowModal] = useState(false);
+  const [editingModelId, setEditingModelId] = useState<string | null>(null);
   const dialogRef = React.useRef<HTMLDivElement>(null);
   useEscapeClose(showModal, () => setShowModal(false));
   useFocusTrap(dialogRef, showModal, '#ai-model-name');
@@ -67,6 +68,15 @@ export const ModelManagementTab: React.FC = () => {
   const [modelCode, setModelCode] = useState('');
   const [isDefault, setIsDefault] = useState(false);
   const [modelType, setModelType] = useState('chat');
+  const [streamSupported, setStreamSupported] = useState(true);
+  const [thinkingSupported, setThinkingSupported] = useState(false);
+  const [toolCallSupported, setToolCallSupported] = useState(true);
+  const [jsonSupported, setJsonSupported] = useState(true);
+  const [contextLength, setContextLength] = useState(64000);
+  const [maxOutputTokens, setMaxOutputTokens] = useState(4096);
+  const [priority, setPriority] = useState(10);
+  const [costInputPer1k, setCostInputPer1k] = useState(0);
+  const [costOutputPer1k, setCostOutputPer1k] = useState(0);
 
   const fetchData = async (options: { silent?: boolean } = {}) => {
     if (!options.silent) setLoading(true);
@@ -99,24 +109,81 @@ export const ModelManagementTab: React.FC = () => {
     return () => window.clearInterval(timer);
   }, []);
 
+  const openCreateModal = () => {
+    setEditingModelId(null);
+    setName('');
+    setModelCode('');
+    setModelType('chat');
+    setIsDefault(false);
+    setStreamSupported(true);
+    setThinkingSupported(false);
+    setToolCallSupported(true);
+    setJsonSupported(true);
+    setContextLength(64000);
+    setMaxOutputTokens(4096);
+    setPriority(10);
+    setCostInputPer1k(0);
+    setCostOutputPer1k(0);
+    if (providers.length > 0 && !providerId) setProviderId(providers[0].id);
+    setShowModal(true);
+  };
+
+  const openEditModal = (model: AIModel) => {
+    setEditingModelId(model.id);
+    setName(model.name);
+    setProviderId(model.provider_id);
+    setModelCode(model.model_code);
+    setModelType(model.model_type || 'chat');
+    setIsDefault(Boolean(model.is_default));
+    setStreamSupported(model.stream_supported !== false);
+    setThinkingSupported(Boolean(model.thinking_supported));
+    setToolCallSupported(model.tool_call_supported !== false);
+    setJsonSupported(model.json_supported !== false);
+    setContextLength(model.context_length || 64000);
+    setMaxOutputTokens(model.max_output_tokens || 4096);
+    setPriority(model.priority ?? 10);
+    setCostInputPer1k(model.cost_input_per_1k || 0);
+    setCostOutputPer1k(model.cost_output_per_1k || 0);
+    setShowModal(true);
+  };
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await createAIModel({
+      const payload = {
         name,
         provider_id: providerId,
         model_code: modelCode,
         model_type: modelType,
         is_default: isDefault,
-        enabled: true,
-      });
+        stream_supported: streamSupported,
+        thinking_supported: thinkingSupported,
+        tool_call_supported: toolCallSupported,
+        json_supported: jsonSupported,
+        context_length: contextLength,
+        max_output_tokens: maxOutputTokens,
+        priority,
+        cost_input_per_1k: costInputPer1k,
+        cost_output_per_1k: costOutputPer1k,
+      };
+      if (editingModelId) {
+        await updateAIModel(editingModelId, payload);
+        showToast(language === 'zh' ? '模型配置已更新' : 'Model updated', 'success');
+      } else {
+        await createAIModel({
+          ...payload,
+          enabled: true,
+        });
+        showToast(language === 'zh' ? '模型已创建' : 'Model created', 'success');
+      }
       setShowModal(false);
+      setEditingModelId(null);
       setName('');
       setModelCode('');
       setModelType('chat');
-      fetchData();
+      await fetchData();
     } catch (err: any) {
-      alert(err.message || tx('ai.model.error.create'));
+      showToast(err?.message || tx('ai.model.error.create'), 'error');
     }
   };
 
@@ -125,7 +192,7 @@ export const ModelManagementTab: React.FC = () => {
       await updateAIModel(model.id, { enabled: !model.enabled });
       await fetchData();
     } catch (err: any) {
-      alert(err.message || tx('ai.model.error.toggle'));
+      showToast(err?.message || tx('ai.model.error.toggle'), 'error');
     }
   };
 
@@ -134,8 +201,9 @@ export const ModelManagementTab: React.FC = () => {
       await updateAIModel(model.id, { is_default: true });
       await setAIUserDefaultModel(model.id);
       await fetchData();
+      showToast(language === 'zh' ? `已将 ${model.name} 设为默认模型` : `${model.name} set as default`, 'success');
     } catch (err: any) {
-      alert(err.message || tx('ai.model.error.default'));
+      showToast(err?.message || tx('ai.model.error.default'), 'error');
     }
   };
 
@@ -192,12 +260,29 @@ export const ModelManagementTab: React.FC = () => {
   };
 
   const handleRouteChange = async (scene: string, modelId: string) => {
-    if (!modelId) return;
     try {
-      await upsertAIModelRoute({ scene, model_id: modelId, enabled: true });
+      if (!modelId) {
+        await deleteAIModelRoute(scene);
+        await fetchData();
+        showToast(language === 'zh' ? `场景 ${scene} 已恢复使用全局默认模型` : `Scene ${scene} reset to global default`, 'success');
+        return;
+      }
+      const existing = routes.find((item) => item.scene === scene);
+      await upsertAIModelRoute(
+        existing
+          ? {
+              scene,
+              model_id: modelId,
+              fallback_model_id: existing.fallback_model_id && existing.fallback_model_id !== modelId ? existing.fallback_model_id : undefined,
+              data_classification: existing.data_classification || 'PUBLIC',
+              priority: existing.priority || 10,
+              enabled: true,
+            }
+          : { scene, model_id: modelId, enabled: true }
+      );
       await fetchData();
     } catch (err: any) {
-      alert(err.message || tx('ai.model.error.route'));
+      showToast(err?.message || tx('ai.model.error.route'), 'error');
     }
   };
 
@@ -205,7 +290,7 @@ export const ModelManagementTab: React.FC = () => {
     const route = routes.find((item) => item.scene === scene);
     const primaryModelId = route?.model_id || models.find((item) => item.is_default && item.enabled)?.id || models.find((item) => item.enabled)?.id;
     if (!primaryModelId) {
-      alert(tx('ai.model.error.noEnabled'));
+      showToast(tx('ai.model.error.noEnabled'), 'error');
       return;
     }
     try {
@@ -219,7 +304,7 @@ export const ModelManagementTab: React.FC = () => {
       });
       await fetchData();
     } catch (err: any) {
-      alert(err.message || tx('ai.model.error.routePolicy'));
+      showToast(err?.message || tx('ai.model.error.routePolicy'), 'error');
     }
   };
 
@@ -369,7 +454,7 @@ export const ModelManagementTab: React.FC = () => {
               {tx('ai.model.action.refresh')}
             </button>
             <button
-              onClick={() => setShowModal(true)}
+              onClick={openCreateModal}
               className="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center gap-1.5 font-medium shadow-sm transition"
             >
               <Plus className="w-4 h-4" />
@@ -451,6 +536,7 @@ export const ModelManagementTab: React.FC = () => {
                     </td>
                     <TableActionCell className="py-3 px-4 text-right">
                       <ActionIconGroup label={tx('ai.model.actionGroup')}>
+                        <ActionIconButton icon={Pencil} label={language === 'zh' ? '编辑模型' : 'Edit model'} variant="accent" onClick={() => openEditModal(m)} />
                         <ActionIconButton icon={Activity} label={checkingModelId === m.id ? tx('ai.model.health.checking') : tx('ai.model.health.checkAction')} variant="accent" disabled={!m.enabled || checkingModelId !== null} iconClassName={checkingModelId === m.id ? 'animate-spin' : undefined} onClick={() => void handleHealthCheck(m)} />
                         <ActionIconButton icon={Star} label={tx('ai.model.action.setDefault')} variant="accent" onClick={() => void handleSetDefault(m)} />
                         <ActionIconButton icon={Power} label={m.enabled ? tx('ai.model.action.disable') : tx('ai.model.action.enable')} onClick={() => void handleToggle(m)} />
@@ -634,62 +720,113 @@ export const ModelManagementTab: React.FC = () => {
         </div>
       </div>
 
-      {/* Create Modal */}
+      {/* Create / Edit Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="ai-model-create-title" tabIndex={-1} className="bg-white dark:bg-gray-800 rounded-xl max-w-md w-full p-6 space-y-4 shadow-xl">
-            <h3 id="ai-model-create-title" className="text-lg font-bold text-gray-900 dark:text-white">{tx('ai.model.modal.title')}</h3>
+          <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="ai-model-create-title" tabIndex={-1} className="bg-white dark:bg-gray-800 rounded-xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 space-y-4 shadow-xl">
+            <h3 id="ai-model-create-title" className="text-lg font-bold text-gray-900 dark:text-white">
+              {editingModelId ? (language === 'zh' ? '编辑模型配置' : 'Edit AI Model') : tx('ai.model.modal.title')}
+            </h3>
             <form onSubmit={handleCreate} className="space-y-4">
-              <div>
-                <label htmlFor="ai-model-name" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.name')}</label>
-                <input
-                  id="ai-model-name"
-                  type="text"
-                  required
-                  placeholder={tx('ai.model.modal.namePlaceholder')}
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white"
-                />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="ai-model-name" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.name')}</label>
+                  <input
+                    id="ai-model-name"
+                    type="text"
+                    required
+                    placeholder={tx('ai.model.modal.namePlaceholder')}
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="ai-model-code" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.code')}</label>
+                  <input
+                    id="ai-model-code"
+                    type="text"
+                    required
+                    placeholder="deepseek-v4-flash"
+                    value={modelCode}
+                    onChange={(e) => setModelCode(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white font-mono"
+                  />
+                </div>
               </div>
 
-              <div>
-                <label htmlFor="ai-model-code" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.code')}</label>
-                <input
-                  id="ai-model-code"
-                  type="text"
-                  required
-                  placeholder="deepseek-v4-flash"
-                  value={modelCode}
-                  onChange={(e) => setModelCode(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white font-mono"
-                />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="ai-model-type" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.type')}</label>
+                  <select id="ai-model-type" value={modelType} onChange={(e) => setModelType(e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white">
+                    <option value="chat">{tx('ai.model.modal.chat')}</option>
+                    <option value="reasoning">{tx('ai.model.modal.reasoning')}</option>
+                    <option value="embedding">{tx('ai.model.modal.embedding')}</option>
+                    <option value="rerank">{tx('ai.model.modal.rerank')}</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label htmlFor="ai-model-provider" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.provider')}</label>
+                  <select
+                    id="ai-model-provider"
+                    value={providerId}
+                    onChange={(e) => setProviderId(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white"
+                  >
+                    {providers.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.provider_type})
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
-              <div>
-                <label htmlFor="ai-model-type" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.type')}</label>
-                <select id="ai-model-type" value={modelType} onChange={(e) => setModelType(e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white">
-                  <option value="chat">{tx('ai.model.modal.chat')}</option>
-                  <option value="reasoning">{tx('ai.model.modal.reasoning')}</option>
-                  <option value="embedding">{tx('ai.model.modal.embedding')}</option>
-                  <option value="rerank">{tx('ai.model.modal.rerank')}</option>
-                </select>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <div>
+                  <label htmlFor="ai-model-ctx" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.table.contextLength')}</label>
+                  <input id="ai-model-ctx" type="number" min={1024} value={contextLength} onChange={(e) => setContextLength(Number(e.target.value) || 64000)} className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white font-mono" />
+                </div>
+                <div>
+                  <label htmlFor="ai-model-max-out" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{language === 'zh' ? '最大输出 Token' : 'Max Output'}</label>
+                  <input id="ai-model-max-out" type="number" min={256} value={maxOutputTokens} onChange={(e) => setMaxOutputTokens(Number(e.target.value) || 4096)} className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white font-mono" />
+                </div>
+                <div>
+                  <label htmlFor="ai-model-priority" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{language === 'zh' ? '优先级' : 'Priority'}</label>
+                  <input id="ai-model-priority" type="number" min={1} max={1000} value={priority} onChange={(e) => setPriority(Number(e.target.value) || 10)} className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white font-mono" />
+                </div>
               </div>
 
-              <div>
-                <label htmlFor="ai-model-provider" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.provider')}</label>
-                <select
-                  id="ai-model-provider"
-                  value={providerId}
-                  onChange={(e) => setProviderId(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white"
-                >
-                  {providers.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({p.provider_type})
-                    </option>
-                  ))}
-                </select>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="ai-model-cost-in" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{language === 'zh' ? '输入成本 ($/1K tok)' : 'Input Cost ($/1K)'}</label>
+                  <input id="ai-model-cost-in" type="number" step="0.0001" min={0} value={costInputPer1k} onChange={(e) => setCostInputPer1k(Number(e.target.value) || 0)} className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white font-mono" />
+                </div>
+                <div>
+                  <label htmlFor="ai-model-cost-out" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{language === 'zh' ? '输出成本 ($/1K tok)' : 'Output Cost ($/1K)'}</label>
+                  <input id="ai-model-cost-out" type="number" step="0.0001" min={0} value={costOutputPer1k} onChange={(e) => setCostOutputPer1k(Number(e.target.value) || 0)} className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white font-mono" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/50">
+                <label className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
+                  <input type="checkbox" checked={streamSupported} onChange={(e) => setStreamSupported(e.target.checked)} className="rounded border-gray-300" />
+                  {tx('ai.model.table.streaming')}
+                </label>
+                <label className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
+                  <input type="checkbox" checked={thinkingSupported} onChange={(e) => setThinkingSupported(e.target.checked)} className="rounded border-gray-300" />
+                  {tx('ai.model.table.thinking')}
+                </label>
+                <label className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
+                  <input type="checkbox" checked={toolCallSupported} onChange={(e) => setToolCallSupported(e.target.checked)} className="rounded border-gray-300" />
+                  {tx('ai.model.table.toolCalls')}
+                </label>
+                <label className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
+                  <input type="checkbox" checked={jsonSupported} onChange={(e) => setJsonSupported(e.target.checked)} className="rounded border-gray-300" />
+                  {tx('ai.model.table.json')}
+                </label>
               </div>
 
               <div className="flex items-center gap-2">
@@ -708,7 +845,7 @@ export const ModelManagementTab: React.FC = () => {
               <div className="flex justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
                 <button
                   type="button"
-                  onClick={() => setShowModal(false)}
+                  onClick={() => { setShowModal(false); setEditingModelId(null); }}
                   className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
                 >
                   {tx('ai.model.modal.cancel')}
@@ -717,7 +854,7 @@ export const ModelManagementTab: React.FC = () => {
                   type="submit"
                   className="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg"
                 >
-                  {tx('ai.model.modal.submit')}
+                  {editingModelId ? (language === 'zh' ? '保存修改' : 'Save Changes') : tx('ai.model.modal.submit')}
                 </button>
               </div>
             </form>

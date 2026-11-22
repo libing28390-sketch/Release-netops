@@ -427,7 +427,14 @@ class ProductResolver:
                     # lifecycle check and deterministic ordering while
                     # omitting caller-tenant visibility from this SQL query.
                     cursor.execute(
-                        "SELECT * FROM ai_document WHERE status = 'active' ORDER BY id",
+                        "SELECT id, name, vendor, product_series, product_model, cli_platform, "
+                        "software_train, os_family, os_generation, metadata_json, normalized_content "
+                        "FROM ai_document "
+                        "WHERE status = 'active' "
+                        "  AND (LOWER(COALESCE(name, '')) LIKE '%product_registry%' "
+                        "       OR LOWER(COALESCE(document_category, '')) = 'hardware' "
+                        "       OR LOWER(COALESCE(metadata_json ->> 'document_type', '')) IN ('hardware_manual', 'product_registry')) "
+                        "ORDER BY id",
                     )
                     descriptions = [str(item[0]) for item in (cursor.description or [])]
                     for row in cursor.fetchall():

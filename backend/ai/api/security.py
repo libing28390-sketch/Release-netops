@@ -62,19 +62,20 @@ def load_persisted_security_policy() -> None:
         current = ai_security_gateway.policy
         external_enabled = bool(policy_row[1]) if policy_row else current.external_ai_enabled
         allow_sensitive = current.allow_sensitive_minimization
+        max_payload_bytes = current.max_payload_bytes
         allowed = current.allowed_provider_types
         policy_version = current.policy_version
         allowed_classifications = current.allowed_classifications
         allowed_regions = current.allowed_data_regions
         provider_kill_switches = current.provider_kill_switches
         tenant_kill_switches = current.tenant_kill_switches
-        if tenant_rows:
-            tenant_kill_switches = {str(row[0]): bool(row[1]) for row in tenant_rows}
         scope_rules = current.scope_rules
         if policy_row:
             try:
                 rules = json.loads(policy_row[2] or '{}')
                 allow_sensitive = bool(rules.get('allow_sensitive_minimization', allow_sensitive))
+                if rules.get('max_payload_bytes') is not None:
+                    max_payload_bytes = max(1_024, min(2_000_000, int(rules['max_payload_bytes'])))
                 policy_version = str(rules.get('policy_version') or (policy_row[0] if policy_row else current.policy_version))
                 allowed_classifications = tuple(str(item).upper() for item in rules.get('allowed_classifications', current.allowed_classifications))
                 allowed_regions = tuple(str(item).lower() for item in rules.get('allowed_data_regions', current.allowed_data_regions))
@@ -94,10 +95,15 @@ def load_persisted_security_policy() -> None:
                     allowed = candidate
             except Exception:
                 pass
+        if tenant_rows:
+            merged_tenant_switches = dict(tenant_kill_switches)
+            for row in tenant_rows:
+                merged_tenant_switches[str(row[0])] = bool(row[1])
+            tenant_kill_switches = merged_tenant_switches
         ai_security_gateway.policy = SecurityPolicy(
             external_ai_enabled=external_enabled,
             kill_switch=bool(kill_row[0]) if kill_row else current.kill_switch,
-            max_payload_bytes=current.max_payload_bytes,
+            max_payload_bytes=max_payload_bytes,
             identifiers_must_be_tokenized=True,
             allow_sensitive_minimization=allow_sensitive,
             allowed_provider_types=allowed,
@@ -194,6 +200,7 @@ def update_security_policy(payload: SecurityPolicyUpdateRequest, user=Depends(re
                 int(policy.external_ai_enabled),
                 json.dumps({
                     "allow_sensitive_minimization": policy.allow_sensitive_minimization,
+                    "max_payload_bytes": policy.max_payload_bytes,
                     "policy_version": policy.policy_version,
                     "allowed_classifications": list(policy.allowed_classifications),
                     "allowed_data_regions": list(policy.allowed_data_regions),
@@ -204,6 +211,18 @@ def update_security_policy(payload: SecurityPolicyUpdateRequest, user=Depends(re
                 json.dumps(list(policy.allowed_provider_types)),
                 user.get("username", "admin"), now, now,
             ),
+        )
+        conn.execute(
+            """
+            INSERT INTO ai_kill_switch (id, enabled, reason, changed_by, changed_at)
+            VALUES (1, ?, 'policy_update', ?, ?)
+            ON CONFLICT (id) DO UPDATE SET
+                enabled = EXCLUDED.enabled,
+                reason = EXCLUDED.reason,
+                changed_by = EXCLUDED.changed_by,
+                changed_at = EXCLUDED.changed_at
+            """,
+            (int(policy.kill_switch), user.get("username", "admin"), now),
         )
         conn.commit()
     return get_security_policy(user)
@@ -280,10 +299,12 @@ def test_payload(payload: SecurityTestPayloadRequest, user=Depends(require_ai_pe
             "security_mode": result.metadata.get("security_mode"),
         }
     except SecurityBlocked as exc:
+        max_level = f"L{max(int(item.level) for item in exc.findings)}" if exc.findings else "unknown"
         return {
             "decision": "BLOCK",
-            "max_data_level": "L4" if any(item.level >= 4 for item in exc.findings) else "unknown",
+            "max_data_level": max_level,
             "finding_categories": sorted({item.category for item in exc.findings}),
+            "reason": exc.user_message or exc.reason_code,
             "reason_code": exc.reason_code,
             "user_message": exc.user_message,
             "external_call_made": False,
@@ -310,7 +331,15 @@ def set_kill_switch(payload: SecurityKillSwitchRequest, user=Depends(require_ai_
     )
     with get_db_connection() as conn:
         conn.execute(
-            "UPDATE ai_kill_switch SET enabled = ?, reason = ?, changed_by = ?, changed_at = ? WHERE id = 1",
+            """
+            INSERT INTO ai_kill_switch (id, enabled, reason, changed_by, changed_at)
+            VALUES (1, ?, ?, ?, ?)
+            ON CONFLICT (id) DO UPDATE SET
+                enabled = EXCLUDED.enabled,
+                reason = EXCLUDED.reason,
+                changed_by = EXCLUDED.changed_by,
+                changed_at = EXCLUDED.changed_at
+            """,
             (int(enabled), payload.reason, user.get("username", "admin"), _now()),
         )
         conn.commit()

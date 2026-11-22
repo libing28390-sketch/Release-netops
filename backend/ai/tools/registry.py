@@ -374,14 +374,17 @@ class ToolRegistry:
                 if inspect.isawaitable(output):
                     return {"__async__": True}
                 return output
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(invoke)
-                try:
-                    output = future.result(timeout=max(0.1, float(timeout_seconds or spec.timeout_seconds)))
-                except FutureTimeoutError:
-                    future.cancel()
-                    ai_metrics.tool_finished(name, status="timeout")
-                    return {"success": False, "error_code": "TOOL_TIMEOUT", "duration_ms": int((time.perf_counter() - started) * 1000)}
+            executor = ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(invoke)
+            try:
+                output = future.result(timeout=max(0.1, float(timeout_seconds or spec.timeout_seconds)))
+            except FutureTimeoutError:
+                future.cancel()
+                executor.shutdown(wait=False, cancel_futures=True)
+                ai_metrics.tool_finished(name, status="timeout")
+                return {"success": False, "error_code": "TOOL_TIMEOUT", "duration_ms": int((time.perf_counter() - started) * 1000)}
+            else:
+                executor.shutdown(wait=False)
             if isinstance(output, dict) and output.get("__async__"):
                 return {"success": False, "error_code": "ASYNC_TOOL_REQUIRES_ASYNC_RUNNER"}
             safe_output = ai_security_gateway.safe_tool_result(output)

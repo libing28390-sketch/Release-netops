@@ -337,7 +337,7 @@ def rename_conversation(*, conversation_id: str, tenant_id: str, user_id: str, t
             raise LookupError("conversation not found")
         conn.execute("UPDATE ai_conversations SET title = ?, updated_at = ? WHERE id = ?", (normalized_title, now, conversation_id))
         conn.commit()
-        row = conn.execute("SELECT id, tenant_id, title, status, context_budget, created_at, updated_at FROM ai_conversations WHERE id = ?", (conversation_id,)).fetchone()
+        row = _get_conversation(conn, conversation_id, tenant_id=tenant_id, user_id=user_id)
     return _conversation_result(row)
 
 
@@ -354,7 +354,7 @@ def archive_conversation(*, conversation_id: str, tenant_id: str, user_id: str, 
             conn.rollback()
             conn.execute("UPDATE ai_conversations SET status = ?, updated_at = ? WHERE id = ?", (status, now, conversation_id))
         conn.commit()
-        row = conn.execute("SELECT id, tenant_id, title, status, context_budget, created_at, updated_at FROM ai_conversations WHERE id = ?", (conversation_id,)).fetchone()
+        row = _get_conversation(conn, conversation_id, tenant_id=tenant_id, user_id=user_id)
     return _conversation_result(row)
 
 
@@ -381,7 +381,7 @@ def clear_messages(*, conversation_id: str, tenant_id: str, user_id: str) -> dic
             conn.rollback()
             conn.execute("UPDATE ai_conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
         conn.commit()
-        row = conn.execute("SELECT id, tenant_id, title, status, context_budget, created_at, updated_at FROM ai_conversations WHERE id = ?", (conversation_id,)).fetchone()
+        row = _get_conversation(conn, conversation_id, tenant_id=tenant_id, user_id=user_id)
     return _conversation_result(row)
 
 
@@ -422,7 +422,11 @@ def append_message(*, conversation_id: str, tenant_id: str, user_id: str, role: 
     if role not in {"system", "user", "assistant", "tool"}:
         raise ValueError("unsupported conversation role")
     safe_content = _safe_message_content(content, tenant_id=tenant_id, scope_id=conversation_id, role=role)
-    allowed_execution_modes = {"local_knowledge", "local_operation", "local_clarification", "provider_generated", "local_fallback", "legacy_unknown"}
+    allowed_execution_modes = {
+        "local_knowledge", "local_operation", "local_clarification",
+        "local_sensitive_identifier", "local_security_block",
+        "provider_generated", "local_fallback", "legacy_unknown",
+    }
     safe_execution_mode = execution_mode if execution_mode in allowed_execution_modes else None
     safe_input_tokens = max(0, int(input_tokens)) if input_tokens is not None else None
     safe_output_tokens = max(0, int(output_tokens)) if output_tokens is not None else None
