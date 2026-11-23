@@ -1,9 +1,17 @@
 import { DataTable } from '../../../components/DataTable';
 import React, { useEffect, useMemo, useState } from 'react';
-import { Activity, Cpu, Pencil, Plus, RefreshCw, Trash2, GitBranch, Star, Power, Search, AlertTriangle, Info, ShieldCheck } from 'lucide-react';
+import { Activity, Boxes, Pencil, Plus, RefreshCw, Trash2, Star, Power, Search, XCircle, ShieldCheck } from 'lucide-react';
 import { getAIModels, createAIModel, updateAIModel, setAIUserDefaultModel, deleteAIModel, getAIModelDeletePreview, checkAIModelHealth, getAIModelRoutes, upsertAIModelRoute, deleteAIModelRoute, getAIProviders, AIModel, AIModelDeletePreview, AIModelRoute, AIProvider } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
-import { ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
+import { ActionButton, ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
+import { PageHeader } from '../../../components/ui/PageHeader';
+import { Panel, PanelHeader } from '../../../components/ui/Panel';
+import { StatusBadge, type StatusTone } from '../../../components/ui/StatusBadge';
+import { SummaryBar } from '../../../components/ui/SummaryBar';
+import { EmptyState } from '../../../components/ui/EmptyState';
+import { InfoTip } from '../../../components/ui/InfoTip';
+import { cn } from '../../../lib/cn';
+import { modelPageCopy } from './ModelManagementTab.copy';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
 import { aiAdminText } from '../../../i18n/aiAdmin';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
@@ -27,6 +35,20 @@ const SCENES = [
   { code: 'capacity_analysis', labelKey: 'ai.prompt.scene.capacity_analysis.label', shortKey: 'ai.prompt.scene.capacity_analysis.short', descriptionKey: 'ai.prompt.scene.capacity_analysis.description' },
 ];
 
+/* Shared control styles — token based, same as the Provider page. */
+const filterControlClass = 'h-9 rounded-lg border border-line bg-surface px-3 text-[13px] text-fg outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/20';
+const fieldLabelClass = 'mb-1.5 block text-[13px] font-medium text-fg';
+const fieldInputClass = 'w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg outline-none transition-colors placeholder:text-fg-subtle focus:border-accent focus:ring-2 focus:ring-accent/20';
+const checkboxClass = 'h-4 w-4 rounded border-line-strong text-accent focus:ring-accent';
+
+const getModelHealthTone = (status?: string): StatusTone => {
+  switch (String(status || 'unknown').toLowerCase()) {
+    case 'healthy': return 'success';
+    case 'unhealthy': return 'danger';
+    default: return 'neutral';
+  }
+};
+
 const getModelHealthStatusKey = (status?: string) => {
   switch (String(status || 'unknown').toLowerCase()) {
     case 'healthy': return 'ai.model.health.healthy';
@@ -40,6 +62,7 @@ const getModelHealthStatusKey = (status?: string) => {
 export const ModelManagementTab: React.FC = () => {
   const { language, showToast } = useCoreApp();
   const tx = (key: string, variables: Record<string, string | number> = {}) => aiAdminText(key, language, variables);
+  const copy = language === 'zh' ? modelPageCopy.zh : modelPageCopy.en;
   const [models, setModels] = useState<AIModel[]>([]);
   const [routes, setRoutes] = useState<AIModelRoute[]>([]);
   const [providers, setProviders] = useState<AIProvider[]>([]);
@@ -431,110 +454,167 @@ export const ModelManagementTab: React.FC = () => {
     [models],
   );
 
+  const enabledCount = models.filter((model) => model.enabled).length;
+  const healthyCount = models.filter((model) => model.enabled && String(model.health_status || '').toLowerCase() === 'healthy').length;
+  const unhealthyCount = models.filter((model) => model.enabled && String(model.health_status || '').toLowerCase() === 'unhealthy').length;
+  const routedSceneCount = SCENES.filter((scene) => routes.some((route) => route.scene === scene.code && route.enabled)).length;
+  const hasActiveFilters = Boolean(search || providerFilter || typeFilter || statusFilter !== 'all');
+  const clearFilters = () => { setSearch(''); setProviderFilter(''); setTypeFilter(''); setStatusFilter('all'); setPage(1); };
+
   return (
-    <div className="w-full space-y-6 pb-8">
-      {/* Models Section */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="nx-page-title flex items-center gap-2 text-gray-900 dark:text-white">
-              <Cpu className="w-6 h-6 text-indigo-500" />
-              {tx('ai.model.header.title')}
-            </h2>
-            <p className="nx-page-description mt-1 text-gray-500 dark:text-gray-400">
-              {tx('ai.model.header.description')}
-            </p>
-          </div>
-          <div className="flex gap-3">
-            <button
+    <div className="w-full space-y-4 pb-8">
+      <PageHeader
+        title={tx('ai.model.header.title')}
+        description={tx('ai.model.header.description')}
+        infoLabel={copy.infoLabel}
+        info={copy.info}
+        actions={(
+          <>
+            <ActionButton
+              type="button"
+              icon={RefreshCw}
+              iconClassName={loading ? 'animate-spin motion-reduce:animate-none' : undefined}
+              size="md"
               onClick={() => void fetchData()}
-              className="px-3 py-2 text-sm bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 text-gray-700 dark:text-gray-300 rounded-lg flex items-center gap-1.5 transition"
             >
-              <RefreshCw className="w-4 h-4" />
               {tx('ai.model.action.refresh')}
-            </button>
-            <button
-              onClick={openCreateModal}
-              className="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center gap-1.5 font-medium shadow-sm transition"
-            >
-              <Plus className="w-4 h-4" />
+            </ActionButton>
+            <ActionButton type="button" icon={Plus} variant="primary" size="md" onClick={openCreateModal}>
               {tx('ai.model.action.add')}
-            </button>
+            </ActionButton>
+          </>
+        )}
+      />
+
+      <SummaryBar
+        label={copy.summaryAria}
+        items={[
+          { key: 'total', value: models.length, label: copy.summaryTotal },
+          { key: 'enabled', value: enabledCount, label: copy.summaryEnabled, tone: 'accent' },
+          { key: 'healthy', value: healthyCount, label: copy.summaryHealthy, tone: 'success' },
+          ...(unhealthyCount > 0 ? [{ key: 'unhealthy', value: unhealthyCount, label: copy.summaryUnhealthy, tone: 'danger' as StatusTone }] : []),
+          { key: 'routes', value: `${routedSceneCount}/${SCENES.length}`, label: copy.summaryRoutes },
+        ]}
+      />
+
+      <div role="search" aria-label={copy.filterAria} className="flex flex-wrap items-center gap-2">
+        <label className="relative flex min-w-[220px] max-w-sm flex-1 items-center">
+          <Search size={15} className="pointer-events-none absolute left-3 text-fg-subtle" aria-hidden="true" />
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => { setSearch(event.target.value); setPage(1); }}
+            placeholder={tx('ai.model.filter.search')}
+            aria-label={copy.filterSearchLabel}
+            className={cn(filterControlClass, 'w-full pl-9')}
+          />
+        </label>
+        <select value={providerFilter} onChange={(event) => { setProviderFilter(event.target.value); setPage(1); }} aria-label={tx('ai.model.filter.allProviders')} className={filterControlClass}>
+          <option value="">{tx('ai.model.filter.allProviders')}</option>
+          {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
+        </select>
+        <select value={typeFilter} onChange={(event) => { setTypeFilter(event.target.value); setPage(1); }} aria-label={tx('ai.model.filter.allTypes')} className={filterControlClass}>
+          <option value="">{tx('ai.model.filter.allTypes')}</option>
+          <option value="chat">{tx('ai.model.modal.chat')}</option>
+          <option value="reasoning">{tx('ai.model.modal.reasoning')}</option>
+          <option value="embedding">{tx('ai.model.modal.embedding')}</option>
+          <option value="rerank">{tx('ai.model.modal.rerank')}</option>
+        </select>
+        <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }} aria-label={tx('ai.model.filter.allStatuses')} className={filterControlClass}>
+          <option value="all">{tx('ai.model.filter.allStatuses')}</option>
+          <option value="enabled">{tx('ai.model.filter.enabled')}</option>
+          <option value="disabled">{tx('ai.model.filter.disabled')}</option>
+        </select>
+        {hasActiveFilters && (
+          <button type="button" onClick={clearFilters} className="h-9 rounded-lg px-2 text-[13px] font-medium text-accent hover:bg-accent-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+            {copy.clearFilters}
+          </button>
+        )}
+        <span className="ml-auto text-xs text-fg-subtle">{copy.filterCount(filteredModels.length)}</span>
+      </div>
+
+      {error && (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-danger/30 bg-danger-subtle px-4 py-3 text-[13px] text-danger">
+          <span className="flex items-start gap-2"><XCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />{error}</span>
+          <ActionButton type="button" variant="danger" onClick={() => void fetchData()}>{copy.retry}</ActionButton>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="h-[280px] animate-pulse rounded-xl border border-line bg-surface p-5 motion-reduce:animate-none" aria-busy="true" aria-label={tx('ai.model.loading')}>
+          <div className="h-5 w-1/4 rounded-md bg-surface-emphasis" />
+          <div className="mt-5 space-y-3">
+            <div className="h-4 rounded-md bg-surface-muted" />
+            <div className="h-4 w-5/6 rounded-md bg-surface-muted" />
+            <div className="h-4 w-2/3 rounded-md bg-surface-muted" />
           </div>
         </div>
-
-        <div className="flex flex-wrap gap-2 rounded-xl border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-          <div className="relative min-w-[240px] flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-gray-400" /><input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder={tx('ai.model.filter.search')} className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-white" /></div>
-          <select value={providerFilter} onChange={(event) => { setProviderFilter(event.target.value); setPage(1); }} className="rounded-lg border border-gray-200 px-3 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="">{tx('ai.model.filter.allProviders')}</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select>
-          <select value={typeFilter} onChange={(event) => { setTypeFilter(event.target.value); setPage(1); }} className="rounded-lg border border-gray-200 px-3 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="">{tx('ai.model.filter.allTypes')}</option><option value="chat">{tx('ai.model.modal.chat')}</option><option value="reasoning">{tx('ai.model.modal.reasoning')}</option><option value="embedding">{tx('ai.model.modal.embedding')}</option><option value="rerank">{tx('ai.model.modal.rerank')}</option></select>
-          <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }} className="rounded-lg border border-gray-200 px-3 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="all">{tx('ai.model.filter.allStatuses')}</option><option value="enabled">{tx('ai.model.filter.enabled')}</option><option value="disabled">{tx('ai.model.filter.disabled')}</option></select>
-        </div>
-
-        {error && <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"><AlertTriangle className="h-4 w-4" />{error}</div>}
-
-        {loading ? (
-          <div className="p-8 text-center text-gray-400">{tx('ai.model.loading')}</div>
-        ) : (
-          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden shadow-sm">
-            <DataTable unstyled exportConfig={{ filename: 'ai-models', language: language === 'zh' ? 'zh' : 'en', disabled: loading || filteredModels.length === 0, exportData: modelExportData }} className="min-w-[1900px] w-full text-left border-collapse text-sm">
-              <thead>
-                <tr className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-xs font-semibold">
-                  <th className="py-3 px-4">{tx('ai.model.table.name')}</th>
-                  <th className="py-3 px-4">{tx('ai.model.table.code')}</th>
-                  <th className="py-3 px-4">{tx('ai.model.table.provider')}</th>
-                  <th className="py-3 px-4">{tx('ai.model.table.type')}</th>
-                  <th className="py-3 px-4">{tx('ai.model.table.streaming')}</th>
-                  <th className="py-3 px-4">{tx('ai.model.table.thinking')}</th>
-                  <th className="py-3 px-4">{tx('ai.model.table.toolCalls')}</th>
-                  <th className="py-3 px-4">{tx('ai.model.table.json')}</th>
-                  <th className="py-3 px-4">{tx('ai.model.table.contextLength')}</th>
-                  <th className="py-3 px-4">{tx('ai.model.table.health')}</th>
-                  <th className="py-3 px-4">{tx('ai.model.table.latency')}</th>
-                  <th className="py-3 px-4">{tx('ai.model.table.inputCost')}</th>
-                  <th className="py-3 px-4">{tx('ai.model.table.default')}</th>
-                  <th className="py-3 px-4">{tx('ai.model.table.status')}</th>
-                  <TableActionHeader className="py-3 px-4 text-right">{tx('ai.model.table.actions')}</TableActionHeader>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200 dark:divide-gray-700 text-gray-700 dark:text-gray-300">
-                {visibleModels.map((m) => (
-                  <tr key={m.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                    <td className="py-3 px-4 font-semibold text-gray-900 dark:text-white">{m.name}</td>
-                    <td className="py-3 px-4 font-mono text-xs text-indigo-600 dark:text-indigo-400">{m.model_code}</td>
-                    <td className="py-3 px-4"><div className="font-semibold text-gray-700 dark:text-gray-200">{providers.find((provider) => provider.id === m.provider_id)?.name || '—'}</div></td>
-                    <td className="py-3 px-4">{m.model_type}</td>
-                    <td className="py-3 px-4">{m.stream_supported ? tx('ai.model.table.yes') : tx('ai.model.table.no')}</td>
-                    <td className="py-3 px-4">{m.thinking_supported ? tx('ai.model.table.yes') : tx('ai.model.table.no')}</td>
-                    <td className="py-3 px-4">{m.tool_call_supported ? tx('ai.model.table.yes') : tx('ai.model.table.no')}</td>
-                    <td className="py-3 px-4">{m.json_supported ? tx('ai.model.table.yes') : tx('ai.model.table.no')}</td>
-                    <td className="py-3 px-4 font-mono">{m.context_length.toLocaleString()}</td>
-                    <td className="py-3 px-4">{tx(getModelHealthStatusKey(m.health_status))}</td>
-                    <td className="py-3 px-4 font-mono">{m.last_latency_ms == null ? '—' : `${m.last_latency_ms} ms`}</td>
-                    <td className="py-3 px-4 font-mono">${(m.cost_input_per_1k || 0).toFixed(4)}</td>
-                    <td className="py-3 px-4">
-                      {m.is_default ? (
-                        <span className="px-2 py-0.5 text-xs bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 rounded-full font-medium inline-flex items-center gap-1">
-                          <Star className="w-3 h-3 fill-current text-amber-500" />{tx('ai.model.table.yes')}
-                        </span>
-                      ) : tx('ai.model.table.no')}
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${m.enabled ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-gray-100 text-gray-600'}`}>
-                          {m.enabled ? tx('ai.model.status.enabled') : tx('ai.model.status.disabled')}
-                        </span>
+      ) : models.length === 0 ? (
+        <EmptyState icon={Boxes} title={copy.emptyTitle} description={copy.emptyBody} />
+      ) : (
+        <Panel aria-label={copy.modelsAria} className="overflow-hidden">
+          <DataTable unstyled exportConfig={{ filename: 'ai-models', language: language === 'zh' ? 'zh' : 'en', disabled: loading || filteredModels.length === 0, exportData: modelExportData }} className="w-full min-w-[1200px] border-collapse text-left text-[13px]">
+            <thead>
+              <tr className="border-b border-line bg-surface-muted text-xs font-medium text-fg-muted">
+                <th scope="col" className="px-4 py-2.5">{tx('ai.model.table.name')}</th>
+                <th scope="col" className="px-4 py-2.5">{tx('ai.model.table.provider')}</th>
+                <th scope="col" className="px-4 py-2.5">{tx('ai.model.table.type')}</th>
+                <th scope="col" className="px-4 py-2.5">{copy.capabilities}</th>
+                <th scope="col" className="px-4 py-2.5 text-right">{tx('ai.model.table.contextLength')}</th>
+                <th scope="col" className="px-4 py-2.5">{tx('ai.model.table.health')}</th>
+                <th scope="col" className="px-4 py-2.5 text-right">{tx('ai.model.table.latency')}</th>
+                <th scope="col" className="px-4 py-2.5 text-right">{tx('ai.model.table.inputCost')}</th>
+                <th scope="col" className="px-4 py-2.5">{tx('ai.model.table.status')}</th>
+                <TableActionHeader className="px-4 py-2.5 text-right">{tx('ai.model.table.actions')}</TableActionHeader>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line text-fg">
+              {visibleModels.map((m) => {
+                const capabilityBadges = [
+                  m.stream_supported ? copy.capStream : null,
+                  m.thinking_supported ? copy.capThinking : null,
+                  m.tool_call_supported ? copy.capTools : null,
+                  m.json_supported ? copy.capJson : null,
+                ].filter(Boolean) as string[];
+                return (
+                  <tr key={m.id} className="align-top transition-colors hover:bg-accent-subtle/60">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1.5 font-medium text-fg">
+                        <span className="truncate" title={m.name}>{m.name}</span>
+                        {m.is_default && (
+                          <StatusBadge tone="warning"><Star size={11} className="fill-current" aria-hidden="true" />{tx('ai.model.table.default')}</StatusBadge>
+                        )}
                       </div>
-                      <div data-export-ignore className="mt-1 text-[10px] text-gray-400">
+                      <div className="mt-0.5 font-mono text-xs text-fg-muted" title={m.model_code}>{m.model_code}</div>
+                    </td>
+                    <td className="px-4 py-3"><div className="text-fg">{providers.find((provider) => provider.id === m.provider_id)?.name || '—'}</div></td>
+                    <td className="px-4 py-3"><StatusBadge mono>{m.model_type}</StatusBadge></td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        {capabilityBadges.length ? capabilityBadges.map((label) => <StatusBadge key={label}>{label}</StatusBadge>) : <span className="text-fg-subtle">—</span>}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono tabular-nums">{m.context_length.toLocaleString()}</td>
+                    <td className="px-4 py-3">
+                      <StatusBadge tone={getModelHealthTone(m.health_status)} dot>{tx(getModelHealthStatusKey(m.health_status))}</StatusBadge>
+                      <div data-export-ignore className="mt-1 text-xs text-fg-subtle">
                         {tx('ai.model.health.sla', { hours: m.sla_window_hours || 24, value: m.sla_availability_percent == null ? '—' : `${m.sla_availability_percent.toFixed(2)}%` })}
                         {' · '}{tx('ai.model.health.checks', { success: m.sla_success_count || 0, total: m.sla_check_count || 0 })}
-                        {' · '}{tx('ai.model.health.avgLatency', { value: m.sla_avg_latency_ms == null ? '—' : `${m.sla_avg_latency_ms} ms` })}
                       </div>
-                      <div data-export-ignore className="mt-0.5 text-[10px] text-gray-400">
-                        {tx('ai.model.health.lastCheck', { value: m.last_health_check_at ? new Date(m.last_health_check_at).toLocaleString() : tx('ai.model.health.never') })}
-                        {m.last_error_code && <span className="ml-1 font-mono text-rose-500">· {m.last_error_code}</span>}
+                      <div data-export-ignore className="mt-0.5 text-xs text-fg-subtle">
+                        {tx('ai.model.health.avgLatency', { value: m.sla_avg_latency_ms == null ? '—' : `${m.sla_avg_latency_ms} ms` })}
+                        {' · '}{tx('ai.model.health.lastCheck', { value: m.last_health_check_at ? new Date(m.last_health_check_at).toLocaleString() : tx('ai.model.health.never') })}
+                        {m.last_error_code && <span className="ml-1 font-mono text-danger">· {m.last_error_code}</span>}
                       </div>
                     </td>
-                    <TableActionCell className="py-3 px-4 text-right">
+                    <td className="px-4 py-3 text-right font-mono tabular-nums">{m.last_latency_ms == null ? '—' : `${m.last_latency_ms} ms`}</td>
+                    <td className="px-4 py-3 text-right font-mono tabular-nums">${(m.cost_input_per_1k || 0).toFixed(4)}</td>
+                    <td className="px-4 py-3">
+                      <StatusBadge tone={m.enabled ? 'success' : 'neutral'} dot>
+                        {m.enabled ? tx('ai.model.status.enabled') : tx('ai.model.status.disabled')}
+                      </StatusBadge>
+                    </td>
+                    <TableActionCell className="px-4 py-3 text-right">
                       <ActionIconGroup label={tx('ai.model.actionGroup')}>
                         <ActionIconButton icon={Pencil} label={language === 'zh' ? '编辑模型' : 'Edit model'} variant="accent" onClick={() => openEditModal(m)} />
                         <ActionIconButton icon={Activity} label={checkingModelId === m.id ? tx('ai.model.health.checking') : tx('ai.model.health.checkAction')} variant="accent" disabled={!m.enabled || checkingModelId !== null} iconClassName={checkingModelId === m.id ? 'animate-spin' : undefined} onClick={() => void handleHealthCheck(m)} />
@@ -544,193 +624,223 @@ export const ModelManagementTab: React.FC = () => {
                       </ActionIconGroup>
                     </TableActionCell>
                   </tr>
-                ))}
-              </tbody>
-            </DataTable>
-            {!visibleModels.length && <div className="border-t border-gray-100 px-4 py-10 text-center text-sm text-gray-400 dark:border-gray-700">{tx('ai.model.empty')}</div>}
-            <Pagination currentPage={page} totalItems={filteredModels.length} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }} language={language} alwaysVisible />
-          </div>
-        )}
-      </div>
+                );
+              })}
+            </tbody>
+          </DataTable>
+          {!visibleModels.length && <div className="border-t border-line px-4 py-10 text-center text-[13px] text-fg-muted">{copy.noMatch}</div>}
+          <Pagination currentPage={page} totalItems={filteredModels.length} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }} language={language} alwaysVisible />
+        </Panel>
+      )}
 
       {/* Scene Routes Section */}
-      <div className="space-y-4 border-t border-gray-200 pt-6 dark:border-gray-700">
-        <div>
-          <h3 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-white">
-            <GitBranch className="h-5 w-5 text-indigo-500" />
-            {tx('ai.model.route.title')}
-          </h3>
-          <p className="mt-1 max-w-4xl text-sm leading-6 text-gray-500 dark:text-gray-400">
-            {tx('ai.model.route.description')}
-          </p>
-        </div>
+      <Panel aria-label={tx('ai.model.route.aria')}>
+        <PanelHeader
+          title={tx('ai.model.route.title')}
+          description={tx('ai.model.route.description')}
+          actions={(
+            <span className="flex items-center gap-1.5 text-xs text-fg-muted">
+              <ShieldCheck size={14} className="text-success" aria-hidden="true" />
+              {tx('ai.model.route.currentDefault')}
+              <strong className="font-mono font-medium text-fg">{defaultModel ? `${defaultModel.name} (${defaultModel.model_code})` : tx('ai.model.route.noneAvailable')}</strong>
+            </span>
+          )}
+        />
 
-        <div className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-3 dark:border-indigo-900/60 dark:bg-indigo-950/20">
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-indigo-900 dark:text-indigo-100">
+        <div className="space-y-4 p-4">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs text-fg-muted">
+            <span className="font-medium text-fg">{tx('ai.model.route.how')}</span>
+            <InfoTip label={copy.routesInfoLabel}>
+              {[
+                'ai.model.route.step.identifyBody',
+                'ai.model.route.step.primaryBody',
+                'ai.model.route.step.fallbackBody',
+                'ai.model.route.step.defaultBody',
+              ].map((key, index) => `${index + 1}. ${tx(key)}`).join(' ')}
+            </InfoTip>
+            {[
+              ['1', 'ai.model.route.step.identify'],
+              ['2', 'ai.model.route.step.primary'],
+              ['3', 'ai.model.route.step.fallback'],
+              ['4', 'ai.model.route.step.default'],
+            ].map(([step, titleKey], index, steps) => (
+              <React.Fragment key={step}>
+                <span className="inline-flex items-center gap-1 rounded-md border border-line bg-surface-muted px-2 py-1">
+                  <span className="font-semibold tabular-nums text-accent">{step}</span>{tx(titleKey)}
+                </span>
+                {index < steps.length - 1 && <span className="text-fg-subtle" aria-hidden="true">→</span>}
+              </React.Fragment>
+            ))}
+            <span className="ml-1 text-fg-subtle">{tx('ai.model.route.enabledOnly')}</span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface-muted px-3 py-2.5">
+            <label className="inline-flex cursor-pointer items-center gap-2 text-[13px] font-medium text-fg">
               <input
                 type="checkbox"
                 aria-label={tx('ai.model.route.bulk.selectAll')}
                 checked={selectedScenes.size === SCENES.length}
                 aria-checked={selectedScenes.size > 0 && selectedScenes.size < SCENES.length ? 'mixed' : selectedScenes.size === SCENES.length}
                 onChange={toggleAllScenes}
-                className="h-4 w-4 rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
+                className={checkboxClass}
               />
               {tx('ai.model.route.bulk.selectAll')}
             </label>
-            <span className="text-xs text-indigo-700/80 dark:text-indigo-200/80">
-              {tx('ai.model.route.bulk.selected', { count: selectedScenes.size })}
-            </span>
-            <span className="text-[11px] text-indigo-700/70 dark:text-indigo-200/70">
-              {tx('ai.model.route.bulk.description')}
-            </span>
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <select
-              aria-label={tx('ai.model.route.bulk.primary')}
-              value={bulkPrimaryModelId}
-              onChange={(event) => setBulkPrimaryModelId(event.target.value)}
-              className="min-w-[260px] rounded-lg border border-indigo-200 bg-white px-2.5 py-2 text-xs font-medium text-gray-800 dark:border-indigo-800 dark:bg-gray-900 dark:text-white"
-              disabled={selectedScenes.size === 0 || bulkApplying}
-            >
-              <option value="">{tx('ai.model.route.bulk.primaryPlaceholder')}</option>
-              {models.filter((model) => model.enabled).map((model) => (
-                <option key={model.id} value={model.id}>{model.name} ({model.model_code})</option>
-              ))}
-            </select>
-            <select
-              aria-label={tx('ai.model.route.bulk.classification')}
-              value={bulkDataClassification}
-              onChange={(event) => setBulkDataClassification(event.target.value)}
-              className="min-w-[190px] rounded-lg border border-indigo-200 bg-white px-2.5 py-2 text-xs font-medium text-gray-800 dark:border-indigo-800 dark:bg-gray-900 dark:text-white"
-              disabled={selectedScenes.size === 0 || bulkApplying}
-            >
-              <option value="">{tx('ai.model.route.bulk.classificationPlaceholder')}</option>
-              <option value="PUBLIC">PUBLIC</option>
-              <option value="INTERNAL">INTERNAL</option>
-              <option value="CONFIDENTIAL">CONFIDENTIAL</option>
-            </select>
-            <button
-              type="button"
-              onClick={() => void handleBulkRouteChange()}
-              disabled={selectedScenes.size === 0 || (!bulkPrimaryModelId && !bulkDataClassification) || bulkApplying}
-              className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {bulkApplying ? tx('ai.model.route.bulk.applying') : tx('ai.model.route.bulk.apply')}
-            </button>
-            {selectedScenes.size > 0 && (
-              <button
-                type="button"
-                onClick={() => { setSelectedScenes(new Set()); setBulkPrimaryModelId(''); setBulkDataClassification(''); }}
-                disabled={bulkApplying}
-                className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-800 dark:bg-gray-900 dark:text-indigo-200 dark:hover:bg-indigo-950/50"
+            <span className="text-xs text-fg-muted">{tx('ai.model.route.bulk.selected', { count: selectedScenes.size })}</span>
+            <InfoTip label={copy.bulkInfoLabel}>{tx('ai.model.route.bulk.description')}</InfoTip>
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <select
+                aria-label={tx('ai.model.route.bulk.primary')}
+                value={bulkPrimaryModelId}
+                onChange={(event) => setBulkPrimaryModelId(event.target.value)}
+                className={cn(filterControlClass, 'min-w-[240px]')}
+                disabled={selectedScenes.size === 0 || bulkApplying}
               >
-                {tx('ai.model.route.bulk.clear')}
-              </button>
-            )}
+                <option value="">{tx('ai.model.route.bulk.primaryPlaceholder')}</option>
+                {models.filter((model) => model.enabled).map((model) => (
+                  <option key={model.id} value={model.id}>{model.name} ({model.model_code})</option>
+                ))}
+              </select>
+              <select
+                aria-label={tx('ai.model.route.bulk.classification')}
+                value={bulkDataClassification}
+                onChange={(event) => setBulkDataClassification(event.target.value)}
+                className={cn(filterControlClass, 'min-w-[180px]')}
+                disabled={selectedScenes.size === 0 || bulkApplying}
+              >
+                <option value="">{tx('ai.model.route.bulk.classificationPlaceholder')}</option>
+                <option value="PUBLIC">PUBLIC</option>
+                <option value="INTERNAL">INTERNAL</option>
+                <option value="CONFIDENTIAL">CONFIDENTIAL</option>
+              </select>
+              <ActionButton
+                type="button"
+                variant="primary"
+                onClick={() => void handleBulkRouteChange()}
+                disabled={selectedScenes.size === 0 || (!bulkPrimaryModelId && !bulkDataClassification) || bulkApplying}
+              >
+                {bulkApplying ? tx('ai.model.route.bulk.applying') : tx('ai.model.route.bulk.apply')}
+              </ActionButton>
+              {selectedScenes.size > 0 && (
+                <ActionButton
+                  type="button"
+                  onClick={() => { setSelectedScenes(new Set()); setBulkPrimaryModelId(''); setBulkDataClassification(''); }}
+                  disabled={bulkApplying}
+                >
+                  {tx('ai.model.route.bulk.clear')}
+                </ActionButton>
+              )}
+            </div>
           </div>
-        </div>
 
-        <section className="grid gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 dark:border-indigo-900/60 dark:bg-indigo-950/20" aria-label={tx('ai.model.route.aria')}>
-          <div className="flex items-center gap-2 text-xs font-bold text-indigo-900 dark:text-indigo-100"><Info className="h-4 w-4 text-indigo-500" />{tx('ai.model.route.how')}</div>
-          <div className="grid gap-2 md:grid-cols-4">
-            {[
-              ['1', 'ai.model.route.step.identify', 'ai.model.route.step.identifyBody'],
-              ['2', 'ai.model.route.step.primary', 'ai.model.route.step.primaryBody'],
-              ['3', 'ai.model.route.step.fallback', 'ai.model.route.step.fallbackBody'],
-              ['4', 'ai.model.route.step.default', 'ai.model.route.step.defaultBody'],
-            ].map(([step, titleKey, descriptionKey], index) => (
-              <div key={step} className="relative rounded-xl border border-indigo-100 bg-white/80 p-3 dark:border-indigo-900/50 dark:bg-slate-900/40">
-                <div className="flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-bold text-white">{step}</span><span className="text-xs font-semibold text-slate-800 dark:text-slate-100">{tx(titleKey)}</span></div>
-                <p className="mt-2 text-[10px] leading-4 text-slate-500 dark:text-slate-400">{tx(descriptionKey)}</p>
-                {index < 3 && <span className="absolute -right-2 top-1/2 hidden text-indigo-400 md:block">→</span>}
-              </div>
-            ))}
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-indigo-800 dark:text-indigo-200">
-            <span className="font-semibold">{tx('ai.model.route.execution')}</span>
-            {[tx('ai.model.route.request'), 'Model Route', 'Model → Provider', tx('ai.model.route.security'), tx('ai.model.route.response')].map((step, index, steps) => (
-              <React.Fragment key={step}>
-                <span className="rounded-full border border-indigo-100 bg-white/80 px-2 py-1 font-medium dark:border-indigo-900/50 dark:bg-slate-900/50">{step}</span>
-                {index < steps.length - 1 && <span className="text-indigo-400">→</span>}
-              </React.Fragment>
-            ))}
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-[11px] text-indigo-800 dark:text-indigo-200"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /><span>{tx('ai.model.route.currentDefault')}</span><strong className="font-mono">{defaultModel ? defaultModel.name + ' (' + defaultModel.model_code + ')' : tx('ai.model.route.noneAvailable')}</strong><span className="text-indigo-700/60 dark:text-indigo-300/60">{tx('ai.model.route.enabledOnly')}</span></div>
-        </section>
-
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {SCENES.map((scene) => {
-            const configuredRoute = routes.find((route) => route.scene === scene.code);
-            const routeModel = models.find((model) => model.id === configuredRoute?.model_id);
-            const fallbackModel = models.find((model) => model.id === configuredRoute?.fallback_model_id);
-            const routeProvider = routeModel ? providers.find((provider) => provider.id === routeModel.provider_id) : undefined;
-            const routeConfigured = Boolean(configuredRoute?.enabled);
-            const effectiveModel = routeConfigured ? routeModel : defaultModel;
-            const effectiveProvider = effectiveModel ? providers.find((provider) => provider.id === effectiveModel.provider_id) : undefined;
-            const routeTargetBlocked = routeConfigured && Boolean(routeModel) && (!routeModel?.enabled || !routeProvider || routeProvider.enabled === false);
-            const routeHealthWarning = routeConfigured && Boolean(routeModel?.enabled) && routeModel?.health_status === 'unhealthy';
-            const routeStatus = !routeConfigured
-              ? tx('ai.model.route.useDefault')
-              : !routeModel
-                ? tx('ai.model.route.missing')
-                : routeTargetBlocked
-                  ? tx('ai.model.route.unavailable')
-                  : routeHealthWarning
-                    ? tx('ai.model.route.unhealthy')
-                    : tx('ai.model.route.active');
-            return (
-              <article key={scene.code} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <h4 className="font-semibold text-sm text-gray-900 dark:text-white">{tx(scene.labelKey)}</h4>
-                    <p className="mt-0.5 font-mono text-xs text-indigo-500">{scene.code}</p>
-                    <p className="mt-2 text-[11px] leading-5 text-gray-500 dark:text-gray-400">{tx(scene.descriptionKey)}</p>
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {SCENES.map((scene) => {
+              const configuredRoute = routes.find((route) => route.scene === scene.code);
+              const routeModel = models.find((model) => model.id === configuredRoute?.model_id);
+              const fallbackModel = models.find((model) => model.id === configuredRoute?.fallback_model_id);
+              const routeProvider = routeModel ? providers.find((provider) => provider.id === routeModel.provider_id) : undefined;
+              const routeConfigured = Boolean(configuredRoute?.enabled);
+              const effectiveModel = routeConfigured ? routeModel : defaultModel;
+              const effectiveProvider = effectiveModel ? providers.find((provider) => provider.id === effectiveModel.provider_id) : undefined;
+              const routeTargetBlocked = routeConfigured && Boolean(routeModel) && (!routeModel?.enabled || !routeProvider || routeProvider.enabled === false);
+              const routeHealthWarning = routeConfigured && Boolean(routeModel?.enabled) && routeModel?.health_status === 'unhealthy';
+              const routeStatus = !routeConfigured
+                ? tx('ai.model.route.useDefault')
+                : !routeModel
+                  ? tx('ai.model.route.missing')
+                  : routeTargetBlocked
+                    ? tx('ai.model.route.unavailable')
+                    : routeHealthWarning
+                      ? tx('ai.model.route.unhealthy')
+                      : tx('ai.model.route.active');
+              const routeTone: StatusTone = routeTargetBlocked || (routeConfigured && !routeModel)
+                ? 'danger'
+                : routeHealthWarning
+                  ? 'warning'
+                  : routeConfigured && routeModel
+                    ? 'success'
+                    : 'neutral';
+              const selected = selectedScenes.has(scene.code);
+              return (
+                <article key={scene.code} className={cn('rounded-lg border bg-surface p-4 transition-colors', selected ? 'border-accent ring-1 ring-accent/30' : 'border-line')}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-start gap-1.5">
+                      <label className="flex min-w-0 cursor-pointer items-start gap-2.5">
+                        <input
+                          type="checkbox"
+                          aria-label={tx('ai.model.route.bulk.selectScene', { name: tx(scene.shortKey) })}
+                          checked={selected}
+                          onChange={() => toggleSceneSelection(scene.code)}
+                          className={cn(checkboxClass, 'mt-0.5')}
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-semibold text-fg">{tx(scene.labelKey)}</span>
+                          <span className="mt-0.5 block font-mono text-xs text-fg-muted">{scene.code}</span>
+                        </span>
+                      </label>
+                      <InfoTip label={copy.sceneInfoLabel(tx(scene.shortKey))}>{tx(scene.descriptionKey)}</InfoTip>
+                    </div>
+                    <StatusBadge tone={routeTone} dot>{routeStatus}</StatusBadge>
                   </div>
-                  <div className="flex shrink-0 flex-col items-end gap-2">
-                    <label className="inline-flex cursor-pointer items-center gap-1.5 text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
-                      <input
-                        type="checkbox"
-                        aria-label={tx('ai.model.route.bulk.selectScene', { name: tx(scene.shortKey) })}
-                        checked={selectedScenes.has(scene.code)}
-                        onChange={() => toggleSceneSelection(scene.code)}
-                        className="h-3.5 w-3.5 rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      {tx('ai.model.route.bulk.select')}
+
+                  <div className="mt-3 rounded-md bg-surface-muted px-3 py-2">
+                    <div className="text-xs text-fg-muted">{tx('ai.model.route.effective')}</div>
+                    <div className="mt-0.5 flex min-w-0 items-baseline gap-2">
+                      <span className="truncate text-[13px] font-medium text-fg">{effectiveModel ? effectiveModel.name : tx('ai.model.route.noModel')}</span>
+                      <span className="truncate font-mono text-xs text-fg-muted">{effectiveModel ? effectiveModel.model_code : tx('ai.model.route.addAndEnable')}</span>
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-fg-muted">{effectiveProvider ? tx('ai.model.route.provider', { name: effectiveProvider.name, status: effectiveProvider.enabled === false ? tx('ai.model.route.providerDisabled') : tx('ai.model.route.providerEnabled') }) : effectiveModel ? tx('ai.model.route.providerMissing') : tx('ai.model.route.providerDash')}</div>
+                    {routeTargetBlocked && <p className="mt-1.5 text-xs leading-5 text-danger">{tx('ai.model.route.targetBlocked')}</p>}
+                    {routeHealthWarning && !routeTargetBlocked && <p className="mt-1.5 text-xs leading-5 text-warning">{tx('ai.model.route.healthWarning')}</p>}
+                  </div>
+
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    <label className="block text-xs font-medium text-fg-muted">
+                      {tx('ai.model.route.primary')}
+                      <select aria-label={tx('ai.model.route.primaryAria', { name: tx(scene.shortKey) })} value={configuredRoute?.model_id || ''} onChange={(event) => handleRouteChange(scene.code, event.target.value)} className={cn(filterControlClass, 'mt-1 w-full')}>
+                        <option value="">{tx('ai.model.route.defaultOption')}</option>
+                        {models.filter((model) => model.enabled || model.id === configuredRoute?.model_id).map((model) => <option key={model.id} value={model.id}>{model.name} ({model.model_code})</option>)}
+                      </select>
                     </label>
-                    <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${routeTargetBlocked ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' : routeHealthWarning ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : routeConfigured && routeModel ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300'}`}>{routeStatus}</span>
+                    <label className="block text-xs font-medium text-fg-muted">
+                      {tx('ai.model.route.fallback')}
+                      <select aria-label={tx('ai.model.route.fallbackAria', { name: tx(scene.shortKey) })} value={configuredRoute?.fallback_model_id || ''} onChange={(event) => void handleRoutePolicyChange(scene.code, event.target.value, configuredRoute?.data_classification || 'PUBLIC')} className={cn(filterControlClass, 'mt-1 w-full')}>
+                        <option value="">{tx('ai.model.route.noFallbackOption')}</option>
+                        {models.filter((model) => model.enabled && model.id !== configuredRoute?.model_id).map((model) => <option key={model.id} value={model.id}>{model.name} ({model.model_code})</option>)}
+                      </select>
+                    </label>
                   </div>
-                </div>
-                <div className="mt-3 rounded-xl bg-slate-50 p-3 dark:bg-slate-900/70">
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{tx('ai.model.route.effective')}</div>
-                  <div className="mt-1 truncate text-xs font-bold text-slate-800 dark:text-slate-100">{effectiveModel ? effectiveModel.name : tx('ai.model.route.noModel')}</div>
-                  <div className="mt-0.5 truncate font-mono text-[10px] text-slate-500 dark:text-slate-400">{effectiveModel ? effectiveModel.model_code : tx('ai.model.route.addAndEnable')}</div>
-                  <div className="mt-1 truncate text-[10px] text-slate-500 dark:text-slate-400">{effectiveProvider ? tx('ai.model.route.provider', { name: effectiveProvider.name, status: effectiveProvider.enabled === false ? tx('ai.model.route.providerDisabled') : tx('ai.model.route.providerEnabled') }) : effectiveModel ? tx('ai.model.route.providerMissing') : tx('ai.model.route.providerDash')}</div>
-                  {routeTargetBlocked && <p className="mt-2 text-[10px] leading-4 text-rose-700 dark:text-rose-300">{tx('ai.model.route.targetBlocked')}</p>}
-                  {routeHealthWarning && !routeTargetBlocked && <p className="mt-2 text-[10px] leading-4 text-amber-700 dark:text-amber-300">{tx('ai.model.route.healthWarning')}</p>}
-                </div>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  <label className="text-xs font-semibold text-gray-600 dark:text-gray-300">{tx('ai.model.route.primary')}<select aria-label={tx('ai.model.route.primaryAria', { name: tx(scene.shortKey) })} value={configuredRoute?.model_id || ''} onChange={(event) => handleRouteChange(scene.code, event.target.value)} className="mt-1 min-h-10 w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm font-medium text-gray-800 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/10 dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="">{tx('ai.model.route.defaultOption')}</option>{models.filter((model) => model.enabled || model.id === configuredRoute?.model_id).map((model) => <option key={model.id} value={model.id}>{model.name} ({model.model_code})</option>)}</select></label>
-                  <label className="text-xs font-semibold text-gray-600 dark:text-gray-300">{tx('ai.model.route.fallback')}<select aria-label={tx('ai.model.route.fallbackAria', { name: tx(scene.shortKey) })} value={configuredRoute?.fallback_model_id || ''} onChange={(event) => void handleRoutePolicyChange(scene.code, event.target.value, configuredRoute?.data_classification || 'PUBLIC')} className="mt-1 min-h-10 w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm font-medium text-gray-800 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/10 dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="">{tx('ai.model.route.noFallbackOption')}</option>{models.filter((model) => model.enabled && model.id !== configuredRoute?.model_id).map((model) => <option key={model.id} value={model.id}>{model.name} ({model.model_code})</option>)}</select></label>
-                </div>
-                <div className="mt-2 flex flex-col items-start justify-between gap-2 sm:flex-row sm:items-center"><label className="flex w-full flex-col gap-1 text-xs font-semibold text-gray-600 dark:text-gray-300 sm:w-auto sm:flex-row sm:items-center">{tx('ai.model.route.classification')}<select aria-label={tx('ai.model.route.classificationAria', { name: tx(scene.shortKey) })} value={configuredRoute?.data_classification || 'PUBLIC'} onChange={(event) => void handleRoutePolicyChange(scene.code, configuredRoute?.fallback_model_id || '', event.target.value)} className="min-h-9 w-full rounded-lg border border-gray-300 bg-white px-2.5 text-xs outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/10 dark:border-gray-600 dark:bg-gray-900 dark:text-white sm:w-auto"><option value="PUBLIC">PUBLIC</option><option value="INTERNAL">INTERNAL</option><option value="CONFIDENTIAL">CONFIDENTIAL</option></select></label><span className="text-xs text-gray-500 dark:text-gray-400">{tx('ai.model.route.priority', { priority: configuredRoute?.priority || 10, fallback: fallbackModel ? tx('ai.model.route.hasFallback') : tx('ai.model.route.noFallback') })}</span></div>
-              </article>
-            );
-          })}
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                    <label className="flex items-center gap-2 text-xs font-medium text-fg-muted">
+                      {tx('ai.model.route.classification')}
+                      <select aria-label={tx('ai.model.route.classificationAria', { name: tx(scene.shortKey) })} value={configuredRoute?.data_classification || 'PUBLIC'} onChange={(event) => void handleRoutePolicyChange(scene.code, configuredRoute?.fallback_model_id || '', event.target.value)} className={cn(filterControlClass, 'h-8 text-xs')}>
+                        <option value="PUBLIC">PUBLIC</option>
+                        <option value="INTERNAL">INTERNAL</option>
+                        <option value="CONFIDENTIAL">CONFIDENTIAL</option>
+                      </select>
+                    </label>
+                    <span className="text-xs text-fg-subtle">{tx('ai.model.route.priority', { priority: configuredRoute?.priority || 10, fallback: fallbackModel ? tx('ai.model.route.hasFallback') : tx('ai.model.route.noFallback') })}</span>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      </Panel>
 
       {/* Create / Edit Modal */}
       {showModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="ai-model-create-title" tabIndex={-1} className="bg-white dark:bg-gray-800 rounded-xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 space-y-4 shadow-xl">
-            <h3 id="ai-model-create-title" className="text-lg font-bold text-gray-900 dark:text-white">
-              {editingModelId ? (language === 'zh' ? '编辑模型配置' : 'Edit AI Model') : tx('ai.model.modal.title')}
-            </h3>
-            <form onSubmit={handleCreate} className="space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="ai-model-create-title" tabIndex={-1} className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl border border-line bg-surface shadow-xl">
+            <div className="border-b border-line px-6 py-4">
+              <h3 id="ai-model-create-title" className="text-base font-semibold text-fg">
+                {editingModelId ? (language === 'zh' ? '编辑模型配置' : 'Edit AI Model') : tx('ai.model.modal.title')}
+              </h3>
+            </div>
+            <form onSubmit={handleCreate} className="space-y-4 px-6 py-5">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label htmlFor="ai-model-name" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.name')}</label>
+                  <label htmlFor="ai-model-name" className={fieldLabelClass}>{tx('ai.model.modal.name')}</label>
                   <input
                     id="ai-model-name"
                     type="text"
@@ -738,12 +848,12 @@ export const ModelManagementTab: React.FC = () => {
                     placeholder={tx('ai.model.modal.namePlaceholder')}
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white"
+                    className={fieldInputClass}
                   />
                 </div>
 
                 <div>
-                  <label htmlFor="ai-model-code" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.code')}</label>
+                  <label htmlFor="ai-model-code" className={fieldLabelClass}>{tx('ai.model.modal.code')}</label>
                   <input
                     id="ai-model-code"
                     type="text"
@@ -751,15 +861,15 @@ export const ModelManagementTab: React.FC = () => {
                     placeholder="deepseek-v4-flash"
                     value={modelCode}
                     onChange={(e) => setModelCode(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white font-mono"
+                    className={cn(fieldInputClass, 'font-mono')}
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label htmlFor="ai-model-type" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.type')}</label>
-                  <select id="ai-model-type" value={modelType} onChange={(e) => setModelType(e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white">
+                  <label htmlFor="ai-model-type" className={fieldLabelClass}>{tx('ai.model.modal.type')}</label>
+                  <select id="ai-model-type" value={modelType} onChange={(e) => setModelType(e.target.value)} className={fieldInputClass}>
                     <option value="chat">{tx('ai.model.modal.chat')}</option>
                     <option value="reasoning">{tx('ai.model.modal.reasoning')}</option>
                     <option value="embedding">{tx('ai.model.modal.embedding')}</option>
@@ -768,12 +878,12 @@ export const ModelManagementTab: React.FC = () => {
                 </div>
 
                 <div>
-                  <label htmlFor="ai-model-provider" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.modal.provider')}</label>
+                  <label htmlFor="ai-model-provider" className={fieldLabelClass}>{tx('ai.model.modal.provider')}</label>
                   <select
                     id="ai-model-provider"
                     value={providerId}
                     onChange={(e) => setProviderId(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white"
+                    className={fieldInputClass}
                   >
                     {providers.map((p) => (
                       <option key={p.id} value={p.id}>
@@ -786,48 +896,49 @@ export const ModelManagementTab: React.FC = () => {
 
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 <div>
-                  <label htmlFor="ai-model-ctx" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.model.table.contextLength')}</label>
-                  <input id="ai-model-ctx" type="number" min={1024} value={contextLength} onChange={(e) => setContextLength(Number(e.target.value) || 64000)} className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white font-mono" />
+                  <label htmlFor="ai-model-ctx" className={fieldLabelClass}>{tx('ai.model.table.contextLength')}</label>
+                  <input id="ai-model-ctx" type="number" min={1024} value={contextLength} onChange={(e) => setContextLength(Number(e.target.value) || 64000)} className={cn(fieldInputClass, 'font-mono')} />
                 </div>
                 <div>
-                  <label htmlFor="ai-model-max-out" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{language === 'zh' ? '最大输出 Token' : 'Max Output'}</label>
-                  <input id="ai-model-max-out" type="number" min={256} value={maxOutputTokens} onChange={(e) => setMaxOutputTokens(Number(e.target.value) || 4096)} className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white font-mono" />
+                  <label htmlFor="ai-model-max-out" className={fieldLabelClass}>{language === 'zh' ? '最大输出 Token' : 'Max Output'}</label>
+                  <input id="ai-model-max-out" type="number" min={256} value={maxOutputTokens} onChange={(e) => setMaxOutputTokens(Number(e.target.value) || 4096)} className={cn(fieldInputClass, 'font-mono')} />
                 </div>
                 <div>
-                  <label htmlFor="ai-model-priority" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{language === 'zh' ? '优先级' : 'Priority'}</label>
-                  <input id="ai-model-priority" type="number" min={1} max={1000} value={priority} onChange={(e) => setPriority(Number(e.target.value) || 10)} className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white font-mono" />
+                  <label htmlFor="ai-model-priority" className={fieldLabelClass}>{language === 'zh' ? '优先级' : 'Priority'}</label>
+                  <input id="ai-model-priority" type="number" min={1} max={1000} value={priority} onChange={(e) => setPriority(Number(e.target.value) || 10)} className={cn(fieldInputClass, 'font-mono')} />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label htmlFor="ai-model-cost-in" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{language === 'zh' ? '输入成本 ($/1K tok)' : 'Input Cost ($/1K)'}</label>
-                  <input id="ai-model-cost-in" type="number" step="0.0001" min={0} value={costInputPer1k} onChange={(e) => setCostInputPer1k(Number(e.target.value) || 0)} className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white font-mono" />
+                  <label htmlFor="ai-model-cost-in" className={fieldLabelClass}>{language === 'zh' ? '输入成本 ($/1K tok)' : 'Input Cost ($/1K)'}</label>
+                  <input id="ai-model-cost-in" type="number" step="0.0001" min={0} value={costInputPer1k} onChange={(e) => setCostInputPer1k(Number(e.target.value) || 0)} className={cn(fieldInputClass, 'font-mono')} />
                 </div>
                 <div>
-                  <label htmlFor="ai-model-cost-out" className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{language === 'zh' ? '输出成本 ($/1K tok)' : 'Output Cost ($/1K)'}</label>
-                  <input id="ai-model-cost-out" type="number" step="0.0001" min={0} value={costOutputPer1k} onChange={(e) => setCostOutputPer1k(Number(e.target.value) || 0)} className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white font-mono" />
+                  <label htmlFor="ai-model-cost-out" className={fieldLabelClass}>{language === 'zh' ? '输出成本 ($/1K tok)' : 'Output Cost ($/1K)'}</label>
+                  <input id="ai-model-cost-out" type="number" step="0.0001" min={0} value={costOutputPer1k} onChange={(e) => setCostOutputPer1k(Number(e.target.value) || 0)} className={cn(fieldInputClass, 'font-mono')} />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/50">
-                <label className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
-                  <input type="checkbox" checked={streamSupported} onChange={(e) => setStreamSupported(e.target.checked)} className="rounded border-gray-300" />
+              <fieldset className="grid grid-cols-2 gap-2 rounded-lg border border-line bg-surface-muted p-3">
+                <legend className="px-1 text-xs font-medium text-fg-muted">{copy.capabilities}</legend>
+                <label className="flex items-center gap-2 text-[13px] text-fg">
+                  <input type="checkbox" checked={streamSupported} onChange={(e) => setStreamSupported(e.target.checked)} className={checkboxClass} />
                   {tx('ai.model.table.streaming')}
                 </label>
-                <label className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
-                  <input type="checkbox" checked={thinkingSupported} onChange={(e) => setThinkingSupported(e.target.checked)} className="rounded border-gray-300" />
+                <label className="flex items-center gap-2 text-[13px] text-fg">
+                  <input type="checkbox" checked={thinkingSupported} onChange={(e) => setThinkingSupported(e.target.checked)} className={checkboxClass} />
                   {tx('ai.model.table.thinking')}
                 </label>
-                <label className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
-                  <input type="checkbox" checked={toolCallSupported} onChange={(e) => setToolCallSupported(e.target.checked)} className="rounded border-gray-300" />
+                <label className="flex items-center gap-2 text-[13px] text-fg">
+                  <input type="checkbox" checked={toolCallSupported} onChange={(e) => setToolCallSupported(e.target.checked)} className={checkboxClass} />
                   {tx('ai.model.table.toolCalls')}
                 </label>
-                <label className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
-                  <input type="checkbox" checked={jsonSupported} onChange={(e) => setJsonSupported(e.target.checked)} className="rounded border-gray-300" />
+                <label className="flex items-center gap-2 text-[13px] text-fg">
+                  <input type="checkbox" checked={jsonSupported} onChange={(e) => setJsonSupported(e.target.checked)} className={checkboxClass} />
                   {tx('ai.model.table.json')}
                 </label>
-              </div>
+              </fieldset>
 
               <div className="flex items-center gap-2">
                 <input
@@ -835,27 +946,20 @@ export const ModelManagementTab: React.FC = () => {
                   id="is_default"
                   checked={isDefault}
                   onChange={(e) => setIsDefault(e.target.checked)}
-                  className="rounded border-gray-300"
+                  className={checkboxClass}
                 />
-                <label htmlFor="is_default" className="text-xs text-gray-700 dark:text-gray-300 font-medium">
+                <label htmlFor="is_default" className="text-[13px] font-medium text-fg">
                   {tx('ai.model.modal.default')}
                 </label>
               </div>
 
-              <div className="flex justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
-                <button
-                  type="button"
-                  onClick={() => { setShowModal(false); setEditingModelId(null); }}
-                  className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
-                >
+              <div className="flex justify-end gap-2 border-t border-line pt-4">
+                <ActionButton type="button" size="md" onClick={() => { setShowModal(false); setEditingModelId(null); }}>
                   {tx('ai.model.modal.cancel')}
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg"
-                >
+                </ActionButton>
+                <ActionButton type="submit" variant="primary" size="md">
                   {editingModelId ? (language === 'zh' ? '保存修改' : 'Save Changes') : tx('ai.model.modal.submit')}
-                </button>
+                </ActionButton>
               </div>
             </form>
           </div>

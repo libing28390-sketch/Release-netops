@@ -345,6 +345,22 @@ def _sync_clarification_state(
 from fastapi.responses import StreamingResponse
 from core.context import request_id_var
 
+
+async def _enforce_copilot_quota(user_id: str) -> None:
+    """Per-user daily Copilot request limit (AI_COPILOT_DAILY_REQUEST_LIMIT)."""
+    from ai.security.rate_limit import ai_rate_limiter
+    from core.config import settings as _settings
+
+    limit = int(getattr(_settings, "AI_COPILOT_DAILY_REQUEST_LIMIT", 1000) or 0)
+    if limit <= 0:
+        return
+    allowed, _ = await ai_rate_limiter.is_allowed_async(str(user_id or "anonymous"), "copilot", max_per_day=limit)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail={"code": "AI_QUOTA_EXCEEDED", "message": "今日 Copilot 使用次数已达上限，请明天再试。"},
+        )
+
 @router.post("/chat")
 async def chat_assistant(req: ChatRequest, user=Depends(require_ai_permission("ai.assistant"))):
     """AI Assistant Copilot Chat Endpoint."""
@@ -368,6 +384,7 @@ async def chat_assistant(req: ChatRequest, user=Depends(require_ai_permission("a
             categories=categories,
         )
         return _security_block_result(request_id=request_id, code=request_security_code)
+    await _enforce_copilot_quota(str(user_id))
     if req.conversation_id:
         try:
             context = get_context(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id)
@@ -503,6 +520,14 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
                 code=request_security_code,
             )
 
+    # Count only new streams; reconnects and replays of the same stream are free.
+    if not stream_state.completed and not stream_state.events and not req.last_event_id:
+        try:
+            await _enforce_copilot_quota(user_id)
+        except HTTPException:
+            sse_stream_registry.close(stream_state)
+            raise
+
     if req.conversation_id and not stream_state.completed:
         try:
             context = get_context(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id)
@@ -556,7 +581,7 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
                 site_ids=user.get("site_ids") or [],
                 model_id=requested_model_id,
                 model_selection_source=model_selection_source,
-                context=req.context.model_dump(exclude_none=True),
+                context={**req.context.model_dump(exclude_none=True), **({"conversation_id": req.conversation_id} if req.conversation_id else {})},
                 stream_id=stream_state.stream_id,
                 request_id=request_id_var.get("-"),
                 pending_clarification=pending_clarification,
@@ -570,7 +595,7 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
                         for key in (
                             "intent", "clarification", "citations", "requested_model_id", "model_id", "provider_id", "route_reason",
                             "fallback_used", "execution_mode", "external_egress", "input_tokens",
-                            "output_tokens", "latency_ms", "duration_ms", "token_source",
+                            "output_tokens", "cached_tokens", "latency_ms", "duration_ms", "token_source",
                         ):
                             if key in payload and payload[key] is not None:
                                 route_meta[key] = payload[key]
@@ -618,6 +643,7 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
                         external_egress=route_meta.get("external_egress"),
                         input_tokens=route_meta.get("input_tokens"),
                         output_tokens=route_meta.get("output_tokens"),
+                        cached_tokens=route_meta.get("cached_tokens"),
                         latency_ms=route_meta.get("latency_ms") or route_meta.get("duration_ms"),
                         token_source=route_meta.get("token_source"),
                     )
@@ -1367,3 +1393,152 @@ def batch_delete_documents(payload: KnowledgeBatchDeleteRequest, user=Depends(re
                 continue
             raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
     return {"deleted_count": len(actions), "requested": len(payload.doc_ids), "actions": actions}
+
+
+@router.get("/tools")
+def get_copilot_tools(user=Depends(require_ai_permission("ai.assistant"))):
+    """Return dynamic Copilot slash-command & built-in MCP tool catalog."""
+    del user
+    from ai.mcp import list_copilot_tools
+
+    return {
+        "tools": list_copilot_tools(),
+        "mcp_endpoint": "/api/ai/assistant/mcp",
+    }
+
+
+class MCPJsonRpcRequest(BaseModel):
+    jsonrpc: str = "2.0"
+    id: Any = None
+    method: str = Field(..., min_length=1, max_length=64)
+    params: Dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/mcp")
+async def handle_mcp_jsonrpc(
+    payload: MCPJsonRpcRequest,
+    user=Depends(require_ai_permission("ai.assistant")),
+):
+    """Standard MCP JSON-RPC 2.0 endpoint for built-in read-only Nexora tools."""
+    from ai.mcp import call_mcp_tool, list_mcp_tools
+
+    req_id = payload.id
+    method = payload.method.strip()
+    if method == "initialize":
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "serverInfo": {"name": "nexora-builtin-mcp", "version": "1.0.0"},
+                "capabilities": {"tools": {}},
+            },
+        }
+    if method == "tools/list":
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {"tools": list_mcp_tools()},
+        }
+    if method == "tools/call":
+        tool_name = str(payload.params.get("name") or "").strip()
+        arguments = payload.params.get("arguments")
+        if not isinstance(arguments, dict):
+            arguments = {}
+        try:
+            data = await call_mcp_tool(
+                tool_name,
+                arguments,
+                tenant_id=user.get("tenant_id") if isinstance(user, dict) else None,
+            )
+        except KeyError as exc:
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {"code": -32601, "message": str(exc)},
+            }
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "content": [
+                    {"type": "text", "text": json.dumps(data, ensure_ascii=False)},
+                ],
+                "isError": False,
+            },
+        }
+    return {
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "error": {"code": -32601, "message": f"Unsupported MCP method: {method}"},
+    }
+
+
+@router.post("/attachments/parse")
+async def parse_copilot_attachment_file(
+    file: UploadFile = File(...),
+    user=Depends(require_ai_permission("ai.assistant")),
+):
+    """Parse an uploaded Word/Excel/PDF/text file locally and run security pre-check."""
+    from ai.services.document_security_scan import scan_document_security
+    from services.document_parser_adapters import ParsedBlock, ParsedDocument
+    from ai.services.document_parser import DocumentParseError, parse_uploaded_document
+
+    del user
+    raw = await file.read()
+    try:
+        parsed = parse_uploaded_document(file.filename or "attachment", raw)
+    except DocumentParseError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "ATTACHMENT_PARSE_ERROR", "message": str(exc)},
+        ) from exc
+
+    document = ParsedDocument(
+        format=parsed["extension"].lstrip(".") or "txt",
+        text=parsed["text"],
+        blocks=(ParsedBlock(text=parsed["text"]),),
+        metadata={"filename": parsed["filename"]},
+        parser_name="copilot-attachment-local",
+        parser_version="1",
+    )
+    try:
+        scan = scan_document_security(document)
+    except Exception:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "AI_ATTACHMENT_BLOCKED",
+                "message": "附件未通过安全预检，已阻止进入 AI 上下文。",
+            },
+        )
+    reason_codes = list(getattr(scan, "reason_codes", ()) or ())
+    findings = list(getattr(scan, "findings", ()) or ())
+    hard_block_categories = {"private_key", "credential_leak", "secret_key"}
+    has_hard_secret = any(
+        str(getattr(f, "category", "") or "").lower() in hard_block_categories
+        or "PRIVATE_KEY" in str(getattr(f, "code", "") or "").upper()
+        for f in findings
+    )
+    if has_hard_secret:
+        codes_str = ", ".join(reason_codes[:3]) if reason_codes else "SECRET"
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "AI_ATTACHMENT_BLOCKED",
+                "message": f"附件包含私钥或高敏凭据（{codes_str}），已被安全策略拦截。请移除私钥/明文密码后重试。",
+            },
+        )
+    needs_redact = bool(scan.quarantined or reason_codes)
+    decision = "MINIMIZE" if needs_redact else "ALLOW"
+    safe_text = sanitize_text(parsed["text"]) if needs_redact else parsed["text"]
+    return {
+        "filename": parsed["filename"],
+        "extension": parsed["extension"],
+        "size_bytes": parsed["size_bytes"],
+        "char_count": len(safe_text),
+        "truncated": parsed["truncated"],
+        "decision": decision,
+        "user_message": "附件已自动脱敏并通过安全预检" if needs_redact else "附件已解析并通过安全预检",
+        "text": safe_text,
+    }

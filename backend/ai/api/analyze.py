@@ -34,7 +34,7 @@ async def analyze_command(
     user_id = user.get("username", "user")
     tenant_id = str(user.get("tenant_id") or "tenant-default")
     roles = [str(user.get("role"))] if user.get("role") else []
-    allowed, _ = ai_rate_limiter.is_allowed(user_id, "command_explain")
+    allowed, _ = await ai_rate_limiter.is_allowed_async(user_id, "command_explain")
     if not allowed:
         raise HTTPException(status_code=429, detail="Daily rate limit exceeded for command analysis.")
     return await command_analysis_service.analyze(req, user_id=user_id, tenant_id=tenant_id, roles=roles)
@@ -49,7 +49,7 @@ async def analyze_config(
     user_id = user.get("username", "user")
     tenant_id = str(user.get("tenant_id") or "tenant-default")
     roles = [str(user.get("role"))] if user.get("role") else []
-    allowed, _ = ai_rate_limiter.is_allowed(user_id, "config_explain")
+    allowed, _ = await ai_rate_limiter.is_allowed_async(user_id, "config_explain")
     if not allowed:
         raise HTTPException(status_code=429, detail="Daily rate limit exceeded for config analysis.")
     return await config_analysis_service.analyze(req, user_id=user_id, tenant_id=tenant_id, roles=roles)
@@ -64,7 +64,7 @@ async def analyze_diff(
     user_id = user.get("username", "user")
     tenant_id = str(user.get("tenant_id") or "tenant-default")
     roles = [str(user.get("role"))] if user.get("role") else []
-    allowed, _ = ai_rate_limiter.is_allowed(user_id, "config_diff")
+    allowed, _ = await ai_rate_limiter.is_allowed_async(user_id, "config_diff")
     if not allowed:
         raise HTTPException(status_code=429, detail="Daily rate limit exceeded for diff analysis.")
     return await diff_analysis_service.analyze(req, user_id=user_id, tenant_id=tenant_id, roles=roles)
@@ -79,7 +79,7 @@ async def analyze_alarm(
     user_id = user.get("username", "user")
     tenant_id = str(user.get("tenant_id") or "tenant-default")
     roles = [str(user.get("role"))] if user.get("role") else []
-    allowed, _ = ai_rate_limiter.is_allowed(user_id, "alarm_analysis")
+    allowed, _ = await ai_rate_limiter.is_allowed_async(user_id, "alarm_analysis")
     if not allowed:
         raise HTTPException(status_code=429, detail="Daily rate limit exceeded for alarm analysis.")
     return await alarm_analysis_service.analyze(req, user_id=user_id, tenant_id=tenant_id, roles=roles)

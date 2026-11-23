@@ -127,20 +127,45 @@ def render_asset_analysis(query: str, analysis: Dict[str, Any]) -> str:
 
 def render_alert_analysis(query: str, analysis: Dict[str, Any]) -> str:
     """Render alert aggregates without exposing alert records."""
-    del query  # The raw question is not needed in the factual local report.
+    raw_query = str(query or "")
     alerts = analysis.get("alerts") if isinstance(analysis.get("alerts"), dict) else {}
     total = int(alerts.get("total_count", 0) or 0)
     active = int(alerts.get("active_count", 0) or 0)
     recent = int(alerts.get("recent_24h_count", 0) or 0)
+    scope = analysis.get("scope") if isinstance(analysis.get("scope"), dict) else {}
+    scope_parts = [part for part in (scope.get("time_range"), scope.get("status")) if part]
     lines = [
         "## Nexora 告警查询结果",
         "",
         "> 数据来源：PostgreSQL `alert_events` 与设备只读快照；不调用外部模型。",
         "",
+    ]
+    if any(marker in raw_query for marker in ("在线设备", "离线设备", "多少台", "设备数", "设备总数")):
+        try:
+            with get_db_connection() as conn:
+                dev_rows = conn.execute(
+                    "SELECT LOWER(COALESCE(status, 'unknown')), COUNT(*) FROM devices GROUP BY 1"
+                ).fetchall()
+            status_counts = {str(r[0]): int(r[1] or 0) for r in dev_rows}
+            total_devs = sum(status_counts.values())
+            online_devs = status_counts.get("online", 0) + status_counts.get("up", 0)
+            offline_devs = status_counts.get("offline", 0) + status_counts.get("down", 0)
+            lines.append(
+                f"- 当前纳管设备：**{total_devs}** 台（在线 **{online_devs}** 台，离线 **{offline_devs}** 台）。"
+            )
+        except Exception:
+            pass
+    if scope_parts:
+        lines.append(f"- 查询范围：{' · '.join(scope_parts)}，共 **{total}** 条。")
+        by_status = alerts.get("by_workflow_status") if isinstance(alerts.get("by_workflow_status"), dict) else {}
+        if by_status and not scope.get("status"):
+            lines.append("- 按处理状态：" + "，".join(f"{name} {count} 条" for name, count in by_status.items()) + "。")
+    lines.extend([
         f"- 当前未恢复告警：**{active}** 条。",
         f"- 最近 24 小时新增告警：**{recent}** 条。",
-        f"- 当前查询范围内告警总数：**{total}** 条。",
-    ]
+    ])
+    if not scope_parts:
+        lines.append(f"- 当前查询范围内告警总数：**{total}** 条。")
 
     active_by_severity = alerts.get("active_by_severity") if isinstance(alerts.get("active_by_severity"), dict) else {}
     recent_by_severity = alerts.get("recent_24h_by_severity") if isinstance(alerts.get("recent_24h_by_severity"), dict) else {}
@@ -148,6 +173,23 @@ def render_alert_analysis(query: str, analysis: Dict[str, Any]) -> str:
         lines.extend(["", *_bucket_table("当前未恢复告警严重级别", "严重级别", active_by_severity, active)])
     if recent_by_severity:
         lines.extend(["", *_bucket_table("最近 24 小时新增告警严重级别", "严重级别", recent_by_severity, recent)])
+    by_severity = alerts.get("by_severity") if isinstance(alerts.get("by_severity"), dict) else {}
+    if scope_parts and by_severity and not (by_severity == active_by_severity and total == active):
+        lines.extend(["", *_bucket_table("查询范围内告警严重级别", "严重级别", by_severity, total)])
+    records = analysis.get("records") if isinstance(analysis.get("records"), list) else []
+    if records:
+        shown = len(records)
+        heading = f"### 告警明细（最新 {shown} 条" + (f"，共 {total} 条" if total > shown else "") + "）"
+        lines.extend(["", heading, "", "| 时间 | 级别 | 设备 | 接口 | 告警 | 状态 |", "|---|---|---|---|---|---|"])
+        for item in records:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                f"| {item.get('created_at', '-')} | {item.get('severity', '-')} | {item.get('hostname', '-')} | "
+                f"{item.get('interface', '-')} | {item.get('title', '-')} | {item.get('status', '-')} |"
+            )
+        if total > shown:
+            lines.extend(["", "> 完整列表请到「告警中心」按相同条件筛选。"])
     if not total:
         lines.extend(["", "当前查询范围内没有匹配的告警记录。"])
     lines.extend([
@@ -159,12 +201,86 @@ def render_alert_analysis(query: str, analysis: Dict[str, Any]) -> str:
 
 def _relative_alert_start(value: Any) -> Optional[datetime]:
     """Parse only an unambiguous bounded relative alert window."""
+    window = _alert_time_window(value)
+    return window[0] if window else None
+
+
+_ALERT_WINDOW_ALIASES = {
+    "last_24h": "24h", "recent_24h": "24h", "最近24小时": "24h", "最近 24 小时": "24h",
+    "过去24小时": "24h", "过去 24 小时": "24h", "今天": "today", "今日": "today",
+    "昨天": "yesterday", "昨日": "yesterday", "本周": "this_week", "this week": "this_week",
+}
+_ALERT_STATUS_LABELS = {
+    "unhandled": "未处理（未恢复且未确认）",
+    "active": "未恢复",
+    "acknowledged": "已确认、未恢复",
+    "investigating": "处理中",
+    "suppressed": "已屏蔽",
+    "resolved": "已恢复",
+}
+_WORKFLOW_LABELS = {
+    "open": "未处理", "acknowledged": "已确认", "investigating": "处理中",
+    "suppressed": "已屏蔽", "resolved": "已恢复",
+}
+ALERT_LIST_LIMIT = 20
+
+
+def _alert_time_window(value: Any, now: Optional[datetime] = None) -> Optional[tuple[datetime, Optional[datetime], str]]:
+    """(start_utc, end_utc or None, label) for a normalised window token.
+
+    Calendar windows (today / yesterday / this week) use the server's local
+    timezone, which is the operators' timezone for an on-premises deployment.
+    """
+    import re
+
     normalized = " ".join(str(value or "").lower().split())
+    normalized = _ALERT_WINDOW_ALIASES.get(normalized, normalized)
     if not normalized:
         return None
-    if normalized in {"24h", "last_24h", "recent_24h", "最近24小时", "最近 24 小时", "过去24小时", "过去 24 小时"}:
-        return datetime.now(timezone.utc) - timedelta(hours=24)
+    local_now = (now or datetime.now(timezone.utc)).astimezone()
+    midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if normalized == "today":
+        return midnight.astimezone(timezone.utc), None, f"今天（{midnight:%m-%d} 00:00 起）"
+    if normalized == "yesterday":
+        start = midnight - timedelta(days=1)
+        return start.astimezone(timezone.utc), midnight.astimezone(timezone.utc), f"昨天（{start:%m-%d}）"
+    if normalized == "this_week":
+        start = midnight - timedelta(days=midnight.weekday())
+        return start.astimezone(timezone.utc), None, f"本周（{start:%m-%d} 起）"
+    match = re.fullmatch(r"(\d{1,3})\s*([hd])", normalized)
+    if match:
+        amount = int(match.group(1))
+        if match.group(2) == "h":
+            amount = max(1, min(amount, 720))
+            return local_now.astimezone(timezone.utc) - timedelta(hours=amount), None, f"最近 {amount} 小时"
+        amount = max(1, min(amount, 90))
+        return local_now.astimezone(timezone.utc) - timedelta(days=amount), None, f"最近 {amount} 天"
     return None
+
+
+def _alert_status_condition(status: Any) -> Optional[str]:
+    return {
+        "unhandled": "a.resolved_at IS NULL AND COALESCE(a.workflow_status, 'open') = 'open'",
+        "active": "a.resolved_at IS NULL",
+        "acknowledged": "a.resolved_at IS NULL AND a.workflow_status = 'acknowledged'",
+        "investigating": "a.resolved_at IS NULL AND a.workflow_status = 'investigating'",
+        "suppressed": "a.resolved_at IS NULL AND a.workflow_status = 'suppressed'",
+        "resolved": "a.resolved_at IS NOT NULL",
+    }.get(_text(status).lower())
+
+
+def _format_alert_time(value: Any) -> str:
+    parsed = _parse_timestamp(value)
+    if parsed is None:
+        return _text(value, "-")[:19]
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone().strftime("%m-%d %H:%M")
+
+
+def _table_cell(value: Any, limit: int = 80) -> str:
+    text = " ".join(_text(value, "-").split()).replace("|", "/")
+    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 class NaturalQueryService:
@@ -207,8 +323,8 @@ class NaturalQueryService:
                         "platform": r[3], "vendor": r[4], "model": r[5], "version": r[6],
                         "role": r[7], "site": r[8], "device_category": r[9], "status": r[10]
                     })
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Natural-language device search failed; returning no results code=AI_NATURAL_QUERY_DEVICE_SEARCH_FAILED error=%s", type(exc).__name__)
         return results
 
     async def execute_asset_analysis(
@@ -421,10 +537,17 @@ class NaturalQueryService:
             conditions.append("LOWER(COALESCE(s.site_name, s.site_code, d.site, d.site_id, '')) LIKE ?")
             params.append(f"%{site_filter.lower()}%")
 
-        range_start = _relative_alert_start(filters.get("time_range"))
-        if range_start is not None:
+        window = _alert_time_window(filters.get("time_range"))
+        if window is not None:
             conditions.append("a.created_at >= ?")
-            params.append(range_start.isoformat())
+            params.append(window[0].isoformat())
+            if window[1] is not None:
+                conditions.append("a.created_at < ?")
+                params.append(window[1].isoformat())
+        status_filter = _text(filters.get("status")).lower()
+        status_condition = _alert_status_condition(status_filter)
+        if status_condition:
+            conditions.append(f"({status_condition})")
 
         where_clause = " AND ".join(conditions) if conditions else "1 = 1"
         alert_rows: List[Any] = []
@@ -433,7 +556,8 @@ class NaturalQueryService:
                 alert_rows = conn.execute(
                     f"""
                     SELECT a.created_at, a.resolved_at, a.severity, a.device_id,
-                           a.workflow_status
+                           a.workflow_status, a.title, a.interface_name,
+                           d.hostname
                     FROM alert_events a
                     JOIN devices d ON d.id = a.device_id
                     LEFT JOIN sites s ON s.id = d.site_id OR s.id = d.site
@@ -480,10 +604,39 @@ class NaturalQueryService:
                 "active_by_severity": _count_values([
                     _text(_row_value(row, "severity"), "(empty)") for row in active_alerts
                 ]),
+                "by_severity": _count_values([
+                    _text(_row_value(row, "severity"), "(empty)") for row in alert_rows
+                ]),
+                "by_workflow_status": _count_values([
+                    _WORKFLOW_LABELS.get(
+                        "resolved" if _text(_row_value(row, "resolved_at")) else _text(_row_value(row, "workflow_status"), "open"),
+                        _text(_row_value(row, "workflow_status"), "(empty)"),
+                    )
+                    for row in alert_rows
+                ]),
                 "recent_24h_by_severity": _count_values([
                     _text(_row_value(row, "severity"), "(empty)") for row in recent_alerts
                 ]),
             },
+            "scope": {
+                "time_range": window[2] if window else "",
+                "status": _ALERT_STATUS_LABELS.get(status_filter, ""),
+            },
+            # Bounded, newest first, for the local answer only: hostname,
+            # severity, title and state -- never device ids or messages.
+            "records": [
+                {
+                    "created_at": _format_alert_time(_row_value(row, "created_at")),
+                    "severity": _table_cell(_row_value(row, "severity"), 16),
+                    "hostname": _table_cell(_row_value(row, "hostname"), 40),
+                    "interface": _table_cell(_row_value(row, "interface_name"), 32),
+                    "title": _table_cell(_row_value(row, "title"), 80),
+                    "status": "已恢复" if _text(_row_value(row, "resolved_at")) else _WORKFLOW_LABELS.get(
+                        _text(_row_value(row, "workflow_status"), "open"), _text(_row_value(row, "workflow_status"))
+                    ),
+                }
+                for row in alert_rows[:ALERT_LIST_LIMIT]
+            ],
             "evidence": [
                 {"source_type": "alert_events", "source_id": "alert_events", "record_count": len(alert_rows)},
             ],

@@ -1,0 +1,10 @@
+- targets:
+  - 192.168.204.128:9100
+  labels:
+    instance: 192.168.204.128:9100
+    hostname: ubuntu-nexora
+    role: server
+    os: linux
+    site_name: 默认站点
+    tenant_id: tenant-default
+    asset_id: asset-9688282318d8

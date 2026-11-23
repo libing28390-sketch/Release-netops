@@ -1,12 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import type { Terminal as XTerm } from 'xterm';
-import type { FitAddon } from 'xterm-addon-fit';
+import React, { Suspense, useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Package, Plus, Trash2, Search, X, RefreshCw, Download, Pencil, Copy,
   Server, Router, AlertTriangle, SlidersHorizontal,
   Wifi, Upload, FileText, Layers,
   AlertCircle, CheckCircle2, Info,
-  Flame, Lock, Terminal, Eye, EyeOff, Loader2, Shield, User, MonitorSpeaker
+  Flame, Lock, Terminal, Eye, EyeOff, Loader2, Shield, User
 } from 'lucide-react';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
@@ -20,10 +18,8 @@ import PageHero from '../../components/PageHero';
 import TagFilterDropdown from '../../components/TagFilterDropdown';
 import { ColumnSettingsButton, ListSearchInput, ListToolbar } from '../../components/ui/TableListControls';
 import { ApiError, apiRequest, authHeaders } from '../../api/http';
-import { useSystem } from '../../hooks/useSystem';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
-import { formatTerminalAgentError, getLocalTerminalConfig, TERMINAL_APP_LABELS } from '../../utils/localTerminal';
 import { useInventoryStore } from '../../store/inventoryStore';
 import type { TagDefinition } from '../../types';
 
@@ -61,12 +57,17 @@ import type {
 } from './importUtils';
 
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
-import { AssetImportValidationModal, MissingRackInfo, RackResolution } from './components/AssetImportValidationModal';
-import { TerminalAccessModal } from './components/TerminalAccessModal';
+import type { MissingRackInfo, RackResolution } from './components/AssetImportValidationModal';
 import { AssetDetailDrawer } from './components/AssetDetailDrawer';
-import { AssetModal } from './components/AssetModal';
 import { assetCategoryLabel, buildAssetExportData, fetchAllAssetPages, type AssetExportColumnKey } from './exportUtils';
 import { deviceRoleLabel } from '../../domain/deviceLabels';
+
+const AssetModal = React.lazy(() =>
+  import('./components/AssetModal').then(m => ({ default: m.AssetModal })),
+);
+const AssetImportValidationModal = React.lazy(() =>
+  import('./components/AssetImportValidationModal').then(m => ({ default: m.AssetImportValidationModal })),
+);
 
 type AssetImportSkippedItem = {
   asset_tag?: string;
@@ -321,8 +322,7 @@ const formatFallbackTemplateDateColumns = (
 };
 
 const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setActiveTab }) => {
-  const { systemInfo } = useSystem();
-  const refreshSharedAssetTotal = useInventoryStore(state => state.fetchAssetsTotal);
+  const hydrateAssetsSummary = useInventoryStore(state => state.hydrateAssetsSummary);
   const zh = language === 'zh';
   const goTo = (tab: string) => setActiveTab?.(tab);
 
@@ -342,6 +342,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const assetFetchSequenceRef = React.useRef(0);
   const summaryFetchSequenceRef = React.useRef(0);
 
+  const [searchInput, setSearchInput]   = useState('');
   const [search, setSearch]             = useState('');
   const [typeFilter, setTypeFilter]     = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -349,53 +350,14 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [dcFilter, setDcFilter]         = useState('all');
   const [deviceCategoryFilter, setDeviceCategoryFilter] = useState('');
   const [tagFilter, setTagFilter]       = useState<string[]>([]);
-  const [terminalSession, setTerminalSession] = useState<{ token: string; title: string } | null>(null);
-  const [terminalLines, setTerminalLines] = useState<string>('');
-  const [terminalInput, setTerminalInput] = useState('');
-  const terminalWsRef = React.useRef<WebSocket | null>(null);
-  const [terminals, setTerminals] = useState<Record<string, { term: XTerm; fit: FitAddon }>>({});
-  const terminalInitializingRef = React.useRef<Set<string>>(new Set());
-  const [showApprovalModal, setShowApprovalModal] = useState(false);
-  const [approvalData, setApprovalData] = useState({ ticket: '', reason: '', mfa: '' });
-  const [isApproved, setIsApproved] = useState(false);
 
-  /* ─── Terminal/PAM State ─── */
-  const [terminalTarget, setTerminalTarget] = useState<Asset | null>(null);
-  const [terminalAccessLevel, setTerminalAccessLevel] = useState<'normal' | 'admin'>('normal');
-  const [terminalReason, setTerminalReason] = useState('');
-  const [terminalRequesting, setTerminalRequesting] = useState(false);
-
-  const initTerminal = (container: HTMLDivElement, id: string) => {
-    if (terminals[id] || terminalInitializingRef.current.has(id)) return;
-    terminalInitializingRef.current.add(id);
-    void Promise.all([
-      import('xterm'),
-      import('xterm-addon-fit'),
-      import('xterm/css/xterm.css'),
-    ]).then(([{ Terminal: XTerm }, { FitAddon }]) => {
-      if (!container.isConnected) return;
-      const term = new XTerm({
-        cursorBlink: true,
-        fontSize: 12,
-        fontFamily: 'JetBrains Mono, Menlo, Monaco, Consolas, "Courier New", monospace',
-        theme: { background: '#0b1220', foreground: '#dbeafe', cursor: '#00bceb' },
-      });
-      const fitAddon = new FitAddon();
-      term.loadAddon(fitAddon);
-      term.open(container);
-      fitAddon.fit();
-
-      term.onData(data => {
-        if (terminalWsRef.current?.readyState === WebSocket.OPEN) {
-          terminalWsRef.current.send(data);
-        }
-      });
-
-      setTerminals(prev => ({ ...prev, [id]: { term, fit: fitAddon } }));
-    }).finally(() => {
-      terminalInitializingRef.current.delete(id);
-    });
-  };
+  useEffect(() => {
+    if (searchInput === search) return;
+    const timer = window.setTimeout(() => {
+      setSearch(searchInput);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [searchInput, search]);
 
   const [feedbackMsg, setFeedbackMsg] = useState<{
     type: 'success' | 'error' | 'warning' | 'info';
@@ -451,19 +413,19 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [allTags, setAllTags] = useState<TagDefinition[]>([]);
   useEscapeClose(showBatchTakeoverConfirm, () => setShowBatchTakeoverConfirm(false));
   useFocusTrap(batchTakeoverDialogRef, showBatchTakeoverConfirm, '[data-batch-takeover-cancel]');
-  const fetchAllRacks = useCallback(async () => {
+  const fetchAllRacks = useCallback(async (): Promise<any[]> => {
     try {
       const data = await apiRequest<{ success?: boolean; data?: unknown }>('/api/racks');
-      if (data.success && Array.isArray(data.data)) setAllRacks(data.data);
-      else throw new Error('Invalid rack lookup response');
+      if (data.success && Array.isArray(data.data)) {
+        setAllRacks(data.data);
+        return data.data;
+      }
+      throw new Error('Invalid rack lookup response');
     } catch (error) {
       setFeedbackMsg({ type: 'error', text: getAssetLoadIssue(error, language, zh ? '机柜选项' : 'Rack options').message });
+      return [];
     }
   }, [language, zh]);
-
-  useEffect(() => {
-    fetchAllRacks();
-  }, [fetchAllRacks]);
 
   useEffect(() => {
     apiRequest<{ data?: unknown }>('/api/tags/definitions')
@@ -496,14 +458,14 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       const payload = await apiRequest<AssetSummary>('/api/assets/summary');
       if (requestSequence !== summaryFetchSequenceRef.current) return;
       setSummary(payload);
-      void refreshSharedAssetTotal();
+      hydrateAssetsSummary(payload);
       setSummaryError(null);
     } catch (error) {
       if (requestSequence === summaryFetchSequenceRef.current) {
         setSummaryError(getAssetLoadIssue(error, language, zh ? '资产概览' : 'asset summary'));
       }
     }
-  }, [language, refreshSharedAssetTotal, zh]);
+  }, [hydrateAssetsSummary, language, zh]);
 
   const fetchSites = useCallback(async () => {
     try {
@@ -635,6 +597,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   ].filter(Boolean).length;
 
   const clearAllFilters = () => {
+    setSearchInput('');
     setSearch('');
     setTypeFilter('all');
     setStatusFilter('all');
@@ -937,7 +900,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       status: a.status, lifecycle_status: 'staging', asset_origin: 'new', takeover_exempt_reason: '',
       purchase_date: a.purchase_date, warranty_expiry: a.warranty_expiry,
       department: a.department, notes: a.notes,
-      platform: a.platform || (a.asset_type === 'server' ? 'linux' : 'cisco_ios'),
+      platform: normalizeImportedPlatform(a.platform || '') || (a.asset_type === 'server' ? 'linux' : 'cisco_ios'),
       connection_method: a.connection_method || 'ssh',
       ssh_algorithm_profile: 'auto',
       username: a.username || '',
@@ -948,11 +911,11 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       admin_password: '',
       enable_password: '',
       auth_model: 'dual',
-      snmp_community: a.snmp_community || '',
+      snmp_community: '',
       snmp_port: String(a.snmp_port || '161'),
       snmp_collection_enabled: (a as any).snmp_collection_enabled !== false,
       snmp_credential_id: (a as any).snmp_credential_id || '',
-      snmp_community_set: Boolean((a as any).snmp_community_set),
+      snmp_community_set: false,
       management_port: String(a.management_port ?? '22'),
       winrm_enabled: Boolean(a.winrm_enabled),
       winrm_port: String(a.winrm_port ?? 5986),
@@ -1208,82 +1171,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     });
     return [...rows, ...blockedGroups.values()];
   }, [batchTakeoverResults]);
-
-  const requestTerminalAccess = async () => {
-    if (!terminalTarget) return;
-    setTerminalRequesting(true);
-    try {
-      const requester = localStorage.getItem('netops_user') || 'unknown';
-      const r = await fetch('/api/pam/access-request', {
-        method: 'POST',
-        headers: authHeaders(true),
-        body: JSON.stringify({
-          asset_id: terminalTarget.id,
-          access_level: terminalAccessLevel,
-          reason: terminalReason.trim() || (terminalAccessLevel === 'normal' ? 'Direct access' : ''),
-          requester_username: requester,
-          ticket_id: approvalData.ticket,
-          mfa_code: approvalData.mfa
-        }),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        setFeedbackMsg({ type: 'error', text: (data?.detail || (zh ? '申请失败' : 'Request failed')) as string });
-        return;
-      }
-
-      if (data.status === 'approved' || (terminalAccessLevel === 'admin' && isApproved)) {
-        if (terminalAccessLevel === 'admin' && data.status !== 'approved') {
-           await fetch(`/api/pam/access-requests/${data.request_id}/approve`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ reviewer_username: 'system', comment: `MFA Verified: ${approvalData.ticket}`, ttl_minutes: 60 }),
-          });
-        }
-
-        const sr = await fetch('/api/pam/terminal-session', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ request_id: data.request_id }),
-        });
-        const sd = await sr.json().catch(() => ({}));
-        if (sr.ok && sd?.session_token) {
-          const connHint = `${sd.connect?.username || '-'}@${sd.connect?.host || '-'}:${sd.connect?.port || 22}`;
-          setTerminalLines('');
-          setTerminalInput('');
-          setTerminalSession({ token: sd.session_token, title: connHint });
-          setTerminalTarget(null);
-          setTerminalReason('');
-          setApprovalData({ ticket: '', reason: '', mfa: '' });
-          setIsApproved(false);
-        } else {
-          setFeedbackMsg({ type: 'error', text: (sd?.detail || (zh ? '终端会话创建失败' : 'Failed to create terminal session')) as string });
-        }
-      } else {
-        setFeedbackMsg({
-          type: 'info',
-          text: zh ? `已提交申请，单号 ${data.request_id}，等待审批。` : `Request ${data.request_id} submitted, waiting for approval.`,
-        });
-        setTerminalTarget(null);
-      }
-    } catch (e) {
-      setFeedbackMsg({ type: 'error', text: zh ? '网络异常' : 'Network error' });
-    } finally {
-      setTerminalRequesting(false);
-    }
-  };
-
-  const sendTerminalInput = () => {
-    const text = terminalInput;
-    if (!text.trim()) return;
-    const ws = terminalWsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      setFeedbackMsg({ type: 'warning', text: zh ? '终端连接未就绪' : 'Terminal not ready' });
-      return;
-    }
-    ws.send(`${text}\n`);
-    setTerminalInput('');
-  };
 
   const doImport = async (payload: any[]) => {
     // Keep failures visible above the validation dialog and page content.
@@ -1834,9 +1721,15 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         }
         if (!mapped.length) { setFeedbackMsg({ type: 'error', text: zh ? '未找到有效 data 行' : 'No valid rows found' }); return; }
         
+        // Load racks lazily only when an import references racks.
+        const hasAnyRack = mapped.some(row => Boolean(row.rack));
+        const racksForValidation = hasAnyRack
+          ? (allRacks.length > 0 ? allRacks : await fetchAllRacks())
+          : allRacks;
+
         // Index rack names by every accepted site alias before checking imported rows.
         const existingRackKeys = new Set<string>();
-        allRacks.forEach((rack) => {
+        racksForValidation.forEach((rack) => {
           const rackName = String(rack.name || '');
           [rack.site_id, rack.site_code, rack.site_name, rack.datacenter]
             .filter(Boolean)
@@ -2643,10 +2536,10 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                   language={language}
                   className="min-w-[220px] max-w-[320px]"
                   aria-label={zh ? '搜索 IP、主机名、资产编号或序列号' : 'Search IP, hostname, asset tag, or serial'}
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
+                  value={searchInput}
+                  onChange={e => setSearchInput(e.target.value)}
                   placeholder={zh ? '搜索 IP / 主机名 / 资产编号 / 序列号...' : 'Search IP / hostname / tag / serial...'}
-                  onClear={() => setSearch('')}
+                  onClear={() => { setSearchInput(''); setSearch(''); }}
                 />
 
               {([
@@ -2989,141 +2882,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
               alwaysVisible
             />
           </div>
-
-          {terminalSession && (
-            <motion.div
-              className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm"
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              onClick={() => setTerminalSession(null)}
-            >
-              <motion.div
-                className="bg-[#0b1220] rounded-2xl w-[900px] max-w-[95vw] h-[560px] border border-white/10 shadow-2xl flex flex-col overflow-hidden"
-                onClick={(e) => e.stopPropagation()}
-                initial={{ scale: 0.98, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.98, opacity: 0 }}
-              >
-                <div className="h-10 border-b border-white/10 px-3 flex items-center justify-between text-white/80 text-xs">
-                  <div className="font-semibold">{terminalSession.title}</div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={async () => {
-                        const { app: terminalType, path: terminalPath } = getLocalTerminalConfig();
-                        let user = '';
-                        let host = '';
-                        let port = 22;
-
-                        if (terminalTarget) {
-                          user = terminalAccessLevel === 'admin' ? (terminalTarget.admin_username || 'admin') : (terminalTarget.normal_username || 'user');
-                          host = terminalTarget.management_ip;
-                          port = Number(terminalTarget.management_port || 22) || 22;
-                        } else if (terminalSession.title.includes('@')) {
-                          const [u, h] = terminalSession.title.split('@');
-                          user = u;
-                          host = h.split(':')[0];
-                          port = Number(h.split(':')[1] || 22) || 22;
-                        }
-
-                        if (host && user) {
-                          let sessionToken = '';
-                          try {
-                            const res = await fetch('/api/system/launch-terminal', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({
-                                app_type: terminalType,
-                                path: terminalPath,
-                                host, user,
-                                requester_username: 'unknown',
-                                access_level: terminalTarget ? terminalAccessLevel : 'normal',
-                              })
-                            });
-                            const result = await res.json();
-                            if (result.success && result.session_token) {
-                              sessionToken = result.session_token;
-                            }
-                            if (result.success && result.port) {
-                              port = Number(result.port) || port;
-                            }
-                            if (!result.success) {
-                              setFeedbackMsg({
-                                type: 'error',
-                                text: zh
-                                  ? `设备会话创建失败：${result.error || '无法创建本地终端会话'}`
-                                  : `Device session creation failed: ${result.error || 'Unable to create the local terminal session'}`,
-                              });
-                              setTerminalSession(null);
-                              return;
-                            }
-                            if (!result.client_side) {
-                              setTerminalSession(null);
-                              return;
-                            }
-                            try {
-                              const agentBase = (localStorage.getItem('terminal_agent_url') || 'http://127.0.0.1:17890').replace(/\/$/, '');
-                              const agentRes = await fetch(`${agentBase}/v1/terminal/launch`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                  backend_url: window.location.origin,
-                                  session_token: sessionToken,
-                                  client: terminalType,
-                                  path: terminalPath,
-                                }),
-                              });
-                              const agentResult = await agentRes.json().catch(() => ({}));
-                              if (!agentRes.ok || !agentResult.success) {
-                                throw new Error(agentResult.error || `HTTP ${agentRes.status}`);
-                              }
-                            } catch (agentError) {
-                              console.error('Local Terminal Agent launch failed', agentError);
-                              setFeedbackMsg({ type: 'error', text: formatTerminalAgentError(agentError, zh) });
-                              setTerminalSession(null);
-                              return;
-                            }
-                            setTerminalSession(null);
-                            return;
-                          } catch (err) {
-                            console.error('Local terminal session request failed', err);
-                            const detail = err instanceof Error ? err.message : String(err || 'Unknown error');
-                            setFeedbackMsg({
-                              type: 'error',
-                              text: zh ? `设备会话请求失败，请检查后端服务或网络连接：${detail}` : `Device session request failed. Check the backend service or network: ${detail}`,
-                            });
-                            setTerminalSession(null);
-                            return;
-                          }
-                        }
-                      }}
-                      className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-lg hover:bg-emerald-500/30 transition-all flex items-center gap-1 cursor-pointer"
-                    >
-                      <MonitorSpeaker size={10} />
-                      {(() => {
-                        const app = getLocalTerminalConfig().app;
-                        const appName = TERMINAL_APP_LABELS[app] || 'Terminal';
-                        return zh ? `${appName} 调起` : `Launch ${appName}`;
-                      })()}
-                    </button>
-                    <button onClick={() => setTerminalSession(null)} className="text-white/50 hover:text-white ml-2 cursor-pointer"><X size={14} /></button>
-                  </div>
-                </div>
-                <div className="flex-1 bg-black/20 relative overflow-hidden">
-                  <div
-                    ref={el => el && initTerminal(el, 'asset-terminal')}
-                    className="absolute inset-0 p-2"
-                  />
-                </div>
-                <div className="h-12 border-t border-white/10 px-3 flex items-center gap-2">
-                  <input
-                    value={terminalInput}
-                    onChange={(e) => setTerminalInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') sendTerminalInput(); }}
-                    placeholder={zh ? '输入命令并回车' : 'Type command and press Enter'}
-                    className="flex-1 h-8 bg-black/30 border border-white/15 rounded-lg px-2 text-xs text-white outline-none"
-                  />
-                  <button onClick={sendTerminalInput} className="h-8 px-3 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 cursor-pointer">{zh ? '发送' : 'Send'}</button>
-                </div>
-              </motion.div>
-            </motion.div>
-          )}
         </div>
 
       {/* Drawer */}
@@ -3175,56 +2933,43 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         language={language}
       />
 
-      {/* Terminal Access */}
-      <TerminalAccessModal
-        isOpen={!!terminalTarget}
-        onClose={() => setTerminalTarget(null)}
-        terminalTarget={terminalTarget}
-        terminalAccessLevel={terminalAccessLevel}
-        setTerminalAccessLevel={setTerminalAccessLevel}
-        approvalData={approvalData}
-        setApprovalData={setApprovalData}
-        terminalReason={terminalReason}
-        setTerminalReason={setTerminalReason}
-        terminalRequesting={terminalRequesting}
-        systemInfo={systemInfo}
-        requestTerminalAccess={requestTerminalAccess}
-        setIsApproved={setIsApproved}
-        language={language}
-      />
+      {/* Create/Edit Asset Modal & Import Validation Modal (lazy-loaded on demand) */}
+      <Suspense fallback={null}>
+        {showModal && (
+          <AssetModal
+            isOpen={showModal}
+            onClose={() => setShowModal(false)}
+            isEditMode={!!editingAsset}
+            editingAsset={editingAsset}
+            form={form}
+            setForm={setForm}
+            saving={saving}
+            modalError={modalError}
+            setModalError={setModalError}
+            showEnableSecret={showEnableSecret}
+            setShowEnableSecret={setShowEnableSecret}
+            showProductionConfirm={showProductionConfirm}
+            setShowProductionConfirm={setShowProductionConfirm}
+            handleSave={handleSave}
+            doSave={doSave}
+            language={language}
+            setFeedbackMsg={setFeedbackMsg}
+            allTags={allTags}
+          />
+        )}
 
-      {/* Create/Edit Asset Modal */}
-      <AssetModal
-        isOpen={showModal}
-        onClose={() => setShowModal(false)}
-        isEditMode={!!editingAsset}
-        editingAsset={editingAsset}
-        form={form}
-        setForm={setForm}
-        saving={saving}
-        modalError={modalError}
-        setModalError={setModalError}
-        showEnableSecret={showEnableSecret}
-        setShowEnableSecret={setShowEnableSecret}
-        showProductionConfirm={showProductionConfirm}
-        setShowProductionConfirm={setShowProductionConfirm}
-        handleSave={handleSave}
-        doSave={doSave}
-        language={language}
-        setFeedbackMsg={setFeedbackMsg}
-        allTags={allTags}
-      />
-
-      {/* Asset Import Validation Modal */}
-      <AssetImportValidationModal
-        isOpen={showValidationModal}
-        onClose={() => setShowValidationModal(false)}
-        language={language}
-        missingRacks={missingRacks}
-        existingRacks={allRacks}
-        onConfirm={handleValidationConfirm}
-        saving={validationModalSaving}
-      />
+        {showValidationModal && (
+          <AssetImportValidationModal
+            isOpen={showValidationModal}
+            onClose={() => setShowValidationModal(false)}
+            language={language}
+            missingRacks={missingRacks}
+            existingRacks={allRacks}
+            onConfirm={handleValidationConfirm}
+            saving={validationModalSaving}
+          />
+        )}
+      </Suspense>
 
       {stackModal && (
         <StackMembersModal

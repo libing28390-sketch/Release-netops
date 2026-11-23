@@ -1,0 +1,179 @@
+[
+  {
+    "id": 122807256396,
+    "name": "Release Ubuntu / Linux (main branch)",
+    "status": "completed",
+    "conclusion": "success",
+    "html_url": "https://github.com/chaojifeixia-007/netsops/actions/runs/40685669274/job/122807256396",
+    "steps": [
+      {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1,
+        "started_at": "2026-10-28T12:10:37Z",
+        "completed_at": "2026-10-28T12:10:38Z"
+      },
+      {
+        "name": "Checkout source repository",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 2,
+        "started_at": "2026-10-28T12:10:38Z",
+        "completed_at": "2026-10-28T12:10:44Z"
+      },
+      {
+        "name": "Validate release version and tag",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3,
+        "started_at": "2026-10-28T12:10:44Z",
+        "completed_at": "2026-10-28T12:10:45Z"
+      },
+      {
+        "name": "Start PostgreSQL with pgvector",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 4,
+        "started_at": "2026-10-28T12:10:45Z",
+        "completed_at": "2026-10-28T12:11:07Z"
+      },
+      {
+        "name": "Set up Python",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 5,
+        "started_at": "2026-10-28T12:11:07Z",
+        "completed_at": "2026-10-28T12:11:10Z"
+      },
+      {
+        "name": "Install backend release-gate dependencies",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 6,
+        "started_at": "2026-10-28T12:11:10Z",
+        "completed_at": "2026-10-28T12:11:25Z"
+      },
+      {
+        "name": "Run backend pytest release gate",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 7,
+        "started_at": "2026-10-28T12:11:25Z",
+        "completed_at": "2026-10-28T12:23:00Z"
+      },
+      {
+        "name": "Set up Node",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 8,
+        "started_at": "2026-10-28T12:23:00Z",
+        "completed_at": "2026-10-28T12:23:08Z"
+      },
+      {
+        "name": "Cache uploader script",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 9,
+        "started_at": "2026-10-28T12:23:08Z",
+        "completed_at": "2026-10-28T12:23:08Z"
+      },
+      {
+        "name": "Validate core Docker inputs and build frontend",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 10,
+        "started_at": "2026-10-28T12:23:08Z",
+        "completed_at": "2026-10-28T12:27:34Z"
+      },
+      {
+        "name": "Run complete Knowledge Engine evaluation release gate",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 11,
+        "started_at": "2026-10-28T12:27:34Z",
+        "completed_at": "2026-10-28T12:27:34Z"
+      },
+      {
+        "name": "Remove private and development-only files",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 12,
+        "started_at": "2026-10-28T12:27:34Z",
+        "completed_at": "2026-10-28T12:27:45Z"
+      },
+      {
+        "name": "Commit sanitized Ubuntu release tree",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 13,
+        "started_at": "2026-10-28T12:27:45Z",
+        "completed_at": "2026-10-28T12:28:01Z"
+      },
+      {
+        "name": "Package Linux / Ubuntu / Docker Release Archive",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 14,
+        "started_at": "2026-10-28T12:28:01Z",
+        "completed_at": "2026-10-28T12:28:06Z"
+      },
+      {
+        "name": "Upload Linux Release to Baidu Pan (\u767e\u5ea6\u7f51\u76d8)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 15,
+        "started_at": "2026-10-28T12:28:06Z",
+        "completed_at": "2026-10-28T12:28:06Z"
+      },
+      {
+        "name": "Create public GitHub Release",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 16,
+        "started_at": "2026-10-28T12:28:06Z",
+        "completed_at": "2026-10-28T12:28:06Z"
+      },
+      {
+        "name": "Post Set up Node",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 30,
+        "started_at": "2026-10-28T12:28:06Z",
+        "completed_at": "2026-10-28T12:28:06Z"
+      },
+      {
+        "name": "Post Set up Python",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 31,
+        "started_at": "2026-10-28T12:28:06Z",
+        "completed_at": "2026-10-28T12:28:06Z"
+      },
+      {
+        "name": "Post Checkout source repository",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 32,
+        "started_at": "2026-10-28T12:28:06Z",
+        "completed_at": "2026-10-28T12:28:06Z"
+      },
+      {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 33,
+        "started_at": "2026-10-28T12:28:06Z",
+        "completed_at": "2026-10-28T12:28:06Z"
+      }
+    ]
+  },
+  {
+    "id": 122815404858,
+    "name": "Release Windows Workstation Agent",
+    "status": "completed",
+    "conclusion": "skipped",
+    "html_url": "https://github.com/chaojifeixia-007/netsops/actions/runs/40685669274/job/122815404858",
+    "steps": []
+  }
+]

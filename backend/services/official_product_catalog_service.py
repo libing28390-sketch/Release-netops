@@ -89,12 +89,12 @@ MODEL_CATALOG: dict[str, tuple[dict[str, str], ...]] = {
         {"model": "FPR1120-NGFW-K9", "series": "Firepower 1000", "scope": "security", "platform": "cisco_ftd"},
     ),
     "Ruijie": (
-        {"model": "RG-S2910-24GT4XS-E", "series": "RG-S2910", "scope": "campus", "platform": "ruijie_os"},
-        {"model": "RG-S5750C-28GT4XS-H", "series": "RG-S5750C", "scope": "campus", "platform": "ruijie_os"},
-        {"model": "RG-S6220-48XS6QXS-H", "series": "RG-S6220", "scope": "datacenter", "platform": "ruijie_os"},
-        {"model": "RG-S6510-48VS8CQ", "series": "RG-S6510", "scope": "datacenter", "platform": "ruijie_os"},
-        {"model": "RG-N18010-XH", "series": "RG-N18000", "scope": "campus", "platform": "ruijie_os"},
-        {"model": "RG-WALL 1600-Z3200-S", "series": "RG-WALL 1600", "scope": "security", "platform": "ruijie_os"},
+        {"model": "RG-S2910-24GT4XS-E", "series": "RG-S2910", "scope": "campus", "platform": "ruijie_rgos"},
+        {"model": "RG-S5750C-28GT4XS-H", "series": "RG-S5750C", "scope": "campus", "platform": "ruijie_rgos"},
+        {"model": "RG-S6220-48XS6QXS-H", "series": "RG-S6220", "scope": "datacenter", "platform": "ruijie_rgos"},
+        {"model": "RG-S6510-48VS8CQ", "series": "RG-S6510", "scope": "datacenter", "platform": "ruijie_rgos"},
+        {"model": "RG-N18010-XH", "series": "RG-N18000", "scope": "campus", "platform": "ruijie_rgos"},
+        {"model": "RG-WALL 1600-Z3200-S", "series": "RG-WALL 1600", "scope": "security", "platform": "ruijie_rgos"},
     ),
     "Juniper": (
         {"model": "EX4300-48P", "series": "EX4300", "scope": "campus", "platform": "juniper_junos"},

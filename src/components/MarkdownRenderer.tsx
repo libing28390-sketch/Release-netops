@@ -5,6 +5,11 @@ import { Copy, Check, Terminal } from 'lucide-react';
 import { copyTextWithFallback } from '../utils/clipboard';
 import { ActionButton } from './ui/ActionIconButton';
 
+// Derived from the component's props instead of importing `Components`: the
+// local shim in src/types/vendor-modules.d.ts replaces the package typings
+// and does not export that name.
+type Components = NonNullable<React.ComponentProps<typeof ReactMarkdown>['components']>;
+
 interface MarkdownRendererProps {
   content: string;
   className?: string;
@@ -34,6 +39,15 @@ const normalizeSafeHref = (value: string | undefined): string | null => {
     .replace(/^https?\\:\/\//i, (match) => match.replace('\\', ''));
   if (/^(?:https?|mailto):/i.test(href) || href.startsWith('/') || href.startsWith('#')) return href;
   return null;
+};
+
+/** Plain text of a React node tree (code children may be split into spans). */
+const nodeText = (node: React.ReactNode): string => {
+  if (node === null || node === undefined || typeof node === 'boolean') return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(nodeText).join('');
+  if (React.isValidElement<{ children?: React.ReactNode }>(node)) return nodeText(node.props.children);
+  return '';
 };
 
 const CodeBlockHeader: React.FC<{ language: string; code: string }> = ({ language, code }) => {
@@ -99,111 +113,144 @@ const CodeBlockHeader: React.FC<{ language: string; code: string }> = ({ languag
   );
 };
 
-export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className = '' }) => {
+const CodeBlock: React.FC<{ language: string; code: string }> = ({ language, code }) => {
+  const bodyRef = React.useRef<HTMLPreElement>(null);
+
+  // Ctrl/Cmd+A inside a focused code block selects only that block, so a
+  // CLI output can be copied without dragging across the whole answer.
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLPreElement>) => {
+    if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'a' || !bodyRef.current) return;
+    event.preventDefault();
+    const range = document.createRange();
+    range.selectNodeContents(bodyRef.current);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  };
+
+  return (
+    // first:mt-0 -- when an answer starts with a code block, its top margin
+    // used to add a gap above the first line that no other first element has
+    // (the parent's space-y only spaces siblings).
+    <div className="my-3 first:mt-0 last:mb-0 rounded-xl overflow-hidden shadow-md border border-gray-800 bg-[#0d1117]" data-code-block="true">
+      <CodeBlockHeader language={language} code={code} />
+      <pre
+        ref={bodyRef}
+        tabIndex={0}
+        onKeyDown={handleKeyDown}
+        aria-label={`${language || '文本'} 代码块，可按 Ctrl+A 只选中本块`}
+        className="m-0 p-3.5 overflow-x-auto text-[#e6edf3] font-mono text-xs leading-relaxed whitespace-pre select-text cursor-text outline-none focus-visible:ring-1 focus-visible:ring-indigo-400/60 selection:bg-indigo-500/40 selection:text-white"
+      >
+        <code>{code}</code>
+      </pre>
+    </div>
+  );
+};
+
+// Module-level on purpose: an inline `components` object gives react-markdown
+// new component identities on every parent render, so React unmounts and
+// re-creates every code block -- which silently destroys the user's text
+// selection the moment the Copilot page re-renders (e.g. on selectionchange).
+const MARKDOWN_COMPONENTS: Components = {
+  h1: ({ children }) => (
+    <h1 className="text-lg font-bold text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-1 mt-4 first:mt-0 mb-2">
+      {children}
+    </h1>
+  ),
+  h2: ({ children }) => (
+    <h2 className="text-base font-bold text-gray-900 dark:text-white border-b border-gray-100 dark:border-gray-700/60 pb-1 mt-3 first:mt-0 mb-2">
+      {children}
+    </h2>
+  ),
+  h3: ({ children }) => (
+    <h3 className="text-sm font-bold text-gray-900 dark:text-white mt-2.5 first:mt-0 mb-1.5">
+      {children}
+    </h3>
+  ),
+  p: ({ children }) => <p className="mb-2 leading-relaxed">{children}</p>,
+  ul: ({ children }) => <ul className="list-disc list-inside space-y-1 my-2 pl-2">{children}</ul>,
+  ol: ({ children }) => <ol className="list-decimal list-inside space-y-1 my-2 pl-2">{children}</ol>,
+  li: ({ children }) => <li className="leading-normal">{children}</li>,
+  blockquote: ({ children }) => (
+    <blockquote className="border-l-4 border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/30 px-3.5 py-2 my-2 rounded-r-lg text-gray-700 dark:text-gray-300 italic">
+      {children}
+    </blockquote>
+  ),
+  table: ({ children }) => (
+    <div className="overflow-x-auto my-3 rounded-lg border border-gray-200 dark:border-gray-700">
+      <table className="nx-data-table min-w-full text-left">
+        {children}
+      </table>
+    </div>
+  ),
+  thead: ({ children }) => (
+    <thead className="bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200 font-semibold">
+      {children}
+    </thead>
+  ),
+  tbody: ({ children }) => (
+    <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-900/40">
+      {children}
+    </tbody>
+  ),
+  tr: ({ children }) => (
+    <tr className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+      {children}
+    </tr>
+  ),
+  th: ({ children }) => <th className="px-3.5 py-2 font-medium">{children}</th>,
+  td: ({ children }) => <td className="px-3.5 py-2">{children}</td>,
+  hr: () => <hr className="my-4 border-gray-200 dark:border-gray-700" />,
+  a: ({ href, children }) => {
+    const safeHref = normalizeSafeHref(href);
+    if (!safeHref) return <span>{children}</span>;
+    return (
+      <a
+        href={safeHref}
+        target={safeHref.startsWith('http') ? '_blank' : undefined}
+        rel={safeHref.startsWith('http') ? 'noopener noreferrer' : undefined}
+        className="text-indigo-600 dark:text-indigo-400 hover:underline font-medium"
+      >
+        {children}
+      </a>
+    );
+  },
+  // Fenced blocks arrive as <pre><code class="language-x">.  Handling them at
+  // the <pre> level also covers blocks without a language, which used to be
+  // rendered with the inline-code style.
+  pre: ({ children }) => {
+    const child = React.Children.toArray(children)[0];
+    const codeProps = React.isValidElement<{ className?: string; children?: React.ReactNode }>(child)
+      ? child.props
+      : { className: '', children };
+    const language = /language-([\w-]+)/.exec(codeProps.className || '')?.[1] || '';
+    const code = nodeText(codeProps.children).replace(/\n$/, '');
+    return <CodeBlock language={language} code={code} />;
+  },
+  code: ({ children }) => (
+    <code className="bg-gray-200/70 dark:bg-gray-800 text-indigo-600 dark:text-indigo-300 font-mono text-[12px] px-1.5 py-0.5 rounded border border-gray-300/40 dark:border-gray-700/40">
+      {children}
+    </code>
+  ),
+};
+
+const REMARK_PLUGINS = [remarkGfm];
+
+const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, className = '' }) => {
   return (
     <div
       className={`markdown-body select-text space-y-3 leading-relaxed text-sm ${className}`}
       style={{ userSelect: 'text', WebkitUserSelect: 'text' }}
     >
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          h1: ({ children }) => (
-            <h1 className="text-lg font-bold text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-1 mt-4 mb-2">
-              {children}
-            </h1>
-          ),
-          h2: ({ children }) => (
-            <h2 className="text-base font-bold text-gray-900 dark:text-white border-b border-gray-100 dark:border-gray-700/60 pb-1 mt-3 mb-2">
-              {children}
-            </h2>
-          ),
-          h3: ({ children }) => (
-            <h3 className="text-sm font-bold text-gray-900 dark:text-white mt-2.5 mb-1.5">
-              {children}
-            </h3>
-          ),
-          p: ({ children }) => <p className="mb-2 leading-relaxed">{children}</p>,
-          ul: ({ children }) => <ul className="list-disc list-inside space-y-1 my-2 pl-2">{children}</ul>,
-          ol: ({ children }) => <ol className="list-decimal list-inside space-y-1 my-2 pl-2">{children}</ol>,
-          li: ({ children }) => <li className="leading-normal">{children}</li>,
-          blockquote: ({ children }) => (
-            <blockquote className="border-l-4 border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/30 px-3.5 py-2 my-2 rounded-r-lg text-gray-700 dark:text-gray-300 italic">
-              {children}
-            </blockquote>
-          ),
-          table: ({ children }) => (
-            <div className="overflow-x-auto my-3 rounded-lg border border-gray-200 dark:border-gray-700">
-              <table className="nx-data-table min-w-full text-left">
-                {children}
-              </table>
-            </div>
-          ),
-          thead: ({ children }) => (
-            <thead className="bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200 font-semibold">
-              {children}
-            </thead>
-          ),
-          tbody: ({ children }) => (
-            <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-900/40">
-              {children}
-            </tbody>
-          ),
-          tr: ({ children }) => (
-            <tr className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
-              {children}
-            </tr>
-          ),
-          th: ({ children }) => <th className="px-3.5 py-2 font-medium">{children}</th>,
-          td: ({ children }) => <td className="px-3.5 py-2">{children}</td>,
-          hr: () => <hr className="my-4 border-gray-200 dark:border-gray-700" />,
-          a: ({ href, children }) => {
-            const safeHref = normalizeSafeHref(href);
-            if (!safeHref) return <span>{children}</span>;
-            return (
-              <a
-                href={safeHref}
-                target={safeHref.startsWith('http') ? '_blank' : undefined}
-                rel={safeHref.startsWith('http') ? 'noopener noreferrer' : undefined}
-                className="text-indigo-600 dark:text-indigo-400 hover:underline font-medium"
-              >
-                {children}
-              </a>
-            );
-          },
-          code({ inline, className: codeClassName, children, ...props }: any) {
-            const match = /language-(\w+)/.exec(codeClassName || '');
-            const language = match ? match[1] : '';
-            const codeString = String(children).replace(/\n$/, '');
-
-            if (inline || !codeClassName) {
-              return (
-                <code
-                  className="bg-gray-200/70 dark:bg-gray-800 text-indigo-600 dark:text-indigo-300 font-mono text-[12px] px-1.5 py-0.5 rounded border border-gray-300/40 dark:border-gray-700/40"
-                  {...props}
-                >
-                  {children}
-                </code>
-              );
-            }
-
-            return (
-              <div className="my-3 rounded-xl overflow-hidden shadow-md border border-gray-800 bg-[#0d1117]">
-                <CodeBlockHeader language={language} code={codeString} />
-                <div className="p-3.5 overflow-x-auto text-[#e6edf3] font-mono text-xs leading-relaxed select-text">
-                  <pre>
-                    <code>{codeString}</code>
-                  </pre>
-                </div>
-              </div>
-            );
-          },
-        }}
-      >
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
         {normalizeMarkdownContent(content)}
       </ReactMarkdown>
     </div>
   );
 };
+
+// Re-render only when the text changes; parent state such as the current
+// selection or a running timer must not rebuild the rendered answer.
+export const MarkdownRenderer = React.memo(MarkdownRendererImpl);
 
 export default MarkdownRenderer;

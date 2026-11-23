@@ -1,0 +1,29 @@
+{
+  "mode": "before",
+  "sampleCount": 69,
+  "pageWidthBefore": 852.875,
+  "pageWidthAfter": 1023.390625,
+  "maxWidthDelta": 170.515625,
+  "maxTranslation": 8,
+  "maxScaleDeviation": 0,
+  "firstTransforms": [
+    "none",
+    "matrix(1, 0, 0, 1, 0, -6)",
+    "matrix(1, 0, 0, 1, 0, 8)",
+    "matrix(1, 0, 0, 1, 0, 8)",
+    "matrix(1, 0, 0, 1, 0, 4)",
+    "matrix(1, 0, 0, 1, 0, 4)",
+    "matrix(1, 0, 0, 1, 0, 4)",
+    "matrix(1, 0, 0, 1, 0, 4)"
+  ],
+  "lastTransforms": [
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none"
+  ]
+}

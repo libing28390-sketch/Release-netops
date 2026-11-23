@@ -5,7 +5,12 @@ from services.official_template_projection_service import (
     _product_scope,
     _render,
 )
-from services.official_product_catalog_service import MODEL_CATALOG, model_aliases, vendor_models
+from services.official_product_catalog_service import (
+    MODEL_CATALOG,
+    OFFICIAL_MODEL_REFERENCE,
+    model_aliases,
+    vendor_models,
+)
 
 
 def _row(template_id: str, content: str = "", vendor: str = "Cisco") -> dict[str, str]:
@@ -48,16 +53,29 @@ def test_projection_keeps_data_center_product_scopes_specific():
     assert _product_scope(_row("official-cisco-nexus-bgp-basic", ""))[1] == "Nexus 3000/9000"
 
 
+# Huawei/H3C/Cisco are the fully reviewed vendors; the others were added later
+# with a smaller, still official-source-backed model list.
+CORE_VENDORS = ("Huawei", "H3C", "Cisco")
+KNOWN_SCOPES = {"campus", "datacenter", "wan", "security"}
+
+
 def test_reviewed_catalog_covers_ten_models_per_vendor_and_both_network_scopes():
-    for vendor in ("Huawei", "H3C", "Cisco"):
+    for vendor in CORE_VENDORS:
         rows = vendor_models(vendor)
         assert len(rows) >= 10
-        assert {row["scope"] for row in rows} == {"campus", "datacenter"}
+        scopes = {row["scope"] for row in rows}
+        # Campus and data-center coverage stays mandatory; WAN routers and
+        # security appliances are optional additions.
+        assert {"campus", "datacenter"} <= scopes <= KNOWN_SCOPES
         assert all(row["model"] for row in rows)
         # A CloudEngine display name and its bare hardware token are aliases
         # of one reviewed row, not two unverified SKUs.
         if vendor == "Huawei":
             assert model_aliases(rows[0])[:2] == [rows[0]["model"], rows[0]["model"].replace("CloudEngine ", "")]
+    for vendor, rows in MODEL_CATALOG.items():
+        assert rows, vendor
+        assert {row["scope"] for row in rows} <= KNOWN_SCOPES, vendor
+        assert all(row["model"] and row["series"] and row["platform"] for row in rows), vendor
 
 
 def test_catalog_platforms_keep_campus_and_data_center_cli_families_separate():
@@ -80,12 +98,29 @@ def test_every_catalog_model_has_vendor_official_provenance():
         "Huawei": {"support.huawei.com", "info.support.huawei.com"},
         "H3C": {"www.h3c.com"},
         "Cisco": {"www.cisco.com"},
+        # ruijie.com is Ruijie's current global site; ruijienetworks.com the older one.
+        "Ruijie": {"www.ruijienetworks.com", "www.ruijie.com"},
+        "Juniper": {"www.juniper.net"},
+        "Fortinet": {"www.fortinet.com"},
+        "Aruba": {"www.arubanetworks.com"},
     }
+    # Every catalog vendor must have an explicit official host list.
+    assert set(MODEL_CATALOG) <= set(allowed_hosts)
     for vendor, rows in MODEL_CATALOG.items():
-        assert len(rows) >= 10
+        if vendor in CORE_VENDORS:
+            assert len(rows) >= 10
         for row in rows:
             assert row["official_url"].startswith("https://")
             assert urlsplit(row["official_url"]).hostname in allowed_hosts[vendor]
             assert row["verification_level"] == "official_model_or_series_catalog"
             expected_date = "2026-09-04" if row["model"] in {"C3850", "S6850"} else "2026-08-23"
             assert row["source_checked_at"] == expected_date
+
+
+def test_wan_and_security_models_have_their_own_official_page():
+    """A router or firewall cannot be evidenced by a vendor's switch index page."""
+    for vendor, rows in MODEL_CATALOG.items():
+        generic = OFFICIAL_MODEL_REFERENCE[vendor]
+        for row in rows:
+            if row["scope"] in {"wan", "security"} and "switch" in generic.lower():
+                assert row["official_url"] != generic, (vendor, row["model"])

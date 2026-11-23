@@ -47,6 +47,15 @@ class AIAuthFailedException(AIException):
         super().__init__("AI_AUTH_FAILED", message, request_id, status.HTTP_401_UNAUTHORIZED)
 
 
+class AIKeyDecryptException(AIAuthFailedException):
+    """A provider key is stored but cannot be decrypted (wrong/missing master key)."""
+
+    def __init__(self, message: str = "Stored AI provider key cannot be decrypted; check the master key configuration", request_id: Optional[str] = None):
+        super().__init__(message, request_id)
+        self.code = "AI_KEY_DECRYPT_FAILED"
+        self.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+
+
 class AIRateLimitException(AIException):
     def __init__(self, message: str = "AI Provider or user rate limit exceeded", request_id: Optional[str] = None):
         super().__init__("AI_RATE_LIMIT", message, request_id, status.HTTP_429_TOO_MANY_REQUESTS)
@@ -82,6 +91,13 @@ class AIOutputTruncatedException(AIException):
 class AIInvalidRequestException(AIException):
     def __init__(self, message: str = "AI provider rejected the request", request_id: Optional[str] = None):
         super().__init__("AI_INVALID_REQUEST", message, request_id, status.HTTP_400_BAD_REQUEST)
+
+
+class AIContextTooLargeException(AIException):
+    """The request cannot fit the model context window even after trimming history."""
+
+    def __init__(self, message: str = "Request is larger than the model context window", request_id: Optional[str] = None):
+        super().__init__("AI_CONTEXT_TOO_LARGE", message, request_id, 413)  # Content Too Large; the Starlette constant name changed across versions
 
 
 class AICircuitOpenException(AIException):

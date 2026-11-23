@@ -10,6 +10,9 @@ export interface ServerExportRecord {
   device_role?: string | null;
   vendor?: string | null;
   model?: string | null;
+  site_id?: string | null;
+  site_name?: string | null;
+  site_code?: string | null;
   datacenter?: string | null;
   rack?: string | null;
   rack_unit?: string | number | null;
@@ -27,6 +30,7 @@ export interface ServerExportOptions {
   quickFilter: ServerQuickFilter;
   statusFilter?: string;
   vendorFilter?: string;
+  siteFilter?: string;
   datacenterFilter?: string;
   sortConfig?: { key: string; direction: 'asc' | 'desc' } | null;
   verification?: Record<string, ServerVerificationExport | undefined>;
@@ -50,12 +54,13 @@ const verificationLabel = (value: boolean | number | null | undefined) => value 
 
 export function filterInventoryServers<T extends ServerExportRecord>(
   records: T[],
-  options: Pick<ServerExportOptions, 'quickFilter' | 'statusFilter' | 'vendorFilter' | 'datacenterFilter'>,
+  options: Pick<ServerExportOptions, 'quickFilter' | 'statusFilter' | 'vendorFilter' | 'siteFilter' | 'datacenterFilter'>,
 ): T[] {
   return records.filter((record) => {
     if (options.statusFilter && options.statusFilter !== 'all' && record.status !== options.statusFilter) return false;
     if (options.vendorFilter && record.vendor !== options.vendorFilter) return false;
-    if (options.datacenterFilter && record.datacenter !== options.datacenterFilter) return false;
+    if (options.siteFilter && record.site_id !== options.siteFilter) return false;
+    if (options.datacenterFilter && (record.site_name || record.site_code || record.datacenter) !== options.datacenterFilter) return false;
     return options.quickFilter === 'all'
       || record.status === QUICK_STATUS[options.quickFilter as Exclude<ServerQuickFilter, 'all'>];
   });
@@ -67,16 +72,20 @@ export function buildInventoryServersExportData(
 ): TableExportData {
   const zh = options.language === 'zh';
   const headers = zh
-    ? ['主机名', '管理 IP', '设备角色', '厂商', '型号', '数据中心', '机柜', 'U 位', '状态', 'Ping', 'SSH', '部门']
-    : ['Hostname', 'Management IP', 'Device role', 'Vendor', 'Model', 'Datacenter', 'Rack', 'Rack Unit', 'Status', 'Ping', 'SSH', 'Department'];
+    ? ['主机名', '管理 IP', '设备角色', '厂商', '型号', '站点', '机柜', 'U 位', '状态', 'Ping', 'SSH', '部门']
+    : ['Hostname', 'Management IP', 'Device role', 'Vendor', 'Model', 'Site', 'Rack', 'Rack Unit', 'Status', 'Ping', 'SSH', 'Department'];
 
   const filtered = filterInventoryServers(records, options);
 
   const sorted = options.sortConfig
     ? [...filtered].sort((left, right) => {
       const key = options.sortConfig!.key as keyof ServerExportRecord;
-      const a = String(left[key] ?? '');
-      const b = String(right[key] ?? '');
+      const a = key === 'datacenter'
+        ? String(left.site_name || left.site_code || left.datacenter || '')
+        : String(left[key] ?? '');
+      const b = key === 'datacenter'
+        ? String(right.site_name || right.site_code || right.datacenter || '')
+        : String(right[key] ?? '');
       const result = a.localeCompare(b);
       return options.sortConfig!.direction === 'asc' ? result : -result;
     })
@@ -93,7 +102,7 @@ export function buildInventoryServersExportData(
         deviceRoleLabel(record.device_role, zh ? 'zh' : 'en'),
         display(record.vendor),
         display(record.model),
-        display(record.datacenter),
+        display(record.site_name || record.site_code || record.datacenter),
         display(record.rack),
         record.rack_unit === null || record.rack_unit === undefined || record.rack_unit === '' ? '—' : `U${record.rack_unit}`,
         zh ? status.zh : status.en,

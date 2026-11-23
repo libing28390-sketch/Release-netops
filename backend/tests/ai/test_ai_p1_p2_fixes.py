@@ -110,27 +110,33 @@ def test_tool_get_device_neighbors_swaps_ports_when_device_is_target():
     tgt_id = f"dev-tgt-{uuid.uuid4().hex[:6]}"
     link_id = f"lnk-{uuid.uuid4().hex[:8]}"
     now = _now_iso()
-    with get_db_connection() as conn:
-        conn.execute(
-            "INSERT INTO devices (id, hostname, ip_address, platform, vendor, status) VALUES (?, ?, ?, ?, ?, ?)",
-            (src_id, "CORE-SW1", "10.99.0.1", "huawei_vrp", "Huawei", "online"),
-        )
-        conn.execute(
-            "INSERT INTO devices (id, hostname, ip_address, platform, vendor, status) VALUES (?, ?, ?, ?, ?, ?)",
-            (tgt_id, "ACC-SW2", "10.99.0.2", "huawei_vrp", "Huawei", "online"),
-        )
-        conn.execute(
-            "INSERT INTO topology_links (id, source_device_id, source_port, target_device_id, target_port, status, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (link_id, src_id, "XGigabitEthernet0/0/1", tgt_id, "GigabitEthernet0/0/24", "up", now),
-        )
-        conn.commit()
+    try:
+        with get_db_connection() as conn:
+            conn.execute(
+                "INSERT INTO devices (id, hostname, ip_address, platform, vendor, status) VALUES (?, ?, ?, ?, ?, ?)",
+                (src_id, "CORE-SW1", "10.99.0.1", "huawei_vrp", "Huawei", "online"),
+            )
+            conn.execute(
+                "INSERT INTO devices (id, hostname, ip_address, platform, vendor, status) VALUES (?, ?, ?, ?, ?, ?)",
+                (tgt_id, "ACC-SW2", "10.99.0.2", "huawei_vrp", "Huawei", "online"),
+            )
+            conn.execute(
+                "INSERT INTO topology_links (id, source_device_id, source_port, target_device_id, target_port, status, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (link_id, src_id, "XGigabitEthernet0/0/1", tgt_id, "GigabitEthernet0/0/24", "up", now),
+            )
+            conn.commit()
 
-    res = tool_get_device_neighbors(device_id=tgt_id)
-    neighbors = res["neighbors"]
-    assert len(neighbors) == 1
-    assert neighbors[0]["remote_device"] == src_id
-    assert neighbors[0]["local_port"] == "GigabitEthernet0/0/24"
-    assert neighbors[0]["remote_port"] == "XGigabitEthernet0/0/1"
+        res = tool_get_device_neighbors(device_id=tgt_id)
+        neighbors = res["neighbors"]
+        assert len(neighbors) == 1
+        assert neighbors[0]["remote_device"] == src_id
+        assert neighbors[0]["local_port"] == "GigabitEthernet0/0/24"
+        assert neighbors[0]["remote_port"] == "XGigabitEthernet0/0/1"
+    finally:
+        with get_db_connection() as conn:
+            conn.execute("DELETE FROM topology_links WHERE id = ?", (link_id,))
+            conn.execute("DELETE FROM devices WHERE id IN (?, ?)", (src_id, tgt_id))
+            conn.commit()
 
 
 def test_prompt_renderer_single_pass_fallback_prevents_second_order_injection():
@@ -198,6 +204,7 @@ def test_rate_limiter_in_memory_thread_safe_and_enforces_limit(monkeypatch):
 def test_agent_runner_resolves_registered_agent_config():
     agent_code = f"p1_agent_{uuid.uuid4().hex[:6]}"
     now = _now_iso()
+    agent_id = str(uuid.uuid4())
     with get_db_connection() as conn:
         conn.execute(
             """
@@ -205,7 +212,7 @@ def test_agent_runner_resolves_registered_agent_config():
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
             """,
             (
-                str(uuid.uuid4()),
+                agent_id,
                 agent_code,
                 "P1 Test Agent",
                 "desc",
@@ -219,17 +226,25 @@ def test_agent_runner_resolves_registered_agent_config():
         )
         conn.commit()
 
-    cfg = _resolve_agent_config(agent_code)
-    assert cfg["system_prompt"] == "Custom system prompt"
-    assert cfg["allowed_tools"] == ["get_device_info", "get_device_neighbors"]
-    assert cfg["max_steps"] == 4
-    assert cfg["timeout"] == 25
+    try:
+        cfg = _resolve_agent_config(agent_code)
+        assert cfg["system_prompt"] == "Custom system prompt"
+        assert cfg["allowed_tools"] == ["get_device_info", "get_device_neighbors"]
+        assert cfg["max_steps"] == 4
+        assert cfg["timeout"] == 25
+    finally:
+        # This test writes to the shared development database; leaving the
+        # row behind adds a "P1 Test Agent" to the Agent registry every run.
+        with get_db_connection() as conn:
+            conn.execute("DELETE FROM ai_agent WHERE id = ?", (agent_id,))
+            conn.commit()
 
 
 def test_model_router_resolve_route_policy_returns_classification():
     scene = f"p1_route_{uuid.uuid4().hex[:6]}"
     provider_id = str(uuid.uuid4())
     model_id = str(uuid.uuid4())
+    route_id = str(uuid.uuid4())
     now = _now_iso()
     with get_db_connection() as conn:
         conn.execute(
@@ -245,15 +260,25 @@ def test_model_router_resolve_route_policy_returns_classification():
             INSERT INTO ai_model_route (id, scene, model_id, fallback_model_id, priority, data_classification, enabled, created_at, updated_at)
             VALUES (?, ?, ?, NULL, 10, 'INTERNAL', 1, ?, ?)
             """,
-            (str(uuid.uuid4()), scene, model_id, now, now),
+            (route_id, scene, model_id, now, now),
         )
         conn.commit()
 
-    resolved_id, fallback_id, reason, classification = ModelRouter().resolve_route_policy(scene)
-    assert resolved_id == model_id
-    assert fallback_id is None
-    assert reason == "scene_route"
-    assert classification == "INTERNAL"
+    try:
+        resolved_id, fallback_id, reason, classification = ModelRouter().resolve_route_policy(scene)
+        assert resolved_id == model_id
+        assert fallback_id is None
+        assert reason == "scene_route"
+        assert classification == "INTERNAL"
+    finally:
+        # Without this every run leaves a "P1Prov-p1_route_*" provider and an
+        # unhealthy "P1Model" in the development database, and they show up
+        # in the Copilot model picker.
+        with get_db_connection() as conn:
+            conn.execute("DELETE FROM ai_model_route WHERE id = ?", (route_id,))
+            conn.execute("DELETE FROM ai_model WHERE id = ?", (model_id,))
+            conn.execute("DELETE FROM ai_provider WHERE id = ?", (provider_id,))
+            conn.commit()
 
 
 def test_official_product_catalog_enrichment_covers_expanded_vendors_and_models():

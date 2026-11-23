@@ -260,6 +260,7 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
   );
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
+  const [queryInput, setQueryInput] = useState("");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
   const [filterTagIds, setFilterTagIds] = useState<string[]>([]);
@@ -359,6 +360,15 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
   }, [buildParams, page, pageSize]);
 
   useEffect(() => {
+    if (queryInput === query) return;
+    const timer = window.setTimeout(() => {
+      setQuery(queryInput);
+      setPage(1);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [queryInput, query]);
+
+  useEffect(() => {
     void loadTree();
     void loadTags();
   }, [loadTags, loadTree]);
@@ -367,7 +377,6 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
   }, [loadAssets]);
 
   const tree = useMemo(() => buildTree(treeRows, zh), [treeRows, zh]);
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const allPageSelected =
     assets.length > 0 &&
     assets.every((asset) => selectedIds.includes(asset.id));
@@ -611,13 +620,12 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
             <ListSearchInput
                 language={language}
                 className="min-w-[220px]"
-                value={query}
+                value={queryInput}
                 onChange={(event) => {
-                  setQuery(event.target.value);
-                  setPage(1);
+                  setQueryInput(event.target.value);
                 }}
                 placeholder={zh ? "搜索设备名、资产编号、IP、厂商…" : "Search hostname, tag, IP or vendor…"}
-                onClear={() => { setQuery(""); setPage(1); }}
+                onClear={() => { setQueryInput(""); setQuery(""); setPage(1); }}
               />
             <select
               value={status}
@@ -778,32 +786,6 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
                 )}
               </tbody>
             </table>
-          </div>
-          <div className="hidden">
-            <span>
-              {total
-                ? `${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, total)} / ${total}`
-                : "0"}
-            </span>
-            <div className="flex items-center gap-2">
-              <button
-                disabled={page <= 1}
-                onClick={() => setPage((value) => value - 1)}
-                className="rounded-lg border border-slate-200 px-2.5 py-1.5 disabled:opacity-40"
-              >
-                ‹
-              </button>
-              <span>
-                {page} / {totalPages}
-              </span>
-              <button
-                disabled={page >= totalPages}
-                onClick={() => setPage((value) => value + 1)}
-                className="rounded-lg border border-slate-200 px-2.5 py-1.5 disabled:opacity-40"
-              >
-                ›
-              </button>
-            </div>
           </div>
           <Pagination
             currentPage={page}

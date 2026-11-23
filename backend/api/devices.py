@@ -1199,6 +1199,9 @@ def read_devices(
     role: Optional[str] = Query(default=None),
     role_exact: bool = Query(default=False),
     status: Optional[str] = Query(default=None),
+    lifecycle_status: Optional[str] = Query(default=None),
+    tag_ids: Optional[str] = Query(default=None),
+    quick_filter: Optional[str] = Query(default=None),
     site: Optional[str] = Query(default=None),
     vendor: Optional[str] = Query(default=None),
     device_category: Optional[str] = Query(default=None, pattern='^(network|server)$'),
@@ -1271,6 +1274,24 @@ def read_devices(
             if site_clause:
                 where_clauses.append(site_clause)
                 params.extend(site_params)
+
+        if lifecycle_status and lifecycle_status != 'all':
+            where_clauses.append(
+                "COALESCE(NULLIF(pa.lifecycle_status, ''), NULLIF(d.lifecycle_status, ''), 'staging') = ?"
+            )
+            params.append(lifecycle_status.strip().lower())
+
+        requested_tag_ids = [
+            value.strip() for value in str(tag_ids or '').split(',') if value.strip()
+        ][:100]
+        if requested_tag_ids:
+            tag_predicates = [
+                "EXISTS (SELECT 1 FROM tag_assignments dt_filter "
+                "WHERE dt_filter.resource_type = 'device' AND dt_filter.resource_id = d.id AND dt_filter.tag_id = ?)"
+                for _ in requested_tag_ids
+            ]
+            where_clauses.append(f"({' AND '.join(tag_predicates)})")
+            params.extend(requested_tag_ids)
 
         if device_category:
             server_keywords = (
@@ -1357,6 +1378,51 @@ def read_devices(
         if status_filter_sql:
             where_clauses.append(status_filter_sql)
             params.extend(status_filter_params)
+
+        health_count_where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ''
+        health_count_params = list(params)
+
+        qf = str(quick_filter or '').strip().lower()
+        if qf == 'offline':
+            where_clauses.append("COALESCE(d.status, '') <> 'online'")
+        elif qf == 'warning':
+            where_clauses.append(
+                "("
+                "EXISTS ("
+                "  SELECT 1 FROM alert_events ae_qf"
+                "  WHERE ae_qf.device_id = d.id"
+                "    AND ae_qf.resolved_at IS NULL"
+                "    AND COALESCE(ae_qf.workflow_status, 'open') <> 'suppressed'"
+                ") OR COALESCE(("
+                "  SELECT dhs_qf.health_status FROM device_health_samples dhs_qf"
+                "  WHERE dhs_qf.device_id = d.id"
+                "  ORDER BY dhs_qf.ts DESC LIMIT 1"
+                "), 'unknown') IN ('warning', 'critical')"
+                ")"
+            )
+        elif qf == 'staging_maintenance':
+            where_clauses.append(
+                "(COALESCE(NULLIF(pa.lifecycle_status, ''), NULLIF(d.lifecycle_status, ''), 'staging') IN ('staging', 'maintenance')"
+                " OR d.status = 'pending')"
+            )
+        elif qf == 'healthy':
+            where_clauses.append(
+                "("
+                "d.status = 'online'"
+                " AND COALESCE(("
+                "  SELECT dhs_qf.health_status FROM device_health_samples dhs_qf"
+                "  WHERE dhs_qf.device_id = d.id"
+                "  ORDER BY dhs_qf.ts DESC LIMIT 1"
+                "), 'unknown') NOT IN ('warning', 'critical')"
+                " AND NOT EXISTS ("
+                "  SELECT 1 FROM alert_events ae_qf"
+                "  WHERE ae_qf.device_id = d.id"
+                "    AND ae_qf.resolved_at IS NULL"
+                "    AND COALESCE(ae_qf.workflow_status, 'open') <> 'suppressed'"
+                ")"
+                ")"
+            )
+
         where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ''
         facet_where_clauses = list(base_where_clauses)
         facet_params: list[Any] = list(base_params)
@@ -1423,7 +1489,7 @@ def read_devices(
                                         NULLIF(d.lifecycle_status, ''),
                                         'staging') AS lifecycle_status
                           {from_clause}
-                          {where_sql}
+                          {health_count_where_sql}
                     ),
                     current_alerts AS (
                         SELECT device_id, COUNT(*) AS open_alert_count
@@ -1456,7 +1522,7 @@ def read_devices(
                       ) AS latest_health ON TRUE
                       LEFT JOIN current_alerts
                         ON current_alerts.device_id = inventory.id''',
-                tuple(params),
+                tuple(health_count_params),
             ).fetchone()
             health_counts = {
                 'healthy': int(health_count_row['healthy'] or 0),

@@ -3,10 +3,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   AlertTriangle,
-  Check,
   CheckCircle2,
   ChevronRight,
-  CircleHelp,
   CloudOff,
   Database,
   EyeOff,
@@ -16,11 +14,12 @@ import {
   RefreshCw,
   Save,
   Search,
+  ShieldAlert,
   ShieldCheck,
   Skull,
-  Workflow,
   XCircle,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import {
   AISecurityDryRunResult,
   AISecurityPolicy,
@@ -37,6 +36,14 @@ import {
 } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
 import type { TableExportData } from '../../../components/ui/TableExportMenu';
+import { ActionButton } from '../../../components/ui/ActionIconButton';
+import { PageHeader } from '../../../components/ui/PageHeader';
+import { Panel, PanelHeader } from '../../../components/ui/Panel';
+import { StatusBadge, type StatusTone } from '../../../components/ui/StatusBadge';
+import { SummaryBar } from '../../../components/ui/SummaryBar';
+import { EmptyState } from '../../../components/ui/EmptyState';
+import { InfoTip } from '../../../components/ui/InfoTip';
+import { cn } from '../../../lib/cn';
 
 const DEFAULT_POLICY: AISecurityPolicy = {
   external_ai_enabled: false,
@@ -50,16 +57,58 @@ const DEFAULT_POLICY: AISecurityPolicy = {
   tenant_kill_switches: {},
 };
 
+/* Shared control styles — token based, 36px controls, 8px radius (same as the Provider page). */
+const filterControlClass = 'h-9 rounded-lg border border-line bg-surface px-3 text-[13px] text-fg outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/20';
+const tableHeadClass = 'px-3 py-2 text-xs font-medium text-fg-muted';
+const tableCellClass = 'px-3 py-2 text-[13px] text-fg';
+
 const formatBytes = (bytes: number) => {
   if (!Number.isFinite(bytes) || bytes <= 0) return '未设置';
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${Math.round(bytes / 1024)} KB`;
 };
 
-const decisionClass = (decision: string) => {
-  if (decision === 'BLOCK') return 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/30 dark:text-rose-300';
-  if (decision === 'MINIMIZE' || decision === 'TOKENIZE') return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-300';
-  return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/30 dark:text-emerald-300';
+const decisionTone = (decision: string): StatusTone => {
+  if (decision === 'BLOCK') return 'danger';
+  if (decision === 'MINIMIZE' || decision === 'TOKENIZE') return 'warning';
+  return 'success';
+};
+
+const decisionPanelClass = (decision: string) => {
+  const tone = decisionTone(decision);
+  if (tone === 'danger') return 'border-l-danger bg-danger-subtle text-danger';
+  if (tone === 'warning') return 'border-l-warning bg-warning-subtle text-warning';
+  return 'border-l-success bg-success-subtle text-success';
+};
+
+const severityTone = (severity?: string): StatusTone => {
+  switch (String(severity || '').toLowerCase()) {
+    case 'critical':
+    case 'high':
+      return 'danger';
+    case 'medium':
+      return 'warning';
+    default:
+      return 'neutral';
+  }
+};
+
+const incidentStatusLabel = (status?: string) => {
+  switch (String(status || '').toLowerCase()) {
+    case 'open': return '待处理';
+    case 'investigating': return '处理中';
+    case 'resolved': return '已解决';
+    default: return status || '—';
+  }
+};
+
+const incidentStatusTone = (status?: string): StatusTone => {
+  switch (String(status || '').toLowerCase()) {
+    case 'resolved': return 'success';
+    case 'investigating': return 'accent';
+    case 'open': return 'warning';
+    default: return 'neutral';
+  }
 };
 
 interface SwitchButtonProps {
@@ -78,12 +127,43 @@ const SwitchButton: React.FC<SwitchButtonProps> = ({ checked, disabled, danger, 
     aria-label={label}
     disabled={disabled}
     onClick={onClick}
-    className={`relative inline-flex h-7 w-[52px] shrink-0 items-center rounded-full p-1 transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-500/40 disabled:cursor-not-allowed disabled:opacity-50 ${
-      checked ? (danger ? 'bg-rose-500' : 'bg-cyan-600') : 'bg-slate-200 dark:bg-slate-700'
-    }`}
+    className={cn(
+      'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50',
+      checked ? (danger ? 'bg-danger' : 'bg-accent') : 'bg-line-strong',
+    )}
   >
-    <span className={`h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-5' : 'translate-x-0'}`} />
+    <span className={cn('h-5 w-5 rounded-full bg-surface shadow-sm transition-transform', checked ? 'translate-x-5' : 'translate-x-0')} />
   </button>
+);
+
+interface ControlCardProps {
+  icon: LucideIcon;
+  title: string;
+  checked: boolean;
+  danger?: boolean;
+  disabled?: boolean;
+  switchLabel: string;
+  onToggle: () => void;
+  stateText: React.ReactNode;
+  stateTone: StatusTone;
+  description: React.ReactNode;
+  footer?: React.ReactNode;
+}
+
+/** One egress control: title + switch, current state, one-line explanation. */
+const ControlCard: React.FC<ControlCardProps> = ({ icon: Icon, title, checked, danger, disabled, switchLabel, onToggle, stateText, stateTone, description, footer }) => (
+  <div className={cn('rounded-lg border border-line bg-surface p-4', checked && danger && 'border-l-[3px] border-l-danger', checked && !danger && 'border-l-[3px] border-l-accent')}>
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-2">
+        <Icon size={16} strokeWidth={1.8} aria-hidden="true" className={checked ? (danger ? 'text-danger' : 'text-accent') : 'text-fg-muted'} />
+        <span className="truncate text-sm font-semibold text-fg">{title}</span>
+      </div>
+      <SwitchButton checked={checked} danger={danger} disabled={disabled} onClick={onToggle} label={switchLabel} />
+    </div>
+    <div className="mt-3"><StatusBadge tone={stateTone} dot>{stateText}</StatusBadge></div>
+    <p className="mt-2 text-xs leading-5 text-fg-muted">{description}</p>
+    {footer && <div className="mt-3 border-t border-line pt-3 text-xs text-fg-muted">{footer}</div>}
+  </div>
 );
 
 interface GuardrailRowProps {
@@ -97,31 +177,25 @@ interface GuardrailRowProps {
 const GuardrailRow: React.FC<GuardrailRowProps> = ({ icon, label, description, enabled, state }) => {
   const effectiveState = state || (enabled ? 'on' : 'off');
   const stateLabel = effectiveState === 'bypass' ? '测试模式放开' : effectiveState === 'on' ? 'ON' : 'OFF';
-  const stateTone = effectiveState === 'bypass'
-    ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
-    : effectiveState === 'on'
-      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
-      : 'bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400';
+  const tone: StatusTone = effectiveState === 'bypass' ? 'warning' : effectiveState === 'on' ? 'success' : 'neutral';
   const iconTone = effectiveState === 'bypass'
-    ? 'bg-amber-100 text-amber-600 dark:bg-amber-950/50 dark:text-amber-300'
+    ? 'bg-warning-subtle text-warning'
     : effectiveState === 'on'
-      ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300'
-      : 'bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400';
+      ? 'bg-success-subtle text-success'
+      : 'bg-surface-muted text-fg-muted';
   return (
-  <div className="flex items-start gap-3 rounded-2xl border border-slate-200/80 bg-slate-50/80 p-3 dark:border-slate-800 dark:bg-slate-900/60">
-    <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${iconTone}`}>
-      {icon}
-    </span>
-    <span className="min-w-0 flex-1">
-      <span className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
-        {label}
-        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${stateTone}`}>
-          {stateLabel}
-        </span>
+    <div className="flex items-start gap-3 px-4 py-3">
+      <span className={cn('mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg', iconTone)}>
+        {icon}
       </span>
-      <span className="mt-1 block text-xs leading-5 text-slate-500 dark:text-slate-400">{description}</span>
-    </span>
-  </div>
+      <span className="min-w-0 flex-1">
+        <span className="flex flex-wrap items-center gap-2 text-[13px] font-medium text-fg">
+          {label}
+          <StatusBadge tone={tone}>{stateLabel}</StatusBadge>
+        </span>
+        <span className="mt-0.5 block text-xs leading-5 text-fg-muted">{description}</span>
+      </span>
+    </div>
   );
 };
 
@@ -339,13 +413,14 @@ export const SecurityPolicyTab: React.FC = () => {
 
   const gatewayReady = policy.external_ai_enabled && !policy.kill_switch;
   const devPassthroughActive = Boolean(policy.dev_passthrough?.enabled);
+  const tenantPaused = Boolean(policy.tenant_kill_switches?.['tenant-default']);
   const status = useMemo(() => {
     if (policy.kill_switch) {
       return {
         label: '紧急停止已触发',
         detail: '所有外部 AI 请求都会在网关处被阻断。解除前请确认告警和变更原因。',
         icon: Skull,
-        tone: 'rose',
+        tone: 'danger' as StatusTone,
       };
     }
     if (!policy.external_ai_enabled) {
@@ -353,7 +428,7 @@ export const SecurityPolicyTab: React.FC = () => {
         label: '默认拒绝外部 AI',
         detail: '当前 Provider 连接测试会返回 AI_SECURITY_BLOCKED；先启用外部 AI 出口才能进行真实连通性测试。',
         icon: CloudOff,
-        tone: 'amber',
+        tone: 'warning' as StatusTone,
       };
     }
     if (devPassthroughActive) {
@@ -361,320 +436,409 @@ export const SecurityPolicyTab: React.FC = () => {
         label: 'AI 临时黑名单模式已开启',
         detail: '普通请求不再因数据分类被拦截，也不做最小化和 Token 化；凭据 DLP、Kill Switch、Provider/区域/租户权限、请求大小、危险工具/写入操作以及跨租户和凭据读取拦截仍然保留。',
         icon: AlertTriangle,
-        tone: 'amber',
+        tone: 'warning' as StatusTone,
       };
     }
     return {
       label: '安全网关已就绪',
       detail: '请求会先经过数据分级、脱敏/最小化、Token 化和 DLP 检查，再转发到允许的 Provider。',
       icon: ShieldCheck,
-      tone: 'emerald',
+      tone: 'success' as StatusTone,
     };
   }, [devPassthroughActive, policy.external_ai_enabled, policy.kill_switch]);
 
   const StatusIcon = status.icon;
-  const statusTone = status.tone === 'rose'
-    ? 'border-rose-200 bg-rose-50/80 text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/20 dark:text-rose-300'
-    : status.tone === 'amber'
-      ? 'border-amber-200 bg-amber-50/80 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-300'
-      : 'border-emerald-200 bg-emerald-50/80 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/20 dark:text-emerald-300';
+  const statusBorder = status.tone === 'danger' ? 'border-l-danger' : status.tone === 'warning' ? 'border-l-warning' : 'border-l-success';
+  const statusIconTone = status.tone === 'danger' ? 'bg-danger-subtle text-danger' : status.tone === 'warning' ? 'bg-warning-subtle text-warning' : 'bg-success-subtle text-success';
+  const openIncidentCount = incidents.filter((incident) => incident.status !== 'resolved').length;
 
   if (loading) {
     return (
-      <div className="flex min-h-[420px] items-center justify-center rounded-3xl border border-slate-200 bg-white text-sm text-slate-500 shadow-sm dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
-        <div className="flex items-center gap-3"><RefreshCw className="h-4 w-4 animate-spin text-cyan-600" />正在读取安全网关策略…</div>
+      <div role="status" aria-busy="true" className="flex min-h-[420px] items-center justify-center rounded-xl border border-line bg-surface text-sm text-fg-muted">
+        <div className="flex items-center gap-3"><RefreshCw className="h-4 w-4 animate-spin text-accent motion-reduce:animate-none" aria-hidden="true" />正在读取安全网关策略…</div>
       </div>
     );
   }
 
   return (
-    <div className="w-full space-y-6 pb-8">
-        <header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
-          <div>
-            <div className="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.2em] text-cyan-700 dark:text-cyan-300">
-              <ShieldCheck className="h-4 w-4" /> AI governance / security gateway
-            </div>
-            <h1 className="nx-page-title text-slate-950 dark:text-white">AI 安全网关</h1>
-            <p className="nx-page-description mt-2 max-w-3xl text-slate-500 dark:text-slate-400">统一控制外部 AI 出口。默认拒绝、可审计、可演练；Provider 连接测试和所有 AI 调用都必须经过这里。</p>
-          </div>
-          <button
+    <div className="w-full space-y-4 pb-8">
+      <PageHeader
+        title="AI 安全网关"
+        description="统一控制外部 AI 出口：默认拒绝、可审计、可演练。"
+        infoLabel="AI 安全网关说明"
+        info="Provider 连接测试和所有 AI 调用都必须经过这里；策略保存后立即对新的请求生效，已存在的请求不会被重新放行。"
+        actions={(
+          <ActionButton
             type="button"
+            icon={RefreshCw}
+            iconClassName={saving ? 'animate-spin motion-reduce:animate-none' : undefined}
+            size="md"
             onClick={() => void load()}
-            className="inline-flex items-center justify-center gap-2 self-start rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-cyan-300 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-cyan-700 dark:hover:text-cyan-300 lg:self-auto"
             disabled={saving || testing}
           >
-            <RefreshCw className={`h-4 w-4 ${saving ? 'animate-spin' : ''}`} /> 刷新状态
-          </button>
-        </header>
-
-        {error && (
-          <div role="alert" className="flex items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/30 dark:text-rose-300">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-            <span className="flex-1">{error}</span>
-            <button type="button" onClick={() => setError(null)} aria-label="关闭错误提示"><XCircle className="h-4 w-4" /></button>
-          </div>
+            刷新状态
+          </ActionButton>
         )}
-        {notice && (
-          <div role="status" className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/30 dark:text-emerald-300">
-            <CheckCircle2 className="h-4 w-4 shrink-0" />
-            <span className="flex-1">{notice}</span>
-            <span className="text-xs opacity-75">{lastSavedAt ? `刚刚 ${lastSavedAt.toLocaleTimeString()}` : ''}</span>
+      />
+
+      <SummaryBar
+        label="AI 安全网关概览"
+        items={[
+          { key: 'egress', value: policy.external_ai_enabled ? '已启用' : '默认拒绝', label: '外部 AI 出口', tone: policy.external_ai_enabled ? 'accent' : 'warning' },
+          { key: 'kill', value: policy.kill_switch ? '已触发' : '未触发', label: '紧急停止', tone: policy.kill_switch ? 'danger' : 'success' },
+          { key: 'providers', value: (policy.allowed_provider_types || []).length, label: '允许的 Provider 类型' },
+          { key: 'payload', value: formatBytes(policy.max_payload_bytes), label: '单次 Payload 上限' },
+          { key: 'incidents', value: incidentTotal, label: '安全事件', tone: openIncidentCount > 0 ? 'danger' : undefined },
+          { key: 'events', value: eventTotal, label: '审计事件' },
+        ]}
+      />
+
+      {error && (
+        <div role="alert" className="flex items-start gap-3 rounded-lg border border-line border-l-[3px] border-l-danger bg-danger-subtle px-4 py-3 text-[13px] text-danger">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <span className="flex-1">{error}</span>
+          <button type="button" onClick={() => setError(null)} aria-label="关闭错误提示" className="rounded-md p-0.5 hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"><XCircle className="h-4 w-4" aria-hidden="true" /></button>
+        </div>
+      )}
+      {notice && (
+        <div role="status" className="flex items-center gap-3 rounded-lg border border-line border-l-[3px] border-l-success bg-success-subtle px-4 py-3 text-[13px] text-success">
+          <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+          <span className="flex-1">{notice}</span>
+          <span className="text-xs opacity-75">{lastSavedAt ? `刚刚 ${lastSavedAt.toLocaleTimeString()}` : ''}</span>
+        </div>
+      )}
+
+      <Panel className={cn('border-l-[3px] px-4 py-4', statusBorder)} aria-label="当前网关状态">
+        <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
+          <div className="flex items-start gap-3">
+            <span className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-lg', statusIconTone)}><StatusIcon className="h-5 w-5" aria-hidden="true" /></span>
+            <div className="min-w-0">
+              <div className="text-xs text-fg-muted">当前网关状态</div>
+              <h3 className="mt-0.5 text-base font-semibold text-fg">{status.label}</h3>
+              <p className="mt-1 max-w-3xl text-[13px] leading-5 text-fg-muted">{status.detail}</p>
+            </div>
           </div>
-        )}
+          <StatusBadge tone={devPassthroughActive ? 'warning' : gatewayReady ? 'success' : 'danger'} dot>
+            {devPassthroughActive ? '临时黑名单 · 定时' : gatewayReady ? '安全网关 · 已就绪' : '策略已阻断'}
+          </StatusBadge>
+        </div>
+      </Panel>
 
-        <section className={`relative overflow-hidden rounded-3xl border p-5 shadow-sm sm:p-6 ${statusTone}`}>
-          <div className="pointer-events-none absolute -right-10 -top-16 h-48 w-48 rounded-full border-[24px] border-current opacity-10" />
-          <div className="relative flex flex-col justify-between gap-5 lg:flex-row lg:items-center">
-            <div className="flex items-start gap-4">
-              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/80 shadow-sm dark:bg-slate-950/50"><StatusIcon className="h-6 w-6" /></span>
-              <div>
-                <div className="text-[11px] font-bold uppercase tracking-[0.18em] opacity-70">Current gateway posture</div>
-                <h2 className="mt-1 text-xl font-bold">{status.label}</h2>
-                <p className="mt-1 max-w-3xl text-sm leading-6 opacity-80">{status.detail}</p>
-              </div>
-            </div>
-            <div className="flex shrink-0 items-center gap-2 rounded-full bg-white/70 px-3 py-2 text-xs font-bold uppercase tracking-wider shadow-sm dark:bg-slate-950/40">
-              <span className={`h-2 w-2 rounded-full ${gatewayReady ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-              {devPassthroughActive ? '临时黑名单 · 定时' : gatewayReady ? '安全网关 · 已就绪' : '策略已阻断'}
-            </div>
-          </div>
-        </section>
-
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
-          <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white"><LockKeyhole className="h-4 w-4 text-cyan-600" />出口控制</div>
-                <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">只在明确需要时开启外部 AI；紧急停止可以随时切断出口。</p>
-              </div>
-              <span className="rounded-full bg-cyan-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-cyan-700 dark:bg-cyan-950/50 dark:text-cyan-300">Administrator</span>
-            </div>
-
-            <div className="mt-5 grid gap-4 md:grid-cols-2">
-              <div className={`rounded-2xl border p-4 transition ${policy.external_ai_enabled ? 'border-cyan-200 bg-cyan-50/60 dark:border-cyan-900/60 dark:bg-cyan-950/20' : 'border-slate-200 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-950/50'}`}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-2"><CloudOff className={`h-4 w-4 ${policy.external_ai_enabled ? 'text-cyan-600' : 'text-slate-500'}`} /><span className="text-sm font-semibold text-slate-800 dark:text-slate-100">外部 AI 出口</span></div>
-                  <SwitchButton checked={policy.external_ai_enabled} disabled={saving} onClick={toggleExternalAI} label="切换外部 AI 出口" />
-                </div>
-                <div className="mt-4 flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">{policy.external_ai_enabled ? '已启用' : '默认拒绝'}<span className="text-xs font-normal text-slate-500">{policy.external_ai_enabled ? ' / policy checked' : ' / fail closed'}</span></div>
-                <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">开启后，只有通过本网关检查并命中允许 Provider 类型的请求才会出站。</p>
-                <div className="mt-4 flex items-center justify-between border-t border-slate-200/70 pt-3 text-xs dark:border-slate-800"><span className="text-slate-500">允许 Provider</span><code className="rounded-md bg-white px-2 py-1 font-mono font-semibold text-cyan-700 shadow-sm dark:bg-slate-900 dark:text-cyan-300">{policy.allowed_provider_types.join(', ') || 'none'}</code></div>
-              </div>
-
-              <div className={`rounded-2xl border p-4 transition ${policy.kill_switch ? 'border-rose-200 bg-rose-50/60 dark:border-rose-900/60 dark:bg-rose-950/20' : 'border-slate-200 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-950/50'}`}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-2"><Skull className={`h-4 w-4 ${policy.kill_switch ? 'text-rose-600' : 'text-slate-500'}`} /><span className="text-sm font-semibold text-slate-800 dark:text-slate-100">紧急停止</span></div>
-                  <SwitchButton checked={policy.kill_switch} danger disabled={saving} onClick={() => void toggleKillSwitch()} label="切换 AI 紧急停止" />
-                </div>
-                <div className="mt-4 flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">{policy.kill_switch ? '已触发' : '未触发'}<span className="text-xs font-normal text-slate-500">{policy.kill_switch ? ' / all egress blocked' : ' / normal operation'}</span></div>
-                <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">故障、泄露或策略异常时立即阻断所有外部调用，不会自动降级到未受控的 Provider。</p>
-                <div className="mt-4 flex items-center gap-2 border-t border-slate-200/70 pt-3 text-xs text-slate-500 dark:border-slate-800"><CircleHelp className="h-3.5 w-3.5" />适合应急处置，解除后请重新运行策略演练。</div>
-              </div>
-
-              <div className={`rounded-2xl border p-4 transition ${policy.tenant_kill_switches?.['tenant-default'] ? 'border-rose-200 bg-rose-50/60 dark:border-rose-900/60 dark:bg-rose-950/20' : 'border-slate-200 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-950/50'}`}>
-                <div className="flex items-start justify-between gap-3"><div className="flex items-center gap-2"><Skull className="h-4 w-4 text-rose-500" /><span className="text-sm font-semibold text-slate-800 dark:text-slate-100">当前租户开关</span></div><SwitchButton checked={Boolean(policy.tenant_kill_switches?.['tenant-default'])} danger disabled={saving} onClick={() => void toggleTenantKillSwitch()} label="切换当前租户 AI 开关" /></div>
-                <div className="mt-4 text-sm font-bold text-slate-900 dark:text-white">{policy.tenant_kill_switches?.['tenant-default'] ? '已暂停' : '未暂停'}</div>
-                <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">租户开关优先于 Provider 配置，只影响当前认证租户。</p>
-              </div>
-
-              {policy.dev_passthrough?.supported && (
-                <div className={`rounded-2xl border p-4 transition ${policy.dev_passthrough.enabled ? 'border-amber-200 bg-amber-50/70 dark:border-amber-900/60 dark:bg-amber-950/20' : 'border-slate-200 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-950/50'}`}>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-2"><AlertTriangle className={`h-4 w-4 ${policy.dev_passthrough.enabled ? 'text-amber-600' : 'text-slate-500'}`} /><span className="text-sm font-semibold text-slate-800 dark:text-slate-100">AI 临时黑名单模式</span></div>
-                    <SwitchButton checked={Boolean(policy.dev_passthrough.enabled)} danger disabled={saving} onClick={() => void toggleTemporaryTestMode()} label="切换 AI 临时测试模式" />
-                  </div>
-                  <div className="mt-4 text-sm font-bold text-slate-900 dark:text-white">{policy.dev_passthrough.enabled ? `已开启 · 剩余 ${Math.ceil(policy.dev_passthrough.remaining_seconds / 60)} 分钟` : '未开启'}</div>
-                  <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">管理员临时测试使用，最多 15 分钟，重启自动关闭。普通请求不再因数据分类被拦截，也不做最小化和 Token 化；仅保留凭据 DLP、Kill Switch、Provider/区域/租户权限、请求大小、危险工具/写入操作以及跨租户和凭据读取拦截。</p>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
+        <Panel>
+          <PanelHeader
+            title={<span className="inline-flex items-center gap-2"><LockKeyhole className="h-4 w-4 text-accent" aria-hidden="true" />出口控制</span>}
+            description="只在明确需要时开启外部 AI；紧急停止可以随时切断出口。"
+            actions={<StatusBadge tone="accent">Administrator</StatusBadge>}
+          />
+          <div className="grid gap-3 p-4 md:grid-cols-2">
+            <ControlCard
+              icon={CloudOff}
+              title="外部 AI 出口"
+              checked={policy.external_ai_enabled}
+              disabled={saving}
+              switchLabel="切换外部 AI 出口"
+              onToggle={toggleExternalAI}
+              stateText={policy.external_ai_enabled ? '已启用 · 按策略检查' : '默认拒绝 · fail closed'}
+              stateTone={policy.external_ai_enabled ? 'accent' : 'warning'}
+              description="开启后，只有通过本网关检查并命中允许 Provider 类型的请求才会出站。"
+              footer={(
+                <div className="flex items-center justify-between gap-2">
+                  <span>允许 Provider</span>
+                  <code className="truncate rounded bg-surface-muted px-1.5 py-0.5 font-mono text-fg" title={(policy.allowed_provider_types || []).join(', ')}>{(policy.allowed_provider_types || []).join(', ') || 'none'}</code>
                 </div>
               )}
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-950/50">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-2"><EyeOff className="h-4 w-4 text-cyan-600" /><span className="text-sm font-semibold text-slate-800 dark:text-slate-100">敏感内容最小化</span></div>
-                  <SwitchButton
-                    checked={policy.allow_sensitive_minimization}
-                    disabled={saving}
-                    onClick={() => void save({ allow_sensitive_minimization: !policy.allow_sensitive_minimization })}
-                    label="切换敏感内容最小化"
-                  />
-                </div>
-                <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">开启时自动裁剪无关配置上下文；关闭则直接按分类与 DLP 拦截。</p>
-                <div className="mt-3 flex items-center gap-2 border-t border-slate-200/70 pt-3 dark:border-slate-800">
-                  <label htmlFor="ai-max-payload-kb" className="text-xs font-medium text-slate-500 dark:text-slate-400">单次 Payload 上限 (KB)</label>
-                  <input
-                    id="ai-max-payload-kb"
-                    type="number"
-                    min={16}
-                    max={4096}
-                    value={maxPayloadKbInput}
-                    onChange={(event) => setMaxPayloadKbInput(event.target.value)}
-                    className="w-24 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-mono text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                  />
-                  <button
-                    type="button"
-                    disabled={saving}
-                    onClick={() => {
-                      const kb = Math.max(16, Math.min(4096, Number(maxPayloadKbInput) || 250));
-                      setMaxPayloadKbInput(String(kb));
-                      void save({ max_payload_bytes: kb * 1024 });
-                    }}
-                    className="ml-auto inline-flex items-center gap-1 rounded-lg bg-cyan-600 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-cyan-700 disabled:opacity-50"
-                  >
-                    <Save className="h-3 w-3" /> 保存上限
-                  </button>
-                </div>
+            />
+
+            <ControlCard
+              icon={Skull}
+              title="紧急停止"
+              checked={policy.kill_switch}
+              danger
+              disabled={saving}
+              switchLabel="切换 AI 紧急停止"
+              onToggle={() => void toggleKillSwitch()}
+              stateText={policy.kill_switch ? '已触发 · 全部出口阻断' : '未触发 · 正常运行'}
+              stateTone={policy.kill_switch ? 'danger' : 'success'}
+              description="故障、泄露或策略异常时立即阻断所有外部调用，不会自动降级到未受控的 Provider。"
+              footer="适合应急处置，解除后请重新运行策略演练。"
+            />
+
+            <ControlCard
+              icon={ShieldAlert}
+              title="当前租户开关"
+              checked={tenantPaused}
+              danger
+              disabled={saving}
+              switchLabel="切换当前租户 AI 开关"
+              onToggle={() => void toggleTenantKillSwitch()}
+              stateText={tenantPaused ? '已暂停' : '未暂停'}
+              stateTone={tenantPaused ? 'danger' : 'success'}
+              description="租户开关优先于 Provider 配置，只影响当前认证租户。"
+            />
+
+            {policy.dev_passthrough?.supported && (
+              <ControlCard
+                icon={AlertTriangle}
+                title="AI 临时黑名单模式"
+                checked={Boolean(policy.dev_passthrough.enabled)}
+                danger
+                disabled={saving}
+                switchLabel="切换 AI 临时测试模式"
+                onToggle={() => void toggleTemporaryTestMode()}
+                stateText={policy.dev_passthrough.enabled ? `已开启 · 剩余 ${Math.ceil(policy.dev_passthrough.remaining_seconds / 60)} 分钟` : '未开启'}
+                stateTone={policy.dev_passthrough.enabled ? 'warning' : 'neutral'}
+                description={(
+                  <span className="inline-flex items-start gap-1">
+                    管理员临时测试使用，最多 15 分钟，重启自动关闭。
+                    <InfoTip label="临时黑名单模式说明">普通请求不再因数据分类被拦截，也不做最小化和 Token 化；仅保留凭据 DLP、Kill Switch、Provider/区域/租户权限、请求大小、危险工具/写入操作以及跨租户和凭据读取拦截。</InfoTip>
+                  </span>
+                )}
+              />
+            )}
+
+            <div className="rounded-lg border border-line bg-surface p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2"><EyeOff size={16} strokeWidth={1.8} aria-hidden="true" className="text-accent" /><span className="truncate text-sm font-semibold text-fg">敏感内容最小化</span></div>
+                <SwitchButton
+                  checked={policy.allow_sensitive_minimization}
+                  disabled={saving}
+                  onClick={() => void save({ allow_sensitive_minimization: !policy.allow_sensitive_minimization })}
+                  label="切换敏感内容最小化"
+                />
+              </div>
+              <div className="mt-3"><StatusBadge tone={policy.allow_sensitive_minimization ? 'success' : 'neutral'} dot>{policy.allow_sensitive_minimization ? '已开启' : '已关闭'}</StatusBadge></div>
+              <p className="mt-2 text-xs leading-5 text-fg-muted">开启时自动裁剪无关配置上下文；关闭则直接按分类与 DLP 拦截。</p>
+              <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
+                <label htmlFor="ai-max-payload-kb" className="text-xs font-medium text-fg-muted">单次 Payload 上限 (KB)</label>
+                <input
+                  id="ai-max-payload-kb"
+                  type="number"
+                  min={16}
+                  max={4096}
+                  value={maxPayloadKbInput}
+                  onChange={(event) => setMaxPayloadKbInput(event.target.value)}
+                  className={cn(filterControlClass, 'h-8 w-24 px-2.5 font-mono text-xs')}
+                />
+                <ActionButton
+                  type="button"
+                  icon={Save}
+                  variant="primary"
+                  disabled={saving}
+                  className="ml-auto"
+                  onClick={() => {
+                    const kb = Math.max(16, Math.min(4096, Number(maxPayloadKbInput) || 250));
+                    setMaxPayloadKbInput(String(kb));
+                    void save({ max_payload_bytes: kb * 1024 });
+                  }}
+                >
+                  保存上限
+                </ActionButton>
               </div>
             </div>
-          </section>
-
-          <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white"><ShieldCheck className="h-4 w-4 text-emerald-600" />数据保护基线</div>
-                <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">这些约束在网关层执行，Provider 无法绕过。</p>
-              </div>
-              <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${devPassthroughActive ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'}`}>{devPassthroughActive ? '黑名单基线' : 'Fail closed'}</span>
-            </div>
-            <div className="mt-5 space-y-3">
-              <GuardrailRow
-                icon={<Fingerprint className="h-4 w-4" />}
-                label="敏感标识符 Token 化"
-                description={devPassthroughActive ? '临时黑名单模式不再对普通标识符做 Token 化；密码、API Key、Token、私钥和 Cookie 仍由凭据 DLP 拦截。' : '设备 IP、用户名、密钥等标识在出站前替换为稳定 Token。'}
-                enabled={policy.identifiers_must_be_tokenized}
-                state={devPassthroughActive ? 'bypass' : undefined}
-              />
-              <GuardrailRow
-                icon={<EyeOff className="h-4 w-4" />}
-                label="敏感内容最小化"
-                description={devPassthroughActive ? '临时黑名单模式不再对普通内容做最小化，便于联调时保留完整上下文；硬凭据 DLP 不放开。' : '只保留当前分析所需内容，减少原始配置和凭据暴露。'}
-                enabled={policy.allow_sensitive_minimization}
-                state={devPassthroughActive ? 'bypass' : undefined}
-              />
-              <GuardrailRow
-                icon={<LockKeyhole className="h-4 w-4" />}
-                label="数据分类边界"
-                description={devPassthroughActive ? '临时黑名单模式不再因普通数据分类阻断请求；Provider 类型、区域和租户权限仍在网关执行。' : `允许分类 ${policy.allowed_classifications?.join('、') || 'PUBLIC/INTERNAL/CONFIDENTIAL'}。`}
-                enabled={(policy.allowed_classifications || []).length > 0}
-                state={devPassthroughActive ? 'bypass' : undefined}
-              />
-              <GuardrailRow
-                icon={<CloudOff className="h-4 w-4" />}
-                label="Provider / 区域 / 租户权限"
-                description={`只允许已配置 Provider 类型和区域（${policy.allowed_data_regions?.join('、') || 'unknown'}），并继续执行当前租户授权与租户开关。`}
-                enabled={(policy.allowed_provider_types || []).length > 0 && (policy.allowed_data_regions || []).length > 0}
-              />
-              <GuardrailRow
-                icon={<Database className="h-4 w-4" />}
-                label="请求体大小限制"
-                description={`单次 payload 上限 ${formatBytes(policy.max_payload_bytes)}，超过即拒绝。`}
-                enabled={policy.max_payload_bytes > 0}
-              />
-              <GuardrailRow icon={<ShieldCheck className="h-4 w-4" />} label="凭据 DLP" description="密码、API Key、Token、私钥、Cookie、JWT 以及凭据字段始终禁止出站。" enabled />
-              <GuardrailRow icon={<Skull className="h-4 w-4" />} label="危险工具与写入操作拦截" description="raw SSH/SQL、设备写入命令、配置变更、提交、删除和重启等操作始终拦截。" enabled />
-              <GuardrailRow icon={<LockKeyhole className="h-4 w-4" />} label="跨租户与凭据读取拦截" description="跨租户私有数据访问、凭据查询、导出和读取请求始终拦截。" enabled />
-              <GuardrailRow icon={<AlertTriangle className="h-4 w-4" />} label="Kill Switch" description="全局、Provider 和租户 Kill Switch 一旦触发，立即阻断全部外部 AI 出口。" enabled />
-            </div>
-          </section>
-        </div>
-
-        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
-          <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white"><Workflow className="h-4 w-4 text-indigo-600" />一条请求如何通过网关</div>
-          <div className="mt-5 flex flex-col gap-3 md:flex-row md:items-stretch md:gap-0">
-            {[
-              ['01', '数据分级', '识别敏感等级'],
-              ['02', '最小化', '压缩必要上下文'],
-              ['03', 'Token 化', '替换敏感标识'],
-              ['04', 'DLP 检查', '发现即阻断'],
-              ['05', 'Provider', '按 allowlist 控制 DeepSeek、OpenAI-compatible、Azure、Ollama 等适配器'],
-            ].map(([number, title, detail], index, steps) => (
-              <React.Fragment key={number}>
-                <div className="flex min-w-0 flex-1 items-center gap-3 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-950/50">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-xs font-bold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">{number}</span>
-                  <span className="min-w-0"><span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">{title}</span><span className="mt-0.5 block truncate text-[11px] text-slate-500 dark:text-slate-400">{detail}</span></span>
-                </div>
-                {index < steps.length - 1 && <ChevronRight className="mx-auto h-5 w-5 shrink-0 self-center text-slate-300 dark:text-slate-700 md:mx-2" />}
-              </React.Fragment>
-            ))}
           </div>
-        </section>
+        </Panel>
 
-        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
-          <div className="flex items-center justify-between gap-3"><div><div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white"><AlertTriangle className="h-4 w-4 text-rose-600" />安全事件响应</div><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">阻断请求只保留元数据证据；处理动作受租户和 Administrator 权限保护。</p></div><span className="rounded-full bg-rose-50 px-2.5 py-1 text-[10px] font-bold text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">{incidentTotal} 条匹配</span></div>
-          <form onSubmit={(event) => { event.preventDefault(); setIncidentPage(1); setIncidentSearchApplied(incidentSearch.trim()); }} className="mt-4 flex flex-wrap gap-2">
-            <div className="relative min-w-[240px] flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input type="search" value={incidentSearch} onChange={(event) => setIncidentSearch(event.target.value)} placeholder="搜索请求 ID、任务、类型或分类" className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white" /></div>
-            <select value={incidentStatus} onChange={(event) => { setIncidentStatus(event.target.value); setIncidentPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">全部状态</option><option value="open">待处理</option><option value="investigating">处理中</option><option value="resolved">已解决</option></select>
-            <select value={incidentSeverity} onChange={(event) => { setIncidentSeverity(event.target.value); setIncidentPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">全部级别</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select>
+        <Panel>
+          <PanelHeader
+            title={<span className="inline-flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-success" aria-hidden="true" />数据保护基线</span>}
+            description="这些约束在网关层执行，Provider 无法绕过。"
+            actions={<StatusBadge tone={devPassthroughActive ? 'warning' : 'success'}>{devPassthroughActive ? '黑名单基线' : 'Fail closed'}</StatusBadge>}
+          />
+          <div className="divide-y divide-line">
+            <GuardrailRow
+              icon={<Fingerprint className="h-4 w-4" />}
+              label="敏感标识符 Token 化"
+              description={devPassthroughActive ? '临时黑名单模式不再对普通标识符做 Token 化；密码、API Key、Token、私钥和 Cookie 仍由凭据 DLP 拦截。' : '设备 IP、用户名、密钥等标识在出站前替换为稳定 Token。'}
+              enabled={policy.identifiers_must_be_tokenized}
+              state={devPassthroughActive ? 'bypass' : undefined}
+            />
+            <GuardrailRow
+              icon={<EyeOff className="h-4 w-4" />}
+              label="敏感内容最小化"
+              description={devPassthroughActive ? '临时黑名单模式不再对普通内容做最小化，便于联调时保留完整上下文；硬凭据 DLP 不放开。' : '只保留当前分析所需内容，减少原始配置和凭据暴露。'}
+              enabled={policy.allow_sensitive_minimization}
+              state={devPassthroughActive ? 'bypass' : undefined}
+            />
+            <GuardrailRow
+              icon={<LockKeyhole className="h-4 w-4" />}
+              label="数据分类边界"
+              description={devPassthroughActive ? '临时黑名单模式不再因普通数据分类阻断请求；Provider 类型、区域和租户权限仍在网关执行。' : `允许分类 ${policy.allowed_classifications?.join('、') || 'PUBLIC/INTERNAL/CONFIDENTIAL'}。`}
+              enabled={(policy.allowed_classifications || []).length > 0}
+              state={devPassthroughActive ? 'bypass' : undefined}
+            />
+            <GuardrailRow
+              icon={<CloudOff className="h-4 w-4" />}
+              label="Provider / 区域 / 租户权限"
+              description={`只允许已配置 Provider 类型和区域（${policy.allowed_data_regions?.join('、') || 'unknown'}），并继续执行当前租户授权与租户开关。`}
+              enabled={(policy.allowed_provider_types || []).length > 0 && (policy.allowed_data_regions || []).length > 0}
+            />
+            <GuardrailRow
+              icon={<Database className="h-4 w-4" />}
+              label="请求体大小限制"
+              description={`单次 payload 上限 ${formatBytes(policy.max_payload_bytes)}，超过即拒绝。`}
+              enabled={policy.max_payload_bytes > 0}
+            />
+            <GuardrailRow icon={<ShieldCheck className="h-4 w-4" />} label="凭据 DLP" description="密码、API Key、Token、私钥、Cookie、JWT 以及凭据字段始终禁止出站。" enabled />
+            <GuardrailRow icon={<Skull className="h-4 w-4" />} label="危险工具与写入操作拦截" description="raw SSH/SQL、设备写入命令、配置变更、提交、删除和重启等操作始终拦截。" enabled />
+            <GuardrailRow icon={<LockKeyhole className="h-4 w-4" />} label="跨租户与凭据读取拦截" description="跨租户私有数据访问、凭据查询、导出和读取请求始终拦截。" enabled />
+            <GuardrailRow icon={<AlertTriangle className="h-4 w-4" />} label="Kill Switch" description="全局、Provider 和租户 Kill Switch 一旦触发，立即阻断全部外部 AI 出口。" enabled />
+          </div>
+        </Panel>
+      </div>
+
+      <Panel>
+        <PanelHeader title="一条请求如何通过网关" description="每个外部 AI 请求按顺序经过以下检查。" />
+        <ol className="flex flex-col gap-2 p-4 md:flex-row md:items-stretch md:gap-0">
+          {[
+            ['01', '数据分级', '识别敏感等级'],
+            ['02', '最小化', '压缩必要上下文'],
+            ['03', 'Token 化', '替换敏感标识'],
+            ['04', 'DLP 检查', '发现即阻断'],
+            ['05', 'Provider', '按 allowlist 控制 DeepSeek、OpenAI-compatible、Azure、Ollama 等适配器'],
+          ].map(([number, title, detail], index, steps) => (
+            <React.Fragment key={number}>
+              <li className="flex min-w-0 flex-1 items-center gap-3 rounded-lg border border-line bg-surface-muted px-3 py-2.5">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent-subtle font-mono text-xs font-semibold text-accent">{number}</span>
+                <span className="min-w-0"><span className="block text-[13px] font-medium text-fg">{title}</span><span className="mt-0.5 block truncate text-xs text-fg-muted" title={detail}>{detail}</span></span>
+              </li>
+              {index < steps.length - 1 && <ChevronRight className="mx-auto h-4 w-4 shrink-0 self-center text-fg-subtle md:mx-1.5" aria-hidden="true" />}
+            </React.Fragment>
+          ))}
+        </ol>
+      </Panel>
+
+      <Panel>
+        <PanelHeader
+          title={<span className="inline-flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-danger" aria-hidden="true" />安全事件响应</span>}
+          description="阻断请求只保留元数据证据；处理动作受租户和 Administrator 权限保护。"
+          actions={<StatusBadge tone={incidentTotal > 0 ? 'danger' : 'neutral'}>{incidentTotal} 条匹配</StatusBadge>}
+        />
+        <div className="p-4">
+          <form onSubmit={(event) => { event.preventDefault(); setIncidentPage(1); setIncidentSearchApplied(incidentSearch.trim()); }} className="flex flex-wrap gap-2">
+            <div className="relative min-w-[240px] flex-1">
+              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-fg-subtle" aria-hidden="true" />
+              <input type="search" value={incidentSearch} onChange={(event) => setIncidentSearch(event.target.value)} placeholder="搜索请求 ID、任务、类型或分类" aria-label="搜索安全事件" className={cn(filterControlClass, 'w-full pl-9')} />
+            </div>
+            <select value={incidentStatus} onChange={(event) => { setIncidentStatus(event.target.value); setIncidentPage(1); }} aria-label="按状态筛选安全事件" className={filterControlClass}><option value="">全部状态</option><option value="open">待处理</option><option value="investigating">处理中</option><option value="resolved">已解决</option></select>
+            <select value={incidentSeverity} onChange={(event) => { setIncidentSeverity(event.target.value); setIncidentPage(1); }} aria-label="按级别筛选安全事件" className={filterControlClass}><option value="">全部级别</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select>
           </form>
-          <div className="mt-4 space-y-2">{incidentsLoading ? <div className="py-6 text-center text-xs text-slate-400">正在加载安全事件…</div> : incidents.map((incident) => <div key={incident.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-100 px-3 py-2 text-xs dark:border-slate-800"><span className="font-semibold text-slate-800 dark:text-slate-100">{incident.incident_type}</span><span className="rounded-full bg-rose-50 px-2 py-0.5 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">{incident.severity}</span><span className="text-slate-500">{incident.created_at}</span><span className="ml-auto text-slate-500">{incident.status}</span>{incident.status !== 'resolved' && <button type="button" onClick={() => void resolveIncident(incident.id)} className="rounded border border-emerald-200 px-2 py-1 font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900/60 dark:text-emerald-300">标记已解决</button>}</div>)}{!incidentsLoading && incidents.length === 0 && <div className="py-4 text-center text-xs text-slate-400">当前筛选没有匹配的安全事件</div>}</div>
+          <div className="mt-3">
+            {incidentsLoading ? (
+              <div className="py-6 text-center text-xs text-fg-muted">正在加载安全事件…</div>
+            ) : incidents.length === 0 ? (
+              <EmptyState icon={ShieldCheck} title="当前筛选没有匹配的安全事件" description="网关阻断或判定异常的请求会在这里生成事件记录。" className="py-8" />
+            ) : (
+              <ul className="divide-y divide-line rounded-lg border border-line">
+                {incidents.map((incident) => (
+                  <li key={incident.id} className="flex flex-wrap items-center gap-3 px-3 py-2 text-[13px] transition-colors hover:bg-accent-subtle">
+                    <span className="font-medium text-fg">{incident.incident_type}</span>
+                    <StatusBadge tone={severityTone(incident.severity)}>{incident.severity}</StatusBadge>
+                    <span className="text-xs text-fg-muted">{incident.created_at}</span>
+                    <span className="ml-auto"><StatusBadge tone={incidentStatusTone(incident.status)} dot>{incidentStatusLabel(incident.status)}</StatusBadge></span>
+                    {incident.status !== 'resolved' && (
+                      <ActionButton type="button" variant="success" icon={CheckCircle2} onClick={() => void resolveIncident(incident.id)}>标记已解决</ActionButton>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           <Pagination currentPage={incidentPage} totalItems={incidentTotal} itemsPerPage={incidentPageSize} onPageChange={setIncidentPage} onItemsPerPageChange={(size) => { setIncidentPageSize(size); setIncidentPage(1); }} language="zh" alwaysVisible />
-        </section>
+        </div>
+      </Panel>
 
-        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white"><Database className="h-4 w-4 text-cyan-600" />安全事件审计</div>
-              <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">仅展示策略版本、分类、处置、Provider/Model 和请求 ID，不返回原始提示词或秘密。</p>
+      <Panel>
+        <PanelHeader
+          title={<span className="inline-flex items-center gap-2"><Database className="h-4 w-4 text-accent" aria-hidden="true" />安全事件审计</span>}
+          description="仅展示策略版本、分类、处置、Provider/Model 和请求 ID，不返回原始提示词或秘密。"
+          actions={<ActionButton type="button" icon={RefreshCw} iconClassName={eventsLoading ? 'animate-spin motion-reduce:animate-none' : undefined} onClick={() => void loadEvents()}>刷新事件</ActionButton>}
+        />
+        <div className="p-4">
+          <form onSubmit={(event) => { event.preventDefault(); setEventPage(1); setEventSearchApplied(eventSearch.trim()); }} className="flex flex-wrap gap-2">
+            <div className="relative min-w-[240px] flex-1">
+              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-fg-subtle" aria-hidden="true" />
+              <input type="search" value={eventSearch} onChange={(event) => setEventSearch(event.target.value)} placeholder="搜索 Request ID、Provider、Model 或错误码" aria-label="搜索审计事件" className={cn(filterControlClass, 'w-full pl-9')} />
             </div>
-            <div className="flex items-center gap-2"><button type="button" onClick={() => void loadEvents()} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-cyan-300 dark:border-slate-700 dark:text-slate-300">刷新事件</button></div>
-          </div>
-          <form onSubmit={(event) => { event.preventDefault(); setEventPage(1); setEventSearchApplied(eventSearch.trim()); }} className="mt-4 flex flex-wrap gap-2">
-            <div className="relative min-w-[240px] flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input type="search" value={eventSearch} onChange={(event) => setEventSearch(event.target.value)} placeholder="搜索 Request ID、Provider、Model 或错误码" className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white" /></div>
-            <select value={eventDecision} onChange={(event) => { setEventDecision(event.target.value); setEventPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">全部决定</option><option value="ALLOW">ALLOW</option><option value="MINIMIZE">MINIMIZE</option><option value="TOKENIZE">TOKENIZE</option><option value="BLOCK">BLOCK</option></select>
+            <select value={eventDecision} onChange={(event) => { setEventDecision(event.target.value); setEventPage(1); }} aria-label="按决定筛选审计事件" className={filterControlClass}><option value="">全部决定</option><option value="ALLOW">ALLOW</option><option value="MINIMIZE">MINIMIZE</option><option value="TOKENIZE">TOKENIZE</option><option value="BLOCK">BLOCK</option></select>
           </form>
-          <div className="mt-4 overflow-x-auto">
-            <DataTable unstyled exportConfig={{ filename: 'ai-security-events', language: 'zh', disabled: eventsLoading || eventTotal === 0, exportData: exportAllEvents }} className="min-w-[900px] text-left text-xs"><thead className="text-slate-400"><tr><th className="px-2 py-2">时间</th><th className="px-2 py-2">决定</th><th className="px-2 py-2">分类</th><th className="px-2 py-2">Provider ID</th><th className="px-2 py-2">Model ID</th><th className="px-2 py-2">发现项</th></tr></thead><tbody>
-              {!eventsLoading && events.map((event) => <tr key={event.id} className="border-t border-slate-100 dark:border-slate-800"><td className="px-2 py-2 whitespace-nowrap text-slate-500">{event.created_at}</td><td className="px-2 py-2 font-semibold">{event.decision}</td><td className="px-2 py-2">{event.classification}</td><td className="px-2 py-2">{event.provider_id || '—'}</td><td className="px-2 py-2">{event.model_id || '—'}</td><td className="px-2 py-2">{event.finding_categories?.join('、') || '无'}</td></tr>)}
-            </tbody></DataTable>
-            {eventsLoading ? <div className="py-6 text-center text-xs text-slate-400">正在加载审计事件…</div> : events.length === 0 && <div className="py-6 text-center text-xs text-slate-400">当前筛选没有匹配的审计事件</div>}
+          <div className="mt-3 overflow-x-auto rounded-lg border border-line">
+            <DataTable unstyled exportConfig={{ filename: 'ai-security-events', language: 'zh', disabled: eventsLoading || eventTotal === 0, exportData: exportAllEvents }} className="min-w-[900px] text-left">
+              <thead className="bg-surface-muted">
+                <tr>
+                  <th className={tableHeadClass}>时间</th>
+                  <th className={tableHeadClass}>决定</th>
+                  <th className={tableHeadClass}>分类</th>
+                  <th className={tableHeadClass}>Provider ID</th>
+                  <th className={tableHeadClass}>Model ID</th>
+                  <th className={tableHeadClass}>发现项</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!eventsLoading && events.map((event) => (
+                  <tr key={event.id} className="border-t border-line transition-colors hover:bg-accent-subtle">
+                    <td className={cn(tableCellClass, 'whitespace-nowrap text-fg-muted')}>{event.created_at}</td>
+                    <td className={tableCellClass}><StatusBadge tone={decisionTone(event.decision)} mono>{event.decision}</StatusBadge></td>
+                    <td className={tableCellClass}><StatusBadge mono>{event.classification}</StatusBadge></td>
+                    <td className={cn(tableCellClass, 'max-w-[180px] truncate font-mono text-xs')} title={event.provider_id || ''}>{event.provider_id || '—'}</td>
+                    <td className={cn(tableCellClass, 'max-w-[180px] truncate font-mono text-xs')} title={event.model_id || ''}>{event.model_id || '—'}</td>
+                    <td className={cn(tableCellClass, 'max-w-[240px] truncate')} title={event.finding_categories?.join('、') || ''}>{event.finding_categories?.join('、') || '无'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </DataTable>
+            {eventsLoading ? (
+              <div className="py-6 text-center text-xs text-fg-muted">正在加载审计事件…</div>
+            ) : events.length === 0 && (
+              <div className="py-6 text-center text-xs text-fg-muted">当前筛选没有匹配的审计事件</div>
+            )}
           </div>
           <Pagination currentPage={eventPage} totalItems={eventTotal} itemsPerPage={eventPageSize} onPageChange={setEventPage} onItemsPerPageChange={(size) => { setEventPageSize(size); setEventPage(1); }} language="zh" alwaysVisible />
-        </section>
+        </div>
+      </Panel>
 
-        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
-          <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
-            <div>
-              <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white"><FlaskConical className="h-4 w-4 text-violet-600" />策略演练</div>
-              <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">只在本地执行安全检查，不会调用外部 Provider。先用它验证为什么某段内容会被允许、最小化或阻断。</p>
+      <Panel>
+        <PanelHeader
+          title={<span className="inline-flex items-center gap-2"><FlaskConical className="h-4 w-4 text-accent" aria-hidden="true" />策略演练</span>}
+          description="只在本地执行安全检查，不会调用外部 Provider。用它验证某段内容为什么会被允许、最小化或阻断。"
+          actions={<StatusBadge tone="accent">No external call</StatusBadge>}
+        />
+        <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.42fr)]">
+          <div>
+            <label htmlFor="ai-security-dry-run" className="mb-1.5 block text-[13px] font-medium text-fg">待检查内容</label>
+            <textarea
+              id="ai-security-dry-run"
+              value={sample}
+              onChange={(event) => setSample(event.target.value)}
+              className="min-h-[170px] w-full resize-y rounded-lg border border-line bg-surface p-3 font-mono text-[13px] leading-6 text-fg outline-none transition-colors placeholder:text-fg-subtle focus:border-accent focus:ring-2 focus:ring-accent/20"
+              placeholder="输入命令、配置片段或对话内容…"
+            />
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <ActionButton type="button" variant="primary" size="md" icon={FlaskConical} iconClassName={testing ? 'animate-pulse motion-reduce:animate-none' : undefined} disabled={testing} onClick={() => void runDryRun()}>
+                {testing ? '检查中…' : '运行策略检查'}
+              </ActionButton>
+              <span className="text-xs text-fg-muted">演练结果不会改变当前策略。</span>
             </div>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-violet-700 dark:bg-violet-950/50 dark:text-violet-300"><Check className="h-3 w-3" />No external call</span>
           </div>
-          <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.42fr)]">
-            <div>
-              <label htmlFor="ai-security-dry-run" className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">待检查内容</label>
-              <textarea
-                id="ai-security-dry-run"
-                value={sample}
-                onChange={(event) => setSample(event.target.value)}
-                className="min-h-[170px] w-full resize-y rounded-2xl border border-slate-200 bg-slate-50 p-4 font-mono text-sm leading-6 text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-cyan-400 focus:ring-4 focus:ring-cyan-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                placeholder="输入命令、配置片段或对话内容…"
-              />
-              <div className="mt-3 flex flex-wrap items-center gap-3">
-                <button type="button" disabled={testing} onClick={() => void runDryRun()} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-cyan-600 dark:hover:bg-cyan-500">
-                  <FlaskConical className={`h-4 w-4 ${testing ? 'animate-pulse' : ''}`} />{testing ? '检查中…' : '运行策略检查'}
-                </button>
-                <span className="text-xs text-slate-400">演练结果不会改变当前策略。</span>
-              </div>
-            </div>
-            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-950/60">
-              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400"><AlertTriangle className="h-3.5 w-3.5 text-amber-500" />检查结果</div>
-              {dryRun ? (
-                <div className="mt-4 space-y-3">
-                  <div role="status" aria-label="策略检查结果" className={`rounded-xl border px-3 py-2.5 text-sm font-bold ${decisionClass(dryRun.decision)}`}>
-                    {dryRun.decision} <span className="ml-1 text-xs font-normal opacity-80">/ {dryRun.max_data_level}{dryRun.security_mode === 'blacklist' ? ' · 临时黑名单' : ''}</span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="rounded-xl bg-white p-3 dark:bg-slate-900"><div className="text-slate-400">Payload</div><div className="mt-1 font-mono font-semibold text-slate-700 dark:text-slate-200">{dryRun.payload_bytes?.toLocaleString() || '—'} B</div></div>
-                    <div className="rounded-xl bg-white p-3 dark:bg-slate-900"><div className="text-slate-400">Findings</div><div className="mt-1 font-semibold text-slate-700 dark:text-slate-200">{dryRun.finding_categories.join('、') || '无'}</div></div>
-                  </div>
-                  <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">{dryRun.user_message || dryRun.reason || dryRun.reason_code || '策略检查完成，未发现需要额外处理的问题。'}</p>
+          <div className="rounded-lg border border-dashed border-line-strong bg-surface-muted p-4">
+            <div className="text-[13px] font-medium text-fg">检查结果</div>
+            {dryRun ? (
+              <div className="mt-3 space-y-3">
+                <div role="status" aria-label="策略检查结果" className={cn('rounded-lg border border-line border-l-[3px] px-3 py-2.5 text-sm font-semibold', decisionPanelClass(dryRun.decision))}>
+                  {dryRun.decision} <span className="ml-1 text-xs font-normal opacity-80">/ {dryRun.max_data_level}{dryRun.security_mode === 'blacklist' ? ' · 临时黑名单' : ''}</span>
                 </div>
-              ) : (
-                <div className="mt-8 text-center text-xs leading-5 text-slate-400"><ShieldCheck className="mx-auto mb-2 h-7 w-7 opacity-40" />输入内容后运行一次检查，结果会显示在这里。</div>
-              )}
-            </div>
+                <dl className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="rounded-lg border border-line bg-surface p-3"><dt className="text-fg-muted">Payload</dt><dd className="mt-1 font-mono font-semibold tabular-nums text-fg">{dryRun.payload_bytes?.toLocaleString() || '—'} B</dd></div>
+                  <div className="rounded-lg border border-line bg-surface p-3"><dt className="text-fg-muted">Findings</dt><dd className="mt-1 font-semibold text-fg">{(dryRun.finding_categories || []).join('、') || '无'}</dd></div>
+                </dl>
+                <p className="text-xs leading-5 text-fg-muted">{dryRun.user_message || dryRun.reason || dryRun.reason_code || '策略检查完成，未发现需要额外处理的问题。'}</p>
+              </div>
+            ) : (
+              <EmptyState icon={ShieldCheck} title="尚未运行检查" description="输入内容后运行一次检查，结果会显示在这里。" className="mt-3 border-0 bg-transparent px-2 py-6" />
+            )}
           </div>
-        </section>
-
-        <div className="flex items-center gap-2 pb-2 text-xs text-slate-400"><Save className="h-3.5 w-3.5" />策略保存后立即对新的 AI 请求生效；已存在的请求不会被重新放行。</div>
+        </div>
+      </Panel>
     </div>
   );
 };

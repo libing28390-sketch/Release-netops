@@ -737,7 +737,7 @@
           "instant": true
         }
       ],
-      "description": "数据库级 Shared Buffer 内存缓存命中率（通常建议 >95%）；该指标反映库级整体缓存效率，不属于单条 SQL。"
+      "description": "数据库级 Shared Buffer 缓存命中率（通常建议 >95%）；反映库级整体缓存效率，不属于单条 SQL。"
     },
     {
       "id": 901,

@@ -4,6 +4,7 @@ AI Rate Limiter supporting Redis sliding window / daily quota with in-memory fal
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import time
@@ -18,13 +19,23 @@ _IN_MEMORY_LOCK = threading.Lock()
 
 try:
     import redis
-    _redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    # Short timeouts: a slow or unreachable Redis must not stall AI requests.
+    _redis_client = redis.Redis.from_url(
+        settings.REDIS_URL,
+        decode_responses=True,
+        socket_connect_timeout=0.5,
+        socket_timeout=0.5,
+    )
 except Exception:
     _redis_client = None
 
 
 class AIRateLimiter:
     """Rate limiter for AI endpoints."""
+
+    async def is_allowed_async(self, user_id: str, scene: str, max_per_day: int = 200) -> Tuple[bool, int]:
+        """Same as ``is_allowed`` without blocking the event loop on Redis I/O."""
+        return await asyncio.to_thread(self.is_allowed, user_id, scene, max_per_day)
 
     def is_allowed(self, user_id: str, scene: str, max_per_day: int = 200) -> Tuple[bool, int]:
         """

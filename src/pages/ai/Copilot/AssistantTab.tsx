@@ -23,6 +23,9 @@ import {
   archiveAIConversation,
   submitCopilotFeedback,
   checkCopilotAttachment,
+  getCopilotTools,
+  parseCopilotAttachment,
+  type CopilotToolDefinition,
   createCopilotCase,
   handoffCopilotCase,
   createDiagnosticPlan,
@@ -33,8 +36,19 @@ import { copyTextWithFallback } from '../../../utils/clipboard';
 import { cloneSelectionWithin, hasTextSelection, restoreSelection } from './selectionUtils';
 import { CopilotSidebar, ChatSession } from './CopilotSidebar';
 import { CopilotHeader } from './CopilotHeader';
+import {
+  buildExportFilename,
+  formatConversationAsJson,
+  formatConversationAsMarkdown,
+  triggerTextDownload,
+} from './exportUtils';
 import { CopilotEmptyState } from './CopilotEmptyState';
 import { CopilotComposer, CopilotModelOption } from './CopilotComposer';
+import { buildCopilotModelOptions, pickCopilotModel } from './modelOptions';
+import { buildLocalHistoryPayload } from './historyPayload';
+import { StreamingText } from './StreamingText';
+import { knowledgeNoMatchNotice } from './knowledgeNotice';
+import { copilotCopy } from './AssistantTab.copy';
 import { CopilotInspectorDrawer } from './CopilotInspectorDrawer';
 import { ClarificationCard } from './ClarificationCard';
 import { formatCopilotDuration, upsertCopilotProcessStep } from './progress';
@@ -80,6 +94,7 @@ interface ChatMessage {
   latency_ms?: number;
   input_tokens?: number;
   output_tokens?: number;
+  cached_tokens?: number;
   route_model?: string;
   provider_id?: string;
   route_reason?: string;
@@ -90,7 +105,17 @@ interface ChatMessage {
   copilot?: CopilotContract;
   feedback?: 'positive' | 'negative';
   stream_status?: 'streaming' | 'completed' | 'aborted' | 'error';
+  /** The model stopped at its output limit; offer "continue". */
+  truncated?: boolean;
 }
+
+const CONTINUE_PROMPT = '请从上一条回答中断的位置继续，不要重复已经输出的内容。';
+
+/** Label of the step currently running, for the streaming status line. */
+const currentStepLabel = (steps: AssistantProcessStep[] | undefined): string => {
+  const running = [...(steps || [])].reverse().find((step) => step.status === 'running');
+  return running?.label || '准备回答';
+};
 
 const LEGACY_STORAGE_KEY = 'nexora_copilot_sessions_v4';
 const SIDEBAR_COLLAPSED_KEY = 'nexora_copilot_sidebar_collapsed_v1';
@@ -137,6 +162,7 @@ const mapConversationMessage = (message: AIConversationMessage): ChatMessage => 
   external_egress: message.external_egress,
   input_tokens: typeof message.input_tokens === 'number' ? message.input_tokens : undefined,
   output_tokens: typeof message.output_tokens === 'number' ? message.output_tokens : undefined,
+  cached_tokens: typeof message.cached_tokens === 'number' ? message.cached_tokens : undefined,
   latency_ms: typeof message.latency_ms === 'number' ? message.latency_ms : undefined,
   token_source: message.token_source,
   sources: Array.isArray(message.citations)
@@ -285,6 +311,25 @@ export const AssistantTab: React.FC = () => {
   const [feedbackReasonMessageId, setFeedbackReasonMessageId] = useState<string | null>(null);
   const [feedbackNotice, setFeedbackNotice] = useState<string | null>(null);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
+  const [copilotTools, setCopilotTools] = useState<CopilotToolDefinition[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    if (typeof getCopilotTools === 'function') {
+      Promise.resolve(getCopilotTools())
+        .then((res) => {
+          if (active && Array.isArray(res?.tools)) {
+            setCopilotTools(res.tools);
+          }
+        })
+        .catch(() => {
+          // Fallback to built-in default slash commands in CopilotComposer
+        });
+    }
+    return () => {
+      active = false;
+    };
+  }, []);
   const [caseNotice, setCaseNotice] = useState<string | null>(null);
   const [diagnosticPlan, setDiagnosticPlan] = useState<any | null>(null);
   const [authorizedDiagnosticSteps, setAuthorizedDiagnosticSteps] = useState<number[]>([]);
@@ -414,26 +459,12 @@ export const AssistantTab: React.FC = () => {
     const fetchModelsAndProviders = async () => {
       try {
         const [providers, models] = await Promise.all([getAIProviders(), getAIModels()]);
-        const enabledProviderMap = new Map(providers.filter((p) => p.enabled).map((p) => [p.id, p.name]));
-
-        const validModels = models
-          .filter((m) => m.enabled && enabledProviderMap.has(m.provider_id))
-          .map((m) => ({
-            id: m.id,
-            name: m.name,
-            model_code: m.model_code,
-            provider_name: enabledProviderMap.get(m.provider_id) || 'AI 供应商',
-            model_type: m.model_type,
-            context_length: m.context_length,
-            health_status: m.health_status,
-            stream_supported: m.stream_supported,
-          }));
+        // Chat models only, one entry per model, unhealthy ones last.
+        const validModels = buildCopilotModelOptions(providers, models);
 
         if (validModels.length > 0) {
           setAvailableModels(validModels);
-          if (!validModels.some((m) => m.id === selectedModel)) {
-            setSelectedModel(validModels[0].id);
-          }
+          setSelectedModel((current) => pickCopilotModel(validModels, current));
         }
       } catch (err) {
         console.error('Failed to load dynamic AI providers/models:', err);
@@ -709,9 +740,16 @@ export const AssistantTab: React.FC = () => {
     const nowTime = formatSessionTime(createdAt);
     const isFirstMsg = messages.length === 0;
     const newTitle = isFirstMsg ? (userMsg.length > 16 ? userMsg.slice(0, 16) + '...' : userMsg) : activeSession.title;
+    const titleSessionId = activeSessionId;
 
     if (conversationId && isFirstMsg) {
-      void renameAIConversation(conversationId, newTitle).catch((error) => {
+      // The server redacts credentials in titles; show its title, never the
+      // locally derived one, so "我的密码是…" does not appear in the sidebar.
+      void renameAIConversation(conversationId, newTitle).then((updated) => {
+        if (updated?.title) {
+          setSessions((prev) => prev.map((s) => (s.id === titleSessionId ? { ...s, title: updated.title } : s)));
+        }
+      }).catch((error) => {
         console.warn('Failed to update conversation title:', error);
       });
     }
@@ -739,7 +777,8 @@ export const AssistantTab: React.FC = () => {
         if (s.id === activeSessionId) {
           return {
             ...s,
-            title: newTitle,
+            // Server conversation: keep the current title until rename returns.
+            title: conversationId && isFirstMsg ? s.title : newTitle,
             updatedAt: nowTime,
             messages: updatedMessages,
           };
@@ -760,16 +799,18 @@ export const AssistantTab: React.FC = () => {
     // Stream tokens arrive faster than the display refreshes. Committing one
     // setState per token re-rendered the whole conversation and made text
     // selection and copy feel laggy, so tokens are batched per frame.
+    let currentAssistantMsgId = assistantMsgId;
     let pendingStreamText = '';
     let streamFlushHandle: number | null = null;
     let streamFlushIsTimeout = false;
     const appendStreamText = (chunk: string) => {
       if (!chunk) return;
+      const targetId = currentAssistantMsgId;
       setSessions((prev) =>
         prev.map((s) => {
           if (s.id !== activeSessionId) return s;
           const msgs = s.messages.map((m) => {
-            if (m.id === assistantMsgId) {
+            if (m.id === targetId) {
               return { ...m, content: m.content + chunk, stream_status: 'streaming' as const };
             }
             return m;
@@ -806,7 +847,11 @@ export const AssistantTab: React.FC = () => {
     };
 
     try {
-      const historyPayload = conversationId ? undefined : messages.map((m) => ({ role: m.role, content: m.content }));
+      // Local (unsaved) sessions send their own history.  Error bubbles,
+      // empty placeholders and non-chat roles are UI state, not conversation
+      // content, and would otherwise crowd out real turns in the history
+      // budget on the server.
+      const historyPayload = conversationId ? undefined : buildLocalHistoryPayload(messages);
 
       await chatAssistantStream(
         userMsg,
@@ -816,6 +861,14 @@ export const AssistantTab: React.FC = () => {
           scheduleStreamFlush();
         },
         (meta) => {
+          if (meta.assistant_message_id) {
+            finalizeStreamText(true);
+          }
+          const matchId = currentAssistantMsgId;
+          const nextId = meta.assistant_message_id || matchId;
+          if (meta.assistant_message_id) {
+            currentAssistantMsgId = meta.assistant_message_id;
+          }
           setSessions((prev) =>
             prev.map((s) => {
               if (s.id === activeSessionId) {
@@ -831,11 +884,11 @@ export const AssistantTab: React.FC = () => {
                     ? null
                     : s.pending_clarification);
                 const msgs = s.messages.map((m) => {
-                  if (m.id === assistantMsgId) {
+                  if (m.id === matchId || m.id === nextId) {
                     return {
                       ...m,
-                      id: meta.assistant_message_id || m.id,
-                      stream_status: meta.assistant_message_id ? 'done' : 'streaming',
+                      id: nextId,
+                      stream_status: meta.assistant_message_id ? 'completed' as const : m.stream_status,
                       intent: meta.intent || m.intent,
                       sources: meta.citations || m.sources,
                       retrieval: meta.retrieval || m.retrieval,
@@ -849,6 +902,7 @@ export const AssistantTab: React.FC = () => {
                       token_source: meta.token_source ?? m.token_source,
                       input_tokens: meta.input_tokens ?? m.input_tokens,
                       output_tokens: meta.output_tokens ?? m.output_tokens,
+                      cached_tokens: meta.cached_tokens ?? m.cached_tokens,
                       latency_ms: meta.latency_ms ?? m.latency_ms,
                     };
                   }
@@ -861,11 +915,12 @@ export const AssistantTab: React.FC = () => {
           );
         },
         (step) => {
+          const targetId = currentAssistantMsgId;
           setSessions((prev) =>
             prev.map((s) => {
               if (s.id !== activeSessionId) return s;
               const msgs = s.messages.map((m) => {
-                if (m.id !== assistantMsgId) return m;
+                if (m.id !== targetId) return m;
                 return {
                   ...m,
                   processing_steps: upsertCopilotProcessStep(m.processing_steps || [], step),
@@ -876,27 +931,31 @@ export const AssistantTab: React.FC = () => {
           );
         },
         (done) => {
+          finalizeStreamText(true);
           if (typeof done.duration_ms === 'number') {
             streamDurationMs = done.duration_ms;
           }
+          const targetId = currentAssistantMsgId;
           setSessions((prev) =>
             prev.map((s) => {
               if (s.id !== activeSessionId) return s;
               return {
                 ...s,
                 messages: s.messages.map((m) => {
-                  if (m.id !== assistantMsgId) return m;
+                  if (m.id !== targetId) return m;
                   return {
                     ...m,
                     latency_ms: typeof done.duration_ms === 'number' ? done.duration_ms : m.latency_ms,
                     input_tokens: typeof done.input_tokens === 'number' ? done.input_tokens : m.input_tokens,
                     output_tokens: typeof done.output_tokens === 'number' ? done.output_tokens : m.output_tokens,
+                    cached_tokens: typeof done.cached_tokens === 'number' ? done.cached_tokens : m.cached_tokens,
                     route_model: done.model_id || m.route_model,
                     provider_id: done.provider_id || m.provider_id,
                     route_reason: done.route_reason || m.route_reason,
                     execution_mode: done.execution_mode || m.execution_mode,
                     external_egress: done.external_egress ?? m.external_egress,
                     token_source: done.token_source ?? m.token_source,
+                    truncated: done.finish_reason === 'length',
                   };
                 }),
               };
@@ -904,14 +963,16 @@ export const AssistantTab: React.FC = () => {
           );
         },
         (streamError) => {
+          finalizeStreamText(false);
           const message = formatAssistantStreamError(streamError);
+          const targetId = currentAssistantMsgId;
           setSessions((prev) =>
             prev.map((s) => {
               if (s.id !== activeSessionId) return s;
               return {
                 ...s,
                 messages: s.messages.map((m) =>
-                  m.id === assistantMsgId ? { ...m, content: message, stream_status: 'error' } : m
+                  m.id === targetId ? { ...m, content: message, stream_status: 'error' } : m
                 ),
               };
             })
@@ -927,13 +988,14 @@ export const AssistantTab: React.FC = () => {
             ...raw,
             document: String(raw.document || raw.document_name || 'Nexora'),
           } as CitationSource;
+          const targetId = currentAssistantMsgId;
           setSessions((prev) =>
             prev.map((s) => {
               if (s.id !== activeSessionId) return s;
               return {
                 ...s,
                 messages: s.messages.map((m) => {
-                  if (m.id !== assistantMsgId) return m;
+                  if (m.id !== targetId) return m;
                   const existing = m.sources || [];
                   if (citation.citation_id && existing.some((item) => item.citation_id === citation.citation_id)) return m;
                   return { ...m, sources: [...existing, citation] };
@@ -950,15 +1012,16 @@ export const AssistantTab: React.FC = () => {
 
       finalizeStreamText(true);
       const elapsed = streamDurationMs ?? Date.now() - startTime;
+      const finalTargetId = currentAssistantMsgId;
       setSessions((prev) =>
         prev.map((s) => {
           if (s.id === activeSessionId) {
             const msgs = s.messages.map((m) => {
-              if (m.id === assistantMsgId) {
+              if (m.id === finalTargetId) {
                 const updatedMsg = {
                   ...m,
                   latency_ms: m.latency_ms ?? elapsed,
-                  stream_status: 'completed' as const,
+                  stream_status: m.stream_status === 'error' ? 'error' as const : 'completed' as const,
                 };
                 setActiveInspectorMsg((current) => current?.id === updatedMsg.id ? updatedMsg : current);
                 return updatedMsg;
@@ -974,11 +1037,12 @@ export const AssistantTab: React.FC = () => {
       finalizeStreamText(false);
       const elapsed = streamDurationMs ?? Date.now() - startTime;
       const aborted = err?.name === 'AbortError' || abortController.signal.aborted;
+      const errTargetId = currentAssistantMsgId;
       setSessions((prev) =>
         prev.map((s) => {
           if (s.id === activeSessionId) {
             const msgs = s.messages.map((m) => {
-              if (m.id === assistantMsgId) {
+              if (m.id === errTargetId) {
                 return {
                   ...m,
                   content: aborted
@@ -1171,9 +1235,31 @@ export const AssistantTab: React.FC = () => {
         <CopilotHeader
           sessionTitle={activeSession?.title || '新对话'}
           selectedModel={selectedModel}
-          onSelectModel={setSelectedModel}
           models={availableModels}
           onClearChat={handleClearMessages}
+          canExport={messages.length > 0}
+          onExportMarkdown={() => {
+            if (!activeSession || messages.length === 0) return;
+            const currentModelObj = availableModels.find((m) => m.id === selectedModel) || availableModels[0];
+            const content = formatConversationAsMarkdown({
+              id: activeSession.id,
+              title: activeSession.title || '新对话',
+              modelName: currentModelObj?.name || selectedModel,
+              messages,
+            });
+            triggerTextDownload(buildExportFilename(activeSession.title || '新对话', 'md'), content, 'text/markdown');
+          }}
+          onExportJson={() => {
+            if (!activeSession || messages.length === 0) return;
+            const currentModelObj = availableModels.find((m) => m.id === selectedModel) || availableModels[0];
+            const content = formatConversationAsJson({
+              id: activeSession.id,
+              title: activeSession.title || '新对话',
+              modelName: currentModelObj?.name || selectedModel,
+              messages,
+            });
+            triggerTextDownload(buildExportFilename(activeSession.title || '新对话', 'json'), content, 'application/json');
+          }}
         />
 
         {sessionError && (
@@ -1281,17 +1367,21 @@ export const AssistantTab: React.FC = () => {
                       ? '本地范围确认'
                     : m.execution_mode === 'local_sensitive_identifier'
                       ? '本地敏感标识定位'
+                    : m.execution_mode === 'local_security_block'
+                      ? '本地安全拦截'
                     : m.execution_mode === 'provider_generated'
                       ? `${displayProviderName || '外部模型'} 生成`
                       : m.execution_mode === 'local_fallback'
                         ? '本地回退回答'
                         : isMessageStreaming
-                          ? '执行路径确认中'
+                          ? '处理中'
                           : '历史消息 · 路由未知';
                 const executionBadgeClass = m.execution_mode === 'local_knowledge' || m.execution_mode === 'local_operation'
                   ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
                   : m.execution_mode === 'local_clarification'
                     ? 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-300'
+                  : m.execution_mode === 'local_security_block'
+                    ? 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300'
                   : m.execution_mode === 'local_sensitive_identifier'
                     ? 'border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-300'
                   : m.execution_mode === 'provider_generated'
@@ -1324,19 +1414,6 @@ export const AssistantTab: React.FC = () => {
                             </time>
                           )}
                         </div>
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pl-8 text-[11px] text-gray-500 dark:text-gray-400">
-                          <span>{m.external_egress === true ? '已通过安全网关调用外部模型' : m.external_egress === false ? '未发生外部调用' : isMessageStreaming ? '外部调用状态确认中' : '外部调用状态未记录'}</span>
-                          {m.execution_mode === 'provider_generated' && actualModelLabel && <span>实际模型：{actualModelLabel}</span>}
-                          <span>
-                            {typeof m.input_tokens === 'number' && typeof m.output_tokens === 'number'
-                              ? m.token_source === 'provider_reported'
-                                ? `实际 Token：输入 ${m.input_tokens} / 输出 ${m.output_tokens}`
-                                : m.token_source === 'estimated'
-                                  ? `Token 估算：输入 ${m.input_tokens} / 输出 ${m.output_tokens}`
-                                  : `模型 Token：输入 ${m.input_tokens} / 输出 ${m.output_tokens}`
-                              : '模型 Token 未记录'}
-                          </span>
-                        </div>
                       </div>
                     </div>
 
@@ -1347,13 +1424,40 @@ export const AssistantTab: React.FC = () => {
                       style={{ userSelect: 'text', WebkitUserSelect: 'text' }}
                     >
                       {isMessageStreaming ? (
-                        <div className="whitespace-pre-wrap break-words leading-relaxed select-text">
-                          {m.content || '...'}
-                        </div>
+                        m.content ? (
+                          <StreamingText
+                            content={m.content}
+                            className="whitespace-pre-wrap break-words leading-relaxed select-text"
+                          />
+                        ) : (
+                          <div className="flex items-center gap-2 text-xs text-indigo-500 select-none" data-copilot-stage="true">
+                            <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
+                            <span>正在{currentStepLabel(m.processing_steps)}…</span>
+                          </div>
+                        )
                       ) : (
                         <MarkdownRenderer content={m.content || (loading ? '...' : '')} />
                       )}
                     </div>
+
+                    {!isMessageStreaming && (() => {
+                      const notice = knowledgeNoMatchNotice({
+                        retrievalStatus: m.retrieval?.status,
+                        knowledgeFallback: (m.copilot?.runtime as { knowledge_fallback?: string | null } | undefined)?.knowledge_fallback,
+                        executionMode: m.execution_mode,
+                      });
+                      return notice ? (
+                        <div
+                          className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/20 dark:text-amber-200"
+                          role="note"
+                          aria-label={copilotCopy.noMatchAria}
+                          data-copilot-no-match="true"
+                        >
+                          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                          <span>{notice}</span>
+                        </div>
+                      ) : null;
+                    })()}
 
                     {currentMessageClarification && (
                       <ClarificationCard
@@ -1473,7 +1577,25 @@ export const AssistantTab: React.FC = () => {
                       );
                     })()}
 
-                    {/* Assistant Action Bar (Copy, Feedback, Case, Inspector Toggle) */}
+                    {!isMessageStreaming && m.truncated && (
+                      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs text-amber-800 select-none dark:border-amber-800/60 dark:bg-amber-950/20 dark:text-amber-200" data-copilot-truncated="true">
+                        <span>回答已达到单次输出长度上限，内容未完整。</span>
+                        {m.id === [...messages].reverse().find((item) => item.role === 'assistant')?.id && (
+                          <button
+                            type="button"
+                            disabled={loading}
+                            onClick={() => void handleSend(CONTINUE_PROMPT)}
+                            className="rounded border border-amber-300 bg-white/80 px-2 py-0.5 font-medium hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:bg-gray-900/50"
+                          >
+                            继续生成
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Assistant Action Bar (Copy, Feedback, Case, Inspector Toggle).
+                        Hidden while the answer is still streaming. */}
+                    {!isMessageStreaming && (
                     <div className="flex items-center gap-3 pt-1 text-gray-400 select-none text-xs">
                       {selectedText?.messageId === m.id && (
                         <ActionButton
@@ -1513,15 +1635,6 @@ export const AssistantTab: React.FC = () => {
                         <ThumbsUp className="w-3.5 h-3.5" />
                       </button>
 
-                      <button type="button" onClick={() => void handleCreateCase(m)} className="hover:text-indigo-500 p-1 transition" title="生成故障案例">
-                        案例
-                      </button>
-                      {m.copilot?.intent === 'diagnosis' && (
-                        <button type="button" onClick={() => void handleBuildDiagnosticPlan(m.content)} className="hover:text-amber-600 p-1 transition" title="生成只读诊断计划">
-                          诊断计划
-                        </button>
-                      )}
-
                       <button
                         onClick={() => handleNegativeFeedback(m)}
                         disabled={feedbackMessageId === m.id}
@@ -1531,18 +1644,16 @@ export const AssistantTab: React.FC = () => {
                         <ThumbsDown className="w-3.5 h-3.5" />
                       </button>
 
-                      <button
-                        onClick={() => {
-                          setActiveInspectorMsg(m);
-                          setIsInspectorOpen(true);
-                        }}
-                        className="hover:text-indigo-500 flex items-center gap-1 p-1 transition ml-auto"
-                        title="查看技术调试 Trace"
-                      >
-                        <SlidersHorizontal className="w-3.5 h-3.5" />
-                        <span className="text-[11px]">调试 Trace</span>
-                      </button>
+                      {(typeof m.input_tokens === 'number' || typeof m.output_tokens === 'number' || typeof m.cached_tokens === 'number') && (
+                        <span
+                          className="ml-2 text-[11px] text-gray-400 dark:text-gray-500 tabular-nums select-none"
+                          data-testid="message-token-usage"
+                        >
+                          输入 {m.input_tokens ?? 0} · 输出 {m.output_tokens ?? 0} · 缓存 {m.cached_tokens ?? 0}
+                        </span>
+                      )}
                     </div>
+                    )}
                     {feedbackReasonMessageId === m.id && (
                       <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-rose-100 bg-rose-50/70 px-2 py-1.5 text-[11px] text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/20 dark:text-rose-300">
                         <span>请选择差评原因：</span>
@@ -1569,7 +1680,7 @@ export const AssistantTab: React.FC = () => {
                 />
               )}
 
-              {loading && (
+              {loading && !streamingMessageId && (
                 <div className="flex gap-2 items-center text-xs text-indigo-500 font-medium p-2 select-none">
                   <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
                   AI 正在思考中...
@@ -1604,6 +1715,8 @@ export const AssistantTab: React.FC = () => {
           onStop={handleStopGeneration}
           isStreaming={loading}
           disabled={loading || sessionLoadingId === activeSessionId || !activeSession}
+          tools={copilotTools}
+          onUploadFile={parseCopilotAttachment}
         />
       </div>
 

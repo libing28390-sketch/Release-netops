@@ -39,4 +39,32 @@ describe('CopilotInspectorDrawer keyboard interaction', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(opener));
   });
+
+  it('shows zero hits for a knowledge miss and does not claim the model was skipped when it answered', () => {
+    render(
+      <CopilotInspectorDrawer
+        isOpen
+        onClose={() => undefined}
+        activeMessage={{
+          intent: 'knowledge',
+          execution_mode: 'provider_generated',
+          route_model: 'model-1',
+          input_tokens: 12,
+          output_tokens: 34,
+          retrieval: { status: 'no_match', metadata_candidate_documents: 3, vector_top_n: 8 },
+          sources: [],
+        }}
+      />,
+    );
+    expect(screen.getByText('本地 RAG 已执行 · 精确检索未命中')).toBeTruthy();
+    const finalDocuments = document.querySelector('[data-copilot-final-documents="true"]');
+    expect(finalDocuments?.textContent).toBe('0');
+    expect(screen.getByText('model-1')).toBeTruthy();
+    expect(screen.queryByText('未调用')).toBeNull();
+  });
+
+  it('does not show an invented relevance score for citation-only messages', () => {
+    render(<CopilotInspectorDrawer isOpen onClose={() => undefined} activeMessage={{ sources: [{ document: 'SOP', section: '巡检' }] }} />);
+    expect(screen.queryByText(/88%/)).toBeNull();
+  });
 });

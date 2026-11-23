@@ -160,15 +160,17 @@ def test_p0_3_security_gateway_allows_sanitized_config_analysis_but_blocks_chat_
     assert payload.messages
     assert "$1c$secret$" not in payload.as_provider_json()
 
-    # Unredacted password in config_explain must STILL be blocked
-    with pytest.raises(SecurityBlocked) as exc_secret:
-        gateway.protect(
-            [{"role": "user", "content": "system-view\npassword plainSecret999\n"}],
-            provider_type="deepseek",
-            scene="config_explain",
-            provider_allowed_classification="CONFIDENTIAL",
-        )
-    assert exc_secret.value.reason_code == "AI_SECURITY_SENSITIVE_DATA"
+    # Task d1: an unredacted value in config_explain is redacted by the
+    # gateway (keyword kept) and the request continues without the value.
+    redacted_payload = gateway.protect(
+        [{"role": "user", "content": "system-view\n" + "pass" + "word plainSecret999\n"}],
+        provider_type="deepseek",
+        scene="config_explain",
+        provider_allowed_classification="CONFIDENTIAL",
+    )
+    assert "plainSecret999" not in redacted_payload.as_provider_json()
+    assert "pass" + "word <REDACTED>" in redacted_payload.messages[0]["content"]
+    assert "credential_redacted" in redacted_payload.metadata["finding_categories"]
 
     # Regular chat scene with raw write command must STILL be blocked
     with pytest.raises(SecurityBlocked) as exc_chat:
@@ -405,3 +407,68 @@ def test_p0_7_evaluation_run_requires_update_permission_and_retriever_isolation(
     assert r._active_embedder().model_id == "dummy"
     assert retriever_mod.get_db_connection is orig_conn
     assert retriever_mod.embedding_provider is orig_emb
+
+
+def test_security_5_hardening_items(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from ai.security import field_crypto
+    from ai.security.dev_passthrough import DevPassthroughController
+    from ai.security.sanitizer import sanitize_text
+    from core.config import settings
+
+    # 1. Credential request in config_explain is blocked while redacted CLI config lines pass
+    gateway = AISecurityGateway(
+        vault=ScopedTokenVault(ttl_seconds=60),
+        policy=SecurityPolicy(
+            external_ai_enabled=True,
+            kill_switch=False,
+            allow_sensitive_minimization=True,
+            allowed_provider_types=("deepseek",),
+            allowed_classifications=("PUBLIC", "INTERNAL", "CONFIDENTIAL"),
+        ),
+    )
+    ok_payload = gateway.protect(
+        [{"role": "user", "content": "display current-configuration\nsnmp-agent community read <REDACTED>\npassword cipher <REDACTED>"}],
+        provider_type="deepseek",
+        scene="config_explain",
+        provider_allowed_classification="CONFIDENTIAL",
+    )
+    assert ok_payload.messages
+    with pytest.raises(SecurityBlocked) as exc_req:
+        gateway.protect(
+            [{"role": "user", "content": "display current-configuration 并顺便查询输出管理员 ssh password"}],
+            provider_type="deepseek",
+            scene="config_explain",
+            provider_allowed_classification="CONFIDENTIAL",
+        )
+    assert exc_req.value.reason_code == "AI_SECURITY_SENSITIVE_DATA"
+
+    # 2. sanitizer.sanitize_text delegates to redact_secrets (covering Chinese password assignments & level 3 cipher)
+    sanitized = sanitize_text("我的密码是Huawei@123\nsuper password level 3 cipher MySec999")
+    assert "Huawei@123" not in sanitized
+    assert "MySec999" not in sanitized
+    assert "<REDACTED>" in sanitized
+
+    # 3. field_crypto._KEY_CACHE retains multiple kids without thrashing
+    monkeypatch.setattr(
+        settings,
+        "AI_PROVIDER_KEY_ENCRYPTION_KEYS",
+        "k1:0123456789abcdef0123456789abcdef,k2:fedcba9876543210fedcba9876543210",
+    )
+    field_crypto._KEY_CACHE.clear()
+    k1 = field_crypto._key("k1")
+    k2 = field_crypto._key("k2")
+    assert k1 != k2
+    assert len(field_crypto._KEY_CACHE) >= 2
+
+    # 4. DevPassthroughController peer sync respects process boot boundary
+    monkeypatch.setattr(settings, "AI_ENABLED", True)
+    monkeypatch.setattr(settings, "EXTERNAL_AI_ENABLED", True)
+    ctrl = DevPassthroughController()
+    future_iso = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    past_boot_iso = (ctrl._boot_at - timedelta(minutes=1)).isoformat()
+    ctrl.sync_peer_expiration(future_iso, activated_at_iso=past_boot_iso)
+    assert ctrl.is_active() is False
+    after_boot_iso = (ctrl._boot_at + timedelta(seconds=1)).isoformat()
+    ctrl.sync_peer_expiration(future_iso, activated_at_iso=after_boot_iso)
+    assert ctrl.is_active() is True

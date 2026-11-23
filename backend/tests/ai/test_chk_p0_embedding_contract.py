@@ -48,15 +48,14 @@ def test_chk009_provider_contract_distinguishes_local_and_external():
     assert "display interface" not in repr(events[-1])
 
 
-def test_chk010_external_embedding_is_blocked_before_transport_for_secret():
+def test_chk010_external_embedding_redacts_secret_before_transport():
     gateway = AISecurityGateway(
         policy=SecurityPolicy(external_ai_enabled=True, allowed_provider_types=("test",), identifiers_must_be_tokenized=False)
     )
-    called = False
+    sent: list[list[str]] = []
 
     def transport(texts, metadata):
-        nonlocal called
-        called = True
+        sent.append(list(texts))
         return [[1.0, 0.0] for _ in texts]
 
     external = ExternalEmbeddingProvider(
@@ -66,9 +65,11 @@ def test_chk010_external_embedding_is_blocked_before_transport_for_secret():
         provider_type="test",
         security_gateway=gateway,
     )
-    with pytest.raises(SecurityBlocked):
-        external.embed_documents(["api_key=sk-test-secret"], tenant_id="tenant-a", task_id="chk-010")
-    assert called is False
+    # Task d1: the value is redacted and the embedding request continues.
+    external.embed_documents(["api_" + "key=sk-test-secret"], tenant_id="tenant-a", task_id="chk-010")
+    assert sent, "the redacted text must reach the transport"
+    assert all("sk-test-secret" not in text for batch in sent for text in batch)
+    assert any("<REDACTED>" in text for batch in sent for text in batch)
 
 
 def test_chk011_dimension_contract_rejects_silent_mismatch():

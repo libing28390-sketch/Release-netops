@@ -74,6 +74,9 @@ def test_retrieve_uses_one_generic_web_path_and_keeps_urls_in_citations(monkeypa
 
 
 def test_retrieve_blocks_credentials_and_internal_identifiers_before_search(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Web search is off by default (AI_WEB_SEARCH_ENABLED=0); enable it so the
+    # DLP gate in front of the search is what gets exercised.
+    monkeypatch.setattr(settings, "AI_WEB_SEARCH_ENABLED", True)
     called = False
 
     def forbidden_search(_query: str):

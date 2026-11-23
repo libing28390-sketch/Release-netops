@@ -1,0 +1,61 @@
+{
+  "projection": {
+    "snapshots_created": 0,
+    "observations_created": 0,
+    "complete_arp_snapshots": 0,
+    "unavailable_arp_snapshots": 0,
+    "mac_positive_snapshots": 0,
+    "retention_days": 90
+  },
+  "repeat_projection": {
+    "snapshots_created": 0,
+    "observations_created": 0,
+    "complete_arp_snapshots": 0,
+    "unavailable_arp_snapshots": 0,
+    "mac_positive_snapshots": 0,
+    "retention_days": 90
+  },
+  "discovery_records": 90,
+  "discovery_summary": {
+    "discovered_ip_count": 90,
+    "recent_ip_count": 0,
+    "mac_only_count": 0,
+    "registered_count": 0,
+    "unregistered_count": 0,
+    "scope_pending_count": 90,
+    "conflict_count": 0,
+    "coverage_status": "partial",
+    "coverage_reason": "\u4ec5\u663e\u793a\u5df2\u6295\u5f71\u7684\u6e90\u8bb0\u5f55\uff1b\u8303\u56f4\u4e0d\u660e\u6216\u65e0\u6cd5\u8bc1\u660e\u5b8c\u6574\u4ee3\u6b21\u7684\u91c7\u96c6\u4e0d\u4f1a\u7528\u4e8e\u5224\u65ad\u7f3a\u5e2d\u3002",
+    "source_last_success_at": "2026-10-28T08:45:25+00:00"
+  },
+  "registered_records": 0,
+  "reconciliation_summary": {
+    "ipam_address_record_count": 0,
+    "allocated_ipam_address_count": 0,
+    "active_endpoint_count": 0,
+    "current_endpoint_count": 0,
+    "interface_snapshot_ip_count": 55,
+    "total_undocumented": 0,
+    "total_stale": 0,
+    "total_mismatched": 0,
+    "total_never_observed": 0,
+    "total_unscoped": 0,
+    "total_unavailable": 10,
+    "unavailable_address_count": 0,
+    "unavailable_source_count": 10,
+    "endpoint_cache_fresh": false,
+    "latest_endpoint_seen": "2026-10-28T08:45:25+00:00",
+    "latest_active_endpoint_seen": "",
+    "latest_source_success_at": "2026-10-28T08:45:25+00:00",
+    "current_window_minutes": 22,
+    "stale_after_days": 7,
+    "required_misses": 3,
+    "complete_source_run_count": 0,
+    "coverage_source_set_known": true,
+    "expected_source_count": 0,
+    "proven_source_count": 0,
+    "missing_source_count": 0,
+    "coverage_status": "partial",
+    "coverage_reason": "\u6765\u6e90\u96c6\u5408\u6216\u5730\u5740\u8303\u56f4\u5c1a\u672a\u5b8c\u6574\u8bc1\u660e\uff1b\u7ed3\u679c\u4ec5\u53cd\u6620\u5f53\u524d\u53ef\u9a8c\u8bc1\u7684\u6b63\u5411\u89c2\u5bdf\u3002"
+  }
+}

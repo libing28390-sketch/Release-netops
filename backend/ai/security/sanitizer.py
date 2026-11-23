@@ -22,12 +22,14 @@ _REDACTION_PATTERNS = [
     (re.compile(r'(?i)(snmp-server\s+community\s+)(\S+)'), r'\1<REDACTED>'),
     
     # CLI Passwords & Secrets
-    (re.compile(r'(?i)(password\s+(?:(?:level\s+\d+\s+)?(?:irreversible[-_ ]?cipher|cipher|simple|hash|7|0)\s+)?)(\S+)'), r'\1<REDACTED>'),
-    (re.compile(r'(?i)(secret\s+(?:(?:level\s+\d+\s+)?(?:irreversible[-_ ]?cipher|cipher|simple|hash|5|8|9)\s+)?)(\S+)'), r'\1<REDACTED>'),
+    # (?<![\w-]) keeps "trace-secret Bearer" or "db-password x" from being
+    # read as the CLI keyword followed by its value.
+    (re.compile(r'(?i)(?<![\w-])(password\s+(?:(?:level\s+\d+\s+)?(?:irreversible[-_ ]?cipher|cipher|simple|hash|7|8|9|0)\s+)?)(\S+)'), r'\1<REDACTED>'),
+    (re.compile(r'(?i)(?<![\w-])(secret\s+(?:(?:level\s+\d+\s+)?(?:irreversible[-_ ]?cipher|cipher|simple|hash|0|5|7|8|9)\s+)?)(\S+)'), r'\1<REDACTED>'),
     (re.compile(r'(?i)(key-string\s+(?:(?:cipher|simple)\s+)?)(\S+)'), r'\1<REDACTED>'),
-    (re.compile(r'(?i)(pre-shared-key\s+(?:(?:cipher|local|remote)\s+)?)(\S+)'), r'\1<REDACTED>'),
-    (re.compile(r'(?i)(tacacs-server\s+key\s+(?:(?:cipher|simple|0|7)\s+)?)(\S+)'), r'\1<REDACTED>'),
-    (re.compile(r'(?i)(radius-server\s+shared-key\s+(?:(?:cipher|simple)\s+)?)(\S+)'), r'\1<REDACTED>'),
+    (re.compile(r'(?i)(pre-shared-key\s+(?:(?:cipher|simple|local|remote)\s+)*)(\S+)'), r'\1<REDACTED>'),
+    (re.compile(r'(?i)(tacacs-server\s+(?:key|shared-key)\s+(?:(?:irreversible[-_ ]?cipher|cipher|simple|0|7|8|9)\s+)?)(\S+)'), r'\1<REDACTED>'),
+    (re.compile(r'(?i)(radius-server\s+(?:shared-key|key)\s+(?:(?:irreversible[-_ ]?cipher|cipher|simple|0|7|8|9)\s+)?)(\S+)'), r'\1<REDACTED>'),
     (re.compile(r'(?i)(authentication-password\s+(?:(?:cipher|simple)\s+)?)(\S+)'), r'\1<REDACTED>'),
     
     # JSON / Key-Value Credentials
@@ -48,6 +50,11 @@ def sanitize_text(text: str) -> str:
     if not text:
         return text
     sanitized = text
+    try:
+        from ai.security.classification import redact_cn_secret_assignments
+        sanitized, _ = redact_cn_secret_assignments(sanitized)
+    except Exception:
+        pass
     for pattern, replacement in _REDACTION_PATTERNS:
         sanitized = pattern.sub(replacement, sanitized)
     return sanitized

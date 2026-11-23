@@ -1,9 +1,8 @@
 import { DataTable } from '../components/DataTable';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Plus, Upload, Trash2, Pencil,
-  Server, ChevronDown, ChevronUp, ChevronRight,
-  CheckCircle2, XCircle, AlertTriangle, Wrench, X, Activity, RefreshCw, Settings2,
+  Server, ChevronDown, ChevronUp,
+  CheckCircle2, XCircle, AlertTriangle, X, Activity, RefreshCw, Settings2,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import Pagination from '../components/Pagination';
@@ -12,7 +11,7 @@ import { ActionIconButton } from '../components/ui/ActionIconButton';
 import { ColumnSettingsButton, ListSearchInput, ListToolbar } from '../components/ui/TableListControls';
 import { authHeaders } from '../api/http';
 import { fetchAllPaginatedItems } from '../utils/pagination';
-import { buildInventoryServersExportData, filterInventoryServers } from './inventoryServersExport';
+import { buildInventoryServersExportData } from './inventoryServersExport';
 import { deviceRoleLabel } from '../domain/deviceLabels';
 
 import { TableActionCell, TableActionHeader } from '../components/ui/TableActionColumn';
@@ -22,13 +21,23 @@ import { TableActionCell, TableActionHeader } from '../components/ui/TableAction
 
 interface ServerAsset {
   id: string; asset_type: string; asset_tag: string; serial_number: string;
-  vendor: string; model: string; hostname: string; datacenter: string;
+  vendor: string; model: string; hostname: string;
+  site_id?: string; site_name?: string; site_code?: string; datacenter?: string;
   rack: string; rack_unit: string; management_ip: string; business_ip: string;
   device_role: string; vlan: string; uplink_switch: string; uplink_port: string;
   status: string; purchase_date: string;
   warranty_expiry: string; department: string; notes: string;
   created_at: string; updated_at: string;
 }
+
+interface SiteOption {
+  id: string;
+  site_name?: string;
+  site_code?: string;
+}
+
+const serverSiteLabel = (server: ServerAsset): string =>
+  server.site_name || server.site_code || server.datacenter || '';
 
 type ServerColumnKey =
   | 'hostname' | 'management_ip' | 'device_role' | 'vendor' | 'model'
@@ -42,7 +51,7 @@ const SERVER_COLUMN_DEFS: Array<{ key: ServerColumnKey; zh: string; en: string }
   { key: 'device_role', zh: '设备角色', en: 'Device role' },
   { key: 'vendor', zh: '厂商', en: 'Vendor' },
   { key: 'model', zh: '型号', en: 'Model' },
-  { key: 'datacenter', zh: '数据中心', en: 'Datacenter' },
+  { key: 'datacenter', zh: '站点', en: 'Site' },
   { key: 'rack', zh: '机柜', en: 'Rack' },
   { key: 'rack_unit', zh: 'U 位', en: 'Rack unit' },
   { key: 'status', zh: '状态', en: 'Status' },
@@ -237,7 +246,7 @@ const DetailModal: React.FC<{
           <ReadonlyField label={zh ? '厂商' : 'Vendor'} value={server.vendor} />
           <ReadonlyField label={zh ? '型号' : 'Model'} value={server.model} />
           <ReadonlyField label={zh ? '状态' : 'Status'} value={zh ? st.zh : st.en} />
-          <ReadonlyField label={zh ? '数据中心' : 'Datacenter'} value={server.datacenter} />
+          <ReadonlyField label={zh ? '站点' : 'Site'} value={serverSiteLabel(server)} />
           <ReadonlyField label={zh ? '机柜 / U位' : 'Rack / U'} value={[server.rack, server.rack_unit].filter(Boolean).join(' / ') || '—'} />
           <ReadonlyField label={zh ? '设备角色' : 'Device role'} value={deviceRoleLabel(server.device_role, zh ? 'zh' : 'en')} />
           <ReadonlyField label={zh ? '部门' : 'Department'} value={server.department} />
@@ -263,20 +272,21 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
   /* ─── State ─── */
   const [servers, setServers]           = useState<ServerAsset[]>([]);
   const [total, setTotal]               = useState(0);
+  const [statusCounts, setStatusCounts] = useState<Record<string, number> | null>(null);
+  const [sites, setSites]               = useState<SiteOption[]>([]);
   const [page, setPage]                 = useState(1);
   const [pageSize, setPageSize]         = useState(PAGE_SIZE);
   const [loading, setLoading]           = useState(true);
+  const [searchInput, setSearchInput]   = useState('');
   const [search, setSearch]             = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [vendorFilter, setVendorFilter] = useState('');
-  const [dcFilter, setDcFilter]         = useState('');
+  const [siteFilter, setSiteFilter]     = useState('');
   const [columns, setColumns]           = useState<ServerColumnVisibility>(() => loadServerColumnVisibility());
   const [sortConfig, setSortConfig]     = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
   const [selectedIds, setSelectedIds]   = useState<Set<string>>(new Set());
   const [quickFilter, setQuickFilter]   = useState<'all' | 'offline' | 'warning' | 'healthy'>('all');
   const [detailServer, setDetailServer] = useState<ServerAsset | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<ServerAsset | null>(null);
-  const [deleting, setDeleting]         = useState(false);
   const [verifyingIds, setVerifyingIds] = useState<Set<string>>(new Set());
   const [verifyResults, setVerifyResults] = useState<Record<string, any>>({});
   const visibleServerColumns = SERVER_COLUMN_DEFS.filter(column => columns[column.key]);
@@ -290,16 +300,49 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
     }
   }, [columns]);
 
+  useEffect(() => {
+    if (searchInput === search) return;
+    const timer = window.setTimeout(() => {
+      setSearch(searchInput);
+      setPage(1);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [searchInput, search]);
+
+  useEffect(() => {
+    fetch('/api/cmdb/sites', { headers: authHeaders() })
+      .then(r => (r.ok ? r.json() : null))
+      .then(payload => {
+        const list = Array.isArray(payload?.data?.items)
+          ? payload.data.items
+          : Array.isArray(payload?.items)
+            ? payload.items
+            : Array.isArray(payload?.data)
+              ? payload.data
+              : [];
+        setSites(list.filter((item: any) => item && typeof item.id === 'string'));
+      })
+      .catch(() => {});
+  }, []);
+
+  const effectiveStatus = useMemo(() => {
+    if (quickFilter === 'offline') return 'inactive';
+    if (quickFilter === 'warning') return 'maintenance';
+    if (quickFilter === 'healthy') return 'active';
+    return statusFilter;
+  }, [quickFilter, statusFilter]);
+
   /* ─── Data Fetching ─── */
   const fetchServers = useCallback(async () => {
     setLoading(true);
     try {
       const p = new URLSearchParams({
         asset_type: 'server',
-        status: statusFilter,
+        status: effectiveStatus,
         vendor: vendorFilter,
-        datacenter: dcFilter,
+        site_id: siteFilter,
         q: search,
+        include_status_counts: 'true',
         page: page.toString(),
         page_size: pageSize.toString(),
       });
@@ -308,10 +351,13 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
         const data = await r.json();
         setServers(data.items || []);
         setTotal(data.total || 0);
+        if (data.status_counts && typeof data.status_counts === 'object') {
+          setStatusCounts(data.status_counts);
+        }
       }
     } catch { /* noop */ }
     setLoading(false);
-  }, [page, pageSize, search, statusFilter, vendorFilter, dcFilter]);
+  }, [page, pageSize, search, effectiveStatus, vendorFilter, siteFilter]);
 
   useEffect(() => { fetchServers(); }, [fetchServers]);
 
@@ -327,73 +373,51 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
     if (!sortConfig) return servers;
     const { key, direction } = sortConfig;
     return [...servers].sort((a, b) => {
-      const av = (a as any)[key] ?? '';
-      const bv = (b as any)[key] ?? '';
+      const av = key === 'datacenter' ? serverSiteLabel(a) : ((a as any)[key] ?? '');
+      const bv = key === 'datacenter' ? serverSiteLabel(b) : ((b as any)[key] ?? '');
       const cmp = String(av).localeCompare(String(bv));
       return direction === 'asc' ? cmp : -cmp;
     });
   }, [servers, sortConfig]);
 
-  /* ─── Quick filter ─── */
+  /* ─── Quick filter counts (server-side status_counts with safe fallback) ─── */
   const counts = useMemo(() => {
+    if (statusCounts) {
+      const active = Number(statusCounts.active || 0);
+      const inactive = Number(statusCounts.inactive || 0);
+      const maint = Number(statusCounts.maintenance || 0);
+      const all = Object.values(statusCounts).reduce((sum, n) => sum + (Number(n) || 0), 0);
+      return { all, healthy: active, offline: inactive, warning: maint };
+    }
     const active = servers.filter(s => s.status === 'active').length;
     const inactive = servers.filter(s => s.status === 'inactive').length;
     const maint = servers.filter(s => s.status === 'maintenance').length;
-    return { all: servers.length, healthy: active, offline: inactive, warning: maint };
-  }, [servers]);
+    return { all: total, healthy: active, offline: inactive, warning: maint };
+  }, [statusCounts, servers, total]);
 
-  const displayRows = useMemo(() => {
-    return filterInventoryServers(sortedServers, {
-      quickFilter,
-      statusFilter,
-      vendorFilter,
-      datacenterFilter: dcFilter,
-    });
-  }, [sortedServers, quickFilter, statusFilter, vendorFilter, dcFilter]);
+  const displayRows = sortedServers;
 
   const exportData = useCallback(async () => {
     const params = new URLSearchParams({
       asset_type: 'server',
-      status: statusFilter,
+      status: effectiveStatus,
       vendor: vendorFilter,
-      datacenter: dcFilter,
+      site_id: siteFilter,
       q: search,
     });
     const allFilteredServers = await fetchAllPaginatedItems<ServerAsset>('/api/assets', params, 1000);
     return buildInventoryServersExportData(allFilteredServers, {
       language,
       quickFilter,
-      statusFilter,
+      statusFilter: effectiveStatus,
       vendorFilter,
-      datacenterFilter: dcFilter,
+      siteFilter,
       sortConfig,
       verification: verifyResults,
     });
-  }, [statusFilter, vendorFilter, dcFilter, search, language, quickFilter, sortConfig, verifyResults]);
+  }, [effectiveStatus, vendorFilter, siteFilter, search, language, quickFilter, sortConfig, verifyResults]);
 
   /* ─── Actions ─── */
-  const handleDelete = async (server: ServerAsset) => {
-    setDeleting(true);
-    try {
-      const r = await fetch(`/api/assets/${server.id}`, { method: 'DELETE', headers: authHeaders() });
-      if (r.ok) {
-        fetchServers();
-        setDeleteTarget(null);
-      }
-    } catch { /* noop */ }
-    setDeleting(false);
-  };
-
-  const handleDeleteSelected = async () => {
-    for (const id of selectedIds) {
-      try {
-        await fetch(`/api/assets/${id}`, { method: 'DELETE', headers: authHeaders() });
-      } catch { /* noop */ }
-    }
-    setSelectedIds(new Set());
-    fetchServers();
-  };
-
   const handleVerify = async (server: ServerAsset) => {
     setVerifyingIds(prev => new Set(prev).add(server.id));
     try {
@@ -439,7 +463,21 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
 
   /* ─── Unique filter options ─── */
   const vendors = useMemo(() => [...new Set(servers.map(s => s.vendor).filter(Boolean))], [servers]);
-  const datacenters = useMemo(() => [...new Set(servers.map(s => s.datacenter).filter(Boolean))], [servers]);
+  const siteOptions = useMemo(() => {
+    if (sites.length > 0) {
+      return sites.map(s => ({
+        id: s.id,
+        label: s.site_name || s.site_code || s.id,
+      }));
+    }
+    const map = new Map<string, string>();
+    for (const s of servers) {
+      if (s.site_id) {
+        map.set(s.site_id, serverSiteLabel(s) || s.site_id);
+      }
+    }
+    return Array.from(map.entries()).map(([id, label]) => ({ id, label }));
+  }, [sites, servers]);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -458,12 +496,12 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
             className="w-full 2xl:min-w-[220px] 2xl:max-w-[320px]"
             aria-label={zh ? '搜索 IP、主机名或序列号' : 'Search IP, hostname, or serial number'}
             placeholder={zh ? '搜索 IP / 主机名 / SN …' : 'Search IP / hostname / SN …'}
-            value={search}
-            onChange={e => { setSearch(e.target.value); setPage(1); }}
-            onClear={() => { setSearch(''); setPage(1); }}
+            value={searchInput}
+            onChange={e => setSearchInput(e.target.value)}
+            onClear={() => { setSearchInput(''); setSearch(''); setPage(1); }}
           />
         <div className="flex flex-wrap items-center gap-2 2xl:flex-nowrap">
-          <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
+          <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setQuickFilter('all'); setPage(1); }}
             title={zh ? '按状态筛选' : 'Filter by status'}
             className="shrink-0 px-2.5 py-1.5 text-[11px] border border-black/6 dark:border-white/8 rounded-lg bg-transparent
               outline-none text-black/55 dark:text-white/55 focus:border-[#00bceb]/40">
@@ -481,32 +519,32 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
               {vendors.map(v => <option key={v} value={v}>{v}</option>)}
             </select>
           )}
-          {datacenters.length > 0 && (
-            <select value={dcFilter} onChange={e => { setDcFilter(e.target.value); setPage(1); }}
-              title={zh ? '按数据中心筛选' : 'Filter by datacenter'}
+          {siteOptions.length > 0 && (
+            <select value={siteFilter} onChange={e => { setSiteFilter(e.target.value); setPage(1); }}
+              title={zh ? '按站点筛选' : 'Filter by site'}
               className="shrink-0 px-2.5 py-1.5 text-[11px] border border-black/6 dark:border-white/8 rounded-lg bg-transparent
                 outline-none text-black/55 dark:text-white/55 focus:border-[#00bceb]/40">
-              <option value="">{zh ? '全部数据中心' : 'All Datacenters'}</option>
-              {datacenters.map(d => <option key={d} value={d}>{d}</option>)}
+              <option value="">{zh ? '全部站点' : 'All Sites'}</option>
+              {siteOptions.map(site => <option key={site.id} value={site.id}>{site.label}</option>)}
             </select>
           )}
           <div className="flex flex-wrap items-center gap-1.5 2xl:flex-nowrap 2xl:shrink-0">
-            <QuickTag icon={<Server size={11} />} label={zh ? '全部' : 'All'} count={total}
+            <QuickTag icon={<Server size={11} />} label={zh ? '全部' : 'All'} count={counts.all}
               active={quickFilter === 'all'}
               tone="bg-[#00bceb]/10 border-[#00bceb]/25 text-[#0096bd] dark:text-[#5dd8f0] dark:border-[#00bceb]/20"
-              onClick={() => setQuickFilter('all')} />
+              onClick={() => { setQuickFilter('all'); setStatusFilter('all'); setPage(1); }} />
             <QuickTag icon={<XCircle size={11} />} label={zh ? '离线' : 'Offline'} count={counts.offline}
               active={quickFilter === 'offline'}
               tone="bg-red-500/10 border-red-500/25 text-red-600 dark:text-red-400 dark:border-red-500/20"
-              onClick={() => setQuickFilter(quickFilter === 'offline' ? 'all' : 'offline')} />
+              onClick={() => { setQuickFilter(quickFilter === 'offline' ? 'all' : 'offline'); setStatusFilter('all'); setPage(1); }} />
             <QuickTag icon={<AlertTriangle size={11} />} label={zh ? '维护中' : 'Maintenance'} count={counts.warning}
               active={quickFilter === 'warning'}
               tone="bg-amber-500/10 border-amber-500/25 text-amber-600 dark:text-amber-400 dark:border-amber-500/20"
-              onClick={() => setQuickFilter(quickFilter === 'warning' ? 'all' : 'warning')} />
+              onClick={() => { setQuickFilter(quickFilter === 'warning' ? 'all' : 'warning'); setStatusFilter('all'); setPage(1); }} />
             <QuickTag icon={<CheckCircle2 size={11} />} label={zh ? '在线' : 'Online'} count={counts.healthy}
               active={quickFilter === 'healthy'}
               tone="bg-emerald-500/10 border-emerald-500/25 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/20"
-              onClick={() => setQuickFilter(quickFilter === 'healthy' ? 'all' : 'healthy')} />
+              onClick={() => { setQuickFilter(quickFilter === 'healthy' ? 'all' : 'healthy'); setStatusFilter('all'); setPage(1); }} />
           </div>
           <ColumnSettingsButton
             columns={[
@@ -569,7 +607,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
                 <th hidden={!columns.device_role} className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? '设备角色' : 'Device role'}</th>
                 <SortHeader col="vendor" sortConfig={sortConfig} onSort={handleSort} className={columns.vendor ? '' : 'hidden'}>{zh ? '厂商' : 'Vendor'}</SortHeader>
                 <th hidden={!columns.model} className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? '型号' : 'Model'}</th>
-                <SortHeader col="datacenter" sortConfig={sortConfig} onSort={handleSort} className={columns.datacenter ? '' : 'hidden'}>{zh ? '数据中心' : 'Datacenter'}</SortHeader>
+                <SortHeader col="datacenter" sortConfig={sortConfig} onSort={handleSort} className={columns.datacenter ? '' : 'hidden'}>{zh ? '站点' : 'Site'}</SortHeader>
                 <th hidden={!columns.rack} className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? '机柜' : 'Rack'}</th>
                 <th hidden={!columns.rack_unit} className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">{zh ? 'U 位' : 'Rack Unit'}</th>
                 <SortHeader col="status" sortConfig={sortConfig} onSort={handleSort} className={columns.status ? '' : 'hidden'}>{zh ? '状态' : 'Status'}</SortHeader>
@@ -632,7 +670,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
                     </td>
                     <td hidden={!columns.vendor} className="px-3 py-2"><span className="text-[11px] font-medium text-black/65 dark:text-white/65">{server.vendor || '—'}</span></td>
                     <td hidden={!columns.model} className="px-3 py-2 text-[10px] text-black/45 dark:text-white/45">{server.model || '—'}</td>
-                    <td hidden={!columns.datacenter} className="px-3 py-2 text-[11px] text-black/55 dark:text-white/55">{server.datacenter || '—'}</td>
+                    <td hidden={!columns.datacenter} className="px-3 py-2 text-[11px] text-black/55 dark:text-white/55">{serverSiteLabel(server) || '—'}</td>
                     <td hidden={!columns.rack} className="px-3 py-2 text-[10px] text-black/45 dark:text-white/45">{server.rack || '—'}</td>
                     <td hidden={!columns.rack_unit} className="px-3 py-2 text-[10px] text-black/45 dark:text-white/45">{server.rack_unit ? `U${server.rack_unit}` : '—'}</td>
                     <td hidden={!columns.status} className="px-3 py-2">
@@ -716,56 +754,6 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
       <AnimatePresence>
         {detailServer && (
           <DetailModal server={detailServer} language={language} onClose={() => setDetailServer(null)} />
-        )}
-      </AnimatePresence>
-
-      {/* ════ Delete Confirmation ════ */}
-      <AnimatePresence>
-        {deleteTarget && (
-          <motion.div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            onClick={() => setDeleteTarget(null)}
-          >
-            <motion.div
-              className="bg-white dark:bg-[#0d1526] rounded-2xl shadow-2xl border border-black/8 dark:border-white/10
-                w-full max-w-sm mx-4 p-6"
-              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
-              transition={{ duration: 0.15 }}
-              onClick={e => e.stopPropagation()}
-            >
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center">
-                  <AlertTriangle size={20} className="text-red-500" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-semibold text-black/85 dark:text-white/90">
-                    {zh ? '确认删除' : 'Confirm Delete'}
-                  </h3>
-                  <p className="text-xs text-black/50 dark:text-white/45 mt-0.5">
-                    {zh ? '此操作不可撤销' : 'This action cannot be undone'}
-                  </p>
-                </div>
-              </div>
-              <p className="text-xs text-black/60 dark:text-white/55 mb-5">
-                {zh ? '确定要删除服务器 ' : 'Are you sure you want to delete server '}
-                <span className="font-semibold">{deleteTarget.hostname || deleteTarget.management_ip}</span>
-                {zh ? ' 吗？' : '?'}
-              </p>
-              <div className="flex justify-end gap-2">
-                <button onClick={() => setDeleteTarget(null)}
-                  className="px-4 py-1.5 text-xs font-medium rounded-lg border border-black/8 dark:border-white/10
-                    text-black/60 dark:text-white/55 hover:bg-black/5 dark:hover:bg-white/8 transition-all">
-                  {zh ? '取消' : 'Cancel'}
-                </button>
-                <button onClick={() => handleDelete(deleteTarget)} disabled={deleting}
-                  className="px-4 py-1.5 text-xs font-medium rounded-lg bg-red-500 text-white hover:bg-red-600
-                    disabled:opacity-50 transition-all">
-                  {deleting ? (zh ? '删除中…' : 'Deleting…') : (zh ? '确认删除' : 'Delete')}
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
         )}
       </AnimatePresence>
       </div>

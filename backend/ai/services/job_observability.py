@@ -9,6 +9,7 @@ returned.
 
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Any
@@ -17,6 +18,8 @@ from ai.services.metrics import ai_metrics
 from database import core as database_core
 from database.core import get_db_connection
 from services.ingestion_pipeline_service import ingestion_pipeline
+
+logger = logging.getLogger(__name__)
 
 
 _QUEUE_FIELDS = (
@@ -75,8 +78,9 @@ def _reindex_queue_snapshot() -> tuple[dict[str, int], str]:
                 # missing lock table only means lease health is unavailable.
                 try:
                     conn.rollback()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Best-effort cleanup; lease health is simply reported as unavailable.
+                    logger.debug("Rollback after scheduler_locks lookup failed code=AI_JOB_OBS_ROLLBACK_FAILED error=%s", type(exc).__name__)
             now = datetime.now(timezone.utc)
             for row in rows:
                 job_id = str(row[0] or "")

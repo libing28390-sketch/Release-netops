@@ -1,0 +1,29 @@
+{
+  "mode": "after",
+  "sampleCount": 73,
+  "pageWidthBefore": 1280,
+  "pageWidthAfter": 1280,
+  "maxWidthDelta": 0,
+  "maxTranslation": 0,
+  "maxScaleDeviation": 0,
+  "firstTransforms": [
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none"
+  ],
+  "lastTransforms": [
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none"
+  ]
+}

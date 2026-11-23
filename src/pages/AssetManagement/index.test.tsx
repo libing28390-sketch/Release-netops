@@ -258,14 +258,14 @@ describe('AssetManagementTab request states', () => {
     expect(screen.getByText('23 assets')).toBeTruthy();
   });
 
-  it('refreshes the shared device count after an asset is saved', async () => {
+  it('refreshes the shared device count after an asset is saved without duplicate initial summary or mount-time racks fetch', async () => {
     let summaryRequestCount = 0;
     vi.mocked(fetch).mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.startsWith('/api/assets?')) return response({ items: [], total: 0 });
       if (url === '/api/assets/summary') {
         summaryRequestCount += 1;
-        return summaryRequestCount <= 2 ? assetSummary(0, 0) : assetSummary(2, 1);
+        return summaryRequestCount <= 1 ? assetSummary(0, 0) : assetSummary(2, 1);
       }
       if (url === '/api/cmdb/sites') return response({ data: [] });
       if (url === '/api/racks') return response({ success: true, data: [] });
@@ -277,8 +277,12 @@ describe('AssetManagementTab request states', () => {
     renderAssetPage();
     await screen.findByText('No asset records');
     await waitFor(() => expect(useInventoryStore.getState().assetsTotal).toBe(0));
+    expect(summaryRequestCount).toBe(1);
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input) === '/api/racks')).toBe(false);
+
     fireEvent.click(screen.getAllByRole('button', { name: 'New' })[0]);
-    fireEvent.change(screen.getByRole('textbox', { name: 'Hostname' }), { target: { value: 'new-device' } });
+    const hostnameInput = await screen.findByRole('textbox', { name: 'Hostname' });
+    fireEvent.change(hostnameInput, { target: { value: 'new-device' } });
     fillRequiredAssetFields();
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 

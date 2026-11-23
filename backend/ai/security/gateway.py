@@ -4,8 +4,14 @@ from __future__ import annotations
 
 import json
 import hashlib
-from dataclasses import dataclass, field
+import logging
+import threading
+import time
+from collections import deque
+from dataclasses import dataclass, field, replace as _dataclass_replace
+from fnmatch import fnmatchcase
 from typing import Any
+from urllib.parse import urlparse
 
 from core.config import settings
 from ai.security.classification import (
@@ -19,11 +25,14 @@ from ai.security.classification import (
     normalize_classification,
     request_policy_findings,
     separate_data_and_instructions,
+    redact_secrets,
 )
 from ai.security.dev_passthrough import dev_passthrough
 from ai.security.dlp import assert_clean
 from ai.security.minimizer import minimize, minimize_tool_result
-from ai.security.tokenization import ScopedTokenVault, opaque_user_id, tokenize_text, token_vault
+from ai.security.tokenization import ScopedTokenVault, opaque_user_id, tokenize_text, token_vault, provider_user_id
+
+logger = logging.getLogger(__name__)
 
 
 class SecurityBlocked(Exception):
@@ -111,6 +120,32 @@ class SecureEmbeddingPayload:
         )
 
 
+def _redact_cn_secrets(value: Any) -> tuple[Any, int]:
+    """Redact credential values in every string of a payload.
+
+    Chinese (batch 6) and English (task d1) credential values, SNMP
+    communities, RADIUS/TACACS keys, private-key blocks, JWTs and cookie
+    values are replaced (see ``redact_secrets``); the request continues and
+    the model never sees the value.  The final DLP check still refuses
+    anything left over.  Field *names* are not changed: a sensitive field
+    name such as ``api_key`` is still blocked by ``_has_sensitive_field``.
+    """
+
+    total = 0
+
+    def transform(text: str) -> str:
+        nonlocal total
+        redacted, count = redact_secrets(text)
+        total += count
+        return redacted
+
+    redacted = _walk_transform(value, transform)
+    return redacted, total
+
+
+_redact_secrets = _redact_cn_secrets
+
+
 def _walk_transform(value: Any, transform) -> Any:
     if isinstance(value, str):
         return transform(value)
@@ -195,10 +230,97 @@ def _classification_rank(value: DataClassification | str | None) -> int:
         return 0
 
 
+# ── Deployment-level egress ceiling ──────────────────────────────────────
+# The environment flags belong to whoever operates the deployment.  They are a
+# hard ceiling on the database policy that administrators edit in the UI:
+# AI_ENABLED / EXTERNAL_AI_ENABLED can only take egress away and
+# AI_KILL_SWITCH can only add a stop.  Nothing stored in the database can
+# override them (ADR-006).
+
+
+def deployment_egress_allowed() -> bool:
+    return bool(getattr(settings, "AI_ENABLED", False)) and bool(getattr(settings, "EXTERNAL_AI_ENABLED", False))
+
+
+def deployment_kill_switch() -> bool:
+    return bool(getattr(settings, "AI_KILL_SWITCH", False))
+
+
+def deployment_status() -> dict[str, bool]:
+    return {
+        "ai_enabled": bool(getattr(settings, "AI_ENABLED", False)),
+        "external_ai_enabled": bool(getattr(settings, "EXTERNAL_AI_ENABLED", False)),
+        "kill_switch": deployment_kill_switch(),
+        "egress_allowed": deployment_egress_allowed() and not deployment_kill_switch(),
+        "network_write_enabled": bool(getattr(settings, "NETWORK_WRITE_ENABLED", False)),
+        "production_credentials_allowed": bool(getattr(settings, "PRODUCTION_CREDENTIALS_ALLOWED", False)),
+    }
+
+
+def apply_deployment_limits(policy: "SecurityPolicy") -> "SecurityPolicy":
+    """Intersect a stored policy with the deployment flags."""
+
+    external = bool(policy.external_ai_enabled) and deployment_egress_allowed()
+    kill = bool(policy.kill_switch) or deployment_kill_switch()
+    if external == policy.external_ai_enabled and kill == policy.kill_switch:
+        return policy
+    return _dataclass_replace(policy, external_ai_enabled=external, kill_switch=kill)
+
+
+def endpoint_host(url: Any) -> str:
+    try:
+        return (urlparse(str(url or "").strip()).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def deployment_endpoint_allowed(url: Any) -> bool:
+    """Check a provider URL against ``AI_PROVIDER_ENDPOINT_ALLOWLIST``.
+
+    The setting is a comma-separated list of host names (``*.example.com``
+    wildcards allowed).  It is maintained outside the application, so the
+    permission that edits a Provider cannot also approve its destination.
+    An empty setting adds no restriction.
+    """
+
+    raw = str(getattr(settings, "AI_PROVIDER_ENDPOINT_ALLOWLIST", "") or "")
+    patterns = []
+    for item in raw.split(","):
+        item = item.strip().lower()
+        if not item:
+            continue
+        if "://" in item:
+            item = endpoint_host(item)
+        if item:
+            patterns.append(item)
+    if not patterns:
+        return True
+    host = endpoint_host(url)
+    return bool(host) and any(fnmatchcase(host, pattern) for pattern in patterns)
+
+
+_UNSET = object()
+
+
 class AISecurityGateway:
-    def __init__(self, *, vault: ScopedTokenVault | None = None, policy: SecurityPolicy | None = None):
+    def __init__(
+        self,
+        *,
+        vault: ScopedTokenVault | None = None,
+        policy: SecurityPolicy | None = None,
+        enforce_deployment_flags: bool = False,
+    ):
         self.vault = vault or token_vault
-        self._egress_audit_events: list[dict[str, Any]] = []
+        # Bounded: keeps the latest evidence without growing for the life of the process.
+        self._egress_audit_events: deque[dict[str, Any]] = deque(maxlen=1000)
+        # Only the process-wide gateway enforces the deployment flags and
+        # follows the persisted policy; gateways built with an explicit policy
+        # (tools, dry runs, tests) evaluate exactly the policy they were given.
+        self.enforce_deployment_flags = enforce_deployment_flags
+        self._synced_policy: SecurityPolicy | None = None
+        self._synced_fingerprint: Any = None
+        self._last_refresh_check = 0.0
+        self._refresh_lock = threading.Lock()
         self.policy = policy or SecurityPolicy(
             external_ai_enabled=False,
             kill_switch=bool(getattr(settings, "AI_KILL_SWITCH", False)),
@@ -209,6 +331,108 @@ class AISecurityGateway:
                 if item.strip()
             ) or SecurityPolicy.allowed_provider_types,
         )
+
+    # ── Policy lifecycle ────────────────────────────────────────────────
+    def install_policy(self, policy: SecurityPolicy, *, fingerprint: Any = _UNSET) -> SecurityPolicy:
+        """Install the operator policy loaded from (or just written to) the database.
+
+        ``policy`` keeps the operator's stored values; deployment flags are
+        applied when the policy is read (``effective_policy``), so the policy
+        page can still show what the operator configured.
+        """
+
+        self.policy = policy
+        self._synced_policy = policy
+        if fingerprint is not _UNSET:
+            self._synced_fingerprint = fingerprint
+        self._last_refresh_check = time.monotonic()
+        return policy
+
+    def effective_policy(self) -> SecurityPolicy:
+        """The policy that decides egress right now."""
+
+        if not self.enforce_deployment_flags:
+            return self.policy
+        self._maybe_refresh_policy()
+        return apply_deployment_limits(self.policy)
+
+    def _maybe_refresh_policy(self) -> None:
+        """Follow policy changes made by other worker processes.
+
+        Each worker re-reads a cheap change marker at most every
+        ``AI_POLICY_REFRESH_SECONDS`` and reloads the policy when it differs,
+        so a kill switch set on one worker reaches every worker within that
+        interval.
+        """
+
+        try:
+            interval = max(0.0, float(getattr(settings, "AI_POLICY_REFRESH_SECONDS", 3.0)))
+        except (TypeError, ValueError):
+            interval = 3.0
+        now = time.monotonic()
+        if now - self._last_refresh_check < interval:
+            return
+        if not self._refresh_lock.acquire(blocking=False):
+            return
+        try:
+            self._last_refresh_check = now
+            if self._synced_policy is not None and self.policy is not self._synced_policy:
+                # The policy object was replaced outside install_policy
+                # (an operator tool or a test fixture); leave it in place.
+                return
+            from ai.api.security import load_persisted_security_policy, read_policy_fingerprint
+
+            fingerprint = read_policy_fingerprint()
+            if fingerprint is None:
+                return
+            if self._synced_fingerprint is None:
+                self._synced_fingerprint = fingerprint
+                return
+            if fingerprint != self._synced_fingerprint:
+                load_persisted_security_policy()
+        except Exception:  # pragma: no cover - keep serving with the last known policy
+            logger.warning("AI security policy refresh failed; keeping the last loaded policy")
+        finally:
+            self._refresh_lock.release()
+
+    def _resolve_policy(self, policy: SecurityPolicy | None) -> SecurityPolicy:
+        if policy is None:
+            return self.effective_policy()
+        return apply_deployment_limits(policy) if self.enforce_deployment_flags else policy
+
+    def assert_egress_allowed(
+        self,
+        *,
+        provider_type: str | None,
+        provider_id: str | None = None,
+        data_region: str | None = None,
+        tenant_id: str = "tenant-default",
+        policy: SecurityPolicy | None = None,
+    ) -> tuple[str, str]:
+        """Egress eligibility of one concrete provider/model.
+
+        Called for the primary model, for every fallback candidate and again
+        right before each provider request, so a fallback can never bypass a
+        kill switch, the provider allowlist or the data-region policy.
+        Returns the normalized provider type and data region.
+        """
+
+        active_policy = policy if policy is not None else self.effective_policy()
+        if active_policy.kill_switch:
+            raise SecurityBlocked("AI external egress is disabled by the kill switch", reason_code="AI_SECURITY_KILL_SWITCH")
+        if active_policy.tenant_kill_switches.get(str(tenant_id)):
+            raise SecurityBlocked("tenant AI egress is disabled by the kill switch", reason_code="AI_SECURITY_KILL_SWITCH")
+        if not active_policy.external_ai_enabled:
+            raise SecurityBlocked("external AI is disabled by policy", reason_code="AI_SECURITY_POLICY_DISABLED")
+        normalized_provider = str(provider_type or "").lower().replace("-", "_")
+        if normalized_provider not in {item.lower().replace("-", "_") for item in active_policy.allowed_provider_types}:
+            raise SecurityBlocked("provider is not allowed by the AI egress policy", reason_code="AI_SECURITY_PROVIDER_DENIED")
+        if active_policy.provider_kill_switches.get(normalized_provider) or (provider_id and active_policy.provider_kill_switches.get(str(provider_id))):
+            raise SecurityBlocked("provider is disabled by its kill switch", reason_code="AI_SECURITY_KILL_SWITCH")
+        normalized_region = str(data_region or "unknown").strip().lower()
+        if normalized_region not in {str(item).lower() for item in active_policy.allowed_data_regions}:
+            raise SecurityBlocked("provider data region is not allowed", reason_code="AI_SECURITY_SCOPE_DENIED")
+        return normalized_provider, normalized_region
 
     def _classify(self, value: Any) -> tuple[DataLevel, list[Finding]]:
         return classify(value)
@@ -239,36 +463,58 @@ class AISecurityGateway:
         provider_data_processing_agreement_ref: str | None = None,
         scene: str | None = None,
     ) -> SecurePayload:
-        active_policy = policy or self.policy
-        if self is ai_security_gateway and not active_policy.external_ai_enabled and policy is None:
-            try:
-                from ai.api.security import load_persisted_security_policy
-                load_persisted_security_policy()
-                active_policy = self.policy
-            except Exception:
-                pass
-        if active_policy.kill_switch:
-            raise SecurityBlocked("AI external egress is disabled by the kill switch", reason_code="AI_SECURITY_KILL_SWITCH")
-        if active_policy.tenant_kill_switches.get(str(tenant_id)):
-            raise SecurityBlocked("tenant AI egress is disabled by the kill switch", reason_code="AI_SECURITY_KILL_SWITCH")
-        if not active_policy.external_ai_enabled:
-            raise SecurityBlocked("external AI is disabled by policy", reason_code="AI_SECURITY_POLICY_DISABLED")
-        normalized_provider = provider_type.lower().replace("-", "_")
-        if normalized_provider not in {item.lower().replace("-", "_") for item in active_policy.allowed_provider_types}:
-            raise SecurityBlocked("provider is not allowed by the AI egress policy", reason_code="AI_SECURITY_PROVIDER_DENIED")
-        if active_policy.provider_kill_switches.get(normalized_provider) or (provider_id and active_policy.provider_kill_switches.get(provider_id)):
-            raise SecurityBlocked("provider is disabled by its kill switch", reason_code="AI_SECURITY_KILL_SWITCH")
-        normalized_region = str(data_region or "unknown").strip().lower()
-        if normalized_region not in {str(item).lower() for item in active_policy.allowed_data_regions}:
-            raise SecurityBlocked("provider data region is not allowed", reason_code="AI_SECURITY_SCOPE_DENIED")
+        active_policy = self._resolve_policy(policy)
+        normalized_provider, normalized_region = self.assert_egress_allowed(
+            provider_type=provider_type,
+            provider_id=provider_id,
+            data_region=data_region,
+            tenant_id=tenant_id,
+            policy=active_policy,
+        )
         scope = {"tenant": tenant_id, "workspace": workspace_id, "site": site_id, "department": department, "document_scope": document_scope, "user_role": user_role}
         required_scope = active_policy.scope_rules or {}
         for key, allowed in required_scope.items():
             if allowed and str(scope.get(key) or "") not in {str(item) for item in (allowed if isinstance(allowed, (list, tuple, set)) else [allowed])}:
                 raise SecurityBlocked("request is outside the configured data scope", reason_code="AI_SECURITY_SCOPE_DENIED")
 
+        # Credential values (Chinese and English) are redacted, not blocked:
+        # a vendor manual quoting "缺省密码为Admin@123" or a pasted
+        # "password cipher ..." line must not stop the answer.  Tools and
+        # provider options are redacted too, otherwise a value there would
+        # only be caught by the final DLP check (task d1).
+        messages, redacted_secrets = _redact_secrets(messages)
+        if tools:
+            tools, redacted_tool_secrets = _redact_secrets(tools)
+            redacted_secrets += redacted_tool_secrets
+        if provider_options:
+            provider_options, redacted_option_secrets = _redact_secrets(provider_options)
+            redacted_secrets += redacted_option_secrets
+
         combined = {"messages": messages, "tools": tools or [], "provider_options": provider_options or {}}
-        level, findings = self._classify(combined)
+        non_system_messages = [
+            msg for msg in messages
+            if not (isinstance(msg, dict) and str(msg.get("role") or "").strip().lower() == "system")
+        ]
+        system_messages = [
+            msg for msg in messages
+            if isinstance(msg, dict) and str(msg.get("role") or "").strip().lower() == "system"
+        ]
+        level, findings = self._classify({
+            "messages": non_system_messages,
+            "tools": tools or [],
+            "provider_options": provider_options or {},
+        })
+        if system_messages:
+            _, sys_findings = self._classify({"messages": system_messages})
+            sys_secret_findings = [
+                item for item in sys_findings
+                if item.level >= DataLevel.L4_PROHIBITED or item.category in _BLACKLIST_DLP_FINDING_CATEGORIES
+            ]
+            if sys_secret_findings:
+                findings.extend(sys_secret_findings)
+                level = max(level, max(item.level for item in sys_secret_findings))
+        if redacted_secrets:
+            findings.append(Finding(DataLevel.L1_GENERAL, "credential_redacted", detail=str(redacted_secrets)))
         normalized_scene = str(scene or "").strip().lower()
         # In read-only configuration/diff/command analysis and change-draft
         # generation scenes, CLI syntax tokens (e.g. ``system-view``,
@@ -301,23 +547,6 @@ class AISecurityGateway:
             findings.append(Finding(DataLevel.L4_PROHIBITED, "credential_field"))
             level = max(level, DataLevel.L4_PROHIBITED)
         request_findings = request_policy_findings(messages, tenant_id=tenant_id)
-        if normalized_scene in {
-            "config_explain",
-            "config_diff",
-            "command_explain",
-            "alarm_analysis",
-            "change_plan",
-            "config_generation",
-        }:
-            # Sanitized network config text naturally contains CLI headers like
-            # ``display current-configuration`` followed by redacted lines like
-            # ``password <REDACTED>``. Do not misclassify that as a user asking
-            # to exfiltrate credentials; cross-tenant scope requests and any
-            # unredacted secrets remain strictly blocked.
-            request_findings = [
-                item for item in request_findings
-                if item.category != "credential_request"
-            ]
         if request_findings:
             findings.extend(request_findings)
             level = max(level, max((item.level for item in request_findings), default=level))
@@ -335,6 +564,17 @@ class AISecurityGateway:
             else:
                 raise SecurityBlocked("unknown data classification", reason_code="AI_SECURITY_CLASSIFICATION_DENIED", findings=findings)
 
+        # A caller may declare a stricter classification, never a looser one:
+        # content with identifiers (IP/MAC/host names/serials) or anything
+        # more sensitive is at least INTERNAL, whatever the caller declared.
+        if (
+            data_classification is not None
+            and requested_classification is not None
+            and level >= DataLevel.L2_IDENTIFIER
+            and _classification_rank(requested_classification) < _classification_rank(DataClassification.INTERNAL)
+        ):
+            requested_classification = DataClassification.INTERNAL
+
         has_injection = any(item.category == "prompt_injection" for item in findings)
         if tools and any(_tool_is_unsafe(tool) for tool in tools):
             raise SecurityBlocked("raw write-capable or unrestricted tool is not allowed", findings=findings, reason_code="AI_SECURITY_UNSAFE_TOOL")
@@ -351,14 +591,29 @@ class AISecurityGateway:
             )
 
         # A write command embedded in a user message is still an operation
-        # request even when no structured tool was supplied.  Keep the same
-        # hard stop as the tool-definition check above.
-        if any(item.category in _BLACKLIST_WRITE_FINDING_CATEGORIES for item in findings):
-            raise SecurityBlocked(
-                "write-capable operation is not allowed in temporary test mode",
-                findings=findings,
-                reason_code="AI_SECURITY_UNSAFE_TOOL",
-            )
+        # request even when no structured tool was supplied.  Check only user
+        # messages so system safety instructions ("禁止修改配置/重启设备") or
+        # prior assistant explanations never self-block benign user prompts.
+        if normalized_scene not in {
+            "config_explain",
+            "config_diff",
+            "command_explain",
+            "alarm_analysis",
+            "change_plan",
+            "config_generation",
+        }:
+            user_only_messages = [
+                msg for msg in messages
+                if isinstance(msg, dict) and str(msg.get("role") or "").strip().lower() == "user"
+            ]
+            if user_only_messages:
+                _, user_findings = self._classify(user_only_messages)
+                if any(item.category in _BLACKLIST_WRITE_FINDING_CATEGORIES for item in user_findings):
+                    raise SecurityBlocked(
+                        "write-capable operation is not allowed in temporary test mode",
+                        findings=findings,
+                        reason_code="AI_SECURITY_UNSAFE_TOOL",
+                    )
 
         # A user asking the model to retrieve credentials or another tenant's
         # private scope is prohibited even when the prompt contains no secret
@@ -421,7 +676,7 @@ class AISecurityGateway:
             safe_messages = _walk_transform(safe_messages, transform)
             safe_tools = _walk_transform(minimize(tools or []), transform) if tools else None
             safe_options = _walk_transform(minimize(provider_options or {}), transform)
-        opaque_id = opaque_user_id(user_id, tenant_id=tenant_id, task_id=task_id)
+        opaque_id = provider_user_id(user_id, tenant_id=tenant_id, task_id=task_id)
         payload = SecurePayload(
             messages=safe_messages,
             tools=safe_tools,
@@ -483,27 +738,23 @@ class AISecurityGateway:
     ) -> SecureEmbeddingPayload:
         """Apply the same fail-closed controls to external embedding egress."""
 
-        active_policy = policy or self.policy
-        if active_policy.kill_switch:
-            raise SecurityBlocked("AI external egress is disabled by the kill switch", reason_code="AI_SECURITY_KILL_SWITCH")
-        if active_policy.tenant_kill_switches.get(str(tenant_id)):
-            raise SecurityBlocked("tenant AI egress is disabled by the kill switch", reason_code="AI_SECURITY_KILL_SWITCH")
-        if not active_policy.external_ai_enabled:
-            raise SecurityBlocked("external AI is disabled by policy", reason_code="AI_SECURITY_POLICY_DISABLED")
-        normalized_provider = provider_type.lower().replace("-", "_")
-        if normalized_provider not in {item.lower().replace("-", "_") for item in active_policy.allowed_provider_types}:
-            raise SecurityBlocked("provider is not allowed by the AI egress policy", reason_code="AI_SECURITY_PROVIDER_DENIED")
-        if active_policy.provider_kill_switches.get(normalized_provider) or (provider_id and active_policy.provider_kill_switches.get(provider_id)):
-            raise SecurityBlocked("provider is disabled by its kill switch", reason_code="AI_SECURITY_KILL_SWITCH")
-        normalized_region = str(data_region or "unknown").strip().lower()
-        if normalized_region not in {str(item).lower() for item in active_policy.allowed_data_regions}:
-            raise SecurityBlocked("provider data region is not allowed", reason_code="AI_SECURITY_SCOPE_DENIED")
+        active_policy = self._resolve_policy(policy)
+        normalized_provider, normalized_region = self.assert_egress_allowed(
+            provider_type=provider_type,
+            provider_id=provider_id,
+            data_region=data_region,
+            tenant_id=tenant_id,
+            policy=active_policy,
+        )
         values = [str(value or "") for value in texts]
         if not values or any(not value.strip() for value in values):
             raise SecurityBlocked("embedding input must not be empty", reason_code="AI_SECURITY_DLP_FAILED")
+        values, redacted_secrets = _redact_secrets(values)
 
         combined = {"embedding_inputs": values, "provider_type": provider_type}
         level, findings = self._classify(combined)
+        if redacted_secrets:
+            findings.append(Finding(DataLevel.L1_GENERAL, "credential_redacted", detail=str(redacted_secrets)))
         passthrough_active = dev_passthrough.is_active()
         requested_classification = normalize_classification(data_classification) if data_classification is not None else classification_for_level(level)
         if data_classification is not None and requested_classification is None:
@@ -511,6 +762,16 @@ class AISecurityGateway:
                 requested_classification = classification_for_level(level)
             else:
                 raise SecurityBlocked("unknown data classification", reason_code="AI_SECURITY_CLASSIFICATION_DENIED", findings=findings)
+        # A caller may declare a stricter classification, never a looser one:
+        # content with identifiers (IP/MAC/host names/serials) or anything
+        # more sensitive is at least INTERNAL, whatever the caller declared.
+        if (
+            data_classification is not None
+            and requested_classification is not None
+            and level >= DataLevel.L2_IDENTIFIER
+            and _classification_rank(requested_classification) < _classification_rank(DataClassification.INTERNAL)
+        ):
+            requested_classification = DataClassification.INTERNAL
         if passthrough_active and any(item.category in _BLACKLIST_DLP_FINDING_CATEGORIES for item in findings):
             raise SecurityBlocked(
                 "credential DLP blocked the temporary embedding request",
@@ -551,7 +812,7 @@ class AISecurityGateway:
         metadata = {
             "egress_kind": "embedding",
             "provider_type": provider_type,
-            "user_id": opaque_user_id(user_id, tenant_id=tenant_id, task_id=task_id),
+            "user_id": provider_user_id(user_id, tenant_id=tenant_id, task_id=task_id),
             "idempotency_key": idempotency_key or "",
             "finding_categories": sorted({item.category for item in findings}),
             "policy_version": active_policy.policy_version,
@@ -608,4 +869,4 @@ class AISecurityGateway:
         return sanitize_output(value, tenant_id=tenant_id, task_id=task_id, vault=self.vault)
 
 
-ai_security_gateway = AISecurityGateway()
+ai_security_gateway = AISecurityGateway(enforce_deployment_flags=True)

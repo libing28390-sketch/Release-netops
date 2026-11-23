@@ -298,6 +298,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"[IPLocator] Failed to close retained SSH sessions: {type(e).__name__}")
 
+    try:
+        from ai.providers.openai_compatible import aclose_shared_clients
+
+        await aclose_shared_clients()
+    except Exception as e:
+        logger.warning(f"[AI] Failed to close provider HTTP clients: {type(e).__name__}")
+
+    try:
+        from ai.services.rag_retriever import shutdown_shadow_executor
+
+        # Queued shadow comparisons are diagnostics; do not delay shutdown.
+        shutdown_shadow_executor(wait=False)
+    except Exception as e:
+        logger.warning(f"[AI] Failed to stop RAG shadow worker: {type(e).__name__}")
+
     if run_scheduler:
         scheduler.shutdown(wait=False)
         logger.info("[Scheduler] APScheduler stopped")
@@ -1280,6 +1295,10 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5010"))
     workers = int(os.environ.get("WORKERS", "1"))
     is_dev = os.environ.get("NODE_ENV") == "development"
+    # scripts/dev-backend.mjs sets NEXORA_DEV_RELOAD=0 on Windows and restarts
+    # this process itself: uvicorn's Windows reloader sends a console Ctrl+C
+    # that stops every process in the terminal, including `npm run dev`.
+    use_reload = is_dev and os.environ.get("NEXORA_DEV_RELOAD", "1") != "0"
     backend_directory = os.path.dirname(os.path.abspath(__file__))
     reload_kwargs = (
         {
@@ -1296,7 +1315,7 @@ if __name__ == "__main__":
                 os.path.join(backend_directory, 'artifacts'),
             ],
         }
-        if is_dev
+        if use_reload
         else {}
     )
 

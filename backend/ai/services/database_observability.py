@@ -7,11 +7,14 @@ document bodies, or host details. PostgreSQL is the only database authority.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Callable
 
 from database import core as database_core
 from database.capacity import DEFAULTS, collect_postgres_relation_stats
+
+logger = logging.getLogger(__name__)
 
 
 _OBSERVATION_TABLES = (
@@ -71,8 +74,9 @@ def _run_probe(
 def _safe_rollback(connection: Any) -> None:
     try:
         connection.rollback()
-    except Exception:
-        pass
+    except Exception as exc:
+        # Best-effort cleanup: the probe already reports UNAVAILABLE.
+        logger.debug("Rollback after a failed observability probe failed code=AI_DB_OBS_ROLLBACK_FAILED error=%s", type(exc).__name__)
 
 
 def _cache_probe(connection: Any) -> dict[str, Any]:

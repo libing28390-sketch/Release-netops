@@ -597,10 +597,18 @@ def _is_canonical_plan(value: Mapping[str, Any]) -> bool:
 
 def _reload_snmp_exporter_config() -> bool:
     """Ask the local Compose exporter to reload its published config."""
-    request = UrlRequest("http://snmp-exporter:9116/-/reload", method="POST")
+    # The default is the Compose service name; a local (non-Docker) dev host
+    # cannot resolve it, so it can be overridden with SNMP_EXPORTER_URL.
+    base = str(os.environ.get("SNMP_EXPORTER_URL") or "http://snmp-exporter:9116").rstrip("/")
+    request = UrlRequest(f"{base}/-/reload", method="POST")
     try:
         with build_opener(ProxyHandler({})).open(request, timeout=3) as response:
             return 200 <= int(response.status) < 300
+    except OSError as exc:
+        # Exporter not running / name not resolvable: expected outside Docker.
+        # One line instead of a full traceback on every startup.
+        logger.warning("SNMP exporter configuration reload is pending (exporter unreachable: %s)", type(getattr(exc, "reason", exc)).__name__)
+        return False
     except Exception:
         logger.warning("SNMP exporter configuration reload is pending", exc_info=True)
         return False

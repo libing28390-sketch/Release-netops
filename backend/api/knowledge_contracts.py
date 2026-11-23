@@ -271,6 +271,7 @@ class CopilotContext(StrictContract):
     recent_changes: list[str] = Field(default_factory=list, max_length=100)
     metrics: dict[str, object] = Field(default_factory=dict)
     document_scope: dict[str, object] = Field(default_factory=dict)
+    web_search: bool | None = None
 
 
 class CopilotPlanItem(StrictContract):

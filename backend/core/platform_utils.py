@@ -17,13 +17,13 @@ def _platform_vendor(platform: str) -> str:
         return 'maipu'
     if value.startswith(('dptech', 'conplat')):
         return 'dptech'
-    if value.startswith(('juniper', 'junos')):
+    if value.startswith(('juniper', 'junos', 'srx')):
         return 'juniper'
     if value.startswith(('hillstone', 'stoneos')):
         return 'hillstone'
     if value.startswith(('arista', 'eos')):
         return 'arista'
-    if value.startswith(('cisco', 'ios', 'nxos', 'nexus', 'asa')):
+    if value.startswith(('cisco', 'ios', 'iosxr', 'nxos', 'nexus', 'asa')):
         return 'cisco'
     return ''
 
@@ -95,12 +95,16 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
     # V3/V5/V7/V9 command differences belong to Platform Profile releases, not to
     # another device platform string.
     explicit_platforms = {
-        'huawei_vrp', 'huawei_vrpv8', 'huawei_yunshan', 'vrp5', 'vrpv5', 'vrp8', 'vrpv8',
+        'huawei_vrp', 'huawei_vrpv8', 'huawei_yunshan', 'huawei_smartax', 'huawei_usg',
+        'vrp5', 'vrpv5', 'vrp8', 'vrpv8',
         'h3c_comware', 'h3c_comware_v3', 'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9',
         'ruijie_rgos', 'ruijie_os', 'zte_zxros', 'maipu', 'maipu_network', 'maipu_mypower',
         'dptech_ios', 'dptech', 'dptech_conplat', 'dptech_conplat_fw',
         'raisecom_ros', 'raisecom_ros5', 'raisecom_ros_5',
         'hillstone_stoneos',
+        'juniper_junos', 'juniper_srx',
+        'arista_eos',
+        'cisco_ios', 'cisco_xe', 'cisco_iosxe', 'cisco_nxos', 'cisco_iosxr', 'cisco_asa',
     }
     if p in explicit_platforms:
         if p in {'vrp8', 'vrpv8'}:

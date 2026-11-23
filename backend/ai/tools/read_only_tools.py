@@ -4,12 +4,15 @@ READ_ONLY Tool Implementations for Agent Execution
 
 from __future__ import annotations
 
+import logging
 import json
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from database.core import get_db_connection
 from ai.security.sanitizer import sanitize_data
+
+logger = logging.getLogger(__name__)
 
 
 def _freshness(value: Any) -> str:
@@ -34,8 +37,9 @@ def tool_search_ip(ip: str, tenant_id: str | None = None) -> Dict[str, Any]:
             row = cursor.fetchone()
             if row:
                 res["device"] = {"hostname": row[0], "platform": row[1], "vendor": row[2], "status": row[3]}
-    except Exception:
-        pass
+    except Exception as exc:
+        # Read-only tools degrade to an empty result instead of failing the agent step.
+        logger.warning("AI read-only tool query failed tool=%s code=AI_TOOL_QUERY_FAILED error=%s", "tool_search_ip", type(exc).__name__)
     res["evidence"] = [{"source_type": "cmdb", "source_id": "devices"}] if res["device"] else []
     res["freshness"] = "database_snapshot"
     return sanitize_data(res)
@@ -54,8 +58,9 @@ def tool_search_mac(mac: str, tenant_id: str | None = None) -> Dict[str, Any]:
             ).fetchone()
             if row:
                 result.update({"found": True, "vlan": row[0], "interface": row[1], "evidence": [{"source_type": "mac_table"}]})
-    except Exception:
-        pass
+    except Exception as exc:
+        # Read-only tools degrade to an empty result instead of failing the agent step.
+        logger.warning("AI read-only tool query failed tool=%s code=AI_TOOL_QUERY_FAILED error=%s", "tool_search_mac", type(exc).__name__)
     return sanitize_data(result)
 
 
@@ -85,8 +90,9 @@ def tool_get_device_neighbors(device_id: str, tenant_id: str | None = None) -> D
                     "remote_device": row[1] if is_source else source,
                     "remote_port": row[3] if is_source else row[2],
                 })
-    except Exception:
-        pass
+    except Exception as exc:
+        # Read-only tools degrade to an empty result instead of failing the agent step.
+        logger.warning("AI read-only tool query failed tool=%s code=AI_TOOL_QUERY_FAILED error=%s", "tool_get_device_neighbors", type(exc).__name__)
     return sanitize_data({"device_id": device_id, "neighbors": neighbors, "evidence": [{"source_type": "topology_links"}] if neighbors else []})
 
 
@@ -116,8 +122,9 @@ def tool_get_active_alarms(device_id: Optional[str] = None, tenant_id: str | Non
                     """
                 ).fetchall()
             alarms = [{"title": row[0], "severity": row[1], "device": row[2]} for row in rows]
-    except Exception:
-        pass
+    except Exception as exc:
+        # Read-only tools degrade to an empty result instead of failing the agent step.
+        logger.warning("AI read-only tool query failed tool=%s code=AI_TOOL_QUERY_FAILED error=%s", "tool_get_active_alarms", type(exc).__name__)
     return sanitize_data({"alarms": alarms, "evidence": [{"source_type": "alert_events"}] if alarms else []})
 
 
@@ -150,8 +157,9 @@ def tool_get_asset(device_id: str, tenant_id: str | None = None) -> Dict[str, An
                     "asset_id": row[9], "asset_name": row[10], "asset_tag": row[11],
                 }
                 result["evidence"] = [{"source_type": "cmdb", "source_id": str(row[0])}]
-    except Exception:
-        pass
+    except Exception as exc:
+        # Read-only tools degrade to an empty result instead of failing the agent step.
+        logger.warning("AI read-only tool query failed tool=%s code=AI_TOOL_QUERY_FAILED error=%s", "tool_get_asset", type(exc).__name__)
     result["freshness"] = "database_snapshot"
     return sanitize_data(result)
 
@@ -200,8 +208,9 @@ def tool_get_device_status(device_id: str, tenant_id: str | None = None) -> Dict
                         "freshness": _freshness(item[4]),
                     })
                     result["evidence"].append({"source_type": "collector_status", "source_id": str(item[0])})
-    except Exception:
-        pass
+    except Exception as exc:
+        # Read-only tools degrade to an empty result instead of failing the agent step.
+        logger.warning("AI read-only tool query failed tool=%s code=AI_TOOL_QUERY_FAILED error=%s", "tool_get_device_status", type(exc).__name__)
     return sanitize_data(result)
 
 
@@ -231,8 +240,9 @@ def tool_get_arp_entry(ip: str | None = None, device_id: str | None = None, tena
                 tuple(params),
             ).fetchall()
             entries = [{"device_id": r[0], "hostname": r[1], "ip": r[2], "mac": r[3], "interface": r[4], "vlan": r[5], "last_updated": r[6]} for r in rows]
-    except Exception:
-        pass
+    except Exception as exc:
+        # Read-only tools degrade to an empty result instead of failing the agent step.
+        logger.warning("AI read-only tool query failed tool=%s code=AI_TOOL_QUERY_FAILED error=%s", "tool_get_arp_entry", type(exc).__name__)
     return sanitize_data({"ip": ip, "device_id": device_id, "entries": entries, "evidence": [{"source_type": "arp", "source_id": str(item["device_id"])} for item in entries], "freshness": _freshness(entries[0].get("last_updated") if entries else None)})
 
 
@@ -258,8 +268,9 @@ def tool_get_mac_entry(mac: str, device_id: str | None = None, tenant_id: str | 
                 tuple(params),
             ).fetchall()
             entries = [{"device_id": r[0], "hostname": r[1], "mac": r[2], "interface": r[3], "vlan": r[4], "entry_type": r[5], "last_updated": r[6]} for r in rows]
-    except Exception:
-        pass
+    except Exception as exc:
+        # Read-only tools degrade to an empty result instead of failing the agent step.
+        logger.warning("AI read-only tool query failed tool=%s code=AI_TOOL_QUERY_FAILED error=%s", "tool_get_mac_entry", type(exc).__name__)
     return sanitize_data({"mac": mac, "entries": entries, "evidence": [{"source_type": "mac_table", "source_id": str(item["device_id"])} for item in entries], "freshness": _freshness(entries[0].get("last_updated") if entries else None)})
 
 
@@ -310,8 +321,9 @@ def tool_get_running_config(device_id: str, tenant_id: str | None = None) -> Dic
                 (device_id,),
             ).fetchall()
             snapshots = [{"id": r[0], "device_id": r[1], "timestamp": r[2], "trigger": r[3], "author": r[4], "size": r[5], "raw_hash": r[6], "normalized_hash": r[7], "line_count": r[8], "section_count": r[9], "integrity_status": r[10], "config_type": r[11]} for r in rows]
-    except Exception:
-        pass
+    except Exception as exc:
+        # Read-only tools degrade to an empty result instead of failing the agent step.
+        logger.warning("AI read-only tool query failed tool=%s code=AI_TOOL_QUERY_FAILED error=%s", "tool_get_running_config", type(exc).__name__)
     return sanitize_data({"device_id": device_id, "snapshots": snapshots, "raw_available": False, "evidence": [{"source_type": "config_snapshot", "source_id": str(item["id"])} for item in snapshots], "freshness": _freshness(snapshots[0].get("timestamp") if snapshots else None)})
 
 

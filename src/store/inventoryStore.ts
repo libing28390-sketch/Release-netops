@@ -115,6 +115,8 @@ let latestAssetSummaryRequestId = 0;
 
 // ─── Store ────────────────────────────────────────────────────────────────────
 
+export type InventoryQuickFilter = 'all' | 'offline' | 'warning' | 'staging_maintenance' | 'healthy';
+
 interface InventoryState {
   inventoryPage: number;
   inventoryPageSize: number;
@@ -123,6 +125,8 @@ interface InventoryState {
   inventoryRoleFilter: string;
   inventoryStatusFilter: string;
   inventoryLifecycleFilter: string;
+  inventoryTagFilterIds: string[];
+  inventoryQuickFilter: InventoryQuickFilter;
   inventorySortConfig: { key: keyof Device; direction: 'asc' | 'desc' } | null;
   selectedDeviceIds: string[];
 
@@ -157,12 +161,15 @@ interface InventoryState {
   setInventoryRoleFilter: (filter: string) => void;
   setInventoryStatusFilter: (filter: string) => void;
   setInventoryLifecycleFilter: (filter: string) => void;
+  setInventoryTagFilterIds: (ids: string[]) => void;
+  setInventoryQuickFilter: (filter: InventoryQuickFilter) => void;
   setInventorySortConfig: (
     config: { key: keyof Device; direction: 'asc' | 'desc' } | null,
   ) => void;
   setSelectedDeviceIds: (ids: string[] | ((prev: string[]) => string[])) => void;
   setInventoryRefreshTick: (tick: number | ((prev: number) => number)) => void;
   setAssetsTotal: (total: number) => void;
+  hydrateAssetsSummary: (summary: unknown) => void;
   resetAssetsTotal: () => void;
   setDeviceToDelete: (id: string | null) => void;
   setIsDeletingSelected: (v: boolean) => void;
@@ -181,6 +188,8 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
   inventoryRoleFilter: 'all',
   inventoryStatusFilter: 'all',
   inventoryLifecycleFilter: 'all',
+  inventoryTagFilterIds: [],
+  inventoryQuickFilter: 'all',
   inventorySortConfig: null,
   selectedDeviceIds: [],
 
@@ -211,6 +220,10 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
     set({ inventoryStatusFilter: filter, inventoryPage: 1 }),
   setInventoryLifecycleFilter: (filter) =>
     set({ inventoryLifecycleFilter: filter, inventoryPage: 1 }),
+  setInventoryTagFilterIds: (ids) =>
+    set({ inventoryTagFilterIds: ids, inventoryPage: 1 }),
+  setInventoryQuickFilter: (filter) =>
+    set({ inventoryQuickFilter: filter, inventoryPage: 1 }),
   setInventorySortConfig: (config) => set({ inventorySortConfig: config }),
   setSelectedDeviceIds: (ids) =>
     set((state) => ({
@@ -230,6 +243,22 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
       assetsTotalError: null,
       assetsPlatformCounts: null,
       assetsPlatformError: null,
+    });
+  },
+  hydrateAssetsSummary: (summary) => {
+    const assetsTotal = getManagedAssetDeviceTotal(summary);
+    if (assetsTotal === null) return;
+    const assetsOnlineTotal = getManagedAssetDeviceOnlineTotal(summary);
+    const assetsPlatformCounts = getManagedAssetPlatformCounts(summary, assetsTotal);
+    latestAssetSummaryRequestId += 1;
+    set({
+      assetsTotal,
+      assetsOnlineTotal,
+      assetsTotalError: null,
+      assetsPlatformCounts,
+      assetsPlatformError: assetsPlatformCounts === null
+        ? 'Invalid asset platform summary response'
+        : null,
     });
   },
   resetAssetsTotal: () => {
@@ -263,6 +292,15 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
         sort_direction: state.inventorySortConfig?.direction || 'asc',
         asset_type: 'network_device',
       });
+      if (state.inventoryLifecycleFilter && state.inventoryLifecycleFilter !== 'all') {
+        params.set('lifecycle_status', state.inventoryLifecycleFilter);
+      }
+      if (state.inventoryTagFilterIds.length > 0) {
+        params.set('tag_ids', state.inventoryTagFilterIds.join(','));
+      }
+      if (state.inventoryQuickFilter && state.inventoryQuickFilter !== 'all') {
+        params.set('quick_filter', state.inventoryQuickFilter);
+      }
 
       const resp = await fetch(`/api/devices?${params.toString()}`, { headers: authHeaders() });
       if (requestId !== latestInventoryRequestId) return;

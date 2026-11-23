@@ -326,8 +326,12 @@ def api_cmdb_asset_tree(_user=require_role("Viewer")):
     role.  It intentionally never reads ``devices.role`` or the legacy
     retired free-text datacenter field.
     """
+    from api.assets import _asset_scope_clauses
+
     conn = get_db_connection()
     try:
+        scope_clauses, scope_params = _asset_scope_clauses(conn, _user)
+        where = f" WHERE {' AND '.join(scope_clauses)}" if scope_clauses else ""
         rows = conn.execute(
             f"""SELECT
                     COALESCE(NULLIF(pa.site_id, ''), 'unassigned') AS site_id,
@@ -341,10 +345,12 @@ def api_cmdb_asset_tree(_user=require_role("Viewer")):
                 FROM physical_assets pa
                 LEFT JOIN sites s ON s.id = pa.site_id
                 LEFT JOIN devices d ON d.asset_id = pa.id
+                {where}
                 GROUP BY pa.site_id, s.site_name, s.site_code,
                          pa.asset_type, pa.device_category, pa.device_role,
                          pa.status, d.status
-                ORDER BY site_name, asset_type, device_category, device_role, online_status"""
+                ORDER BY site_name, asset_type, device_category, device_role, online_status""",
+            scope_params,
         ).fetchall()
         return {"success": True, "data": {"items": [dict(row) for row in rows]}, "message": ""}
     finally:
@@ -366,10 +372,11 @@ def api_cmdb_assets(
     _user=require_role("Viewer"),
 ):
     """List CMDB assets for the selected tree branch."""
+    from api.assets import _asset_scope_clauses, _sanitize_asset_item
+
     conn = get_db_connection()
     try:
-        conditions: list[str] = []
-        params: list[object] = []
+        conditions, params = _asset_scope_clauses(conn, _user)
         if site_id:
             conditions.append("pa.site_id = ?")
             params.append(site_id)
@@ -426,14 +433,7 @@ def api_cmdb_assets(
                 LIMIT ? OFFSET ?""",
             params + [page_size, offset],
         ).fetchall()
-        items = []
-        for row in rows:
-            item = dict(row)
-            for sensitive in ("password", "normal_password", "admin_password", "enable_password"):
-                if sensitive in item:
-                    item[f"{sensitive}_set"] = bool(item.get(sensitive))
-                    item[sensitive] = ""
-            items.append(item)
+        items = [_sanitize_asset_item(dict(row)) for row in rows]
         _attach_asset_tags(conn, items)
         return {
             "success": True,

@@ -1,0 +1,270 @@
+- targets:
+  - 10.254.0.6
+  labels:
+    nexora_asset_id: asset-16e8b0e1b375
+    nexora_hostname: AC_19
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: access
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_49947255850e
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 10.254.0.6
+  labels:
+    nexora_asset_id: asset-16e8b0e1b375
+    nexora_hostname: AC_19
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: access
+    nexora_module: generic_system_std
+    nexora_auth: auth_49947255850e
+    nexora_scrape_interval: 300s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 192.168.56.14
+  labels:
+    nexora_asset_id: asset-1f49a0c4fa6e
+    nexora_hostname: AC_11
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: wireless_controller
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_49947255850e
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 192.168.56.14
+  labels:
+    nexora_asset_id: asset-1f49a0c4fa6e
+    nexora_hostname: AC_11
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: wireless_controller
+    nexora_module: generic_system_std
+    nexora_auth: auth_49947255850e
+    nexora_scrape_interval: 300s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 10.254.0.4
+  labels:
+    nexora_asset_id: asset-352776601de3
+    nexora_hostname: AC_17
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: distribution
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_49947255850e
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 10.254.0.4
+  labels:
+    nexora_asset_id: asset-352776601de3
+    nexora_hostname: AC_17
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: distribution
+    nexora_module: generic_system_std
+    nexora_auth: auth_49947255850e
+    nexora_scrape_interval: 300s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 192.168.56.11
+  labels:
+    nexora_asset_id: asset-41e5b70e11e0
+    nexora_hostname: F1090-9
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: firewall
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_49947255850e
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 192.168.56.11
+  labels:
+    nexora_asset_id: asset-41e5b70e11e0
+    nexora_hostname: F1090-9
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: firewall
+    nexora_module: generic_system_std
+    nexora_auth: auth_49947255850e
+    nexora_scrape_interval: 300s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 10.254.0.1
+  labels:
+    nexora_asset_id: asset-41f037aab08e
+    nexora_hostname: AC_14
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: core
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_49947255850e
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 10.254.0.1
+  labels:
+    nexora_asset_id: asset-41f037aab08e
+    nexora_hostname: AC_14
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: core
+    nexora_module: generic_system_std
+    nexora_auth: auth_49947255850e
+    nexora_scrape_interval: 300s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 192.168.56.12
+  labels:
+    nexora_asset_id: asset-90b82d719c31
+    nexora_hostname: F1090-10
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: firewall
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_49947255850e
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 192.168.56.12
+  labels:
+    nexora_asset_id: asset-90b82d719c31
+    nexora_hostname: F1090-10
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: firewall
+    nexora_module: generic_system_std
+    nexora_auth: auth_49947255850e
+    nexora_scrape_interval: 300s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 10.254.0.5
+  labels:
+    nexora_asset_id: asset-9524f368913c
+    nexora_hostname: AC_18
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: access
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_49947255850e
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 10.254.0.5
+  labels:
+    nexora_asset_id: asset-9524f368913c
+    nexora_hostname: AC_18
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: access
+    nexora_module: generic_system_std
+    nexora_auth: auth_49947255850e
+    nexora_scrape_interval: 300s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 10.254.0.3
+  labels:
+    nexora_asset_id: asset-acf71d492956
+    nexora_hostname: AC_16
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: distribution
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_49947255850e
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 10.254.0.3
+  labels:
+    nexora_asset_id: asset-acf71d492956
+    nexora_hostname: AC_16
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: distribution
+    nexora_module: generic_system_std
+    nexora_auth: auth_49947255850e
+    nexora_scrape_interval: 300s
+    nexora_scrape_timeout: 30s
+- targets:
+  - 10.254.0.2
+  labels:
+    nexora_asset_id: asset-e4cffa4c81e4
+    nexora_hostname: AC_15
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: core
+    nexora_module: generic_ifmib_interface_std
+    nexora_auth: auth_49947255850e
+    nexora_scrape_interval: 30s
+    nexora_scrape_timeout: 20s
+- targets:
+  - 10.254.0.2
+  labels:
+    nexora_asset_id: asset-e4cffa4c81e4
+    nexora_hostname: AC_15
+    nexora_tenant_id: tenant-default
+    nexora_site_id: site-f287cf1c61ec
+    nexora_site_name: WH-DC-01
+    nexora_vendor: H3C
+    nexora_platform: h3c_comware
+    nexora_role: core
+    nexora_module: generic_system_std
+    nexora_auth: auth_49947255850e
+    nexora_scrape_interval: 300s
+    nexora_scrape_timeout: 30s

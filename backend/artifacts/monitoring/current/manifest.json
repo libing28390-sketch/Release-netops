@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "collector_id": "collector-local",
+  "config_version": 718,
+  "generated_at": "2026-10-26T14:29:48+00:00",
+  "assignment_count": 18,
+  "module_count": 2,
+  "excluded_nonbaseline_assignment_count": 0,
+  "excluded_nonbaseline_variant_keys": [],
+  "auth_alias_count": 1,
+  "server_target_count": 2,
+  "modules": [
+    {
+      "variant_key": "generic_ifmib_interface_std",
+      "supported_platforms": [],
+      "supported_models": [],
+      "supported_version_scope": [],
+      "mib_bundle_id": "if-mib-rfc2863",
+      "generator_version": "snmp_exporter-config-v1/2026.09.26",
+      "generator_config_hash": "0202df0ba299841f07d8c93475db58163ceef7859763137eda2c56a296246cf6",
+      "walk_count": 3,
+      "get_count": 2,
+      "metric_count": 25
+    },
+    {
+      "variant_key": "generic_system_std",
+      "supported_platforms": [],
+      "supported_models": [],
+      "supported_version_scope": [],
+      "mib_bundle_id": "snmpv2-mib-rfc3418",
+      "generator_version": "snmp_exporter-config-v1/2026.09.26",
+      "generator_config_hash": "275ef6058f26b130de3001f68b313334c21b09e39ee57764231a2b2133525e07",
+      "walk_count": 1,
+      "get_count": 6,
+      "metric_count": 6
+    }
+  ],
+  "compiler_version": "monitoring-compiler-1.1.0",
+  "checksum": "92a764ee05d731c4d038e3e4eabb54319152954170c839aa1cd38bcf1279b1d9"
+}

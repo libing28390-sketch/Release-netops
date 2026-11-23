@@ -1,0 +1,131 @@
+[
+  {
+    "id": 122852193590,
+    "name": "Promptfoo full (isolated PostgreSQL)",
+    "status": "completed",
+    "conclusion": "success",
+    "html_url": "https://github.com/chaojifeixia-007/netsops/actions/runs/40698668670/job/122852193590",
+    "steps": [
+      {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1,
+        "started_at": "2026-10-28T13:40:59Z",
+        "completed_at": "2026-10-28T13:41:00Z"
+      },
+      {
+        "name": "Checkout",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 2,
+        "started_at": "2026-10-28T13:41:00Z",
+        "completed_at": "2026-10-28T13:41:07Z"
+      },
+      {
+        "name": "Start PostgreSQL with pgvector",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3,
+        "started_at": "2026-10-28T13:41:07Z",
+        "completed_at": "2026-10-28T13:41:26Z"
+      },
+      {
+        "name": "Setup Node 22",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 4,
+        "started_at": "2026-10-28T13:41:26Z",
+        "completed_at": "2026-10-28T13:41:32Z"
+      },
+      {
+        "name": "Setup Python 3.11",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 5,
+        "started_at": "2026-10-28T13:41:32Z",
+        "completed_at": "2026-10-28T13:41:36Z"
+      },
+      {
+        "name": "Install isolated test dependencies",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 6,
+        "started_at": "2026-10-28T13:41:36Z",
+        "completed_at": "2026-10-28T13:42:37Z"
+      },
+      {
+        "name": "Bootstrap isolated PostgreSQL Knowledge Engine corpus",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 7,
+        "started_at": "2026-10-28T13:42:37Z",
+        "completed_at": "2026-10-28T13:43:05Z"
+      },
+      {
+        "name": "Validate release-safe AI/RAG configuration",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 8,
+        "started_at": "2026-10-28T13:43:05Z",
+        "completed_at": "2026-10-28T13:43:05Z"
+      },
+      {
+        "name": "Run Promptfoo gate",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 9,
+        "started_at": "2026-10-28T13:43:05Z",
+        "completed_at": "2026-10-28T13:43:41Z"
+      },
+      {
+        "name": "Build redacted JSON and JUnit artifacts",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 10,
+        "started_at": "2026-10-28T13:43:41Z",
+        "completed_at": "2026-10-28T13:43:41Z"
+      },
+      {
+        "name": "Upload redacted Promptfoo artifacts",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 11,
+        "started_at": "2026-10-28T13:43:41Z",
+        "completed_at": "2026-10-28T13:43:42Z"
+      },
+      {
+        "name": "Post Setup Python 3.11",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 20,
+        "started_at": "2026-10-28T13:43:42Z",
+        "completed_at": "2026-10-28T13:43:42Z"
+      },
+      {
+        "name": "Post Setup Node 22",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 21,
+        "started_at": "2026-10-28T13:43:42Z",
+        "completed_at": "2026-10-28T13:43:46Z"
+      },
+      {
+        "name": "Post Checkout",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 22,
+        "started_at": "2026-10-28T13:43:46Z",
+        "completed_at": "2026-10-28T13:43:46Z"
+      },
+      {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 23,
+        "started_at": "2026-10-28T13:43:46Z",
+        "completed_at": "2026-10-28T13:43:46Z"
+      }
+    ]
+  }
+]

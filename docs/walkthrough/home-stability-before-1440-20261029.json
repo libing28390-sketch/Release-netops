@@ -1,0 +1,124 @@
+{
+  "mode": "before",
+  "scenario": "success",
+  "language": "zh",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "sampleCount": 139,
+  "targets": [
+    {
+      "name": "page",
+      "first": {
+        "x": 72.5,
+        "y": 64,
+        "width": 1280,
+        "height": 815.25
+      },
+      "last": {
+        "x": 80,
+        "y": 64,
+        "width": 1280,
+        "height": 794.75
+      },
+      "xRange": 7.5,
+      "yRange": 0,
+      "widthRange": 0
+    },
+    {
+      "name": "title",
+      "first": {
+        "x": 96.5,
+        "y": 88,
+        "width": 1232,
+        "height": 90
+      },
+      "last": {
+        "x": 104,
+        "y": 88,
+        "width": 1232,
+        "height": 69.5
+      },
+      "xRange": 7.5,
+      "yRange": 0,
+      "widthRange": 0
+    },
+    {
+      "name": "firstKpi",
+      "first": {
+        "x": 96.5,
+        "y": 202,
+        "width": 297.5,
+        "height": 124.5
+      },
+      "last": {
+        "x": 104,
+        "y": 181.5,
+        "width": 297.5,
+        "height": 124.5
+      },
+      "xRange": 7.5,
+      "yRange": 20.5,
+      "widthRange": 0
+    },
+    {
+      "name": "firstModule",
+      "first": {
+        "x": 96.5,
+        "y": 350.5,
+        "width": 299,
+        "height": 62
+      },
+      "last": {
+        "x": 104,
+        "y": 330,
+        "width": 299,
+        "height": 62
+      },
+      "xRange": 7.5,
+      "yRange": 20.5,
+      "widthRange": 0
+    },
+    {
+      "name": "platformPanel",
+      "first": {
+        "x": 96.5,
+        "y": 584.5,
+        "width": 814.65625,
+        "height": 270.75
+      },
+      "last": {
+        "x": 104,
+        "y": 564,
+        "width": 814.65625,
+        "height": 270.75
+      },
+      "xRange": 7.5,
+      "yRange": 20.5,
+      "widthRange": 0
+    },
+    {
+      "name": "quickActions",
+      "first": {
+        "x": 931.15625,
+        "y": 584.5,
+        "width": 397.34375,
+        "height": 270.75
+      },
+      "last": {
+        "x": 938.65625,
+        "y": 564,
+        "width": 397.34375,
+        "height": 270.75
+      },
+      "xRange": 7.5,
+      "yRange": 20.5,
+      "widthRange": 0
+    }
+  ],
+  "scrollerWidths": [
+    1425,
+    1440
+  ]
+}

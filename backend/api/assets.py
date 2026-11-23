@@ -688,10 +688,10 @@ def _platform_from_vendor(vendor: str, asset_type: str = 'network_device') -> st
     """
     v = (vendor or '').lower()
     if 'cisco' in v:
-        return 'cisco_iosxe'
-    if 'huawei' in v:
+        return 'cisco_ios'
+    if 'huawei' in v or '华为' in v:
         return 'huawei_vrp'
-    if 'h3c' in v or 'comware' in v:
+    if 'h3c' in v or 'comware' in v or '华三' in v:
         return 'h3c_comware'
     if 'arista' in v:
         return 'arista_eos'
@@ -711,22 +711,63 @@ def _platform_from_vendor(vendor: str, asset_type: str = 'network_device') -> st
         if 'fw' in v or 'firewall' in v or '防火墙' in v or asset_type == 'firewall':
             return 'dptech_conplat_fw'
         return 'dptech_conplat'
+    if 'fortinet' in v or '飞塔' in v:
+        return 'fortinet'
+    if 'palo alto' in v or 'paloalto' in v or '帕洛阿尔托' in v:
+        return 'paloalto_panos'
+    if 'sangfor' in v or '深信服' in v:
+        return 'sangfor_ngaf'
+    if 'check point' in v or 'checkpoint' in v or '检查点' in v:
+        return 'check_point_gaia'
+    if 'venustech' in v or '启明星辰' in v:
+        return 'venustech_usg'
+    if 'nsfocus' in v or '绿盟' in v:
+        return 'nsfocus_firewall'
+    if 'topsec' in v or '天融信' in v:
+        return 'topsec_firewall'
+    if 'qi an xin' in v or 'qianxin' in v or '奇安信' in v:
+        return 'qianxin_firewall'
+    if 'f5' in v:
+        return 'f5_bigip'
     if any(x in v for x in ['ubuntu', 'debian', 'centos', 'redhat', 'linux']):
         return 'linux'
 
     if asset_type == 'server':
         return 'linux'
-    return 'cisco_iosxe'
+    return 'cisco_ios'
 
 
 _VENDOR_PLATFORM_RULES: tuple[tuple[str, set[str], str], ...] = (
-    ('cisco', {'cisco', 'ios', 'iosxe', 'cisco_ios', 'cisco_iosxe', 'cisco_xe', 'cisco_nxos', 'nxos', 'nexus'}, 'cisco_ios'),
-    ('huawei', {'huawei', 'huawei_vrp', 'huawei_vrpv8', 'huawei_yunshan', 'vrp', 'ce', 'ce_vrp', 'ne'}, 'huawei_vrp'),
-    ('华为', {'huawei', 'huawei_vrp', 'huawei_vrpv8', 'huawei_yunshan', 'vrp', 'ce', 'ce_vrp', 'ne'}, 'huawei_vrp'),
+    (
+        'cisco',
+        {
+            'cisco', 'ios', 'iosxe', 'cisco_ios', 'cisco_iosxe', 'cisco_xe',
+            'cisco_nxos', 'nxos', 'nexus',
+            'cisco_iosxr', 'cisco_xr', 'iosxr',
+            'cisco_asa', 'asa',
+        },
+        'cisco_ios',
+    ),
+    (
+        'huawei',
+        {
+            'huawei', 'huawei_vrp', 'huawei_vrpv8', 'huawei_yunshan',
+            'huawei_smartax', 'huawei_usg', 'vrp', 'ce', 'ce_vrp', 'ne',
+        },
+        'huawei_vrp',
+    ),
+    (
+        '华为',
+        {
+            'huawei', 'huawei_vrp', 'huawei_vrpv8', 'huawei_yunshan',
+            'huawei_smartax', 'huawei_usg', 'vrp', 'ce', 'ce_vrp', 'ne',
+        },
+        'huawei_vrp',
+    ),
     ('h3c', {'h3c_comware'}, 'h3c_comware'),
     ('comware', {'h3c_comware'}, 'h3c_comware'),
     ('arista', {'arista', 'arista_eos', 'eos'}, 'arista_eos'),
-    ('juniper', {'juniper', 'juniper_junos', 'junos'}, 'juniper_junos'),
+    ('juniper', {'juniper', 'juniper_junos', 'junos', 'juniper_srx', 'srx'}, 'juniper_junos'),
     ('ruijie', {'ruijie', 'ruijie_os', 'ruijie_rgos', 'rgos'}, 'ruijie_rgos'),
     ('zte', {'zte', 'zte_zxros', 'zxros'}, 'zte_zxros'),
     ('raisecom', {'raisecom', 'raisecom_ros', 'raisecom_ros5', 'raisecom_ros_5'}, 'raisecom_ros'),
@@ -736,6 +777,9 @@ _VENDOR_PLATFORM_RULES: tuple[tuple[str, set[str], str], ...] = (
     ('stoneos', {'hillstone_stoneos'}, 'hillstone_stoneos'),
     ('山石', {'hillstone_stoneos'}, 'hillstone_stoneos'),
     ('dptech', {'dptech', 'dptech_ios', 'dptech_conplat', 'dptech_conplat_fw', 'conplat'}, 'dptech_conplat'),
+    ('fortinet', {'fortinet', 'fortios'}, 'fortinet'),
+    ('palo alto', {'paloalto_panos', 'panos'}, 'paloalto_panos'),
+    ('sangfor', {'sangfor_ngaf'}, 'sangfor_ngaf'),
 )
 
 _SERVER_PLATFORMS = {
@@ -2329,33 +2373,22 @@ def asset_summary(_user=require_role("Viewer")):
     try:
         scope_clauses, scope_params = _asset_scope_clauses(conn, _user)
         scope_where = (' WHERE ' + ' AND '.join(scope_clauses)) if scope_clauses else ''
-        total = conn.execute(
-            f'SELECT COUNT(*) FROM physical_assets pa{scope_where}',
-            scope_params,
-        ).fetchone()[0]
-        servers = conn.execute(
-            f"SELECT COUNT(*) FROM physical_assets pa{scope_where}"
-            " AND pa.asset_type = 'server'" if scope_where else
-            "SELECT COUNT(*) FROM physical_assets pa WHERE pa.asset_type = 'server'",
-            scope_params,
-        ).fetchone()[0]
-        network = conn.execute(
-            f"SELECT COUNT(*) FROM physical_assets pa{scope_where}"
-            " AND pa.asset_type = 'network_device'" if scope_where else
-            "SELECT COUNT(*) FROM physical_assets pa WHERE pa.asset_type = 'network_device'",
-            scope_params,
-        ).fetchone()[0]
-
-        # Warranty expiring within 90 days
+        # Single-pass aggregation for total, servers, network, and warranty_soon
         now_str = _utc_now()[:10]
         future_str = (datetime.now(timezone.utc) + timedelta(days=90)).strftime('%Y-%m-%d')
-        warranty_soon = conn.execute(
-            f"SELECT COUNT(*) FROM physical_assets pa{scope_where}"
-            " AND pa.warranty_expiry != '' AND pa.warranty_expiry <= ? AND pa.warranty_expiry >= ?"
-            if scope_where else
-            "SELECT COUNT(*) FROM physical_assets pa WHERE pa.warranty_expiry != '' AND pa.warranty_expiry <= ? AND pa.warranty_expiry >= ?",
-            [*scope_params, future_str, now_str],
-        ).fetchone()[0]
+        summary_row = conn.execute(
+            f"""SELECT
+                    COUNT(*) AS total,
+                    COALESCE(SUM(CASE WHEN pa.asset_type = 'server' THEN 1 ELSE 0 END), 0) AS servers,
+                    COALESCE(SUM(CASE WHEN pa.asset_type = 'network_device' THEN 1 ELSE 0 END), 0) AS network,
+                    COALESCE(SUM(CASE WHEN pa.warranty_expiry != '' AND pa.warranty_expiry <= ? AND pa.warranty_expiry >= ? THEN 1 ELSE 0 END), 0) AS warranty_soon
+                FROM physical_assets pa{scope_where}""",
+            [future_str, now_str, *scope_params],
+        ).fetchone()
+        total = int(summary_row['total'] or 0) if summary_row else 0
+        servers = int(summary_row['servers'] or 0) if summary_row else 0
+        network = int(summary_row['network'] or 0) if summary_row else 0
+        warranty_soon = int(summary_row['warranty_soon'] or 0) if summary_row else 0
 
         # By status
         by_status = {}
@@ -2473,6 +2506,7 @@ def list_assets(
     tag_ids: str = '',
     tag_match_all: bool = True,
     q: str = '',
+    include_status_counts: bool = False,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=1000),
     _user=require_role("Viewer"),
@@ -2510,6 +2544,8 @@ def list_assets(
                 "COALESCE(NULLIF(d.lifecycle_status, ''), NULLIF(pa.lifecycle_status, ''), 'staging') = ?"
             )
             params.append(lifecycle_status)
+        status_count_conditions = list(conditions)
+        status_count_params = list(params)
         if status != 'all':
             if status in ('online', 'offline', 'pending'):
                 conditions.append(
@@ -2521,6 +2557,8 @@ def list_assets(
         if device_role:
             conditions.append('pa.device_role = ?')
             params.append(device_role)
+            status_count_conditions.append('pa.device_role = ?')
+            status_count_params.append(device_role)
         requested_tag_ids = [item.strip() for item in tag_ids.split(',') if item.strip()][:100]
         if requested_tag_ids:
             tag_exists = [
@@ -2529,20 +2567,26 @@ def list_assets(
             ]
             if tag_match_all:
                 conditions.extend(tag_exists)
+                status_count_conditions.extend(tag_exists)
             else:
                 conditions.append(f"({' OR '.join(tag_exists)})")
+                status_count_conditions.append(f"({' OR '.join(tag_exists)})")
             params.extend(requested_tag_ids)
+            status_count_params.extend(requested_tag_ids)
         if q:
-            conditions.append(
-                "(pa.asset_tag LIKE ? OR pa.serial_number LIKE ? OR pa.hostname LIKE ? OR pa.vendor LIKE ? OR pa.model LIKE ? OR pa.management_ip LIKE ? OR pa.business_ip LIKE ? OR pa.rack LIKE ? OR s.site_name LIKE ? OR s.site_code LIKE ?)"
-            )
+            q_clause = "(pa.asset_tag LIKE ? OR pa.serial_number LIKE ? OR pa.hostname LIKE ? OR pa.vendor LIKE ? OR pa.model LIKE ? OR pa.management_ip LIKE ? OR pa.business_ip LIKE ? OR pa.rack LIKE ? OR s.site_name LIKE ? OR s.site_code LIKE ?)"
+            conditions.append(q_clause)
+            status_count_conditions.append(q_clause)
             like = f'%{q}%'
             params.extend([like] * 10)
+            status_count_params.extend([like] * 10)
         if severity != 'all':
             now_str = _utc_now()[:10]
             future_str = (datetime.now(timezone.utc) + timedelta(days=90)).strftime('%Y-%m-%d')
             conditions.append(f"({_asset_severity_sql()}) = ?")
             params.extend([future_str, now_str, severity])
+            status_count_conditions.append(f"({_asset_severity_sql()}) = ?")
+            status_count_params.extend([future_str, now_str, severity])
 
         where = (' WHERE ' + ' AND '.join(conditions)) if conditions else ''
         total = conn.execute(
@@ -2551,6 +2595,18 @@ def list_assets(
                 LEFT JOIN sites s ON s.id = pa.site_id{where}''',
             params,
         ).fetchone()[0]
+
+        status_counts = None
+        if include_status_counts:
+            sc_where = (' WHERE ' + ' AND '.join(status_count_conditions)) if status_count_conditions else ''
+            sc_rows = conn.execute(
+                f'''SELECT pa.status, COUNT(*) AS cnt FROM physical_assets pa
+                    LEFT JOIN devices d ON d.asset_id = pa.id
+                    LEFT JOIN sites s ON s.id = pa.site_id{sc_where}
+                    GROUP BY pa.status''',
+                status_count_params,
+            ).fetchall()
+            status_counts = {str(r['status'] or ''): int(r['cnt'] or 0) for r in sc_rows}
 
         offset = (page - 1) * page_size
         rows = conn.execute(
@@ -2642,13 +2698,16 @@ def list_assets(
         for item in items:
             item['web_profiles'] = web_profile_map.get(str(item.get('id') or ''), [])
 
-        return {
+        result = {
             'items': items,
             'total': total,
             'page': page,
             'page_size': page_size,
             'total_pages': max(1, -(-total // page_size)),
         }
+        if status_counts is not None:
+            result['status_counts'] = status_counts
+        return result
     finally:
         conn.close()
 
@@ -2663,6 +2722,7 @@ def asset_tree(_user=require_role("Viewer")):
             f'''SELECT
                  COALESCE(NULLIF(pa.asset_type, ''), 'other') AS asset_type,
                  COALESCE(NULLIF(pa.device_category, ''), 'other') AS device_category,
+                 COALESCE(NULLIF(pa.device_role, ''), 'unassigned') AS device_role,
                  COALESCE(NULLIF(pa.site_id, ''), 'unassigned') AS site_id,
                  COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), 'Unassigned site') AS site_name,
                  COALESCE(NULLIF(d.status, ''),

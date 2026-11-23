@@ -88,6 +88,8 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
     inventoryRoleFilter, setInventoryRoleFilter,
     inventoryStatusFilter, setInventoryStatusFilter,
     inventoryLifecycleFilter, setInventoryLifecycleFilter,
+    inventoryTagFilterIds: tagFilterIds, setInventoryTagFilterIds: setTagFilterIds,
+    inventoryQuickFilter: quickFilter, setInventoryQuickFilter: setQuickFilter,
     inventorySortConfig, inventoryLoading, inventoryError,
     selectedDeviceIds, setSelectedDeviceIds,
     fetchInventory, inventoryRefreshTick
@@ -95,17 +97,28 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
 
   const { handleSort, handleDeleteDevice, handleDeleteSelected } = useInventoryTableActions();
 
-  const [quickFilter, setQuickFilter] = useState<'all' | 'offline' | 'warning' | 'staging_maintenance' | 'healthy'>('all');
+  const [searchInput, setSearchInput] = useState(inventorySearch);
   const [columns, setColumns] = useState<ColumnVisibility>(() => loadColumnVisibility());
   const visibleDeviceDataKeys = COLUMN_KEYS.filter(key => key !== 'actions' && columns[key]);
   const lastVisibleDeviceDataKey = visibleDeviceDataKeys.length === 1 ? visibleDeviceDataKeys[0] : undefined;
   const [allTags, setAllTags] = useState<TagDefinition[]>([]);
-  const [tagFilterIds, setTagFilterIds] = useState<string[]>([]);
   const [batchTagOpen, setBatchTagOpen] = useState(false);
   const [batchTagIds, setBatchTagIds] = useState<string[]>([]);
   const [batchTagLoading, setBatchTagLoading] = useState(false);
   const [batchPlatformOpen, setBatchPlatformOpen] = useState(false);
   const batchTagRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setSearchInput(inventorySearch);
+  }, [inventorySearch]);
+
+  useEffect(() => {
+    if (searchInput === inventorySearch) return;
+    const timer = window.setTimeout(() => {
+      setInventorySearch(searchInput);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [searchInput, inventorySearch, setInventorySearch]);
 
   useEffect(() => {
     saveColumnVisibility(columns);
@@ -134,15 +147,14 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
     inventoryPlatformFilter,
     inventoryRoleFilter,
     inventoryStatusFilter,
+    inventoryLifecycleFilter,
+    tagFilterIds,
+    quickFilter,
     inventoryPage,
     inventoryPageSize,
     inventorySortConfig,
     inventoryRefreshTick,
   ]);
-
-  useEffect(() => {
-    setInventoryPage(1);
-  }, [quickFilter, inventoryLifecycleFilter, tagFilterIds, setInventoryPage]);
 
   useEffect(() => {
     if (!batchTagOpen) return;
@@ -167,8 +179,14 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
     });
   };
 
-  // Status & Health Counts
-  const totalDevices = inventoryTotal || 0;
+  // Status & Health Counts (computed server-side before quick_filter)
+  const statusCountsTotal = Object.values(inventoryStatusCounts).reduce(
+    (sum, value) => sum + (Number(value) || 0),
+    0,
+  );
+  const totalDevices = (quickFilter !== 'all' && inventoryStatusFilter === 'all' && statusCountsTotal > 0)
+    ? statusCountsTotal
+    : (inventoryTotal || 0);
   const offlineCount = inventoryStatusCounts['offline'] || 0;
   const onlineCount = inventoryStatusCounts['online'] || 0;
   
@@ -176,22 +194,8 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   const stagingOrMaintCount = inventoryHealthCounts?.staging_maintenance ?? null;
   const healthyCount = inventoryHealthCounts?.healthy ?? null;
 
-  // Client-side filtering pipeline
-  const lifecycleRows = (inventoryLifecycleFilter && inventoryLifecycleFilter !== 'all')
-    ? inventoryRows.filter(d => d.lifecycle_status === inventoryLifecycleFilter)
-    : inventoryRows;
-
-  const baseRows = tagFilterIds.length > 0
-    ? lifecycleRows.filter(d => d.tag_ids && tagFilterIds.some(tid => d.tag_ids!.includes(tid)))
-    : lifecycleRows;
-
-  const displayRows = useMemo(() => {
-    if (quickFilter === 'offline') return baseRows.filter(d => d.status === 'offline');
-    if (quickFilter === 'warning') return baseRows.filter(d => d.health_status === 'warning' || d.health_status === 'critical' || (d.open_alert_count && d.open_alert_count > 0));
-    if (quickFilter === 'staging_maintenance') return baseRows.filter(d => d.lifecycle_status === 'staging' || d.lifecycle_status === 'maintenance' || d.status === 'pending');
-    if (quickFilter === 'healthy') return baseRows.filter(d => d.status === 'online' && d.health_status !== 'warning' && d.health_status !== 'critical' && (!d.open_alert_count || d.open_alert_count === 0));
-    return baseRows;
-  }, [baseRows, quickFilter]);
+  // All filtering (lifecycle, tags, quickFilter) is now executed server-side in /api/devices
+  const displayRows = inventoryRows;
 
   const exportAllFilteredDevices = useCallback(async (): Promise<TableExportData> => {
     const pageSize = 1000;
@@ -207,6 +211,15 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
       page: '1',
       page_size: String(pageSize),
     });
+    if (inventoryLifecycleFilter && inventoryLifecycleFilter !== 'all') {
+      params.set('lifecycle_status', inventoryLifecycleFilter);
+    }
+    if (tagFilterIds.length > 0) {
+      params.set('tag_ids', tagFilterIds.join(','));
+    }
+    if (quickFilter && quickFilter !== 'all') {
+      params.set('quick_filter', quickFilter);
+    }
 
     type DevicePageResponse = { items?: unknown[]; total?: number };
     const devices = await fetchAllNetworkDevicePages(async (page, size) => {
@@ -240,6 +253,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   ]);
 
   const hasFilters = Boolean(
+    searchInput.trim() ||
     inventorySearch.trim() ||
     inventoryPlatformFilter !== 'all' ||
     inventoryRoleFilter !== 'all' ||
@@ -250,6 +264,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   );
 
   const clearAllFilters = () => {
+    setSearchInput('');
     setInventorySearch('');
     setInventoryPlatformFilter('all');
     setInventoryRoleFilter('all');
@@ -422,9 +437,9 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
                 className="min-w-[220px] 2xl:max-w-[320px]"
                 aria-label={zh ? '搜索 IP、主机名、序列号或站点' : 'Search IP, hostname, serial number, or site'}
                 placeholder={zh ? '搜索 IP / 主机名 / 序列号 / 站点…' : 'Search IP / hostname / SN / site…'}
-                value={inventorySearch}
-                onChange={e => setInventorySearch(e.target.value)}
-                onClear={() => setInventorySearch('')}
+                value={searchInput}
+                onChange={e => setSearchInput(e.target.value)}
+                onClear={() => { setSearchInput(''); setInventorySearch(''); }}
               />
 
             {/* Platform Select */}

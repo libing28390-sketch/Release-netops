@@ -131,7 +131,11 @@ def test_plan_enforces_vendor_compatibility_and_never_executes_preview() -> None
     assert called == []
 
 
-def test_high_risk_write_requires_change_order_confirmation_and_single_use_token() -> None:
+def test_high_risk_write_requires_change_order_confirmation_and_single_use_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Write tools only run when the deployment allows AI network writes.
+    from core.config import settings
+
+    monkeypatch.setattr(settings, "NETWORK_WRITE_ENABLED", True)
     registry = ToolRegistry()
     calls: list[dict] = []
 

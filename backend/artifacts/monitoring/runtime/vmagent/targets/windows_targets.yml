@@ -1,0 +1,11 @@
+- targets:
+  - 192.168.56.1:9182
+  labels:
+    instance: 192.168.56.1:9182
+    hostname: windows-lb
+    role: server
+    os: windows
+    site_name: Default Site
+    site_id: site-default
+    tenant_id: tenant-default
+    asset_id: asset-cbe859347d78

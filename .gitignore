@@ -176,3 +176,6 @@ tools/node/
 scripts/nexora.exe
 backend/static/nexora.exe
 *.db.bak
+
+# Exported embedding models (hundreds of MB; build artefact, not source)
+sidecars/embedding/models/
