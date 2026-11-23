@@ -62,7 +62,7 @@ export default function EndpointRegistrationDialog({ item, zh, onClose, onRegist
     setError('');
     setPrefixId('');
     setConfirmed(false);
-    fetch('/api/ipam/subnets', { headers: headers(), signal: controller.signal })
+    fetch('/api/ipam/subnets?include_metrics=false', { headers: headers(), signal: controller.signal })
       .then(async response => {
         if (!response.ok) throw new Error(await registrationError(response, zh));
         return response.json();

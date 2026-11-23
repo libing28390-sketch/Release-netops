@@ -28,7 +28,11 @@ import {
   getIPAddressObservationStatus,
   getIPAddressSourceLabel,
   getIPAddressTimestampPresentation,
+  formatIPAddressLocalTime,
 } from './ipAddressTablePresentation';
+import IpamQuickStartGuide from './IpamQuickStartGuide';
+import IPAddressDetailDrawer from './IPAddressDetailDrawer';
+import { describeInterfaceLiveness, type InterfaceLiveness } from './interfaceLiveness';
 
 import { TableActionCell, TableActionHeader } from '../../components/ui/TableActionColumn';
 interface IPAddress {
@@ -42,6 +46,14 @@ interface IPAddress {
   mac_address: string;
   device_type: string;
   purpose?: string;
+  /** True when type/purpose were derived from interface name, mask or device management IP. */
+  classification_inferred?: boolean;
+  /** Observed interface MAC (SNMP IF-MIB or neighbour ARP); never stored in the ledger. */
+  interface_mac?: string;
+  interface_mac_source?: 'snmp_ifmib' | 'neighbor_arp' | string;
+  interface_mac_conflict?: string[];
+  /** Liveness of a device interface address, judged by its interface state (not ARP). */
+  interface_liveness?: InterfaceLiveness;
   status: string;
   description: string;
   expires_at?: string;
@@ -786,6 +798,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   const [showAdvancedFields, setShowAdvancedFields] = useState(false);
   const hasLoadedInventory = useRef(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+  const [detailAddress, setDetailAddress] = useState<IPAddress | null>(null);
   useEscapeClose(showAddEdit, () => { setShowAddEdit(false); setEditingIP(null); });
   useEscapeClose(Boolean(showDeleteConfirm), () => setShowDeleteConfirm(null));
 
@@ -833,7 +846,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     const hdrs = authHeaders();
     try {
       // Fetch Prefixes
-      const prefRes = await fetch('/api/ipam/subnets', { headers: hdrs });
+      const prefRes = await fetch('/api/ipam/subnets?include_metrics=false', { headers: hdrs });
       if (prefRes.ok) {
         const data = await prefRes.json();
         setPrefixes(data);
@@ -941,7 +954,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
         setLoading(false);
       }
     }
-  }, [selectedPrefixId, selectedSiteId, search, statusFilter, typeFilter, purposeFilter, page, isMatrixView, includeObservations, authHeaders, zh]);
+  }, [selectedPrefixId, selectedSiteId, search, statusFilter, typeFilter, purposeFilter, page, pageSize, isMatrixView, includeObservations, authHeaders, zh]);
 
   useEffect(() => {
     fetchLookups();
@@ -1414,6 +1427,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
             <button
               onClick={() => openForm(null)}
               disabled={!selectedPrefixId}
+              title={!selectedPrefixId ? (zh ? '请先在右侧“网段”下拉框中选择一个网段，再分配 IP' : 'Select a prefix first, then allocate an IP') : undefined}
               className={`flex items-center gap-1.5 px-4 py-2 text-white rounded-xl text-xs font-bold shadow-lg transition-all ${
                 selectedPrefixId
                   ? 'bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 shadow-cyan-500/20 active:scale-95 cursor-pointer'
@@ -1570,10 +1584,19 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
         </div>
       )}
 
+      <IpamQuickStartGuide
+        zh={zh}
+        loading={loading}
+        prefixCount={inventorySummary.prefixes}
+        addressCount={inventorySummary.manual || totalItems}
+      />
+
       <section role="note" aria-label={zh ? 'IPAM 地址台账说明' : 'IPAM address ledger scope'} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/80 dark:border-zinc-800 bg-white/90 dark:bg-zinc-900/80 px-4 py-2.5 text-[11px] leading-4 text-slate-600 dark:text-zinc-300 shadow-2xs">
         <p className="min-w-0 flex-1">
           {!includeObservations && !isMatrixView
-            ? (zh ? `当前正式台账共 ${loading ? '—' : totalItems} 条。选择网段后可登记 IP；采集到的终端可从“发现终端”登记。` : `${loading ? '—' : totalItems} registered records. Select a prefix to register an IP, or register a collected endpoint from Discovered Endpoints.`)
+            ? ((search.trim() || statusFilter !== 'all' || typeFilter !== 'all' || purposeFilter !== 'all' || selectedSiteId !== 'all' || selectedPrefixId)
+              ? (zh ? `当前筛选条件下共 ${loading ? '—' : totalItems} 条正式台账记录${!loading && totalItems === 0 ? '，可清除筛选条件查看全部' : ''}。` : `${loading ? '—' : totalItems} registered records match the current filters.`)
+              : (zh ? `当前正式台账共 ${loading ? '—' : totalItems} 条。选择网段后可登记 IP；采集到的终端可从“发现终端”登记。` : `${loading ? '—' : totalItems} registered records. Select a prefix to register an IP, or register a collected endpoint from Discovered Endpoints.`))
             : zh
             ? `当前筛选共 ${loading ? '—' : totalItems} 条记录；已登记 ${loading ? '—' : inventorySummary.manual}，含接口观察 ${loading ? '—' : inventorySummary.interface_observed}，终端发现 ${loading ? '—' : inventorySummary.discovered}。当前站点共 ${siteScopedPrefixes.length} 个网段。观察数量可与登记重叠，采集记录不代表当前在线。`
             : `${loading ? '—' : totalItems} records: ${loading ? '—' : inventorySummary.manual} registered, ${loading ? '—' : inventorySummary.interface_observed} with interface observations, ${loading ? '—' : inventorySummary.discovered} discovered endpoints, across ${siteScopedPrefixes.length} prefixes. Observation counts may overlap registrations and do not prove current availability.`}
@@ -1657,7 +1680,8 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                           return;
                         }
                         if (cell.data) {
-                          navigate(`/ipam/locate?ip=${encodeURIComponent(cell.ip)}`);
+                          if (cell.data.id) setDetailAddress(cell.data);
+                          else navigate(`/ipam/locate?ip=${encodeURIComponent(cell.ip)}`);
                         } else {
                           openForm({
                             id: '',
@@ -1694,6 +1718,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                 <col style={{ width: 170 }} />
                 <col style={{ width: 260 }} />
                 <col style={{ width: 250 }} />
+                <col style={{ width: 110 }} />
                 <col style={{ width: 250 }} />
                 <col style={{ width: 105 }} />
                 <col style={{ width: 105 }} />
@@ -1702,7 +1727,6 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                 <col style={{ width: 150 }} />
                 <col style={{ width: 110 }} />
                 <col style={{ width: 135 }} />
-                <col style={{ width: 110 }} />
                 <col style={{ width: 170 }} />
                 <col style={{ width: 112 }} />
               </colgroup>
@@ -1711,6 +1735,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                   <th className="sticky top-0 z-20 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3 xl:sticky xl:left-0 xl:z-30">{zh ? '站点' : 'Site'}</th>
                   <th className="sticky top-0 z-20 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3 xl:sticky xl:left-[170px] xl:z-30">{zh ? 'IPAM登记网段 / CIDR' : 'IPAM Registered Prefix / CIDR'}</th>
                   <th className="sticky top-0 z-20 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3 xl:sticky xl:left-[430px] xl:z-30">{zh ? 'IP地址' : 'IP Address'}</th>
+                  <th className="sticky top-0 z-10 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3">{zh ? '状态' : 'Status'}</th>
                   <th className="sticky top-0 z-10 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3">{zh ? '最近发现 / 采集 / 更新时间' : 'Last Discovered / Collected / Updated'}</th>
                   <th className="sticky top-0 z-10 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3">{zh ? '用途' : 'Purpose'}</th>
                   <th className="sticky top-0 z-10 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3">{zh ? '类型' : 'Role Type'}</th>
@@ -1719,7 +1744,6 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                   <th className="sticky top-0 z-10 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3">{zh ? '资产信息' : 'Asset Info'}</th>
                   <th className="sticky top-0 z-10 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3">{zh ? '接口' : 'Interface'}</th>
                   <th className="sticky top-0 z-10 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3">{zh ? 'MAC地址' : 'MAC Address'}</th>
-                  <th className="sticky top-0 z-10 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3">{zh ? '状态' : 'Status'}</th>
                   <th className="sticky top-0 z-10 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3">{zh ? '备注描述' : 'Description'}</th>
                   <TableActionHeader className="sticky top-0 z-10 whitespace-nowrap bg-[var(--ui-surface-muted)] px-3 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
@@ -1750,8 +1774,16 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       <td className="bg-[var(--ui-surface)] px-3 py-3 font-mono font-bold text-xs text-gray-800 group-hover:bg-[var(--ui-surface-muted)] xl:sticky xl:z-20" style={{ left: 430 }}>
                         <button
                           type="button"
-                          onClick={() => navigate(`/ipam/locate?ip=${encodeURIComponent(node.address)}`)}
-                          title={`${node.address} · ${zh ? '点击查看 IP 定位详情' : 'View IP locator details'}`}
+                          onClick={() => {
+                            if (node.id && !node.is_discovered && !node.is_virtual_gateway) {
+                              setDetailAddress(node);
+                            } else {
+                              navigate(`/ipam/locate?ip=${encodeURIComponent(node.address)}`);
+                            }
+                          }}
+                          title={node.id && !node.is_discovered && !node.is_virtual_gateway
+                            ? `${node.address} · ${zh ? '点击查看详情（归属、设备接口、发现记录、变更历史）' : 'Open detail'}`
+                            : `${node.address} · ${zh ? '点击在“IP 定位”中查询该地址所在交换机端口' : 'Locate this address on the switch port'}`}
                           className="block max-w-full whitespace-normal break-all text-left text-cyan-700 hover:text-cyan-500 hover:underline transition-colors"
                         >
                           {node.address}
@@ -1779,6 +1811,47 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                         </details>}
                       </td>
                       <td className="px-3 py-3">
+                        {getIPAddressObservationStatus(node, zh) ? (
+                          <span className={`inline-flex max-w-[120px] truncate whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${
+                            getIPAddressObservationStatus(node, zh)?.tone === 'success'
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                              : getIPAddressObservationStatus(node, zh)?.tone === 'warning'
+                                ? 'border-amber-200 bg-amber-50 text-amber-800'
+                                : 'border-[var(--ui-border)] bg-[var(--ui-surface-muted)] text-[var(--ui-fg-muted)]'
+                          }`} title={zh ? '采集快照状态；不代表终端当前在线' : 'Collected snapshot; does not prove current endpoint availability'}>
+                            {getIPAddressObservationStatus(node, zh)?.label}
+                          </span>
+                        ) : <span className={`inline-flex max-w-[96px] items-center gap-1 truncate whitespace-nowrap px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                          node.status === 'active'
+                            ? 'bg-emerald-50 text-emerald-600 border border-emerald-500/10'
+                            : node.status === 'reserved'
+                            ? 'bg-amber-50 text-amber-600 border border-amber-500/10'
+                            : 'bg-rose-50 text-rose-600 border border-rose-500/10'
+                        }`} title={statusLabel(node.status, zh)}>
+                          <span className={`w-1 h-1 rounded-full ${
+                            node.status === 'active' ? 'bg-emerald-500' : node.status === 'reserved' ? 'bg-amber-500' : 'bg-rose-500'
+                          }`} />
+                          {statusLabel(node.status, zh)}
+                        </span>}
+                        {(() => {
+                          const badge = describeInterfaceLiveness(node.interface_liveness, zh);
+                          if (!badge) return null;
+                          const tone = badge.tone === 'current'
+                            ? 'text-emerald-700'
+                            : badge.tone === 'stale' ? 'text-[var(--ui-fg-muted)]' : 'text-rose-700';
+                          return (
+                            <span
+                              data-testid="ip-interface-liveness"
+                              data-tone={badge.tone}
+                              className={`mt-1 block whitespace-nowrap text-[9px] font-semibold ${tone}`}
+                              title={badge.title}
+                            >
+                              {badge.label}{badge.ageText ? ` · ${badge.ageText}` : ''}
+                            </span>
+                          );
+                        })()}
+                      </td>
+                      <td className="px-3 py-3">
                         {(() => {
                           const timestamp = getIPAddressTimestampPresentation(node, zh);
                           return timestamp.kind === 'missing' ? (
@@ -1786,15 +1859,18 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                           ) : (
                             <div className="flex min-w-0 flex-col gap-0.5">
                               <span className="text-[9px] font-semibold text-[var(--ui-fg-muted)]">{timestamp.label}</span>
-                              <time className="break-all font-mono text-[10px] leading-4 text-[var(--ui-fg)]" dateTime={timestamp.value.replace(' ', 'T')} title={timestamp.value}>{timestamp.value}</time>
+                              <time className="break-all font-mono text-[10px] leading-4 text-[var(--ui-fg)]" dateTime={timestamp.value.replace(' ', 'T')} title={zh ? `原始时间：${timestamp.value}` : `Raw: ${timestamp.value}`}>{formatIPAddressLocalTime(timestamp.value)}</time>
                             </div>
                           );
                         })()}
                       </td>
                       <td className="px-3 py-3">
-                        <span className="inline-flex max-w-[92px] truncate whitespace-nowrap rounded-full border border-cyan-500/10 bg-cyan-50 px-2 py-0.5 text-[10px] font-bold text-cyan-700" title={purposeLabel(node.purpose || inferIpPurpose(node.network_type), zh)}>
+                        <span className="inline-flex max-w-[92px] truncate whitespace-nowrap rounded-full border border-cyan-500/10 bg-cyan-50 px-2 py-0.5 text-[10px] font-bold text-cyan-700" title={node.classification_inferred ? (zh ? `${purposeLabel(node.purpose || inferIpPurpose(node.network_type), zh)}（系统根据接口名、掩码或设备管理 IP 推断，编辑后即固定）` : `${purposeLabel(node.purpose || inferIpPurpose(node.network_type), zh)} (inferred from interface name, mask or device management IP; edit to confirm)`) : purposeLabel(node.purpose || inferIpPurpose(node.network_type), zh)}>
                           {purposeLabel(node.purpose || inferIpPurpose(node.network_type), zh)}
                         </span>
+                        {node.classification_inferred && (
+                          <span className="ml-1 align-middle text-[9px] font-semibold text-[var(--ui-fg-muted)]">{zh ? '推断' : 'inferred'}</span>
+                        )}
                       </td>
                       <td className="px-3 py-3">
                         <span className={`inline-block max-w-[92px] truncate whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-bold ${
@@ -1813,35 +1889,35 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                           {roleLabel(node.device_type, zh)}
                         </span>
                       </td>
-                      <td className="px-3 py-3 text-xs font-semibold text-[var(--ui-fg)]"><span className="block max-w-[130px] truncate" title={getIPAddressReadOnlyDisplayFields(node).hostname || '-'}>{getIPAddressReadOnlyDisplayFields(node).hostname || '-'}</span></td>
+                      <td className="px-3 py-3 text-xs font-semibold text-[var(--ui-fg)]">{(() => {
+                        const hostname = getIPAddressReadOnlyDisplayFields(node).hostname || '';
+                        const sameAsDevice = Boolean(hostname) && hostname === getDeviceName(node);
+                        return sameAsDevice
+                          ? <span className="block max-w-[130px] truncate text-[10px] font-medium text-[var(--ui-fg-muted)]" title={hostname}>{zh ? '同关联设备' : 'Same as device'}</span>
+                          : <span className="block max-w-[130px] truncate" title={hostname || '-'}>{hostname || '-'}</span>;
+                      })()}</td>
                       <td className="px-3 py-3 text-xs font-bold text-[var(--ui-accent)] hover:underline cursor-pointer"><span className="block max-w-[140px] truncate" title={getDeviceName(node)}>{getDeviceName(node)}</span></td>
                       <td className="px-3 py-3 text-xs font-medium text-[var(--ui-fg-muted)]"><span className="block max-w-[135px] truncate" title={assetInfoLabel(node, zh)}>{assetInfoLabel(node, zh)}</span></td>
                       <td className="px-3 py-3 text-xs font-semibold text-[var(--ui-fg)]"><span className="block max-w-[100px] truncate" title={getIPAddressReadOnlyDisplayFields(node).switchPort || '-'}>{getIPAddressReadOnlyDisplayFields(node).switchPort || '-'}</span></td>
-                      <td className="px-3 py-3 font-mono text-xs text-[var(--ui-fg)]">{formatMacAddress(getIPAddressReadOnlyDisplayFields(node).macAddress) || '-'}</td>
-                      <td className="px-3 py-3">
-                        {getIPAddressObservationStatus(node, zh) ? (
-                          <span className={`inline-flex max-w-[120px] truncate whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${
-                            getIPAddressObservationStatus(node, zh)?.tone === 'success'
-                              ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                              : getIPAddressObservationStatus(node, zh)?.tone === 'warning'
-                                ? 'border-amber-200 bg-amber-50 text-amber-800'
-                                : 'border-[var(--ui-border)] bg-[var(--ui-surface-muted)] text-[var(--ui-fg-muted)]'
-                          }`} title={zh ? '采集快照状态；不代表终端当前在线' : 'Collected snapshot; does not prove current endpoint availability'}>
-                            {getIPAddressObservationStatus(node, zh)?.label}
-                          </span>
-                        ) : <span className={`inline-flex max-w-[96px] items-center gap-1 truncate whitespace-nowrap px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-                          node.status === 'active' 
-                            ? 'bg-emerald-50 text-emerald-600 border border-emerald-500/10' 
-                            : node.status === 'reserved' 
-                            ? 'bg-amber-50 text-amber-600 border border-amber-500/10' 
-                            : 'bg-rose-50 text-rose-600 border border-rose-500/10'
-                        }`} title={statusLabel(node.status, zh)}>
-                          <span className={`w-1 h-1 rounded-full ${
-                            node.status === 'active' ? 'bg-emerald-500' : node.status === 'reserved' ? 'bg-amber-500' : 'bg-rose-500'
-                          }`} />
-                          {statusLabel(node.status, zh)}
-                        </span>}
-                      </td>
+                      <td className="px-3 py-3 font-mono text-xs text-[var(--ui-fg)]">{(() => {
+                        const stored = formatMacAddress(getIPAddressReadOnlyDisplayFields(node).macAddress);
+                        if (stored) return stored;
+                        if (node.interface_mac) {
+                          const sourceLabel = node.interface_mac_source === 'snmp_ifmib'
+                            ? (zh ? 'SNMP 接口表' : 'SNMP IF-MIB')
+                            : (zh ? '邻居 ARP' : 'Neighbor ARP');
+                          return (
+                            <span title={zh ? `采集值（来源：${sourceLabel}），未写入台账` : `Observed (${sourceLabel}); not stored`}>
+                              {formatMacAddress(node.interface_mac)}
+                              <span className="ml-1 font-sans text-[9px] font-semibold text-[var(--ui-fg-muted)]">{sourceLabel}</span>
+                            </span>
+                          );
+                        }
+                        if (node.interface_mac_conflict && node.interface_mac_conflict.length > 1) {
+                          return <span className="font-sans text-[10px] font-semibold text-amber-700" title={node.interface_mac_conflict.map((mac) => formatMacAddress(mac)).join(', ')}>{zh ? `多个 MAC（${node.interface_mac_conflict.length}）` : `${node.interface_mac_conflict.length} MACs`}</span>;
+                        }
+                        return '-';
+                      })()}</td>
                       <td className="px-3 py-3 text-xs font-medium text-[var(--ui-fg-muted)]"><span className="block max-w-[150px] truncate" title={node.description || '-'}>{node.description || '-'}</span></td>
                       <TableActionCell className="px-3 py-3 text-right">
                         {!node.is_discovered && !node.is_virtual_gateway ? (
@@ -1891,6 +1967,22 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
           </div>
         )}
       </div>
+
+      <IPAddressDetailDrawer
+        zh={zh}
+        seed={detailAddress}
+        authHeaders={authHeaders}
+        onClose={() => setDetailAddress(null)}
+        onDataChanged={() => { void loadData(); }}
+        onEdit={() => {
+          const target = detailAddress;
+          setDetailAddress(null);
+          if (target) void openForm(target);
+        }}
+        statusLabel={statusLabel}
+        purposeLabel={purposeLabel}
+        roleLabel={roleLabel}
+      />
 
       {/* Add / Edit Modal */}
       <AnimatePresence>

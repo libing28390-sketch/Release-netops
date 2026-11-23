@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
+import socket
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +21,58 @@ from services.storage_service import (
     build_storage_service,
     normalize_object_key,
 )
+
+
+logger = logging.getLogger(__name__)
+
+# Upload failures from the current thread, so the scheduled retry can tell a
+# provider outage (DNS/connect/timeout) from a per-recording failure.
+_upload_failure = threading.local()
+
+# Retry circuit breaker. When the object store cannot be reached at all, every
+# queued recording fails the same way: retrying 50 of them each minute only
+# burns ~85 s of DNS/connect timeouts and a scheduler thread. After a
+# connectivity failure the job stops the batch and waits with exponential
+# backoff (2 min, doubling, capped at 30 min) before probing again.
+_RETRY_BACKOFF_BASE_SECONDS = 120.0
+_RETRY_BACKOFF_MAX_SECONDS = 1800.0
+_retry_breaker_lock = threading.Lock()
+_retry_breaker = {"open_until": 0.0, "delay": 0.0, "reason": ""}
+
+_CONNECTIVITY_ERROR_NAMES = {
+    "EndpointConnectionError",
+    "ConnectTimeoutError",
+    "ReadTimeoutError",
+    "ConnectionClosedError",
+    "ProxyConnectionError",
+    "SSLError",
+    "NewConnectionError",
+    "MaxRetryError",
+    "gaierror",
+    "ConnectionError",
+    "ConnectionRefusedError",
+    "TimeoutError",
+}
+
+
+def _is_connectivity_failure(exc: BaseException | None) -> bool:
+    """True when the provider itself is unreachable (not a bad recording)."""
+    seen = 0
+    while exc is not None and seen < 8:
+        if isinstance(exc, (socket.gaierror, ConnectionError, TimeoutError)):
+            return True
+        if type(exc).__name__ in _CONNECTIVITY_ERROR_NAMES:
+            return True
+        message = str(exc)
+        if any(name in message for name in _CONNECTIVITY_ERROR_NAMES):
+            return True
+        exc = exc.__cause__ or exc.__context__
+        seen += 1
+    return False
+
+
+def _remember_upload_failure(exc: BaseException | None) -> None:
+    _upload_failure.exc = exc
 
 
 RECORDING_CONTENT_TYPES = {
@@ -202,6 +257,7 @@ def finalize_pam_recording(
             upload_key = recording_object_key(session_id, _row_value(row, "created_at"), suffix)
             key = service.full_key(upload_key)
     except Exception as exc:
+        _remember_upload_failure(exc)
         _mark_storage_error(
             session_id,
             f"{type(exc).__name__}: recording upload failed",
@@ -249,6 +305,7 @@ def finalize_pam_recording(
                 pass
         return True
     except Exception as exc:
+        _remember_upload_failure(exc)
         _mark_storage_error(
             session_id,
             f"{type(exc).__name__}: recording upload failed",
@@ -258,7 +315,25 @@ def finalize_pam_recording(
         return False
 
 
-def retry_pending_pam_recordings(limit: int = 50) -> dict[str, int]:
+def pam_recording_retry_backoff_status() -> dict[str, Any]:
+    """Expose the retry circuit breaker state for diagnostics."""
+    with _retry_breaker_lock:
+        remaining = max(0.0, _retry_breaker["open_until"] - time.monotonic())
+        return {
+            "deferred": remaining > 0,
+            "retry_in_seconds": int(remaining),
+            "backoff_seconds": int(_retry_breaker["delay"]),
+            "reason": _retry_breaker["reason"],
+        }
+
+
+def retry_pending_pam_recordings(limit: int = 50, *, ignore_backoff: bool = False) -> dict[str, int]:
+    result = {"attempted": 0, "succeeded": 0, "failed": 0, "deferred": 0}
+    if not ignore_backoff:
+        with _retry_breaker_lock:
+            if time.monotonic() < _retry_breaker["open_until"]:
+                result["deferred"] = 1
+                return result
     conn = get_db_connection()
     try:
         rows = conn.execute(
@@ -268,18 +343,40 @@ def retry_pending_pam_recordings(limit: int = 50) -> dict[str, int]:
                  AND storage_status IN ('PENDING', 'ERROR')
                  AND (session_kind <> 'remote_desktop'
                       OR (remote_desktop_protocol <> '' AND remote_desktop_recording_closed = TRUE))
-               ORDER BY created_at ASC LIMIT ?""",
+               ORDER BY storage_updated_at ASC NULLS FIRST, created_at ASC LIMIT ?""",
             (max(1, min(int(limit), 500)),),
         ).fetchall()
     finally:
         conn.close()
-    result = {"attempted": 0, "succeeded": 0, "failed": 0}
     for row in rows:
         result["attempted"] += 1
+        _remember_upload_failure(None)
         if finalize_pam_recording(row["id"], row["recording_spool_path"], content_type=row["content_type"] or None):
             result["succeeded"] += 1
-        else:
-            result["failed"] += 1
+            with _retry_breaker_lock:
+                _retry_breaker.update(open_until=0.0, delay=0.0, reason="")
+            continue
+        result["failed"] += 1
+        failure = getattr(_upload_failure, "exc", None)
+        if _is_connectivity_failure(failure):
+            with _retry_breaker_lock:
+                delay = min(
+                    max(_retry_breaker["delay"] * 2, _RETRY_BACKOFF_BASE_SECONDS),
+                    _RETRY_BACKOFF_MAX_SECONDS,
+                )
+                _retry_breaker.update(
+                    open_until=time.monotonic() + delay,
+                    delay=delay,
+                    reason=type(failure).__name__,
+                )
+            remaining = max(0, len(rows) - result["attempted"])
+            logger.warning(
+                "[PAM Storage] Object storage is unreachable (%s); stopped this retry batch "
+                "(%s more recordings left queued) and will retry in %ds. Check the default "
+                "storage provider endpoint under Management > Storage.",
+                type(failure).__name__, remaining, int(delay),
+            )
+            break
     return result
 
 
@@ -313,6 +410,7 @@ def delete_pam_recording(row: Any) -> None:
 __all__ = [
     "RECORDING_CONTENT_TYPES",
     "delete_pam_recording",
+    "pam_recording_retry_backoff_status",
     "finalize_pam_recording",
     "recording_content_type",
     "recording_object_key",

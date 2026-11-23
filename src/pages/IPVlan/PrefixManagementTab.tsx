@@ -84,11 +84,16 @@ interface Prefix {
   container_child_ips?: number;
   container_utilization?: number;
   active_ips: number;
+  active_arp_ips?: number;
+  active_interface_ips?: number;
   utilization: number;
   network_type: string;
   classification_status?: string;
   classification_confidence?: number;
   manual_override?: number;
+  /** Read-only purpose suggestion for unclassified prefixes (never stored until applied). */
+  suggested_network_type?: string;
+  suggestion_reason?: 'device_management_ip' | 'loopback_interface' | 'point_to_point_mask' | string;
   mixed_network?: number;
   conflict_status?: string;
   cross_site_reuse?: boolean | number;
@@ -2020,6 +2025,67 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     }
   };
 
+  const [confirmApplySuggestions, setConfirmApplySuggestions] = useState(false);
+  const [applyingSuggestions, setApplyingSuggestions] = useState(false);
+  const [suggestionApplyError, setSuggestionApplyError] = useState('');
+  const suggestedPrefixes = prefixes.filter((item) => item.suggested_network_type && !item.manual_override
+    && (!item.network_type || item.network_type === 'unclassified'));
+  const suggestionGroups = suggestedPrefixes.reduce<Record<string, Prefix[]>>((groups, item) => {
+    const key = String(item.suggested_network_type);
+    (groups[key] = groups[key] || []).push(item);
+    return groups;
+  }, {});
+  const suggestionReasonLabel = (reason?: string) => {
+    if (reason === 'device_management_ip') return zh ? '网段内地址是 CMDB 设备的管理 IP' : 'Contains a CMDB device management IP';
+    if (reason === 'loopback_interface') return zh ? '网段内地址都配置在 Loopback 接口上' : 'All addresses are on loopback interfaces';
+    if (reason === 'point_to_point_mask') return zh ? '/30、/31 掩码，典型的设备互联链路' : '/30 or /31 mask: a point-to-point link';
+    return '';
+  };
+
+  const handleApplySuggestions = async () => {
+    if (applyingSuggestions || suggestedPrefixes.length === 0) return;
+    setApplyingSuggestions(true);
+    setBatchNetworkTypeResult('');
+    setSuggestionApplyError('');
+    let applied = 0;
+    const failures: string[] = [];
+    try {
+      for (const [networkType, items] of Object.entries(suggestionGroups)) {
+        const type = NETWORK_TYPES[networkType];
+        const label = (zh ? type?.labelZh : type?.label) || networkType;
+        try {
+          const response = await fetch('/api/ipam/subnets/batch-update-network-type', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({
+              ids: items.map((item) => item.id),
+              expected_revisions: Object.fromEntries(items.map((item) => [item.id, item.revision])),
+              network_type: networkType,
+            }),
+          });
+          if (response.ok) {
+            applied += items.length;
+          } else {
+            const data = await response.json().catch(() => ({})) as { detail?: unknown };
+            failures.push(`${label} · ${typeof data.detail === 'string' ? data.detail.slice(0, 120) : `HTTP ${response.status}`}`);
+          }
+        } catch {
+          failures.push(zh ? `${label} · 连接中断，提交结果待确认` : `${label} · Connection interrupted. Update result unconfirmed.`);
+        }
+      }
+      setConfirmApplySuggestions(false);
+      await loadData({ silent: true });
+      if (applied > 0) {
+        setBatchNetworkTypeResult(zh ? `已采纳推荐用途：${applied} 个网段（已人工锁定，可随时在“管理”中修改）。` : `Applied suggested purposes to ${applied} prefixes.`);
+      }
+      if (failures.length > 0) {
+        setSuggestionApplyError((zh ? '请核对以下用途组：' : 'Review these purpose groups: ') + failures.join('；'));
+      }
+    } finally {
+      setApplyingSuggestions(false);
+    }
+  };
+
   // Toggle selection
   const toggleSelectRow = (id: string) => {
     setBatchNetworkTypeResult('');
@@ -2234,7 +2300,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
             </span>
           </td>
           <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.used_ips}</td>
-          <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.active_ips || 0}</td>
+          <td className="px-4 py-4 text-xs text-gray-600 tabular-nums" title={zh ? `ARP/ND 当前观察到 ${node.active_arp_ips ?? 0} 个；设备接口 up ${node.active_interface_ips ?? 0} 个` : `ARP/ND current ${node.active_arp_ips ?? 0}; interface up ${node.active_interface_ips ?? 0}`}>{node.active_ips || 0}</td>
           <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.total_ips}</td>
           <td className="px-4 py-4 text-xs font-semibold text-gray-600 tabular-nums">
             <div>{node.utilization}%</div>
@@ -2495,6 +2561,40 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         </div>
       )}
 
+      {suggestedPrefixes.length > 0 && (
+        <div role="note" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+          <div className="min-w-0 flex-1">
+            <p className="font-bold">
+              {zh ? `本页有 ${suggestedPrefixes.length} 个网段“用途未确定”，系统给出了推荐用途` : `${suggestedPrefixes.length} unclassified prefixes on this page have a suggested purpose`}
+            </p>
+            <p className="mt-0.5 text-[11px] leading-4">
+              {Object.entries(suggestionGroups).map(([type, items]) => `${NETWORK_TYPES[type] ? (zh ? NETWORK_TYPES[type].labelZh : NETWORK_TYPES[type].label) : type} ${items.length} 个`).join('、')}
+              {zh ? '。用途决定“利用率”是否统计该网段（业务网段才计入容量），也决定 IP 的默认用途。推荐依据见每行“推荐”标签的提示。' : '. Purpose controls utilization scope and default IP purpose.'}
+            </p>
+          </div>
+          {confirmApplySuggestions ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold">{zh ? `确认将这 ${suggestedPrefixes.length} 个网段设为推荐用途？` : `Apply to ${suggestedPrefixes.length} prefixes?`}</span>
+              <button type="button" disabled={applyingSuggestions} onClick={handleApplySuggestions} className="rounded-lg bg-amber-600 px-3 py-1.5 font-bold text-white hover:bg-amber-700 disabled:opacity-60 cursor-pointer">
+                {applyingSuggestions ? (zh ? '应用中…' : 'Applying…') : (zh ? '确认采纳' : 'Confirm')}
+              </button>
+              <button type="button" disabled={applyingSuggestions} onClick={() => setConfirmApplySuggestions(false)} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 font-semibold text-amber-800 hover:bg-amber-100 cursor-pointer dark:bg-zinc-900">
+                {zh ? '取消' : 'Cancel'}
+              </button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setConfirmApplySuggestions(true)} className="shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 font-bold text-white hover:bg-amber-700 cursor-pointer">
+              {zh ? '采纳推荐用途' : 'Apply suggestions'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {suggestionApplyError && (
+        <div role="alert" className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+          {suggestionApplyError}
+        </div>
+      )}
       {batchNetworkTypeResult && (
         <div role="status" aria-live="polite" className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-800">
           {batchNetworkTypeResult}
@@ -2576,7 +2676,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   <th className="px-4 py-4">{zh ? '创建时间' : 'Created At'}</th>
                   <th className="px-4 py-4">{zh ? '网段状态' : 'Status'}</th>
                   <th className="px-4 py-4">{zh ? '已分配IP数' : 'Allocated IPs'}</th>
-                  <th className="px-4 py-4">{zh ? '活跃发现IP数' : 'Active Discovery IPs'}</th>
+                  <th className="px-4 py-4" title={zh ? '网段内当前存活的已登记 IP 数：终端地址按 ARP/ND 采集（约 2 小时内）判断；设备接口地址（Loopback、互联口、SVI）按接口状态判断（接口 up 且 1 天内采集过）。悬停数字可看分项。' : 'Live registered IPs: endpoints by current ARP/ND, device interface addresses by interface up within 1 day'}>{zh ? '活跃发现IP数' : 'Active Discovery IPs'}</th>
                   <th className="px-4 py-4">{zh ? '可用容量' : 'Usable Capacity'}</th>
                   <th className="px-4 py-4">{zh ? '利用率' : 'Utilization'}
                   </th>
@@ -2645,7 +2745,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   <th className="px-4 py-4">{zh ? '创建时间' : 'Created At'}</th>
                   <th className="px-4 py-4">{zh ? '网段状态' : 'Status'}</th>
                   <th className="px-4 py-4">{zh ? '已分配IP数' : 'Allocated IPs'}</th>
-                  <th className="px-4 py-4">{zh ? '活跃发现IP数' : 'Active Discovery IPs'}</th>
+                  <th className="px-4 py-4" title={zh ? '网段内当前存活的已登记 IP 数：终端地址按 ARP/ND 采集（约 2 小时内）判断；设备接口地址（Loopback、互联口、SVI）按接口状态判断（接口 up 且 1 天内采集过）。悬停数字可看分项。' : 'Live registered IPs: endpoints by current ARP/ND, device interface addresses by interface up within 1 day'}>{zh ? '活跃发现IP数' : 'Active Discovery IPs'}</th>
                   <th className="px-4 py-4">{zh ? '可用容量' : 'Usable Capacity'}</th>
                   <th className="px-4 py-4">{zh ? '利用率' : 'Utilization'}</th>
                   <TableActionHeader className="pr-6 py-4 text-right">{zh ? '操作' : 'Actions'}</TableActionHeader>
@@ -2715,6 +2815,11 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                                 <span className={`whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-bold border ${nt.color}`}>
                                   {zh ? nt.labelZh : nt.label}
                                 </span>
+                                {node.suggested_network_type && !node.manual_override && NETWORK_TYPES[node.suggested_network_type] ? (
+                                  <span title={zh ? `推荐依据：${suggestionReasonLabel(node.suggestion_reason)}。点击上方“采纳推荐用途”或在“管理 → 编辑网段”中设置。` : `Why: ${suggestionReasonLabel(node.suggestion_reason)}`} className="whitespace-nowrap px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-50 text-amber-700 border border-dashed border-amber-300">
+                                    {zh ? `推荐：${NETWORK_TYPES[node.suggested_network_type].labelZh}` : `Suggested: ${NETWORK_TYPES[node.suggested_network_type].label}`}
+                                  </span>
+                                ) : null}
                                 {hasVip ? <span className="whitespace-nowrap px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-pink-50 text-pink-700 border border-pink-200">VIP</span> : null}
                                 {hasDhcp ? <span className="whitespace-nowrap px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-sky-50 text-sky-700 border border-sky-200">DHCP</span> : null}
                                 {node.manual_override ? (
@@ -2772,7 +2877,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                           </span>
                         </td>
                         <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.used_ips}</td>
-                        <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.active_ips || 0}</td>
+                        <td className="px-4 py-4 text-xs text-gray-600 tabular-nums" title={zh ? `ARP/ND 当前观察到 ${node.active_arp_ips ?? 0} 个；设备接口 up ${node.active_interface_ips ?? 0} 个` : `ARP/ND current ${node.active_arp_ips ?? 0}; interface up ${node.active_interface_ips ?? 0}`}>{node.active_ips || 0}</td>
                         <td className="px-4 py-4 text-xs text-gray-600 tabular-nums">{node.total_ips}</td>
                         <td className="px-4 py-4 text-xs font-semibold text-gray-600 tabular-nums">
                           <div>{node.utilization}%</div>

@@ -139,7 +139,10 @@ def _classify_candidate(candidate: dict[str, Any]) -> tuple[str, float, list[str
         if any(item.get("neighbor") for item in evidence):
             return "transit", 0.95, ["point_to_point_prefix", "lldp_neighbor"]
         reasons.append("point_to_point_prefix_without_neighbor")
-    if any(token in names for token in ("management", "mgmt", "oob", "me0", "mgt")):
+    if any(token in names for token in ("management", "mgmt", "oob", "me0", "mgt")) or any(
+        # H3C out-of-band management port: M-GigabitEthernet0/0/0 / MGE0/0/0.
+        item.startswith(("mge", "m-gigabitethernet", "m-ge")) for item in interfaces
+    ):
         return "management", 0.92, ["management_interface"]
     if any(item.startswith("vlan") or item.startswith("irb") or item.startswith("bvi") for item in interfaces):
         return "user_access", 0.78, ["svi_or_irb_interface"]

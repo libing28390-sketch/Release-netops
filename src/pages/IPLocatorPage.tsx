@@ -182,6 +182,54 @@ interface LocateResult {
   mac_lookup?: MacLookupInfo;
   mac_lookup_attempts?: MacLookupInfo[];
   context?: LocatorContext;
+  vip_info?: VipInfo;
+}
+
+interface VipControllerInfo {
+  device_id: string;
+  hostname: string;
+}
+
+interface FhrpCollectionStateInfo {
+  device_id: string;
+  hostname: string;
+  latest_status: string;
+  last_error_code: string;
+  last_attempt_at: string | null;
+  last_success_at: string | null;
+}
+
+interface FhrpObservationInfo {
+  device_id: string;
+  hostname: string;
+  protocol: string;
+  group_id: number;
+  interface_name: string;
+  state: string;
+  priority: number | null;
+  observed_at: string | null;
+  virtual_mac: string;
+}
+
+interface VipInfo {
+  id?: string;
+  address?: string;
+  vip_type?: string;
+  status?: string;
+  interface_name?: string;
+  prefix_cidr?: string;
+  address_space_id?: string;
+  address_space_name?: string;
+  updated_at?: string | null;
+  primary?: VipControllerInfo | null;
+  backup?: VipControllerInfo | null;
+  fhrp_group?: { protocol: string; group_id: string; display_name: string } | null;
+  collection_states?: FhrpCollectionStateInfo[];
+  observations?: FhrpObservationInfo[];
+  current_master?: FhrpObservationInfo | null;
+  controller_scope_complete?: boolean;
+  ambiguous?: boolean;
+  candidates?: VipInfo[];
 }
 
 // ── Connectivity Probe Types ──
@@ -692,6 +740,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
   const [probeError, setProbeError] = useState('');
   const [probePorts, setProbePorts] = useState('22, 80, 443');
   const [probeTests, setProbeTests] = useState<Set<string>>(new Set(['ping']));
+  const probeInputRevisionRef = useRef(0);
   const [devices, setDevices] = useState<{ id: number; hostname: string; ip_address: string; platform?: string; cpu_usage?: number; memory_usage?: number; status?: string; model?: string; vendor?: string; role?: string; device_category?: string }[]>([]);
   const [allDevices, setAllDevices] = useState<{ id: number; hostname: string; ip_address: string; platform?: string; cpu_usage?: number; memory_usage?: number; status?: string; model?: string; vendor?: string; role?: string; device_category?: string }[]>([]);
   const [sourceDeviceId, setSourceDeviceId] = useState<number | null>(null);
@@ -1322,9 +1371,16 @@ ${rep.repair_commands}
   }, [doLocate, mode, requestedIp]);
 
   // ── Probe function ──
+  const clearProbeResult = () => {
+    probeInputRevisionRef.current += 1;
+    setProbeResult(null);
+    setProbeError('');
+  };
+
   const doProbe = useCallback(async () => {
     const trimmed = probeIp.trim();
     if (!trimmed) return;
+    const inputRevision = probeInputRevisionRef.current;
     setProbeLoading(true);
     setProbeError('');
     setProbeResult(null);
@@ -1350,9 +1406,12 @@ ${rep.repair_commands}
         const errData = await resp.json().catch(() => ({}));
         throw new Error(errData.detail || `HTTP ${resp.status}`);
       }
-      setProbeResult(await resp.json());
+      const result = await resp.json();
+      if (inputRevision === probeInputRevisionRef.current) setProbeResult(result);
     } catch (e: unknown) {
-      setProbeError(e instanceof Error ? e.message : String(e));
+      if (inputRevision === probeInputRevisionRef.current) {
+        setProbeError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setProbeLoading(false);
     }
@@ -1363,6 +1422,7 @@ ${rep.repair_commands}
   };
 
   const toggleTest = (t: string) => {
+    clearProbeResult();
     setProbeTests(prev => {
       const next = new Set(prev);
       if (next.has(t)) next.delete(t); else next.add(t);
@@ -1372,6 +1432,7 @@ ${rep.repair_commands}
 
   const accessLocations = result?.locations?.filter(l => !l.is_uplink) || [];
   const uplinkLocations = result?.locations?.filter(l => l.is_uplink) || [];
+  const vipInfo = result?.vip_info;
   const locatorContext = result?.context;
   const cacheSummary = summarizeLocatorCache(
     result?.cache_provenance,
@@ -1532,7 +1593,17 @@ ${rep.repair_commands}
           <AlertCircle size={18} className="text-red-500 mt-0.5 flex-shrink-0" />
           <div>
             <p className="text-sm font-semibold text-red-700 dark:text-red-300">{zh ? '查询失败' : 'Locate Failed'}</p>
-            <p className="text-xs text-red-500 dark:text-red-400 mt-0.5">{error}</p>
+            <p className="text-xs text-red-500 dark:text-red-400 mt-0.5">
+              {/^HTTP 5\d\d$/.test(error)
+                ? (zh
+                  ? `后端服务暂时不可用（${error}，通常是服务正在重启或采集任务占满），请稍后点击“定位”重试。`
+                  : `The backend is temporarily unavailable (${error}); retry in a moment.`)
+                : /^HTTP 401$/.test(error)
+                  ? (zh ? '登录已失效，请刷新页面重新登录后再查询。' : 'Your session expired; sign in again and retry.')
+                  : /^HTTP 403$/.test(error)
+                    ? (zh ? '当前账号没有 IP 定位权限，请联系管理员。' : 'Your account lacks IP locator permission.')
+                    : error}
+            </p>
           </div>
         </div>
       )}
@@ -1547,7 +1618,67 @@ ${rep.repair_commands}
                 : `The endpoint cache is ${Math.round((result.cache.endpoint_cache_age_seconds || 0) / 60)} minutes old; it was skipped and devices were queried again.`}
             </div>
           )}
-          {result.found && accessLocations.length > 0 ? (
+          {vipInfo ? (
+            <div className="rounded-2xl border border-cyan-200/70 dark:border-cyan-500/20 bg-gradient-to-r from-cyan-50/80 to-white dark:from-cyan-950/30 dark:to-white/[0.02] overflow-hidden">
+              <div className="flex items-start gap-3 border-b border-cyan-200/50 dark:border-cyan-500/15 px-5 py-4">
+                <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cyan-600 text-white">
+                  <Router size={16} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-cyan-950 dark:text-cyan-100">
+                    {vipInfo.ambiguous
+                      ? (zh ? '该地址在多个范围登记为 VIP' : 'VIP is registered in multiple scopes')
+                      : (zh ? `已识别为 IPAM 登记的 ${vipInfo.vip_type || 'VIP'} 虚拟地址` : `Registered ${vipInfo.vip_type || 'VIP'} virtual address`)}
+                  </p>
+                  <p className="mt-1 text-xs text-cyan-800/80 dark:text-cyan-200/80">
+                    {vipInfo.ambiguous
+                      ? (zh ? '请根据地址空间或网段确认具体范围。' : 'Confirm the address space or prefix to select the correct scope.')
+                      : (zh ? '已确认这是台账中的虚拟地址；以下设备是登记的主备控制设备，不代表当前 Master 或物理终端接入口。' : 'This address is registered as a VIP. The devices below are configured controllers, not proof of the current Master or a physical endpoint port.')}
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-3 p-4">
+                {(vipInfo.ambiguous ? vipInfo.candidates || [] : [vipInfo]).map((vip, index) => {
+                  const unsupported = vip.collection_states?.some(state => state.latest_status === 'unsupported');
+                  const currentStateText = vip.current_master
+                    ? `${zh ? '最近确认的主用设备' : 'Most recently confirmed Master'}: ${vip.current_master.hostname} (${vip.current_master.state})${vip.current_master.observed_at ? ` · ${formatExactTime(vip.current_master.observed_at, zh)}` : ''}`
+                    : unsupported
+                      ? (zh ? '当前 VRRP/HSRP 状态采集不支持，无法确认 Master。' : 'VRRP/HSRP state collection is unsupported; the current Master is unknown.')
+                      : !vip.fhrp_group
+                        ? (zh ? '该 VIP 尚未关联 FHRP 组，无法将运行态与此地址核对。' : 'No FHRP group is linked to this VIP, so runtime state cannot be matched to this address.')
+                        : (zh ? '没有可用的最新 FHRP 观测，当前 Master 未确认。' : 'No usable current FHRP observation is available; the current Master is unconfirmed.');
+                  return (
+                    <div key={vip.id || `${vip.address}-${index}`} className="rounded-xl border border-black/5 dark:border-white/10 bg-white/80 dark:bg-white/[0.03] p-4">
+                      <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+                        <div>
+                          <p className="text-[10px] font-medium text-black/40 dark:text-white/40">VIP</p>
+                          <p className="font-mono text-sm font-semibold text-[#164e63] dark:text-[var(--app-text)]">{vip.address || result.target_ip}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-medium text-black/40 dark:text-white/40">{zh ? '地址空间 / 网段' : 'Address Space / Prefix'}</p>
+                          <p className="text-xs text-[#164e63] dark:text-[var(--app-text)]">{vip.address_space_name || vip.address_space_id || '—'}{vip.prefix_cidr ? ` · ${vip.prefix_cidr}` : ''}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-medium text-black/40 dark:text-white/40">{zh ? '接口' : 'Interface'}</p>
+                          <p className="font-mono text-xs text-[#164e63] dark:text-[var(--app-text)]">{vip.interface_name || '—'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-medium text-black/40 dark:text-white/40">{zh ? 'FHRP 组 / VRID' : 'FHRP Group / VRID'}</p>
+                          <p className="text-xs text-[#164e63] dark:text-[var(--app-text)]">{vip.fhrp_group ? `${vip.fhrp_group.protocol.toUpperCase()} ${vip.fhrp_group.group_id}` : (zh ? '未关联' : 'Not linked')}</p>
+                        </div>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-xs">
+                        <p><span className="text-black/40 dark:text-white/40">{zh ? '登记主设备' : 'Registered primary'}: </span><span className="font-medium text-[#164e63] dark:text-[var(--app-text)]">{vip.primary?.hostname || '—'}</span></p>
+                        <p><span className="text-black/40 dark:text-white/40">{zh ? '登记备用设备' : 'Registered backup'}: </span><span className="font-medium text-[#164e63] dark:text-[var(--app-text)]">{vip.backup?.hostname || '—'}</span></p>
+                        <p><span className="text-black/40 dark:text-white/40">{zh ? '台账状态' : 'Registry status'}: </span><span className="font-medium text-[#164e63] dark:text-[var(--app-text)]">{vip.status || '—'}</span></p>
+                      </div>
+                      <p className="mt-3 rounded-lg bg-amber-50/80 dark:bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">{currentStateText}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : result.found && accessLocations.length > 0 ? (
             <div className="bg-gradient-to-r from-emerald-50 to-[#ecfeff] dark:from-emerald-950/40 dark:to-cyan-950/30 border border-emerald-200/60 dark:border-emerald-500/20 rounded-2xl overflow-hidden">
               {/* Path header */}
               <div className="px-5 py-3.5 border-b border-emerald-200/40 dark:border-emerald-500/15 bg-white/40 dark:bg-white/[0.03]">
@@ -1958,7 +2089,7 @@ ${rep.repair_commands}
             <input
               type="text"
               value={probeIp}
-              onChange={e => setProbeIp(e.target.value)}
+              onChange={e => { clearProbeResult(); setProbeIp(e.target.value); }}
               onKeyDown={handleProbeKeyDown}
               placeholder={zh ? '输入目标 IP，如 10.1.1.1 或 192.168.1.1' : 'Target IP, e.g. 10.1.1.1'}
               className="w-full pl-10 pr-4 py-3 rounded-xl border border-black/10 text-sm bg-white focus:ring-2 focus:ring-[#06b6d4]/30 focus:border-[#06b6d4] outline-none transition-all placeholder:text-black/30"
@@ -1997,7 +2128,7 @@ ${rep.repair_commands}
               <input
                 type="text"
                 value={probePorts}
-                onChange={e => setProbePorts(e.target.value)}
+                onChange={e => { clearProbeResult(); setProbePorts(e.target.value); }}
                 placeholder="22, 80, 443"
                 className="w-36 px-3 py-1 rounded-lg border border-black/10 text-xs font-mono bg-white focus:ring-2 focus:ring-[#06b6d4]/20 outline-none"
               />
@@ -2009,7 +2140,7 @@ ${rep.repair_commands}
             <span className="text-xs text-black/40 dark:text-white/40 font-medium">{zh ? '探测源:' : 'Source:'}</span>
             <select
               value={sourceDeviceId ?? ''}
-              onChange={e => setSourceDeviceId(e.target.value ? Number(e.target.value) : null)}
+              onChange={e => { clearProbeResult(); setSourceDeviceId(e.target.value ? Number(e.target.value) : null); }}
               title={zh ? '选择探测源设备' : 'Select probe source device'}
               className="px-3 py-1 rounded-lg border border-black/10 text-xs bg-white focus:ring-2 focus:ring-[#06b6d4]/20 outline-none min-w-[120px]"
             >
@@ -2052,13 +2183,19 @@ ${rep.repair_commands}
           {/* Header */}
           <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
             <div className="px-5 py-3.5 border-b border-black/5 dark:border-white/8 bg-gradient-to-r from-[#ecfeff]/50 dark:from-cyan-950/30 to-transparent">
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 <div className="w-7 h-7 rounded-full bg-[#0891b2] flex items-center justify-center">
                   <Activity size={14} className="text-white" />
                 </div>
                 <div>
                   <span className="text-sm font-bold text-[#164e63] dark:text-[var(--app-text)]">{zh ? '探测结果' : 'Probe Results'}</span>
                   <span className="text-xs text-black/35 dark:text-white/35 ml-3">{probeResult.target}</span>
+                  <span className="ml-3 text-[10px] text-black/40 dark:text-white/40">
+                    {zh ? '本次执行' : 'Ran'} · {(['ping', 'tcp', 'traceroute'] as const)
+                      .filter(test => probeResult.tests[test] !== undefined)
+                      .map(test => test === 'ping' ? 'PING' : test === 'tcp' ? 'TCP' : 'Traceroute')
+                      .join(zh ? '、' : ', ') || (zh ? '无测试项' : 'No tests')}
+                  </span>
                   {probeResult.source_device && (
                     <span className="text-xs text-[#0891b2] ml-2">via {probeResult.source_device}</span>
                   )}

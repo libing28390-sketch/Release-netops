@@ -44,11 +44,13 @@ const IPAMManagementTab: React.FC<IPAMManagementTabProps> = ({ language, t, ipam
     [location.search],
   );
   const selectedPrefix = prefixes.find((prefix) => prefix.id === prefixId) || null;
-  const isAddressSpace = ['prefixes', 'ips', 'pools'].includes(ipamPage);
   const showsPrefixContextBar = ipamPage === 'pools';
 
   useEffect(() => {
-    if (!isAddressSpace) return;
+    // Only the Pools page renders the prefix context selector; loading the full
+    // prefix list (with per-prefix capacity metrics) on Prefixes / IP Addresses
+    // duplicated the request those pages already make.
+    if (!showsPrefixContextBar) return;
     const token = localStorage.getItem('netops_token');
     fetch('/api/ipam/subnets', { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       .then((response) => (response.ok ? response.json() : []))
@@ -57,7 +59,7 @@ const IPAMManagementTab: React.FC<IPAMManagementTabProps> = ({ language, t, ipam
         setPrefixes(Array.isArray(data) ? data : []);
       })
       .catch((error) => console.error('Failed to load IPAM prefix context', error));
-  }, [isAddressSpace]);
+  }, [showsPrefixContextBar]);
 
   const changePrefixContext = (nextPrefixId: string) => {
     const params = new URLSearchParams(location.search);

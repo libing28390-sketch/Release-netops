@@ -53,6 +53,24 @@ const firstTimestamp = (...values: Array<string | null | undefined>): string =>
 
 const formatTimestamp = (value: string): string => value.replace('T', ' ');
 
+const pad2 = (value: number): string => String(value).padStart(2, '0');
+
+/**
+ * Render a stored (usually UTC) timestamp in the browser's local time zone,
+ * e.g. "2026-11-11 13:57:51+00:00" -> "2026-11-11 21:57:51" in Asia/Shanghai.
+ * Values without an explicit offset are shown unchanged because their zone is unknown.
+ */
+export function formatIPAddressLocalTime(value: string | null | undefined): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const isoLike = raw.replace(' ', 'T');
+  if (!/(Z|[+-]\d{2}:?\d{2})$/i.test(isoLike)) return formatTimestamp(raw);
+  const date = new Date(isoLike);
+  if (Number.isNaN(date.getTime())) return formatTimestamp(raw);
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} `
+    + `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+}
+
 /** Keep discovery timestamps separate from record update times and missing collection data. */
 export function getIPAddressTimestampPresentation(
   address: IPAddressTimestampSource,

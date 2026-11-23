@@ -16,6 +16,7 @@ from typing import Any
 from netmiko import ConnectHandler
 
 from core.interface_utils import interface_nominal_speed_mbps, normalize_interface_name
+from core.scheduler_lock import acquire_scheduler_lock
 from core.textfsm import configure_ntc_templates, smart_parse_cli
 from core.read_cache import invalidate_read_cache
 from database import get_db_connection
@@ -95,7 +96,25 @@ TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS = max(
     60,
     int(os.environ.get('TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS', '86400')),
 )
+
+def _bounded_env_int(name: str, default: int, low: int, high: int) -> int:
+    try:
+        return min(max(int(os.environ.get(name, str(default))), low), high)
+    except (TypeError, ValueError):
+        return default
+
+
+# Scheduled full-scope LLDP discovery. Off by default: discovery logs in to
+# devices (read-only), so enabling it is an explicit collection-policy change.
+# When disabled, the Topology page keeps reporting ``manual_only``.
+TOPOLOGY_AUTOMATIC_DISCOVERY_ENABLED = str(
+    os.environ.get('TOPOLOGY_AUTOMATIC_DISCOVERY_ENABLED', '0')
+).strip().lower() in {'1', 'true', 'yes', 'on'}
+TOPOLOGY_AUTOMATIC_DISCOVERY_HOUR = _bounded_env_int('TOPOLOGY_AUTOMATIC_DISCOVERY_HOUR', 3, 0, 23)
+TOPOLOGY_AUTOMATIC_DISCOVERY_MINUTE = _bounded_env_int('TOPOLOGY_AUTOMATIC_DISCOVERY_MINUTE', 15, 0, 59)
+TOPOLOGY_AUTOMATIC_DISCOVERY_JOB_ID = 'topology_automatic_discovery'
 DISCOVERY_LEASE_SECONDS = max(30, int(os.environ.get('TOPOLOGY_DISCOVERY_LEASE_SECONDS', '90')))
+TOPOLOGY_DISCOVERY_LOCK_NAME = 'topology_discovery'
 DISCOVERY_DEFAULT_TIMEOUT_SECONDS = max(30, int(os.environ.get('TOPOLOGY_DISCOVERY_TIMEOUT_SECONDS', '300')))
 DISCOVERY_DEFAULT_MAX_ATTEMPTS = max(1, int(os.environ.get('TOPOLOGY_DISCOVERY_MAX_ATTEMPTS', '2')))
 # Devices are independent discovery units, but the SSH limiter still keeps
@@ -107,6 +126,50 @@ DISCOVERY_DEVICE_CONCURRENCY = max(
     int(os.environ.get('TOPOLOGY_DISCOVERY_DEVICE_CONCURRENCY', '10')),
 )
 DISCOVERY_RETRYABLE_ERROR_CODES = frozenset({'ssh_unreachable'})
+
+
+def _has_active_topology_run_lease(conn) -> bool:
+    """Detect live run leases even if the shared scheduler lease was lost."""
+    row = conn.execute(
+        """SELECT id FROM topology_discovery_runs
+            WHERE status IN ('pending', 'running')
+              AND (
+                    NULLIF(lease_expires_at, '')::timestamptz > clock_timestamp()
+                 OR NULLIF(heartbeat_at, '')::timestamptz >
+                    clock_timestamp() - (? * INTERVAL '1 second')
+              )
+            LIMIT 1""",
+        (DISCOVERY_LEASE_SECONDS,),
+    ).fetchone()
+    return row is not None
+
+
+def acquire_topology_discovery_lease():
+    """Atomically reserve the shared discovery slot and honor live run leases."""
+    lease = acquire_scheduler_lock(
+        TOPOLOGY_DISCOVERY_LOCK_NAME,
+        expire_seconds=DISCOVERY_LEASE_SECONDS,
+    )
+    if lease is None:
+        return None
+    conn = None
+    try:
+        conn = get_db_connection()
+        if _has_active_topology_run_lease(conn):
+            lease.release()
+            return None
+    except Exception as exc:
+        # Do not collect while the per-run lease cannot be checked. The
+        # scheduler lease itself is still released with its owner fence.
+        logger.warning('[Topology] Unable to verify active discovery runs (%s)', type(exc).__name__)
+        lease.release()
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+    # Start heartbeat before a request queues the background worker.
+    lease.__enter__()
+    return lease
 
 PLATFORM_MAP = {
     'cisco_ios': 'cisco_ios',
@@ -3557,6 +3620,40 @@ def create_discovery_run(
         conn.close()
 
 
+def find_discovery_run_by_idempotency_key(idempotency_key: str) -> dict[str, Any] | None:
+    """Read an existing run for a same-key replay without creating a run."""
+    normalized_key = str(idempotency_key or '').strip()[:160]
+    if not normalized_key:
+        return None
+    key_hash = hashlib.sha256(normalized_key.encode('utf-8')).hexdigest()
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            """SELECT id, scope, status, requested_by, site_id, total_devices, scope_json,
+                      CASE
+                        WHEN status IN ('pending', 'running') AND (
+                             NULLIF(lease_expires_at, '')::timestamptz > clock_timestamp()
+                          OR NULLIF(heartbeat_at, '')::timestamptz >
+                             clock_timestamp() - (? * INTERVAL '1 second')
+                        ) THEN TRUE
+                        ELSE FALSE
+                      END AS has_live_lease
+                 FROM topology_discovery_runs
+                WHERE idempotency_key = ?""",
+            (DISCOVERY_LEASE_SECONDS, key_hash),
+        ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        try:
+            result['scope_payload'] = json.loads(result.get('scope_json') or '{}')
+        except (TypeError, ValueError):
+            result['scope_payload'] = {}
+        return result
+    finally:
+        conn.close()
+
+
 def _update_run_device(run_id: str, device_id: str, **fields: Any):
     if not fields:
         return
@@ -4195,7 +4292,27 @@ async def _discovery_lease_heartbeat(
                 return
 
 
-async def execute_discovery_run(run_id: str, device_ids: list[str]):
+async def execute_discovery_run(
+    run_id: str,
+    device_ids: list[str],
+    *,
+    discovery_lease=None,
+):
+    """Run discovery while holding the shared manual/automatic lease."""
+    lease = discovery_lease or acquire_topology_discovery_lease()
+    if lease is None:
+        logger.info('Discovery run %s was not started because another run holds the shared lease', run_id)
+        return
+    # The lease can be started before this background task is scheduled; the
+    # scheduler lease implementation keeps __enter__ idempotent.
+    lease.__enter__()
+    try:
+        await _execute_discovery_run_with_lease(run_id, device_ids)
+    finally:
+        lease.release()
+
+
+async def _execute_discovery_run_with_lease(run_id: str, device_ids: list[str]):
     worker_id = f'{os.getpid()}:{uuid.uuid4()}'
     if not _claim_discovery_run(run_id, worker_id):
         logger.info('Discovery run %s was already claimed or exhausted', run_id)
@@ -5689,6 +5806,84 @@ def get_topology_site_summaries(
     return sorted(summaries.values(), key=lambda item: str(item['site_name']).lower())
 
 
+def _has_recent_active_discovery_run() -> bool:
+    """True while either shared or per-run topology lease is live."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        if _has_active_topology_run_lease(conn):
+            return True
+        row = conn.execute(
+            """SELECT lock_name FROM scheduler_locks
+                WHERE lock_name = ? AND expires_at > clock_timestamp()
+                LIMIT 1""",
+            (TOPOLOGY_DISCOVERY_LOCK_NAME,),
+        ).fetchone()
+        return row is not None
+    except Exception as exc:
+        # Scheduling must fail closed if the authoritative lease store cannot
+        # be inspected; acquire_topology_discovery_lease is the race guard.
+        logger.warning('[Topology] Unable to inspect discovery leases (%s)', type(exc).__name__)
+        return True
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+async def run_automatic_topology_discovery() -> dict[str, Any]:
+    """Scheduled full-scope LLDP discovery using the manual discovery pipeline.
+
+    Same device selection, run record, worker, observation persistence and
+    link rebuild as ``POST /api/topology/discover``; only the trigger differs
+    (``requested_by='system:automatic'``). Read-only towards devices.
+    """
+    if not TOPOLOGY_AUTOMATIC_DISCOVERY_ENABLED:
+        return {'status': 'disabled'}
+    if _has_recent_active_discovery_run():
+        logger.info('[Topology Auto] Skipping scheduled discovery: another discovery run is still active')
+        return {'status': 'skipped_active_run'}
+    discovery_lease = acquire_topology_discovery_lease()
+    if discovery_lease is None:
+        logger.info('[Topology Auto] Skipping scheduled discovery: shared lease is unavailable')
+        return {'status': 'skipped_active_run'}
+    try:
+        selection = select_topology_discovery_devices('full')
+    except Exception as exc:
+        logger.warning('[Topology Auto] Device selection failed (%s)', type(exc).__name__)
+        discovery_lease.release()
+        return {'status': 'selection_failed'}
+    device_ids = list(selection.get('device_ids') or [])
+    if not device_ids:
+        logger.info('[Topology Auto] Skipping scheduled discovery: no eligible online devices')
+        discovery_lease.release()
+        return {'status': 'no_devices'}
+    try:
+        slot = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H')
+        run_id = create_discovery_run(
+            device_ids=device_ids,
+            requested_by='system:automatic',
+            scope='full',
+            scope_payload={
+                'trigger': 'automatic',
+                'job_id': TOPOLOGY_AUTOMATIC_DISCOVERY_JOB_ID,
+                'scope': 'full',
+                'selected_device_ids': device_ids,
+                'excluded_device_ids': selection.get('excluded_device_ids') or [],
+            },
+            # One run per scheduled hour even if the job fires twice (restart,
+            # misfire catch-up, multiple workers).
+            idempotency_key=f'{TOPOLOGY_AUTOMATIC_DISCOVERY_JOB_ID}:{slot}',
+        )
+        logger.info(
+            '[Topology Auto] Scheduled discovery run %s started for %d device(s)',
+            run_id, len(device_ids),
+        )
+        await execute_discovery_run(run_id, device_ids, discovery_lease=discovery_lease)
+        return {'status': 'started', 'run_id': run_id, 'device_count': len(device_ids)}
+    finally:
+        discovery_lease.release()
+
+
 def get_topology_generation_status(
     *,
     device_ids: list[str] | tuple[str, ...] | None = None,
@@ -5827,12 +6022,16 @@ def get_topology_generation_status(
     blocking_warnings = [item for item in warnings if item.get('blocking', True)]
     return {
         'generation': {
-            'strategy': 'manual_only',
+            'strategy': 'automatic_and_manual' if TOPOLOGY_AUTOMATIC_DISCOVERY_ENABLED else 'manual_only',
             'automatic': {
-                'enabled': False,
-                'job_id': '',
-                'interval_seconds': 0,
-                'scope': '',
+                'enabled': TOPOLOGY_AUTOMATIC_DISCOVERY_ENABLED,
+                'job_id': TOPOLOGY_AUTOMATIC_DISCOVERY_JOB_ID if TOPOLOGY_AUTOMATIC_DISCOVERY_ENABLED else '',
+                'interval_seconds': 86400 if TOPOLOGY_AUTOMATIC_DISCOVERY_ENABLED else 0,
+                'scope': 'full' if TOPOLOGY_AUTOMATIC_DISCOVERY_ENABLED else '',
+                'schedule': (
+                    f'daily {TOPOLOGY_AUTOMATIC_DISCOVERY_HOUR:02d}:{TOPOLOGY_AUTOMATIC_DISCOVERY_MINUTE:02d}'
+                    if TOPOLOGY_AUTOMATIC_DISCOVERY_ENABLED else ''
+                ),
             },
             'manual': {
                 'enabled': True,

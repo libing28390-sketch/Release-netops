@@ -217,7 +217,7 @@ def test_interface_inventory_uses_cmdb_cli_snapshot_for_vlan(monkeypatch):
     monkeypatch.setattr(interface_collection_service, "_collect_snmp_interface_domains", collect_snmp)
     monkeypatch.setattr(interface_collection_service, "_upsert_snmp_interfaces", lambda *_args: 1)
     monkeypatch.setattr(interface_collection_service, "_build_interface_status_rows", lambda *_args, **_kwargs: ({}, []))
-    monkeypatch.setattr(interface_collection_service, "_upsert_interfaces", lambda *_args: 0)
+    monkeypatch.setattr(interface_collection_service, "_upsert_interfaces", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(interface_collection_service, "_description_records", lambda *_args: {})
     monkeypatch.setattr("services.vlan_discovery_service.sync_observed_vlans", lambda: {"observed": 0, "created": 0, "updated": 0})
     monkeypatch.setattr("services.collection_status_service.record_collection_result", lambda *_args, **_kwargs: None)
@@ -238,6 +238,83 @@ def test_interface_inventory_uses_cmdb_cli_snapshot_for_vlan(monkeypatch):
     assert result["vlan_projection"] == {"vlans": 3, "interfaces": 12}
     assert result["snmp_domains"]["requested"]["vlans"] is False
     assert result["vlan_transport"] == "ssh"
+
+
+@pytest.mark.parametrize(
+    ("snmp_status_complete", "snmp_address_complete", "expected_source"),
+    [(False, True, "cli_snapshot"), (True, False, "snmp")],
+)
+def test_interface_status_provenance_follows_the_status_record_source(
+    monkeypatch, snmp_status_complete, snmp_address_complete, expected_source,
+):
+    device = _device()
+    captured: dict = {}
+    snmp_interfaces = [{"name": "Loopback0", "status": "up", "admin_status": "up"}]
+    snmp_addresses = [{"ip_address": "192.0.2.9", "interface": "Loopback0", "prefix_length": 32}]
+    cli_records = [{"interface": "Loopback0", "ip_address": "192.0.2.9", "status": "up", "proto": "down"}]
+    rows = [{
+        "interface_name": "Loopback0", "interface_ip": "192.0.2.9",
+        "admin_status": "up", "oper_status": "down",
+    }]
+    monkeypatch.setattr(interface_collection_service, "_load_device", lambda _device_id: device)
+    monkeypatch.setattr(interface_collection_service, "_load_ip_inventory", lambda _device_id: {})
+    monkeypatch.setattr(
+        "services.collection_plan_service.should_collect",
+        lambda _device, category: category == "interface_status",
+    )
+    monkeypatch.setattr(
+        interface_collection_service,
+        "_collect_snmp_interface_domains",
+        lambda *_args, **_kwargs: {
+            "interfaces": snmp_interfaces,
+            "addresses": snmp_addresses,
+            "complete": {
+                "interface_status": snmp_status_complete,
+                "interface_addresses": snmp_address_complete,
+                "interface_description": True,
+                "interface_mac": snmp_status_complete,
+                "interface_mtu": snmp_status_complete,
+                "vlan": False,
+            },
+            "persisted": {}, "errors": {}, "version": "2c",
+        },
+    )
+    monkeypatch.setattr(interface_collection_service, "_upsert_snmp_interfaces", lambda *_args: 1)
+    monkeypatch.setattr(interface_collection_service, "_upsert_snmp_ip_inventory", lambda *_args: 1)
+    monkeypatch.setattr(
+        interface_collection_service,
+        "collect_read_only_evidence",
+        lambda *_args, **_kwargs: {
+            "collected_at": "2026-11-23T12:00:00+00:00",
+            "categories": [{
+                "key": "interfaces", "success": True, "parse_status": "matched",
+                "records": cli_records, "commands": ["display ip interface brief"],
+            }],
+        },
+    )
+    monkeypatch.setattr(
+        interface_collection_service,
+        "_merge_cli_interface_addresses",
+        lambda snmp, _cli: [dict(snmp[0], ip_address="192.0.2.9", prefix_length=32)],
+    )
+    monkeypatch.setattr(
+        interface_collection_service,
+        "_build_interface_status_rows",
+        lambda *_args, **_kwargs: ({"loop0": {}}, rows),
+    )
+    monkeypatch.setattr(
+        interface_collection_service,
+        "_upsert_interfaces",
+        lambda _device, _rows, **kwargs: captured.update(kwargs) or 1,
+    )
+    monkeypatch.setattr(interface_collection_service, "_description_records", lambda *_args: {})
+    monkeypatch.setattr("services.vlan_discovery_service.sync_observed_vlans", lambda: {})
+    monkeypatch.setattr("services.collection_status_service.record_collection_result", lambda *_args, **_kwargs: None)
+
+    result = interface_collection_service._collect_interface_status_target(device["id"])
+
+    assert captured["status_source"] == expected_source
+    assert result["snmp_used"] is snmp_status_complete
 
 
 @pytest.mark.parametrize("fail_evidence", [False, True])

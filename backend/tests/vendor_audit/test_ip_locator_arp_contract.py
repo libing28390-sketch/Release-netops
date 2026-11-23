@@ -332,6 +332,7 @@ def test_periodic_sweep_includes_access_without_svi_and_honors_explicit_opt_out(
         },
     ]
     monkeypatch.setattr(ip_locator_service, "_load_eligible_devices", lambda **_kwargs: devices)
+    monkeypatch.setattr(ip_locator_service, "_load_terminal_gateway_device_ids", lambda: {})
     monkeypatch.setattr(ip_locator_service, "_load_arp_collection_state", lambda: {})
     monkeypatch.setattr(
         ip_locator_service,
@@ -1641,6 +1642,7 @@ def test_arp_sweep_device_selection_uses_bounded_cursor_batch(monkeypatch):
     ]
     monkeypatch.setattr(ip_locator_service, "_load_eligible_devices", lambda **_kwargs: devices)
     monkeypatch.setattr(ip_locator_service, "_load_svi_evidence", lambda: set())
+    monkeypatch.setattr(ip_locator_service, "_load_terminal_gateway_device_ids", lambda: {})
     monkeypatch.setattr(ip_locator_service, "_load_arp_collection_state", lambda: {})
     monkeypatch.setattr(ip_locator_service, "ARP_MAX_DEVICES_PER_SWEEP", 2)
     monkeypatch.setattr(

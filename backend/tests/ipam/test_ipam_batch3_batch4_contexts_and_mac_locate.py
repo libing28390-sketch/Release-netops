@@ -143,6 +143,7 @@ def test_arp_sweep_includes_prefix_gateways_and_explicit_opt_ins(monkeypatch) ->
     ]
     monkeypatch.setattr(ip_locator_service, '_load_eligible_devices', lambda **_kwargs: devices)
     monkeypatch.setattr(ip_locator_service, '_load_prefix_gateway_device_ids', lambda: {'core-gw', 'gw-opt-out'})
+    monkeypatch.setattr(ip_locator_service, '_load_terminal_gateway_device_ids', lambda: {})
     monkeypatch.setattr(ip_locator_service, '_load_arp_collection_state', lambda: {})
     monkeypatch.setattr(
         ip_locator_service,

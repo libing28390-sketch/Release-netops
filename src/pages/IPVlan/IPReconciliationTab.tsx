@@ -289,7 +289,7 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language }) =
     setRegisterError('');
     setSubnetsLoading(true);
     try {
-      const response = await fetch('/api/ipam/subnets', { headers: authHeaders() });
+      const response = await fetch('/api/ipam/subnets?include_metrics=false', { headers: authHeaders() });
       if (!response.ok) {
         setRegisterError(await safeErrorMessage(response, zh));
         setSubnets([]);

@@ -1,6 +1,7 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import IPUtilizationTab from './IPUtilizationTab';
 
 const analytics = (networkScope: 'business' | 'all') => ({
@@ -54,7 +55,7 @@ describe('IPUtilizationTab network scope', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<IPUtilizationTab language="zh" t={(key) => key} />);
+    render(<MemoryRouter initialEntries={['/ipam/utilization']}><IPUtilizationTab language="zh" t={(key) => key} /></MemoryRouter>);
     expect(await screen.findByText('办公网')).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/ipam/analytics?network_scope=business',
@@ -79,7 +80,7 @@ describe('IPUtilizationTab network scope', () => {
       .mockResolvedValueOnce(jsonResponse(analytics('business')));
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<IPUtilizationTab language="zh" t={(key) => key} />);
+    render(<MemoryRouter initialEntries={['/ipam/utilization']}><IPUtilizationTab language="zh" t={(key) => key} /></MemoryRouter>);
     expect((await screen.findByRole('alert')).textContent).toContain('当前账号没有查看 IP 利用率的权限');
     expect(screen.queryByText('加载分析数据中...')).toBeNull();
 

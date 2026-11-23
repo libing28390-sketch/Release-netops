@@ -527,6 +527,30 @@ def _cmdb_interface_resource_scope(conn, user, action: str) -> tuple[str | None,
     return scope.tenant_id, scope.site_ids
 
 
+def _enforce_cmdb_device_scope(conn, user, device_id: str, action: str) -> None:
+    """Authorize a device-targeted CMDB operation against its actual owner."""
+    row = conn.execute(
+        """SELECT d.id AS device_id, d.asset_id, d.device_group_id,
+                  COALESCE(NULLIF(s.tenant_id, ''), NULLIF(d.tenant_id, ''), 'tenant-default') AS site_tenant_id,
+                  COALESCE(NULLIF(s.id, ''), NULLIF(d.site_id, ''), '') AS site_id
+             FROM devices d
+             LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+             LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
+            WHERE d.id = ?""",
+        (str(device_id or '').strip(),),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="设备不存在")
+
+    # Check the same asset/update action as the neighboring interface mutator,
+    # but against this device's concrete site, tenant, and group. The loaded
+    # resource helper also preserves explicit device-group grants and applies
+    # Administrator boundaries through the shared RBAC policy.
+    from services.rack_scope_service import enforce_loaded_resource
+
+    enforce_loaded_resource(user, dict(row), "asset", action)
+
+
 # ─── Network CMDB Skeleton ──────────────────────────
 
 @router.get("/cmdb/devices")
@@ -627,6 +651,50 @@ def api_update_cmdb_interface_monitoring_profile(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         conn.close()
+
+
+@router.post("/cmdb/devices/{device_id}/interfaces/snmp-refresh")
+def api_refresh_device_interfaces_snmp(device_id: str, user=require_role("Operator")):
+    """Read one device's IF-MIB interface table (status + MAC) on demand."""
+    from services.interface_collection_service import (
+        InterfaceInventorySyncError,
+        refresh_snmp_interface_status,
+    )
+
+    conn = get_db_connection()
+    try:
+        _enforce_cmdb_device_scope(conn, user, device_id, "update")
+    finally:
+        conn.close()
+
+    try:
+        result = refresh_snmp_interface_status(device_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="设备不存在") from exc
+    except InterfaceInventorySyncError as exc:
+        status_code = 409 if exc.code in {
+            "snmp_not_configured", "device_ip_missing", "snmp_collection_disabled",
+        } else 502
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    try:
+        log_audit_event(
+            event_type="CMDB_INTERFACE_SNMP_REFRESH",
+            category="cmdb",
+            severity="info",
+            status="success",
+            summary=f"SNMP 刷新接口表：{result.get('hostname')}（{result.get('interface_count')} 个接口，{result.get('mac_count')} 个含 MAC）",
+            actor_id=str(user.get("id") or "") or None,
+            actor_username=user.get("username"),
+            actor_role=user.get("role"),
+            target_type="device",
+            target_id=device_id,
+            target_name=str(result.get("hostname") or device_id),
+            device_id=device_id,
+            details={k: result.get(k) for k in ("interface_count", "updated_count", "mac_count", "mac_complete", "skipped_interfaces")},
+        )
+    except Exception:
+        logger.debug("Unable to audit SNMP interface refresh for %s", device_id, exc_info=True)
+    return {"success": True, "data": result}
 
 
 @router.post("/cmdb/interfaces/sync", status_code=202)
