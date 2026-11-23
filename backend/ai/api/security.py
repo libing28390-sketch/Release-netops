@@ -13,7 +13,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from database.core import get_db_connection
-from ai.security.gateway import SecurityBlocked, SecurityPolicy, ai_security_gateway
+from ai.security.gateway import SecurityBlocked, SecurityPolicy, ai_security_gateway, deployment_status
 from ai.security.dev_passthrough import dev_passthrough
 from ai.security.classification import DataClassification, normalize_classification
 from ai.security.permissions import require_ai_permission
@@ -30,6 +30,7 @@ from ai.security.security_service import (
     resolve_security_incident,
 )
 from ai.services.document_security_scan import scan_document_security
+from services.audit_service import log_audit_event
 from services.document_parser_adapters import ParsedBlock, ParsedDocument
 from ai.schemas.provider import SUPPORTED_PROVIDER_TYPES
 from api.knowledge_contracts import (
@@ -50,6 +51,76 @@ def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _audit_security_change(user: Dict[str, Any], *, event_type: str, summary: str, severity: str = "high",
+                           before: Dict[str, Any] | None = None, after: Dict[str, Any] | None = None,
+                           details: Dict[str, Any] | None = None) -> None:
+    """Write AI security control changes to the platform audit log."""
+    try:
+        log_audit_event(
+            event_type=event_type,
+            category="ai_security",
+            severity=severity,
+            status="success",
+            summary=summary,
+            actor_id=str(user.get("user_id") or user.get("id") or "") or None,
+            actor_username=str(user.get("username") or "") or None,
+            actor_role=str(user.get("role") or "") or None,
+            target_type="ai_security_policy",
+            target_id="global",
+            before=before,
+            after=after,
+            details=details,
+        )
+    except Exception:
+        # The change itself is already persisted; never fail it on audit I/O.
+        logger.warning("AI security audit write failed event=%s", event_type)
+
+
+def _policy_summary(policy: SecurityPolicy) -> Dict[str, Any]:
+    return {
+        "external_ai_enabled": policy.external_ai_enabled,
+        "kill_switch": policy.kill_switch,
+        "allowed_provider_types": list(policy.allowed_provider_types),
+        "allowed_classifications": list(policy.allowed_classifications),
+        "allowed_data_regions": list(policy.allowed_data_regions),
+        "provider_kill_switches": dict(policy.provider_kill_switches),
+        "tenant_kill_switches": dict(policy.tenant_kill_switches),
+        "max_payload_bytes": policy.max_payload_bytes,
+        "allow_sensitive_minimization": policy.allow_sensitive_minimization,
+        "policy_version": policy.policy_version,
+    }
+
+
+def _policy_fingerprint(conn) -> tuple[str, ...]:
+    row = conn.execute(
+        """
+        SELECT
+            (SELECT COALESCE(MAX(version), 0) FROM ai_security_policies WHERE status = 'active'),
+            (SELECT COUNT(*) FROM ai_security_policies),
+            (SELECT enabled FROM ai_kill_switch WHERE id = 1),
+            (SELECT changed_at FROM ai_kill_switch WHERE id = 1),
+            (SELECT COUNT(*) FROM ai_tenant_security_controls WHERE kill_switch = 1),
+            (SELECT MAX(changed_at) FROM ai_tenant_security_controls)
+        """
+    ).fetchone()
+    return tuple(str(item) for item in (row or ()))
+
+
+def read_policy_fingerprint() -> tuple[str, ...] | None:
+    """Cheap change marker for the stored policy, kill switch and tenant switches.
+
+    Workers compare it every AI_POLICY_REFRESH_SECONDS and reload the policy
+    when another worker changed it.  Returns None when the database is
+    unavailable (the caller keeps its last loaded policy).
+    """
+    try:
+        with get_db_connection() as conn:
+            return _policy_fingerprint(conn)
+    except Exception:
+        logger.warning("AI security policy change marker could not be read")
+        return None
+
+
 def load_persisted_security_policy() -> None:
     """Load the last operator policy after migrations, fail-closed on errors."""
     try:
@@ -59,22 +130,27 @@ def load_persisted_security_policy() -> None:
             ).fetchone()
             kill_row = conn.execute("SELECT enabled FROM ai_kill_switch WHERE id = 1").fetchone()
             tenant_rows = conn.execute("SELECT tenant_id, kill_switch FROM ai_tenant_security_controls WHERE kill_switch = 1").fetchall()
+            try:
+                fingerprint = _policy_fingerprint(conn)
+            except Exception:
+                fingerprint = None
         current = ai_security_gateway.policy
         external_enabled = bool(policy_row[1]) if policy_row else current.external_ai_enabled
         allow_sensitive = current.allow_sensitive_minimization
+        max_payload_bytes = current.max_payload_bytes
         allowed = current.allowed_provider_types
         policy_version = current.policy_version
         allowed_classifications = current.allowed_classifications
         allowed_regions = current.allowed_data_regions
         provider_kill_switches = current.provider_kill_switches
         tenant_kill_switches = current.tenant_kill_switches
-        if tenant_rows:
-            tenant_kill_switches = {str(row[0]): bool(row[1]) for row in tenant_rows}
         scope_rules = current.scope_rules
         if policy_row:
             try:
                 rules = json.loads(policy_row[2] or '{}')
                 allow_sensitive = bool(rules.get('allow_sensitive_minimization', allow_sensitive))
+                if rules.get('max_payload_bytes') is not None:
+                    max_payload_bytes = max(1_024, min(2_000_000, int(rules['max_payload_bytes'])))
                 policy_version = str(rules.get('policy_version') or (policy_row[0] if policy_row else current.policy_version))
                 allowed_classifications = tuple(str(item).upper() for item in rules.get('allowed_classifications', current.allowed_classifications))
                 allowed_regions = tuple(str(item).lower() for item in rules.get('allowed_data_regions', current.allowed_data_regions))
@@ -92,12 +168,18 @@ def load_persisted_security_policy() -> None:
                 candidate = tuple(str(item).lower().strip().replace('-', '_') for item in json.loads(policy_row[3] or '[]'))
                 if candidate and set(candidate) <= set(SUPPORTED_PROVIDER_TYPES):
                     allowed = candidate
-            except Exception:
-                pass
-        ai_security_gateway.policy = SecurityPolicy(
+            except (TypeError, ValueError, IndexError) as exc:
+                # A malformed stored provider list must not break the policy load; the current value stays in force.
+                logger.warning("AI security policy allowed_provider_types unreadable; keeping current value code=AI_POLICY_PROVIDER_TYPES_INVALID error=%s", type(exc).__name__)
+        if tenant_rows:
+            merged_tenant_switches = dict(tenant_kill_switches)
+            for row in tenant_rows:
+                merged_tenant_switches[str(row[0])] = bool(row[1])
+            tenant_kill_switches = merged_tenant_switches
+        ai_security_gateway.install_policy(SecurityPolicy(
             external_ai_enabled=external_enabled,
             kill_switch=bool(kill_row[0]) if kill_row else current.kill_switch,
-            max_payload_bytes=current.max_payload_bytes,
+            max_payload_bytes=max_payload_bytes,
             identifiers_must_be_tokenized=True,
             allow_sensitive_minimization=allow_sensitive,
             allowed_provider_types=allowed,
@@ -107,12 +189,12 @@ def load_persisted_security_policy() -> None:
             provider_kill_switches=provider_kill_switches,
             tenant_kill_switches=tenant_kill_switches,
             scope_rules=scope_rules,
-        )
+        ), fingerprint=fingerprint)
     except Exception:
         # Keep settings defaults (external disabled) if a database is not yet
         # available; never enable external egress because loading failed.
         current = ai_security_gateway.policy
-        ai_security_gateway.policy = SecurityPolicy(
+        ai_security_gateway.install_policy(SecurityPolicy(
             external_ai_enabled=False,
             kill_switch=True,
             max_payload_bytes=current.max_payload_bytes,
@@ -125,11 +207,12 @@ def load_persisted_security_policy() -> None:
             provider_kill_switches=current.provider_kill_switches,
             tenant_kill_switches=current.tenant_kill_switches,
             scope_rules=current.scope_rules,
-        )
+        ), fingerprint=("load_failed",))
 
 
 @router.get("/policy", response_model=Dict[str, Any])
 def get_security_policy(user=Depends(require_ai_permission("ai.audit.view"))):
+    effective = ai_security_gateway.effective_policy()
     policy = ai_security_gateway.policy
     return {
         "external_ai_enabled": policy.external_ai_enabled,
@@ -145,11 +228,17 @@ def get_security_policy(user=Depends(require_ai_permission("ai.audit.view"))):
         "tenant_kill_switches": dict(policy.tenant_kill_switches),
         "scope_rules": dict(policy.scope_rules),
         "dev_passthrough": dev_passthrough.status(),
+        # Environment flags are a hard ceiling on the stored policy above.
+        "deployment": deployment_status(),
+        "effective": {
+            "external_ai_enabled": effective.external_ai_enabled,
+            "kill_switch": effective.kill_switch,
+        },
     }
 
 
 @router.put("/policy", response_model=Dict[str, Any])
-def update_security_policy(payload: SecurityPolicyUpdateRequest, user=Depends(require_ai_permission("ai.provider.manage"))):
+def update_security_policy(payload: SecurityPolicyUpdateRequest, user=Depends(require_ai_permission("ai.security.manage"))):
     allowed = tuple(str(item).lower().strip().replace('-', '_') for item in (payload.allowed_provider_types or SUPPORTED_PROVIDER_TYPES))
     if not allowed or any(item not in SUPPORTED_PROVIDER_TYPES for item in allowed):
         raise HTTPException(status_code=400, detail="Provider type is not in the approved adapter allowlist")
@@ -177,10 +266,13 @@ def update_security_policy(payload: SecurityPolicyUpdateRequest, user=Depends(re
         tenant_kill_switches=tenant_kill_switches,
         scope_rules=scope_rules,
     )
-    ai_security_gateway.policy = policy
     tenant_id = str(user.get("tenant_id") or "tenant-default")
     now = _now()
     with get_db_connection() as conn:
+        conn.execute(
+            "UPDATE ai_security_policies SET status = 'superseded', updated_at = ? WHERE tenant_id = ? AND status = 'active'",
+            (now, tenant_id),
+        )
         conn.execute(
             """
             INSERT INTO ai_security_policies
@@ -194,6 +286,7 @@ def update_security_policy(payload: SecurityPolicyUpdateRequest, user=Depends(re
                 int(policy.external_ai_enabled),
                 json.dumps({
                     "allow_sensitive_minimization": policy.allow_sensitive_minimization,
+                    "max_payload_bytes": policy.max_payload_bytes,
                     "policy_version": policy.policy_version,
                     "allowed_classifications": list(policy.allowed_classifications),
                     "allowed_data_regions": list(policy.allowed_data_regions),
@@ -205,7 +298,30 @@ def update_security_policy(payload: SecurityPolicyUpdateRequest, user=Depends(re
                 user.get("username", "admin"), now, now,
             ),
         )
+        conn.execute(
+            """
+            INSERT INTO ai_kill_switch (id, enabled, reason, changed_by, changed_at)
+            VALUES (1, ?, 'policy_update', ?, ?)
+            ON CONFLICT (id) DO UPDATE SET
+                enabled = EXCLUDED.enabled,
+                reason = EXCLUDED.reason,
+                changed_by = EXCLUDED.changed_by,
+                changed_at = EXCLUDED.changed_at
+            """,
+            (int(policy.kill_switch), user.get("username", "admin"), now),
+        )
         conn.commit()
+    previous = ai_security_gateway.policy
+    # Install only after the database write succeeded; other workers pick the
+    # change up through the policy fingerprint.
+    ai_security_gateway.install_policy(policy, fingerprint=read_policy_fingerprint())
+    _audit_security_change(
+        user,
+        event_type="AI_SECURITY_POLICY_UPDATE",
+        summary=f"AI security policy updated to {policy.policy_version}",
+        before=_policy_summary(previous),
+        after=_policy_summary(policy),
+    )
     return get_security_policy(user)
 
 
@@ -234,7 +350,8 @@ def set_dev_passthrough(
 
     if not dev_passthrough.is_supported():
         raise HTTPException(status_code=403, detail="AI and external AI must be enabled before temporary test mode can be used")
-    if payload.enabled and (not ai_security_gateway.policy.external_ai_enabled or ai_security_gateway.policy.kill_switch):
+    effective = ai_security_gateway.effective_policy()
+    if payload.enabled and (not effective.external_ai_enabled or effective.kill_switch):
         raise HTTPException(status_code=409, detail="Enable external AI and disable the global Kill Switch before starting temporary test mode")
     try:
         status = dev_passthrough.enable(payload.duration_minutes) if payload.enabled else dev_passthrough.disable()
@@ -246,6 +363,13 @@ def set_dev_passthrough(
         user.get("username", "unknown"),
         status.get("expires_at"),
     )
+    _audit_security_change(
+        user,
+        event_type="AI_DEV_PASSTHROUGH_ENABLE" if status["enabled"] else "AI_DEV_PASSTHROUGH_DISABLE",
+        summary=f"AI temporary test mode {'enabled' if status['enabled'] else 'disabled'}",
+        severity="critical" if status["enabled"] else "medium",
+        details={"expires_at": status.get("expires_at")},
+    )
     return status
 
 
@@ -253,7 +377,9 @@ def set_dev_passthrough(
 def test_payload(payload: SecurityTestPayloadRequest, user=Depends(require_ai_permission("ai.audit.view"))):
     """Run the security pipeline without making an external provider call."""
     messages = [item.model_dump() for item in payload.messages]
-    tenant_id = str(payload.tenant_id or user.get("tenant_id") or "tenant-default")
+    # Dry runs always use the caller's own tenant; a client-supplied tenant
+    # would let one tenant probe another tenant's scope rules.
+    tenant_id = str(user.get("tenant_id") or "tenant-default")
     task_id = payload.task_id
     try:
         result = ai_security_gateway.protect(
@@ -280,10 +406,12 @@ def test_payload(payload: SecurityTestPayloadRequest, user=Depends(require_ai_pe
             "security_mode": result.metadata.get("security_mode"),
         }
     except SecurityBlocked as exc:
+        max_level = f"L{max(int(item.level) for item in exc.findings)}" if exc.findings else "unknown"
         return {
             "decision": "BLOCK",
-            "max_data_level": "L4" if any(item.level >= 4 for item in exc.findings) else "unknown",
+            "max_data_level": max_level,
             "finding_categories": sorted({item.category for item in exc.findings}),
+            "reason": exc.user_message or exc.reason_code,
             "reason_code": exc.reason_code,
             "user_message": exc.user_message,
             "external_call_made": False,
@@ -291,10 +419,10 @@ def test_payload(payload: SecurityTestPayloadRequest, user=Depends(require_ai_pe
 
 
 @router.post("/kill-switch", response_model=Dict[str, Any])
-def set_kill_switch(payload: SecurityKillSwitchRequest, user=Depends(require_ai_permission("ai.provider.manage"))):
+def set_kill_switch(payload: SecurityKillSwitchRequest, user=Depends(require_ai_permission("ai.security.manage"))):
     enabled = payload.enabled
     current = ai_security_gateway.policy
-    ai_security_gateway.policy = SecurityPolicy(
+    next_policy = SecurityPolicy(
         external_ai_enabled=current.external_ai_enabled,
         kill_switch=enabled,
         max_payload_bytes=current.max_payload_bytes,
@@ -310,10 +438,28 @@ def set_kill_switch(payload: SecurityKillSwitchRequest, user=Depends(require_ai_
     )
     with get_db_connection() as conn:
         conn.execute(
-            "UPDATE ai_kill_switch SET enabled = ?, reason = ?, changed_by = ?, changed_at = ? WHERE id = 1",
+            """
+            INSERT INTO ai_kill_switch (id, enabled, reason, changed_by, changed_at)
+            VALUES (1, ?, ?, ?, ?)
+            ON CONFLICT (id) DO UPDATE SET
+                enabled = EXCLUDED.enabled,
+                reason = EXCLUDED.reason,
+                changed_by = EXCLUDED.changed_by,
+                changed_at = EXCLUDED.changed_at
+            """,
             (int(enabled), payload.reason, user.get("username", "admin"), _now()),
         )
         conn.commit()
+    ai_security_gateway.install_policy(next_policy, fingerprint=read_policy_fingerprint())
+    _audit_security_change(
+        user,
+        event_type="AI_KILL_SWITCH_ENABLE" if enabled else "AI_KILL_SWITCH_DISABLE",
+        summary=f"AI global kill switch {'enabled' if enabled else 'disabled'}",
+        severity="critical" if enabled else "high",
+        before={"kill_switch": current.kill_switch},
+        after={"kill_switch": enabled},
+        details={"reason": payload.reason},
+    )
     return {"enabled": enabled}
 
 
@@ -324,7 +470,7 @@ def set_tenant_kill_switch(payload: TenantSecurityKillSwitchRequest, user=Depend
     current = ai_security_gateway.policy
     switches = dict(current.tenant_kill_switches)
     switches[tenant_id] = enabled
-    ai_security_gateway.policy = SecurityPolicy(
+    next_policy = SecurityPolicy(
         external_ai_enabled=current.external_ai_enabled,
         kill_switch=current.kill_switch,
         max_payload_bytes=current.max_payload_bytes,
@@ -348,6 +494,15 @@ def set_tenant_kill_switch(payload: TenantSecurityKillSwitchRequest, user=Depend
             (f"tenant_sec_{uuid.uuid4().hex[:12]}", tenant_id, int(enabled), payload.reason, user.get("username", "admin"), _now()),
         )
         conn.commit()
+    ai_security_gateway.install_policy(next_policy, fingerprint=read_policy_fingerprint())
+    _audit_security_change(
+        user,
+        event_type="AI_TENANT_KILL_SWITCH_ENABLE" if enabled else "AI_TENANT_KILL_SWITCH_DISABLE",
+        summary=f"AI kill switch for tenant {tenant_id} {'enabled' if enabled else 'disabled'}",
+        before={"tenant_id": tenant_id, "kill_switch": bool(current.tenant_kill_switches.get(tenant_id))},
+        after={"tenant_id": tenant_id, "kill_switch": enabled},
+        details={"reason": payload.reason},
+    )
     return {"tenant_id": tenant_id, "enabled": enabled}
 
 

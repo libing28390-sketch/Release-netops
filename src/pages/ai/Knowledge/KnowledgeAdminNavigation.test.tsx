@@ -7,18 +7,15 @@ import KnowledgeAdminNavigation from './KnowledgeAdminNavigation';
 describe('KnowledgeAdminNavigation', () => {
   afterEach(() => cleanup());
 
-  it('uses compact Chinese-first labels and keeps view guidance in tooltips', () => {
+  it('uses compact Chinese-first labels for daily management views and keeps guidance in tooltips', () => {
     render(<KnowledgeAdminNavigation activeView="documents" onChange={vi.fn()} />);
 
     expect(screen.getByText('文档与版本')).toBeTruthy();
     expect(screen.getByText('来源与更新')).toBeTruthy();
-    expect(screen.getByText('UAT 签署')).toBeTruthy();
-    expect(screen.getByText('基线自检')).toBeTruthy();
-    expect(screen.getByText('检索诊断')).toBeTruthy();
+    expect(screen.queryByText('UAT 签署')).toBeNull();
+    expect(screen.queryByText('基线自检')).toBeNull();
+    expect(screen.queryByText('检索诊断')).toBeNull();
     expect(screen.getByRole('button', { name: /来源与更新/ }).getAttribute('title')).toContain('校验厂商官网并监控来源更新');
-    expect(screen.getByRole('button', { name: /基线自检/ }).getAttribute('title')).toContain('用固定夹具检查检索规则是否回退');
-    expect(screen.getByRole('button', { name: /检索诊断/ }).getAttribute('title')).toContain('查看一次检索为何命中或未命中');
-    expect(screen.getByRole('button', { name: /UAT 签署/ }).getAttribute('title')).toContain('逐案例记录浏览器验收结论并签署');
   });
 
   it('announces the selected function and requests a view change', async () => {
@@ -26,12 +23,11 @@ describe('KnowledgeAdminNavigation', () => {
     const onChange = vi.fn();
     const { rerender } = render(<KnowledgeAdminNavigation activeView="documents" onChange={onChange} />);
 
-    await user.click(screen.getByRole('button', { name: /基线自检/ }));
-    expect(onChange).toHaveBeenCalledWith('evaluation');
+    await user.click(screen.getByRole('button', { name: /来源与更新/ }));
+    expect(onChange).toHaveBeenCalledWith('sources');
 
-    rerender(<KnowledgeAdminNavigation activeView="evaluation" onChange={onChange} />);
-    expect(screen.getByText('当前：基线自检')).toBeTruthy();
-    expect(screen.getByRole('button', { name: /基线自检/ }).getAttribute('title')).toContain('它不读取当前租户文档');
-    expect(screen.getByRole('button', { name: /基线自检/ }).getAttribute('aria-pressed')).toBe('true');
+    rerender(<KnowledgeAdminNavigation activeView="sources" onChange={onChange} />);
+    expect(screen.getByText('当前：来源与更新')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /来源与更新/ }).getAttribute('aria-pressed')).toBe('true');
   });
 });

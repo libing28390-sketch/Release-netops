@@ -303,7 +303,7 @@ def get_evaluation_report(user: Mapping[str, Any], *, include_cases: bool = True
 
 
 def _run_postgresql_baseline() -> dict[str, Any]:
-    """Run the existing authoritative PG probe while restoring process globals."""
+    """Run the existing authoritative PG probe using an isolated retriever instance."""
 
     try:
         runner_path = ROOT / "scripts" / "knowledge_baseline_pg.py"
@@ -316,17 +316,6 @@ def _run_postgresql_baseline() -> dict[str, Any]:
     except Exception as exc:  # pragma: no cover - startup/import failure
         raise KnowledgeEvaluationError("EVAL_RUNNER_UNAVAILABLE", "PostgreSQL evaluation runner is unavailable", 503) from exc
 
-    import ai.services.rag_retriever as retriever_module
-
-    had_embed_query = hasattr(retriever_module.embedding_provider, "embed_query")
-    missing = object()
-    original_use_pg = getattr(retriever_module, "_USE_PG", missing)
-    original = {
-        "get_db_connection": retriever_module.get_db_connection,
-        "use_pg": original_use_pg,
-        "embed_text": retriever_module.embedding_provider.embed_text,
-        "embed_query": getattr(retriever_module.embedding_provider, "embed_query", None),
-    }
     try:
         return run_baseline()
     except SystemExit as exc:
@@ -335,20 +324,6 @@ def _run_postgresql_baseline() -> dict[str, Any]:
         raise
     except Exception as exc:
         raise KnowledgeEvaluationError("EVAL_RUN_FAILED", "PostgreSQL evaluation failed", 503) from exc
-    finally:
-        retriever_module.get_db_connection = original["get_db_connection"]
-        if original["use_pg"] is missing:
-            try:
-                delattr(retriever_module, "_USE_PG")
-            except AttributeError:
-                pass
-        else:
-            retriever_module._USE_PG = original["use_pg"]
-        retriever_module.embedding_provider.embed_text = original["embed_text"]
-        if had_embed_query:
-            retriever_module.embedding_provider.embed_query = original["embed_query"]
-        elif hasattr(retriever_module.embedding_provider, "embed_query"):
-            delattr(retriever_module.embedding_provider, "embed_query")
 
 
 def run_evaluation(user: Mapping[str, Any]) -> dict[str, Any]:

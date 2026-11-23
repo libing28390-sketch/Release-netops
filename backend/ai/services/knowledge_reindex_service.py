@@ -26,6 +26,7 @@ from ai.providers.embedding import (
     embedding_metadata,
     embedding_provider,
 )
+from ai.services import semantic_vectors
 from ai.security.gateway import SecurityBlocked
 from ai.services.knowledge_metadata import (
     MetadataParseError,
@@ -117,8 +118,9 @@ class _ReindexLease:
             except Exception:
                 try:
                     conn.rollback()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Best-effort cleanup; the lease is reported as held by someone else.
+                    logger.debug("Rollback after reindex lease acquire failed code=AI_REINDEX_LEASE_ROLLBACK_FAILED error=%s", type(exc).__name__)
                 ai_metrics.job_event("reindex", "lease_held")
                 return False
 
@@ -144,8 +146,9 @@ class _ReindexLease:
             except Exception:
                 try:
                     conn.rollback()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Best-effort cleanup; the lease is treated as lost.
+                    logger.debug("Rollback after reindex lease renew failed code=AI_REINDEX_LEASE_ROLLBACK_FAILED error=%s", type(exc).__name__)
                 self._held = False
                 ai_metrics.job_event("reindex", "lease_error")
                 return False
@@ -163,8 +166,9 @@ class _ReindexLease:
             except Exception:
                 try:
                     conn.rollback()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Best-effort cleanup; an unreleased lease expires on its own.
+                    logger.debug("Rollback after reindex lease release failed code=AI_REINDEX_LEASE_ROLLBACK_FAILED error=%s", type(exc).__name__)
             finally:
                 self._held = False
 
@@ -592,6 +596,15 @@ class KnowledgeReindexService:
         counters = {"parsed": 1, "updated": 0, "rechunked": len(chunks), "embedding_success": len(vectors), "embedding_failed": 0}
         if dry_run:
             return counters
+        semantic_batch = semantic_vectors.embed_chunks(
+            [chunk.embedding_content for chunk in chunks],
+            tenant_id=str(document.get("tenant_id") or "tenant-default"),
+            task_id=f"knowledge-reindex-semantic:{document['id']}",
+        )
+        if semantic_batch.status == "ok":
+            counters["semantic_embedding_success"] = len(semantic_batch.vectors)
+        elif semantic_batch.status == "failed":
+            counters["semantic_embedding_failed"] = len(chunks)
 
         now = _now()
         values = {
@@ -640,6 +653,8 @@ class KnowledgeReindexService:
             cursor.execute("DELETE FROM ai_document_chunk WHERE document_id = ?", (document["id"],))
             available_chunks = self._table_columns(cursor, "ai_document_chunk")
             assert_pgvector_column_compatible(cursor, expected_dimensions=contract.dimensions)
+            if semantic_batch.status == "ok":
+                semantic_batch = semantic_vectors.guard_column(cursor, semantic_batch)
             for index, (chunk, vector) in enumerate(zip(chunks, vectors)):
                 section = chunk.to_dict()["section"]
                 chunk_metadata = dict(merged)
@@ -684,6 +699,7 @@ class KnowledgeReindexService:
                     "embedding_dimensions": len(vector),
                     "embedding_version": embedding_info.get("embedding_version"),
                     **{key: value for key, value in metadata_columns(merged).items() if key != "document_id"},
+                    **semantic_batch.columns_for(index, chunk.embedding_content, now=now),
                 }
                 chunk_values = {key: value for key, value in chunk_values.items() if key in available_chunks}
                 cursor.execute(

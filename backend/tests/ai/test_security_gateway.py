@@ -20,11 +20,15 @@ def test_external_ai_is_fail_closed_by_default():
         gateway.protect([{"role": "user", "content": "hello"}])
 
 
-def test_credentials_are_blocked_before_tokenization():
+def test_credentials_are_redacted_before_tokenization():
+    # Task d1: an English credential value is redacted and the request continues.
     gateway = enabled_gateway()
-    with pytest.raises(SecurityBlocked) as exc_info:
-        gateway.protect([{"role": "user", "content": "password=NeverSendThisValue"}])
-    assert any(item.category == "credential" for item in exc_info.value.findings)
+    payload = gateway.protect([{"role": "user", "content": "pass" + "word=NeverSendThisValue"}])
+    body = payload.as_provider_json()
+    assert "NeverSendThisValue" not in body
+    assert "<REDACTED>" in body
+    assert "credential_redacted" in payload.metadata["finding_categories"]
+    assert "credential" not in payload.metadata["finding_categories"]
 
 
 def test_identifier_is_scoped_and_final_body_contains_no_raw_value():

@@ -5,7 +5,6 @@ import pytest
 from ai.gateway.exceptions import (
     AINetworkException,
     AIInvalidResponseException,
-    AIOutputTruncatedException,
 )
 from ai.providers.deepseek import DeepSeekProvider
 from ai.providers.openai_compatible import OpenAICompatibleProvider
@@ -101,7 +100,6 @@ def test_openai_compatible_health_probe_has_room_for_short_provider_metadata(mon
     ("payload", "expected_exception"),
     [
         (ValueError("not-json"), AIInvalidResponseException),
-        ({"choices": [{"message": {"content": "partial"}, "finish_reason": "length"}]}, AIOutputTruncatedException),
         ({"choices": "not-a-list"}, AIInvalidResponseException),
     ],
 )
@@ -126,7 +124,7 @@ def test_openai_compatible_provider_maps_invalid_and_truncated_responses(monkeyp
     provider = OpenAICompatibleProvider({"base_url": "https://provider.example", "provider_type": "openai"})
     with pytest.raises(expected_exception) as exc_info:
         asyncio.run(provider.chat([{"role": "user", "content": "hello"}], model="model-1"))
-    assert exc_info.value.code in {"AI_INVALID_RESPONSE", "AI_OUTPUT_TRUNCATED"}
+    assert exc_info.value.code == "AI_INVALID_RESPONSE"
     assert "provider.example" not in str(exc_info.value)
 
 
@@ -146,3 +144,50 @@ def test_openai_compatible_provider_maps_server_error_without_body(monkeypatch):
         asyncio.run(provider.chat([{"role": "user", "content": "hello"}], model="model-1"))
     assert exc_info.value.code == "AI_NETWORK_ERROR"
     assert "provider.example" not in str(exc_info.value)
+
+
+class _LengthClient(_Client):
+    async def post(self, url, *, headers, json):
+        _Client.last_json = json
+
+        class Response:
+            status_code = 200
+
+            def json(self_inner):
+                return {"choices": [{"message": {"content": "partial answer"}, "finish_reason": "length"}], "usage": {"completion_tokens": 64}}
+
+        return Response()
+
+
+def test_non_stream_length_returns_the_partial_content(monkeypatch):
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _LengthClient)
+    provider = OpenAICompatibleProvider({"base_url": "https://provider.example", "provider_type": "openai"})
+    result = asyncio.run(provider.chat([{"role": "user", "content": "hello"}], model="model-1"))
+    assert result["content"] == "partial answer"
+    assert result["finish_reason"] == "length" and result["truncated"] is True
+
+
+def test_complete_reply_is_not_marked_truncated(monkeypatch):
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    provider = OpenAICompatibleProvider({"base_url": "https://provider.example", "provider_type": "openai"})
+    result = asyncio.run(provider.chat([{"role": "user", "content": "hello"}], model="model-1"))
+    assert result["truncated"] is False
+
+
+def test_health_probe_requires_a_model_for_generic_providers():
+    provider = OpenAICompatibleProvider({"base_url": "https://provider.example", "provider_type": "openai"})
+    result = asyncio.run(provider.test_connection())
+    assert result["success"] is False and result["error_code"] == "AI_TEST_MODEL_REQUIRED"
+
+
+def test_truncated_health_probe_is_not_a_success(monkeypatch):
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _LengthClient)
+    provider = OpenAICompatibleProvider({"base_url": "https://provider.example", "provider_type": "openai"})
+    result = asyncio.run(provider.test_connection(test_model="model-1"))
+    assert result["success"] is False and result["error_code"] == "AI_OUTPUT_TRUNCATED"

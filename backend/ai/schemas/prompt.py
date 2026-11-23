@@ -83,6 +83,7 @@ class AIPromptPageResponse(BaseModel):
     page_size: int
     total_pages: int
     filters: dict[str, Any] = Field(default_factory=dict)
+    facets: dict[str, Any] = Field(default_factory=dict)
 
 
 class AIPromptVersionCompareResponse(BaseModel):

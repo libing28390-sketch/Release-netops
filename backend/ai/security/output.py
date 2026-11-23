@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
-import html
 import re
 from typing import Any
 
-from ai.security.classification import PRIVATE_KEY_RE, SECRET_ASSIGNMENT_RE, is_redacted_assignment_match
+from ai.security.classification import (
+    PRIVATE_KEY_RE,
+    SECRET_ASSIGNMENT_RE,
+    find_cn_personal_info,
+    is_redacted_assignment_match,
+    iter_cn_secret_assignments,
+)
 from ai.security.sanitizer import sanitize_text
 from ai.security.tokenization import TOKEN_RE, ScopedTokenVault
 
@@ -24,8 +29,118 @@ _CREDENTIAL_PREFIXES = (
     "pre-shared-key", "key-string", "shared-key",
 )
 
+# Chinese credential keywords (batch 6).  Longest first so that
+# "预共享密钥" wins over "密钥".  No word boundary: Chinese has none.
+_ZH_CREDENTIAL_KEYWORDS = (
+    "预共享密钥", "共享密钥", "社区字符串", "共同体名", "团体名", "团体字",
+    "密码", "口令", "密钥",
+)
+_ZH_CREDENTIAL_KEYWORD_RE = re.compile("|".join(_ZH_CREDENTIAL_KEYWORDS))
+# What may follow a keyword while the assignment is still being streamed:
+# an optional operator ("是", "：", "设置为" or a prefix of one), an optional
+# opening quote, then printable ASCII only.  Any Chinese / non-ASCII
+# character after the value ends the assignment and releases the hold.
+_ZH_ASSIGNMENT_TAIL_RE = re.compile(
+    r"\s*(?:[:：=]|设置为|设置|设为|设|修改为|修改|修|改为|改成|改|是|为)?\s*[\"'“‘「]?[!-~]*"
+)
+_ZH_CREDENTIAL_PREFIXES = tuple(sorted(
+    {keyword[:size] for keyword in _ZH_CREDENTIAL_KEYWORDS for size in range(1, len(keyword))},
+    key=len,
+    reverse=True,
+))
 
-def sanitize_output(value: Any, *, tenant_id: str, task_id: str, vault: ScopedTokenVault) -> Any:
+# A trailing run that may still grow into an identity-card, bank-card or
+# mobile number (digits, X, spaces, hyphens, a leading +).
+_NUMBER_TAIL_RE = re.compile(r"[0-9Xx +-]+$")
+_NUMBER_HOLD_MAX = 32
+_PII_CONTEXT_CHARS = 24
+
+_MASK_KEEP = {
+    # category: (leading alphanumerics kept, trailing alphanumerics kept)
+    "cn_id_card": (3, 4),
+    "bank_card": (0, 4),
+    "cn_mobile": (3, 4),
+}
+
+
+def _mask_value(value: str, category: str) -> str:
+    head, tail = _MASK_KEEP.get(category, (0, 4))
+    total = sum(1 for char in value if char.isalnum())
+    seen = 0
+    out: list[str] = []
+    for char in value:
+        if not char.isalnum():
+            out.append(char)  # keep spaces / hyphens of a grouped number
+            continue
+        keep = seen < head or seen >= total - tail
+        out.append(char if keep else "*")
+        seen += 1
+    return "".join(out)
+
+
+def _mask_segment(text: str, prefix: str) -> str:
+    matches = find_cn_personal_info(text, strict=True, context=prefix)
+    if not matches:
+        return text
+    parts: list[str] = []
+    last = 0
+    for item in matches:
+        parts.append(text[last:item.start])
+        parts.append(_mask_value(text[item.start:item.end], item.category))
+        last = item.end
+    parts.append(text[last:])
+    return "".join(parts)
+
+
+def mask_personal_info(text: str, *, prefix: str = "") -> str:
+    """Mask identity-card, bank-card and mobile numbers the model produced.
+
+    Uses the strict (output) detector: valid ID check digit, Luhn plus a
+    card-like shape, a phone keyword or +86 for mobile numbers.  ``prefix`` is
+    text that precedes ``text`` (the streamed tail) so a keyword in an earlier
+    chunk still counts.  Opaque ``[[NXA_...]]`` tokens are left untouched;
+    values restored from them later belong to the user and are not masked.
+    """
+
+    if not text or not any(char.isdigit() for char in text):
+        return text
+    parts: list[str] = []
+    last = 0
+    context = prefix
+    for token in TOKEN_RE.finditer(text):
+        segment = text[last:token.start()]
+        parts.append(_mask_segment(segment, context))
+        parts.append(token.group(0))
+        context = (context + segment + token.group(0))[-_PII_CONTEXT_CHARS:]
+        last = token.end()
+    parts.append(_mask_segment(text[last:], context))
+    return "".join(parts)
+
+
+def _redact_cn_credentials(text: str) -> str:
+    """Replace only the value of "密码是Huawei@123"-style assignments."""
+
+    matches = list(iter_cn_secret_assignments(text))
+    if not matches:
+        return text
+    parts: list[str] = []
+    last = 0
+    for match in matches:
+        parts.append(text[last:match.start(1)])
+        parts.append("<REDACTED_CREDENTIAL>")
+        last = match.end(1)
+    parts.append(text[last:])
+    return "".join(parts)
+
+
+def sanitize_output(
+    value: Any,
+    *,
+    tenant_id: str,
+    task_id: str,
+    vault: ScopedTokenVault,
+    pii_context: str = "",
+) -> Any:
     if isinstance(value, str):
         clean = _DANGEROUS_HTML.sub("", value)
         clean = _DANGEROUS_URL.sub("blocked:", clean)
@@ -46,10 +161,15 @@ def sanitize_output(value: Any, *, tenant_id: str, task_id: str, vault: ScopedTo
             return "<REDACTED_CREDENTIAL>"
 
         clean = SECRET_ASSIGNMENT_RE.sub(redact_credential, clean)
+        clean = _redact_cn_credentials(clean)
         clean = sanitize_text(clean)
+        # Numbers the model generated are masked before token resolution, so
+        # an identity-card number the user supplied (restored from its token)
+        # is shown as the user wrote it.
+        clean = mask_personal_info(clean, prefix=pii_context)
         # Resolve only exact, scoped tokens. Unknown/fake tokens remain visible
         # as literal text and are never guessed or fuzzy-matched.
-        return vault.resolve_text(html.escape(clean, quote=False), tenant_id=tenant_id, task_id=task_id)
+        return vault.resolve_text(clean, tenant_id=tenant_id, task_id=task_id)
     if isinstance(value, list):
         return [sanitize_output(item, tenant_id=tenant_id, task_id=task_id, vault=vault) for item in value]
     if isinstance(value, dict):
@@ -71,6 +191,25 @@ def _possible_token_start(text: str, *, start_at: int = 0) -> int | None:
     for size in range(max_prefix, 0, -1):
         if text.endswith(_TOKEN_OPEN[:size]):
             return len(text) - size
+    return None
+
+
+def _possible_number_start(text: str, *, start_at: int = 0) -> int | None:
+    """Hold a trailing digit run that may continue in the next chunk.
+
+    An identity-card or bank-card number split across two provider chunks
+    would otherwise reach the UI half unmasked.  Only a short run made of
+    digits / X / spaces / hyphens / + is held, starting at its first digit or
+    ``+`` (at most the last 32 characters).
+    """
+
+    match = _NUMBER_TAIL_RE.search(text, pos=max(0, start_at))
+    if not match or not any(char.isdigit() for char in match.group(0)):
+        return None
+    begin = max(match.start(), len(text) - _NUMBER_HOLD_MAX)
+    for index in range(begin, len(text)):
+        if text[index].isdigit() or text[index] == "+":
+            return index
     return None
 
 
@@ -118,6 +257,21 @@ def _possible_credential_start(
             if prefix_start >= start_at and at_word_boundary:
                 candidate = min(candidate, prefix_start) if candidate is not None else prefix_start
             break
+
+    # Chinese keywords ("密码是Huawei@123"): hold from the keyword while what
+    # follows can still be the operator and an ASCII value.  The first
+    # Chinese (non-ASCII) character after the value releases the hold.
+    for keyword in _ZH_CREDENTIAL_KEYWORD_RE.finditer(text, pos=max(0, start_at)):
+        if _ZH_ASSIGNMENT_TAIL_RE.fullmatch(text, keyword.end()):
+            candidate = min(candidate, keyword.start()) if candidate is not None else keyword.start()
+            break
+    # A Chinese keyword split across chunks ("密" + "码是...").
+    for prefix in _ZH_CREDENTIAL_PREFIXES:
+        if text.endswith(prefix):
+            prefix_start = len(text) - len(prefix)
+            if prefix_start >= start_at:
+                candidate = min(candidate, prefix_start) if candidate is not None else prefix_start
+            break
     return candidate
 
 
@@ -134,6 +288,9 @@ class StreamingOutputResolver:
         self.task_id = task_id
         self.vault = vault
         self._pending = ""
+        # Last raw characters already emitted: a phone/card keyword in an
+        # earlier chunk still qualifies a number in this one.
+        self._tail = ""
 
     def _emit(self, value: str) -> str:
         resolved = sanitize_output(
@@ -141,7 +298,9 @@ class StreamingOutputResolver:
             tenant_id=self.tenant_id,
             task_id=self.task_id,
             vault=self.vault,
+            pii_context=self._tail,
         )
+        self._tail = (self._tail + value)[-_PII_CONTEXT_CHARS:]
         return resolved if isinstance(resolved, str) else str(resolved)
 
     def push(self, value: Any) -> str:
@@ -156,9 +315,12 @@ class StreamingOutputResolver:
             self._pending,
             start_at=last_complete_end,
         )
+        number_start = _possible_number_start(self._pending, start_at=last_complete_end)
         safe_cut = incomplete_start if incomplete_start is not None else len(self._pending)
         if credential_start is not None:
             safe_cut = min(safe_cut, credential_start)
+        if number_start is not None:
+            safe_cut = min(safe_cut, number_start)
         if safe_cut <= 0:
             return ""
 

@@ -37,3 +37,6 @@ test_dragon.mp3
 
 # Keys
 *.pem
+
+# Embedding sidecar has its own build context; keep the model out of the app image
+sidecars/

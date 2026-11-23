@@ -144,8 +144,8 @@ async def test_gateway_uses_policy_compatible_fallback_after_primary_failure(mon
     )
     monkeypatch.setattr(
         gateway_module.model_router,
-        "resolve_route_with_reason",
-        lambda _scene: ("model-primary", "model-fallback", "test_fallback"),
+        "resolve_route_policy",
+        lambda _scene: ("model-primary", "model-fallback", "scene_route", None),
     )
 
     result = await gateway.chat(

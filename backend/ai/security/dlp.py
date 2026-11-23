@@ -17,7 +17,9 @@ from ai.security.classification import (
     RADIUS_TACACS_SECRET_RE,
     JWT_RE,
     COOKIE_RE,
+    find_cn_personal_info,
     is_redacted_assignment_match,
+    iter_cn_secret_assignments,
 )
 
 
@@ -43,7 +45,11 @@ def scan(value: Any, *, identifiers_blocked: bool = True) -> list[DLPFinding]:
         findings.append(DLPFinding("private_key"))
     if any(not is_redacted_assignment_match(match) for match in SECRET_ASSIGNMENT_RE.finditer(text)):
         findings.append(DLPFinding("credential"))
-    if RADIUS_TACACS_SECRET_RE.search(text):
+    # "密码是Huawei@123" style assignments (batch 6).
+    if next(iter(iter_cn_secret_assignments(text)), None) is not None:
+        findings.append(DLPFinding("credential", "zh_assignment"))
+    # "radius-server key cipher <REDACTED>" is a redacted value (task d1).
+    if any(not is_redacted_assignment_match(match) for match in RADIUS_TACACS_SECRET_RE.finditer(text)):
         findings.append(DLPFinding("radius_or_tacacs_key"))
     if JWT_RE.search(text):
         findings.append(DLPFinding("jwt"))
@@ -56,6 +62,10 @@ def scan(value: Any, *, identifiers_blocked: bool = True) -> list[DLPFinding]:
         ):
             if pattern.search(text):
                 findings.append(DLPFinding(category))
+        # Same detector the tokenizer uses, so a tokenized body never fails
+        # here and an untokenized ID/bank-card number always does.
+        for item in find_cn_personal_info(text):
+            findings.append(DLPFinding(item.category))
     return findings
 
 

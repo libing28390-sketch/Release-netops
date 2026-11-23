@@ -64,6 +64,12 @@ import {
   Cpu,
   Layers3,
   MessageSquare,
+  Plug,
+  HeartPulse,
+  SearchCheck,
+  GitPullRequest,
+  Coins,
+  BrainCircuit,
 } from 'lucide-react';
 import { navConfig } from './AppSidebar/navConfig';
 import { useSystem } from '../hooks/useSystem';
@@ -80,9 +86,9 @@ const LS_KEY = 'nexora_module_nav';
 
 /** Map icon string keys (from navConfig) → lucide component */
 const iconMap: Record<string, React.ComponentType<any>> = {
-  Activity, Archive, BarChart2, BarChart3, Bell, BookOpen, Bot, Boxes, Building2, CalendarClock,
+  Activity, Archive, BarChart2, BarChart3, Bell, BookOpen, Bot, Boxes, BrainCircuit, Building2, CalendarClock, Coins,
   ClipboardCheck, ClipboardList, Clock, CloudCog, Code2, Columns3, Cpu, Database,
-  FileCode2, FileEdit, FileSearch, FileSpreadsheet, FileText, GitBranch, GitCompare, Globe,
+  FileCode2, FileEdit, FileSearch, FileSpreadsheet, FileText, GitBranch, GitCompare, GitPullRequest, Globe, HeartPulse, Plug, SearchCheck,
   Gauge, History, Inbox, Key, Layers, Layers3, LayoutDashboard, MapPin, MessageSquare, Network, Package,
   PlusCircle, Router, Search, Server, Shield, ShieldAlert, ShieldCheck,
   SlidersHorizontal, Star, Tag, Terminal, Timer, TrendingUp,
@@ -274,7 +280,7 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
             </span>
           )}
           <span
-            className="text-[11px] font-semibold tracking-[0.12em] uppercase truncate"
+            className="text-[13px] font-semibold truncate"
             style={{ color: 'var(--muted-text)' }}
           >
             {groupLabel}
@@ -296,7 +302,12 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
 
       {/* Nav items */}
       <nav className={`min-h-0 flex-1 overflow-y-auto ${isCompactNav ? 'px-1.5 pt-2' : 'px-2'}`}>
-        {visibleChildren.map(child => {
+        {visibleChildren.map(child => (
+          <React.Fragment key={child.id}>
+          {child.groupLabel && (isCompactNav
+            ? <div aria-hidden className="mx-2 my-2 border-t border-line" />
+            : <div className="px-3 pb-1 pt-3 text-xs font-medium text-fg-subtle first:pt-1">{zh ? child.groupLabel : (child.groupLabelEn || child.groupLabel)}</div>)}
+          {(() => {
           const active = isActive(child);
           const label = zh ? child.label : (child.labelEn || child.label);
           const Icon = child.icon ? iconMap[child.icon] : undefined;
@@ -470,7 +481,9 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
               )}
             </button>
           );
-        })}
+          })()}
+          </React.Fragment>
+        ))}
       </nav>
 
       {/* Collapse toggle */}

@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     IP_LOCATOR_TASK_DEADLINE_SECONDS: int = 180
     SECRET_KEY: str = "supersecret"
     CREDENTIAL_ENCRYPTION_KEY: str = "change-me-to-a-random-secret"
+    # AI provider key encryption (M14).  "kid:secret[,kid:secret]"; empty means
+    # derive kid "c1" from CREDENTIAL_ENCRYPTION_KEY with a separate HKDF info.
+    AI_PROVIDER_KEY_ENCRYPTION_KEYS: str = ""
+    AI_PROVIDER_KEY_ID: str = ""
+    # Retired provider-key ciphertexts are dropped after this many days.
+    AI_PROVIDER_KEY_HISTORY_RETENTION_DAYS: int = 30
+    # Key for the opaque user id sent to AI providers (>=16 chars). Empty:
+    # derived from CREDENTIAL_ENCRYPTION_KEY.
+    AI_HASH_SALT: str = ""
     ENVIRONMENT: str = "development"
     # Application logs keep operational summaries at INFO. Ordinary successful
     # HTTP access records are emitted at DEBUG; warnings/errors remain visible.
@@ -112,20 +121,44 @@ class Settings(BaseSettings):
     AI_ENABLED: bool = False
     EXTERNAL_AI_ENABLED: bool = False
     AI_KILL_SWITCH: bool = False
-    # Kept for backwards-compatible parsing of older .env files. The
-    # administrator-controlled temporary test mode is now gated by the
-    # normal AI flags and does not require these deployment settings.
-    AI_DEV_PASSTHROUGH_ENABLED: bool = False
-    AI_DEV_PASSTHROUGH_MAX_MINUTES: int = 15
+    # AI_DEV_PASSTHROUGH_ENABLED / AI_DEV_PASSTHROUGH_MAX_MINUTES were removed
+    # (review L1): nothing read them; the temporary test mode is gated by the
+    # normal AI flags.  Older .env files that still set them keep parsing
+    # because Settings ignores unknown keys (Config.extra = "ignore").
     AI_SECURITY_VAULT_TTL_SECONDS: int = 3600
+    AI_KNOWN_HOSTNAME_TTL_SECONDS: int = 300
     AI_MAX_PAYLOAD_BYTES: int = 256000
     AI_PROVIDER_ALLOWLIST: str = "deepseek,openai,openai_compatible,azure_openai,ollama,local,qwen"
+    # Seconds between checks for policy / kill-switch changes made by other
+    # worker processes.  Every worker follows a change within this interval.
+    AI_POLICY_REFRESH_SECONDS: float = 3.0
+    # Optional deployment-level allowlist of provider host names, e.g.
+    # "api.deepseek.com,*.openai.azure.com".  Empty means no extra limit.
+    # Maintained outside the application so the permission that edits a
+    # Provider cannot also approve where its API key is sent.
+    AI_PROVIDER_ENDPOINT_ALLOWLIST: str = ""
+    # Hard limits for the generic /api/v1/ai/chat contract.
+    AI_CHAT_MAX_OUTPUT_TOKENS: int = 8192
+    # Copilot answer length; clamped to each model's max_output_tokens.
+    AI_COPILOT_MAX_OUTPUT_TOKENS: int = 8192
+    AI_CHAT_DAILY_REQUEST_LIMIT: int = 500
+    # Per-user daily limit for Copilot (/api/ai/assistant/chat[-stream]). 0 = unlimited.
+    AI_COPILOT_DAILY_REQUEST_LIMIT: int = 1000
+    # AI / knowledge chain safety switches (see .env.example).  Both default
+    # off: AI tools may not change devices or use production credentials
+    # unless the deployment explicitly allows it.
+    NETWORK_WRITE_ENABLED: bool = False
+    PRODUCTION_CREDENTIALS_ALLOWED: bool = False
+    # Deprecated (review L1): no runtime code reads this flag.  Kept because
+    # scripts/ai_rag_release_config_check.py requires AI_DEBUG_PAYLOAD=0 as a
+    # release safe default; remove both together in a later release.
     AI_DEBUG_PAYLOAD: bool = False
     AI_OUTBOUND_PROXY_URL: str = ""
     # One provider-agnostic, read-only web retrieval capability.  It is used
     # for explicitly current/public questions and as a fallback after a
     # network-knowledge miss; it never grants device write or tenant access.
-    AI_WEB_SEARCH_ENABLED: bool = True
+    # Off unless public web egress is approved for the deployment.
+    AI_WEB_SEARCH_ENABLED: bool = False
     AI_WEB_SEARCH_ENDPOINT: str = "https://html.duckduckgo.com/html/"
     AI_WEB_ALLOWED_HOSTS: str = ""
     AI_WEB_TIMEOUT_SECONDS: float = 8.0
@@ -140,6 +173,14 @@ class Settings(BaseSettings):
     AI_CONCURRENCY_ACQUIRE_TIMEOUT_SECONDS: float = 10.0
     AI_CIRCUIT_FAILURE_THRESHOLD: int = 3
     AI_CIRCUIT_COOLDOWN_SECONDS: float = 30.0
+    # A half-open probe that never reports back is abandoned after this long.
+    AI_CIRCUIT_PROBE_TIMEOUT_SECONDS: float = 120.0
+    # Longest Retry-After (seconds) worth waiting for inside one request.
+    AI_RETRY_AFTER_MAX_SECONDS: float = 10.0
+    # Upper bound on a whole streamed answer, in seconds.
+    AI_STREAM_MAX_SECONDS: float = 300.0
+    # Connection pool size of each shared provider HTTP client.
+    AI_HTTP_MAX_CONNECTIONS: int = 50
     AI_HEALTH_BACKOFF_SECONDS: int = 30
     # Model probes are intentionally sparse and tiny: one probe per enabled
     # chat/reasoning model every ten minutes by default.  The gateway still
@@ -150,6 +191,8 @@ class Settings(BaseSettings):
     AI_MODEL_HEALTH_MAX_TOKENS: int = 64
     AI_MODEL_HEALTH_RETENTION_DAYS: int = 90
     AI_DAILY_BUDGET_USD: float = 0.0
+    # With a budget configured, block calls when spend cannot be read.
+    AI_BUDGET_FAIL_CLOSED: bool = True
 
     # PAM Web terminal compatibility control. Host-key registration is not a
     # login prerequisite; legacy algorithms still require explicit opt-in.

@@ -107,6 +107,61 @@ def version_compatibility(
     return (0.15 if (req_release or req_train) else 0.5), "version_evidence_missing"
 
 
+DEFAULT_SCORE_WEIGHTS: dict[str, float] = {
+    "lexical": 0.45,
+    "vector": 0.25,
+    "metadata": 0.15,
+    "trust": 0.10,
+    "version": 0.05,
+}
+_WEIGHT_KEYS = tuple(DEFAULT_SCORE_WEIGHTS)
+
+
+def parse_score_weights(raw: str | None) -> dict[str, float]:
+    """Parse ``lexical=0.40,vector=0.30,...``; all five keys, each 0..1, sum 1.
+
+    Raises ValueError on any malformed value, so a typo can never silently
+    change ranking.
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return dict(DEFAULT_SCORE_WEIGHTS)
+    values: dict[str, float] = {}
+    for part in text.split(","):
+        key, sep, value = part.partition("=")
+        key = key.strip().lower()
+        if not sep or key not in DEFAULT_SCORE_WEIGHTS or key in values:
+            raise ValueError("score weights must be lexical/vector/metadata/trust/version=<number>")
+        number = float(value)
+        if not (0.0 <= number <= 1.0) or not math.isfinite(number):
+            raise ValueError("score weights must be between 0 and 1")
+        values[key] = number
+    if set(values) != set(DEFAULT_SCORE_WEIGHTS) or abs(sum(values.values()) - 1.0) > 1e-6:
+        raise ValueError("score weights must name all five signals and sum to 1")
+    return values
+
+
+_WEIGHTS_CACHE: tuple[str, dict[str, float]] | None = None
+
+
+def score_weights() -> dict[str, float]:
+    """Active weights from AI_RETRIEVAL_SCORE_WEIGHTS (defaults when unset/invalid)."""
+    global _WEIGHTS_CACHE
+    raw = str(os.environ.get("AI_RETRIEVAL_SCORE_WEIGHTS", "") or "")
+    cached = _WEIGHTS_CACHE
+    if cached is not None and cached[0] == raw:
+        return dict(cached[1])
+    try:
+        weights = parse_score_weights(raw)
+    except ValueError:
+        import logging
+
+        logging.getLogger(__name__).error("AI_RETRIEVAL_SCORE_WEIGHTS is invalid; using the default weights")
+        weights = dict(DEFAULT_SCORE_WEIGHTS)
+    _WEIGHTS_CACHE = (raw, weights)
+    return dict(weights)
+
+
 @dataclass(frozen=True)
 class ScoreComponents:
     lexical: float
@@ -114,22 +169,20 @@ class ScoreComponents:
     metadata: float
     trust: float
     version: float
+    # None = the frozen defaults, so existing callers are unchanged.  Tuning
+    # passes explicit weights (AI_RETRIEVAL_SCORE_WEIGHTS); they are reported
+    # in the explanation object.
+    weights: Mapping[str, float] | None = None
+
+    def _weights(self) -> Mapping[str, float]:
+        return self.weights if self.weights is not None else DEFAULT_SCORE_WEIGHTS
 
     @property
     def total(self) -> float:
-        # Weights are frozen for reproducible ranking and exposed in the
-        # explanation object.  They sum to one and keep hard metadata filters
-        # separate from the soft ranking signals.
+        weights = self._weights()
         return max(
             0.0,
-            min(
-                1.0,
-                0.45 * self.lexical
-                + 0.25 * self.vector
-                + 0.15 * self.metadata
-                + 0.10 * self.trust
-                + 0.05 * self.version,
-            ),
+            min(1.0, sum(float(weights[key]) * float(getattr(self, key)) for key in _WEIGHT_KEYS)),
         )
 
     def to_dict(self) -> dict[str, float | dict[str, float]]:
@@ -140,13 +193,7 @@ class ScoreComponents:
             "trust": round(self.trust, 4),
             "version": round(self.version, 4),
             "total": round(self.total, 4),
-            "weights": {
-                "lexical": 0.45,
-                "vector": 0.25,
-                "metadata": 0.15,
-                "trust": 0.10,
-                "version": 0.05,
-            },
+            "weights": {key: float(self._weights()[key]) for key in _WEIGHT_KEYS},
         }
 
 

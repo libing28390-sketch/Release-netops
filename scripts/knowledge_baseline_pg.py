@@ -52,10 +52,20 @@ def _percentile(values: list[float], percentile: float) -> float:
     return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
 
 
+class _BaselineEmbedder:
+    model_id = "v1-baseline"
+    dimensions = 2
+
+    def embed_text(self, _text: str) -> list[float]:
+        return [1.0, 0.0]
+
+    def embed_query(self, _text: str) -> list[float]:
+        return [1.0, 0.0]
+
+
 def run() -> dict[str, Any]:
     if not _USE_PG:
         raise SystemExit("V1-PG-BASELINE requires PostgreSQL DATABASE_URL")
-    from ai.services import rag_retriever as retriever_module
     from ai.services.rag_retriever import RAGRetriever, RetrievalRequest
 
     fixture = yaml.safe_load(CASE_FILE.read_text(encoding="utf-8"))
@@ -76,11 +86,11 @@ def run() -> dict[str, Any]:
                 (f"chunk-{index}", document_id, document["content"], json.dumps([1.0, 0.0]), "[1,0]", json.dumps(metadata, ensure_ascii=False), f"2026-01-{index + 1:02d}", document["content"], "v1-baseline"),
             )
 
-        retriever_module.get_db_connection = lambda: _SessionContext(connection)
-        retriever_module._USE_PG = True
-        retriever_module.embedding_provider.embed_text = lambda _text: [1.0, 0.0]
-        retriever_module.embedding_provider.embed_query = lambda _text: [1.0, 0.0]
-        retriever = RAGRetriever()
+        retriever = RAGRetriever(
+            cache_enabled=False,
+            connection_factory=lambda: _SessionContext(connection),
+            embedder=_BaselineEmbedder(),
+        )
         rows: list[dict[str, Any]] = []
         latencies: list[float] = []
         for case in fixture["cases"]:

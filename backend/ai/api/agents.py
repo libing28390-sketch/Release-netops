@@ -20,9 +20,50 @@ router = APIRouter(prefix="/agents", tags=["AI Agents & Tools"])
 class AgentRunRequest(BaseModel):
     agent_code: str = Field("troubleshooting_agent", description="Agent code identifier")
     question: str = Field(..., description="Troubleshooting problem description")
-    max_steps: int = Field(6, ge=1, le=50)
-    max_tool_calls: int = Field(12, ge=1, le=200)
-    timeout_seconds: int = Field(180, ge=5, le=3600)
+    max_steps: int = Field(6, ge=1, le=20)
+    max_tool_calls: int = Field(12, ge=1, le=50)
+    # Wall-clock budget for the whole run (all steps), in seconds.
+    timeout_seconds: int = Field(180, ge=5, le=900)
+
+
+@router.get("")
+def list_registered_agents(user=Depends(require_ai_permission("ai.view"))):
+    """List all registered AI Agents."""
+    del user
+    with get_db_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, code, name, description, system_prompt, allowed_tools,
+                   max_steps, timeout, enabled, created_at, updated_at
+            FROM ai_agent
+            ORDER BY enabled DESC, name ASC
+            """
+        ).fetchall()
+    agents: list[dict[str, Any]] = []
+    for row in rows:
+        raw_tools = row[5]
+        if isinstance(raw_tools, list):
+            allowed_tools = raw_tools
+        else:
+            try:
+                parsed = json.loads(str(raw_tools or "[]"))
+                allowed_tools = parsed if isinstance(parsed, list) else []
+            except (TypeError, ValueError, json.JSONDecodeError):
+                allowed_tools = []
+        agents.append({
+            "id": row[0],
+            "code": row[1],
+            "name": row[2],
+            "description": row[3] or "",
+            "system_prompt": row[4] or "",
+            "allowed_tools": [str(item) for item in allowed_tools if str(item).strip()],
+            "max_steps": int(row[6] or 6),
+            "timeout": int(row[7] or 180),
+            "enabled": bool(row[8]),
+            "created_at": row[9],
+            "updated_at": row[10],
+        })
+    return agents
 
 
 @router.get("/tools")

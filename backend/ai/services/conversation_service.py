@@ -8,9 +8,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
 from database.core import get_db_connection
-from ai.security.classification import DataLevel, classify_text
+from ai.security.classification import DataLevel, classify_text, redact_secrets
 from ai.security.minimizer import minimize
+from ai.security import field_crypto
 from ai.security.tokenization import opaque_user_id, tokenize_text, token_vault
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> str:
@@ -114,24 +119,71 @@ class ConversationSecurityError(ValueError):
     code = "AI_SECURITY_SENSITIVE_DATA"
 
 
-def _safe_message_content(content: str, *, tenant_id: str, scope_id: str, role: str = "user") -> str:
+def _readable_message_content(content: str) -> str:
+    """Policy checks on a message before it is stored (secrets never are)."""
     text = str(content or "")[:200_000]
+    # "我的密码是Huawei@123" or an English credential assignment / private key
+    # / JWT: store the message with the value redacted rather than rejecting
+    # it (batch 6, task d1).  The value never reaches the database or a later
+    # prompt built from the history.  Full configuration etc. still raise.
+    text, _ = redact_secrets(text)
     findings = classify_text(text)
     if any(item.level >= DataLevel.L4_PROHIBITED for item in findings):
         raise ConversationSecurityError("message contains prohibited secret or full configuration data")
     if any(item.level >= DataLevel.L3_SENSITIVE for item in findings):
         text = str(minimize(text, max_text_chars=8000))
-    # Assistant output has already passed the outbound security gateway. Keep
-    # its identifiers readable in persisted history so links, addresses, and
-    # CLI examples remain useful after the in-memory token vault expires.
+    return text
+
+
+def _safe_title(title: Any, *, default: str = "") -> str:
+    """Conversation titles are shown in the sidebar and matched by search:
+    redact credential values before truncating (a cut could otherwise leave a
+    partial value that no longer matches the detector)."""
+
+    text, _ = redact_secrets(str(title or "").strip())
+    return text[:200] or default
+
+
+def _message_context(conversation_id: str) -> str:
+    return f"ai_messages:{conversation_id}"
+
+
+def _stored_message_content(text: str, *, tenant_id: str, scope_id: str, role: str) -> str:
+    """Encrypt readable text at rest (M12).
+
+    Identifiers are tokenized later, by the security gateway, for each
+    provider request only -- so history stays readable after the token vault
+    forgets.  Without a master key (should not happen: startup requires one)
+    the previous behaviour is kept: user text tokenized, assistant readable.
+    """
+    if field_crypto.available():
+        return field_crypto.encrypt_field(text, context=_message_context(scope_id))
     if role == "assistant":
         return text
     return tokenize_text(text, tenant_id=tenant_id, task_id=scope_id, vault=token_vault)
 
 
+def _read_message_content(stored: Any, *, tenant_id: str, conversation_id: str) -> str:
+    value = str(stored or "")
+    if field_crypto.is_encrypted(value):
+        try:
+            return field_crypto.decrypt_field(value, context=_message_context(conversation_id))
+        except field_crypto.FieldDecryptError:
+            return "[消息内容无法解密：请检查主密钥配置]"
+    # Rows written before M12: tokenized user text.  Resolve what the
+    # current process still knows; expired tokens stay visible as tokens.
+    return token_vault.resolve_text(value, tenant_id=tenant_id, task_id=conversation_id)
+
+
+def _safe_message_content(content: str, *, tenant_id: str, scope_id: str, role: str = "user") -> str:
+    """Compatibility wrapper: the value stored in ``content_safe``."""
+    return _stored_message_content(_readable_message_content(content), tenant_id=tenant_id, scope_id=scope_id, role=role)
+
+
 def create_conversation(*, tenant_id: str, user_id: str, title: str | None = None, context_budget: int = 8192, selected_model_id: str | None = None, model_locked: bool = False) -> dict[str, Any]:
     conversation_id = f"conv_{uuid.uuid4().hex[:20]}"
     now = _now()
+    safe_title = _safe_title(title)
     with get_db_connection() as conn:
         try:
             conn.execute(
@@ -140,23 +192,23 @@ def create_conversation(*, tenant_id: str, user_id: str, title: str | None = Non
                     (id, tenant_id, user_id_opaque, title, status, context_budget, selected_model_id, model_locked, clarification_state_json, clarification_state_version, clarification_updated_at, created_at, updated_at)
                 VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, 0, NULL, ?, ?)
                 """,
-                (conversation_id, tenant_id, opaque_user_id(user_id, tenant_id=tenant_id, task_id="conversation-owner"), (title or "")[:200], max(4096, min(int(context_budget), 131072)), selected_model_id, int(model_locked), "{}", now, now),
+                (conversation_id, tenant_id, opaque_user_id(user_id, tenant_id=tenant_id, task_id="conversation-owner"), safe_title, max(4096, min(int(context_budget), 131072)), selected_model_id, int(model_locked), "{}", now, now),
             )
         except Exception:
             conn.rollback()
             try:
                 conn.execute(
                     "INSERT INTO ai_conversations (id, tenant_id, user_id_opaque, title, status, context_budget, selected_model_id, model_locked, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)",
-                    (conversation_id, tenant_id, opaque_user_id(user_id, tenant_id=tenant_id, task_id="conversation-owner"), (title or "")[:200], max(4096, min(int(context_budget), 131072)), selected_model_id, int(model_locked), now, now),
+                    (conversation_id, tenant_id, opaque_user_id(user_id, tenant_id=tenant_id, task_id="conversation-owner"), safe_title, max(4096, min(int(context_budget), 131072)), selected_model_id, int(model_locked), now, now),
                 )
             except Exception:
                 conn.rollback()
                 conn.execute(
                     "INSERT INTO ai_conversations (id, tenant_id, user_id_opaque, title, status, context_budget, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', ?, ?, ?)",
-                    (conversation_id, tenant_id, opaque_user_id(user_id, tenant_id=tenant_id, task_id="conversation-owner"), (title or "")[:200], max(4096, min(int(context_budget), 131072)), now, now),
+                    (conversation_id, tenant_id, opaque_user_id(user_id, tenant_id=tenant_id, task_id="conversation-owner"), safe_title, max(4096, min(int(context_budget), 131072)), now, now),
                 )
         conn.commit()
-    return {"id": conversation_id, "tenant_id": tenant_id, "title": (title or "")[:200], "status": "active", "context_budget": max(4096, min(int(context_budget), 131072)), "selected_model_id": selected_model_id, "model_locked": model_locked, "created_at": now, "updated_at": now}
+    return {"id": conversation_id, "tenant_id": tenant_id, "title": safe_title, "status": "active", "context_budget": max(4096, min(int(context_budget), 131072)), "selected_model_id": selected_model_id, "model_locked": model_locked, "created_at": now, "updated_at": now}
 
 
 def list_conversations(*, tenant_id: str, user_id: str, page: int = 1, page_size: int = 20, include_archived: bool = False, search: str = "") -> dict[str, Any]:
@@ -167,16 +219,48 @@ def list_conversations(*, tenant_id: str, user_id: str, page: int = 1, page_size
     search_clause = ""
     search_params: list[Any] = []
     if normalized_search:
-        search_clause = " AND (LOWER(COALESCE(title, '')) LIKE LOWER(?) OR EXISTS (SELECT 1 FROM ai_messages m WHERE m.conversation_id = ai_conversations.id AND LOWER(COALESCE(m.content_safe, '')) LIKE LOWER(?)))"
-        pattern = f"%{normalized_search}%"
-        search_params = [pattern, pattern]
+        # Message text is encrypted at rest, so SQL can only match titles;
+        # message text is matched after decryption, bounded to this user's
+        # most recent conversations.
+        needle = normalized_search.lower()
+        matched_ids: list[str] = []
+        with get_db_connection() as conn:
+            candidates = conn.execute(
+                f"SELECT id, title FROM ai_conversations WHERE tenant_id = ? AND user_id_opaque = ?{status_clause} ORDER BY updated_at DESC LIMIT 300",
+                (tenant_id, opaque),
+            ).fetchall()
+            for candidate in candidates:
+                # Titles stored before task d1 may still hold a raw value.
+                if needle in _safe_title(candidate["title"]).lower():
+                    matched_ids.append(candidate["id"])
+                    continue
+                messages = conn.execute(
+                    "SELECT content_safe FROM ai_messages WHERE conversation_id = ? ORDER BY sequence_no DESC LIMIT 200",
+                    (candidate["id"],),
+                ).fetchall()
+                if any(
+                    needle in _read_message_content(
+                        row["content_safe"] if _row_has(row, "content_safe") else "",
+                        tenant_id=tenant_id,
+                        conversation_id=candidate["id"],
+                    ).lower()
+                    for row in messages
+                ):
+                    matched_ids.append(candidate["id"])
+        if not matched_ids:
+            return {"items": [], "total": 0, "page": page, "page_size": page_size, "search": normalized_search}
+        search_clause = " AND id IN (" + ", ".join("?" for _ in matched_ids) + ")"
+        search_params = matched_ids
     with get_db_connection() as conn:
         total = conn.execute(f"SELECT COUNT(*) AS c FROM ai_conversations WHERE tenant_id = ? AND user_id_opaque = ?{status_clause}{search_clause}", (tenant_id, opaque, *search_params)).fetchone()["c"]
         rows = conn.execute(
             f"SELECT id, tenant_id, title, status, context_budget, selected_model_id, model_locked, created_at, updated_at FROM ai_conversations WHERE tenant_id = ? AND user_id_opaque = ?{status_clause}{search_clause} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
             (tenant_id, opaque, *search_params, page_size, (page - 1) * page_size),
         ).fetchall()
-    return {"items": [dict(row) for row in rows], "total": int(total or 0), "page": page, "page_size": page_size, "search": normalized_search}
+    items = [dict(row) for row in rows]
+    for item in items:
+        item["title"] = _safe_title(item.get("title"))
+    return {"items": items, "total": int(total or 0), "page": page, "page_size": page_size, "search": normalized_search}
 
 
 def _get_conversation(conn, conversation_id: str, *, tenant_id: str, user_id: str):
@@ -188,7 +272,7 @@ def _conversation_result(row: Any) -> dict[str, Any]:
     result = {
         "id": row["id"],
         "tenant_id": row["tenant_id"],
-        "title": row["title"] or "",
+        "title": _safe_title(row["title"]),
         "status": row["status"],
         "context_budget": int(row["context_budget"] or 8192),
         "created_at": row["created_at"],
@@ -329,7 +413,7 @@ def clear_clarification_state(
 
 
 def rename_conversation(*, conversation_id: str, tenant_id: str, user_id: str, title: str) -> dict[str, Any]:
-    normalized_title = str(title or "").strip()[:200] or "新对话"
+    normalized_title = _safe_title(title, default="新对话")
     now = _now()
     with get_db_connection() as conn:
         conversation = _get_conversation(conn, conversation_id, tenant_id=tenant_id, user_id=user_id)
@@ -337,7 +421,7 @@ def rename_conversation(*, conversation_id: str, tenant_id: str, user_id: str, t
             raise LookupError("conversation not found")
         conn.execute("UPDATE ai_conversations SET title = ?, updated_at = ? WHERE id = ?", (normalized_title, now, conversation_id))
         conn.commit()
-        row = conn.execute("SELECT id, tenant_id, title, status, context_budget, created_at, updated_at FROM ai_conversations WHERE id = ?", (conversation_id,)).fetchone()
+        row = _get_conversation(conn, conversation_id, tenant_id=tenant_id, user_id=user_id)
     return _conversation_result(row)
 
 
@@ -354,7 +438,7 @@ def archive_conversation(*, conversation_id: str, tenant_id: str, user_id: str, 
             conn.rollback()
             conn.execute("UPDATE ai_conversations SET status = ?, updated_at = ? WHERE id = ?", (status, now, conversation_id))
         conn.commit()
-        row = conn.execute("SELECT id, tenant_id, title, status, context_budget, created_at, updated_at FROM ai_conversations WHERE id = ?", (conversation_id,)).fetchone()
+        row = _get_conversation(conn, conversation_id, tenant_id=tenant_id, user_id=user_id)
     return _conversation_result(row)
 
 
@@ -381,7 +465,7 @@ def clear_messages(*, conversation_id: str, tenant_id: str, user_id: str) -> dic
             conn.rollback()
             conn.execute("UPDATE ai_conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
         conn.commit()
-        row = conn.execute("SELECT id, tenant_id, title, status, context_budget, created_at, updated_at FROM ai_conversations WHERE id = ?", (conversation_id,)).fetchone()
+        row = _get_conversation(conn, conversation_id, tenant_id=tenant_id, user_id=user_id)
     return _conversation_result(row)
 
 
@@ -418,32 +502,57 @@ def import_messages(*, conversation_id: str, tenant_id: str, user_id: str, messa
     return {"conversation": _conversation_result(conversation), "imported": imported, "skipped": skipped}
 
 
-def append_message(*, conversation_id: str, tenant_id: str, user_id: str, role: str, content: str, citations: list[dict[str, Any]] | None = None, reasoning_internal: str | None = None, requested_model_id: str | None = None, actual_model_id: str | None = None, provider_id: str | None = None, route_reason: str | None = None, fallback_used: bool = False, execution_mode: str | None = None, external_egress: bool | None = None, input_tokens: int | None = None, output_tokens: int | None = None, latency_ms: int | None = None, token_source: str | None = None) -> dict[str, Any]:
+_CACHED_TOKENS_COL_READY = False
+
+
+def _ensure_cached_tokens_column(conn: Any) -> None:
+    global _CACHED_TOKENS_COL_READY
+    if _CACHED_TOKENS_COL_READY:
+        return
+    try:
+        conn.execute("ALTER TABLE ai_messages ADD COLUMN IF NOT EXISTS cached_tokens INTEGER")
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    _CACHED_TOKENS_COL_READY = True
+
+
+def append_message(*, conversation_id: str, tenant_id: str, user_id: str, role: str, content: str, citations: list[dict[str, Any]] | None = None, reasoning_internal: str | None = None, requested_model_id: str | None = None, actual_model_id: str | None = None, provider_id: str | None = None, route_reason: str | None = None, fallback_used: bool = False, execution_mode: str | None = None, external_egress: bool | None = None, input_tokens: int | None = None, output_tokens: int | None = None, cached_tokens: int | None = None, latency_ms: int | None = None, token_source: str | None = None) -> dict[str, Any]:
     if role not in {"system", "user", "assistant", "tool"}:
         raise ValueError("unsupported conversation role")
-    safe_content = _safe_message_content(content, tenant_id=tenant_id, scope_id=conversation_id, role=role)
-    allowed_execution_modes = {"local_knowledge", "local_operation", "local_clarification", "provider_generated", "local_fallback", "legacy_unknown"}
+    readable_content = _readable_message_content(content)
+    safe_content = _stored_message_content(readable_content, tenant_id=tenant_id, scope_id=conversation_id, role=role)
+    allowed_execution_modes = {
+        "local_knowledge", "local_operation", "local_clarification",
+        "local_sensitive_identifier", "local_security_block",
+        "provider_generated", "local_fallback", "legacy_unknown",
+    }
     safe_execution_mode = execution_mode if execution_mode in allowed_execution_modes else None
     safe_input_tokens = max(0, int(input_tokens)) if input_tokens is not None else None
     safe_output_tokens = max(0, int(output_tokens)) if output_tokens is not None else None
+    safe_cached_tokens = max(0, int(cached_tokens)) if cached_tokens is not None else None
     safe_latency_ms = max(0, int(latency_ms)) if latency_ms is not None else None
     safe_token_source = token_source if token_source in {"provider_reported", "estimated", "local_zero"} else None
     message_id = f"msg_{uuid.uuid4().hex[:20]}"
     now = _now()
     with get_db_connection() as conn:
+        _ensure_cached_tokens_column(conn)
         conversation = _get_conversation(conn, conversation_id, tenant_id=tenant_id, user_id=user_id)
         if not conversation:
             raise LookupError("conversation not found")
         next_seq = conn.execute("SELECT COALESCE(MAX(sequence_no), 0) + 1 AS n FROM ai_messages WHERE conversation_id = ?", (conversation_id,)).fetchone()["n"]
-        token_count = max(1, len(safe_content) // 3)
+        token_count = max(1, len(readable_content) // 3)
         try:
             conn.execute(
                 """
                 INSERT INTO ai_messages
-                    (id, conversation_id, sequence_no, role, content_safe, reasoning_internal, tool_calls_json, citations_json, token_count, requested_model_id, actual_model_id, provider_id, route_reason, fallback_used, execution_mode, external_egress, input_tokens, output_tokens, latency_ms, token_source, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, conversation_id, sequence_no, role, content_safe, reasoning_internal, tool_calls_json, citations_json, token_count, requested_model_id, actual_model_id, provider_id, route_reason, fallback_used, execution_mode, external_egress, input_tokens, output_tokens, cached_tokens, latency_ms, token_source, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (message_id, conversation_id, int(next_seq), role, safe_content, (reasoning_internal or "")[:10000] or None, json.dumps(citations or [], ensure_ascii=False), token_count, requested_model_id, actual_model_id, provider_id, route_reason, int(fallback_used), safe_execution_mode, int(external_egress) if external_egress is not None else None, safe_input_tokens, safe_output_tokens, safe_latency_ms, safe_token_source, now),
+                (message_id, conversation_id, int(next_seq), role, safe_content, (reasoning_internal or "")[:10000] or None, json.dumps(citations or [], ensure_ascii=False), token_count, requested_model_id, actual_model_id, provider_id, route_reason, int(fallback_used), safe_execution_mode, int(external_egress) if external_egress is not None else None, safe_input_tokens, safe_output_tokens, safe_cached_tokens, safe_latency_ms, safe_token_source, now),
             )
         except Exception:
             conn.execute(
@@ -452,18 +561,19 @@ def append_message(*, conversation_id: str, tenant_id: str, user_id: str, role: 
             )
         conn.execute("UPDATE ai_conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
         conn.commit()
-    return {"id": message_id, "conversation_id": conversation_id, "sequence_no": int(next_seq), "role": role, "content": safe_content, "citations": citations or [], "token_count": token_count, "execution_mode": safe_execution_mode, "external_egress": external_egress, "input_tokens": safe_input_tokens, "output_tokens": safe_output_tokens, "latency_ms": safe_latency_ms, "token_source": safe_token_source, "created_at": now}
+    return {"id": message_id, "conversation_id": conversation_id, "sequence_no": int(next_seq), "role": role, "content": readable_content, "citations": citations or [], "token_count": token_count, "execution_mode": safe_execution_mode, "external_egress": external_egress, "input_tokens": safe_input_tokens, "output_tokens": safe_output_tokens, "cached_tokens": safe_cached_tokens, "latency_ms": safe_latency_ms, "token_source": safe_token_source, "created_at": now}
 
 
 def get_context(*, conversation_id: str, tenant_id: str, user_id: str, max_messages: int = 40) -> dict[str, Any]:
     max_messages = max(1, min(int(max_messages), 100))
     with get_db_connection() as conn:
+        _ensure_cached_tokens_column(conn)
         conversation = _get_conversation(conn, conversation_id, tenant_id=tenant_id, user_id=user_id)
         if not conversation:
             raise LookupError("conversation not found")
         try:
             rows = conn.execute(
-                "SELECT id, sequence_no, role, content_safe, citations_json, token_count, requested_model_id, actual_model_id, provider_id, route_reason, fallback_used, execution_mode, external_egress, input_tokens, output_tokens, latency_ms, token_source, created_at FROM ai_messages WHERE conversation_id = ? ORDER BY sequence_no DESC LIMIT ?",
+                "SELECT id, sequence_no, role, content_safe, citations_json, token_count, requested_model_id, actual_model_id, provider_id, route_reason, fallback_used, execution_mode, external_egress, input_tokens, output_tokens, cached_tokens, latency_ms, token_source, created_at FROM ai_messages WHERE conversation_id = ? ORDER BY sequence_no DESC LIMIT ?",
                 (conversation_id, max_messages),
             ).fetchall()
         except Exception:
@@ -478,15 +588,10 @@ def get_context(*, conversation_id: str, tenant_id: str, user_id: str, max_messa
             item["citations"] = json.loads(item.pop("citations_json") or "[]")
         except Exception:
             item["citations"] = []
-        # Conversation content is tokenized at rest. The caller has already
-        # passed the tenant/user ownership check above, so resolve only the
-        # exact token scope for this conversation before returning it to the
-        # authorized UI or reusing it as model history.
-        item["content"] = token_vault.resolve_text(
-            item.pop("content_safe"),
-            tenant_id=tenant_id,
-            task_id=conversation_id,
-        )
+        # The caller has passed the tenant/user ownership check above.
+        # Encrypted rows (M12) decrypt; older tokenized rows resolve through
+        # the vault for this conversation's scope only.
+        item["content"] = _read_message_content(item.pop("content_safe"), tenant_id=tenant_id, conversation_id=conversation_id)
         if "external_egress" in item:
             item["external_egress"] = None if item["external_egress"] is None else bool(item["external_egress"])
         items.append(item)

@@ -32,10 +32,12 @@ async def analyze_command(
 ):
     """AI Command Explanation Endpoint."""
     user_id = user.get("username", "user")
-    allowed, _ = ai_rate_limiter.is_allowed(user_id, "command_explain")
+    tenant_id = str(user.get("tenant_id") or "tenant-default")
+    roles = [str(user.get("role"))] if user.get("role") else []
+    allowed, _ = await ai_rate_limiter.is_allowed_async(user_id, "command_explain")
     if not allowed:
         raise HTTPException(status_code=429, detail="Daily rate limit exceeded for command analysis.")
-    return await command_analysis_service.analyze(req, user_id=user_id)
+    return await command_analysis_service.analyze(req, user_id=user_id, tenant_id=tenant_id, roles=roles)
 
 
 @router.post("/config", response_model=ConfigAnalysisResponse)
@@ -45,10 +47,12 @@ async def analyze_config(
 ):
     """AI Configuration Analysis Endpoint."""
     user_id = user.get("username", "user")
-    allowed, _ = ai_rate_limiter.is_allowed(user_id, "config_explain")
+    tenant_id = str(user.get("tenant_id") or "tenant-default")
+    roles = [str(user.get("role"))] if user.get("role") else []
+    allowed, _ = await ai_rate_limiter.is_allowed_async(user_id, "config_explain")
     if not allowed:
         raise HTTPException(status_code=429, detail="Daily rate limit exceeded for config analysis.")
-    return await config_analysis_service.analyze(req, user_id=user_id)
+    return await config_analysis_service.analyze(req, user_id=user_id, tenant_id=tenant_id, roles=roles)
 
 
 @router.post("/diff", response_model=DiffAnalysisResponse)
@@ -58,10 +62,12 @@ async def analyze_diff(
 ):
     """AI Config Diff Analysis Endpoint (Consumes raw diff from Nexora Diff Engine)."""
     user_id = user.get("username", "user")
-    allowed, _ = ai_rate_limiter.is_allowed(user_id, "config_diff")
+    tenant_id = str(user.get("tenant_id") or "tenant-default")
+    roles = [str(user.get("role"))] if user.get("role") else []
+    allowed, _ = await ai_rate_limiter.is_allowed_async(user_id, "config_diff")
     if not allowed:
         raise HTTPException(status_code=429, detail="Daily rate limit exceeded for diff analysis.")
-    return await diff_analysis_service.analyze(req, user_id=user_id)
+    return await diff_analysis_service.analyze(req, user_id=user_id, tenant_id=tenant_id, roles=roles)
 
 
 @router.post("/alarm", response_model=AlarmAnalysisResponse)
@@ -71,7 +77,9 @@ async def analyze_alarm(
 ):
     """AI Alarm & Incident Correlation Analysis Endpoint."""
     user_id = user.get("username", "user")
-    allowed, _ = ai_rate_limiter.is_allowed(user_id, "alarm_analysis")
+    tenant_id = str(user.get("tenant_id") or "tenant-default")
+    roles = [str(user.get("role"))] if user.get("role") else []
+    allowed, _ = await ai_rate_limiter.is_allowed_async(user_id, "alarm_analysis")
     if not allowed:
         raise HTTPException(status_code=429, detail="Daily rate limit exceeded for alarm analysis.")
-    return await alarm_analysis_service.analyze(req, user_id=user_id)
+    return await alarm_analysis_service.analyze(req, user_id=user_id, tenant_id=tenant_id, roles=roles)

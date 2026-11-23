@@ -185,6 +185,65 @@ class PromptManager:
             # prompt contents or connection details into application logs.
             logger.warning("Prompt seed initialization skipped: %s", type(exc).__name__)
 
+    def get_prompt_for_scene(
+        self,
+        scene: str,
+        *,
+        vendor: str = "all",
+        platform: str = "all",
+    ) -> Optional[Dict[str, Any]]:
+        """Resolve the highest-specificity enabled prompt for (scene, vendor, platform)."""
+        norm_scene = str(scene or "").strip()
+        if not norm_scene:
+            return None
+        norm_vendor = str(vendor or "all").strip().lower() or "all"
+        norm_platform = str(platform or "all").strip().lower() or "all"
+        with get_db_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, code, name, scene, vendor, platform, system_prompt, user_prompt_template,
+                       output_schema, temperature, max_tokens, version, enabled
+                FROM ai_prompt
+                WHERE scene = ? AND enabled = 1
+                ORDER BY version DESC, updated_at DESC
+                """,
+                (norm_scene,),
+            ).fetchall()
+        if not rows:
+            return None
+
+        def _score(r) -> int:
+            r_vendor = str(r[4] or "all").strip().lower()
+            r_platform = str(r[5] or "all").strip().lower()
+            if r_vendor not in {norm_vendor, "all"} or r_platform not in {norm_platform, "all"}:
+                return -1
+            score = 0
+            if r_vendor == norm_vendor and norm_vendor != "all":
+                score += 2
+            if r_platform == norm_platform and norm_platform != "all":
+                score += 4
+            return score
+
+        ranked = sorted(((s, r) for r in rows if (s := _score(r)) >= 0), key=lambda item: item[0], reverse=True)
+        if not ranked:
+            return None
+        row = ranked[0][1]
+        return {
+            "id": row[0],
+            "code": row[1],
+            "name": row[2],
+            "scene": row[3],
+            "vendor": row[4],
+            "platform": row[5],
+            "system_prompt": row[6],
+            "user_prompt_template": row[7],
+            "output_schema": row[8],
+            "temperature": row[9],
+            "max_tokens": row[10],
+            "version": row[11],
+            "enabled": row[12],
+        }
+
     def get_prompt_by_code(self, code: str) -> Optional[Dict[str, Any]]:
         with get_db_connection() as conn:
             cursor = conn.cursor()

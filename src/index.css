@@ -5,6 +5,32 @@
 
 @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 
+/* ─── Design tokens → Tailwind utilities ───
+ * Expose the semantic --ui-* palette as utilities (bg-surface, text-fg-muted,
+ * border-line, bg-accent-subtle …) so pages stop hard-coding slate/gray/indigo.
+ * Values follow the light/dark tokens below automatically.
+ * Scale contract: text 12 / 13 / 14 / 16 / 20px · radius 6 (md) / 8 (lg) / 12 (xl). */
+@theme inline {
+	--color-canvas: var(--ui-canvas);
+	--color-surface: var(--ui-surface);
+	--color-surface-muted: var(--ui-surface-muted);
+	--color-surface-emphasis: var(--ui-surface-emphasis);
+	--color-line: var(--ui-border);
+	--color-line-strong: var(--ui-border-strong);
+	--color-fg: var(--ui-fg);
+	--color-fg-muted: var(--ui-fg-muted);
+	--color-fg-subtle: var(--ui-fg-subtle);
+	--color-accent: var(--ui-accent);
+	--color-accent-hover: var(--ui-accent-hover);
+	--color-accent-subtle: var(--ui-accent-subtle);
+	--color-success: var(--ui-success);
+	--color-success-subtle: var(--ui-success-subtle);
+	--color-warning: var(--ui-warning);
+	--color-warning-subtle: var(--ui-warning-subtle);
+	--color-danger: var(--ui-danger);
+	--color-danger-subtle: var(--ui-danger-subtle);
+}
+
 :root {
 	/* GitHub Primer-inspired semantic palette. Pages should consume these roles
 	 * instead of introducing page-specific cyan/indigo/black values. */
@@ -1480,8 +1506,9 @@ input[type="search"]:hover::-webkit-search-cancel-button {
  * foreground and background colors remain page-defined. */
 .app-shell table:not(.nx-terminal-table) tbody td [class~="rounded-full"],
 .nx-data-table tbody td [class~="rounded-full"] {
-	font-size: 10px;
-	font-weight: 600;
+	/* 12px is the smallest text size in the design scale. */
+	font-size: var(--ui-text-label);
+	font-weight: 500;
 }
 
 /* Keep low-opacity neutral copy in table rows readable in both themes. Status

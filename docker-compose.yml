@@ -135,6 +135,9 @@ services:
       - AI_DAILY_BUDGET_USD=${AI_DAILY_BUDGET_USD:-0}
       - AI_EMBEDDING_MODE=${AI_EMBEDDING_MODE:-local}
       - AI_EMBEDDING_DIMENSIONS=${AI_EMBEDDING_DIMENSIONS:-1536}
+      - AI_SEMANTIC_EMBEDDING_PROVIDER=${AI_SEMANTIC_EMBEDDING_PROVIDER:-none}
+      - AI_EMBEDDING_SIDECAR_URL=${AI_EMBEDDING_SIDECAR_URL:-http://embedding-sidecar:8005}
+      - AI_EMBEDDING_SIDECAR_TOKEN=${AI_EMBEDDING_SIDECAR_TOKEN:-}
       - AI_RETRIEVAL_CACHE_ENABLED=${AI_RETRIEVAL_CACHE_ENABLED:-0}
       - AI_RETRIEVAL_TRGM_THRESHOLD=${AI_RETRIEVAL_TRGM_THRESHOLD:-0.35}
       - REQUEST_BODY_MAX_BYTES=${REQUEST_BODY_MAX_BYTES:-157286400}
@@ -208,6 +211,7 @@ services:
       - librenms_control
       - remote_desktop_api
       - telemetry_control
+      - semantic_embedding
     restart: unless-stopped
     ulimits:
       nofile:
@@ -268,6 +272,7 @@ services:
       - librenms_control
       - remote_desktop_api
       - telemetry_control
+      - semantic_embedding
     restart: unless-stopped
     logging: *container-logging
 
@@ -510,6 +515,46 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
+
+  # Optional semantic embedding sidecar (bge-m3, ONNX int8, CPU).  Enable with
+  #   docker compose --profile semantic-embedding up -d embedding-sidecar
+  # and AI_SEMANTIC_EMBEDDING_PROVIDER=sidecar.  The image carries the model;
+  # the container has no outbound network (internal network only) and no
+  # published port.  Without it, retrieval keeps the lexical fallback.
+  embedding-sidecar:
+    image: nexora-embedding-sidecar:${EMBEDDING_SIDECAR_TAG:-bge-m3-int8-v1}
+    build:
+      context: ./sidecars/embedding
+      dockerfile: Dockerfile
+    container_name: nexora-embedding-sidecar
+    profiles: ["semantic-embedding"]
+    mem_limit: ${EMBEDDING_SIDECAR_MEM_LIMIT:-1536m}
+    cpus: "${EMBEDDING_SIDECAR_CPUS:-2.0}"
+    pids_limit: 128
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - EMBEDDING_THREADS=${EMBEDDING_SIDECAR_THREADS:-2}
+      - EMBEDDING_MAX_TOKENS=${EMBEDDING_SIDECAR_MAX_TOKENS:-512}
+      - EMBEDDING_SIDECAR_TOKEN=${AI_EMBEDDING_SIDECAR_TOKEN:-}
+    expose:
+      - "8005"
+    networks:
+      - semantic_embedding
+    restart: unless-stopped
+    logging: *container-logging
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:8005/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
 
   snmp-exporter:
     image: prom/snmp-exporter:v0.26.0
@@ -1221,6 +1266,9 @@ volumes:
 
 networks:
   default: {}
+  # Backend <-> embedding sidecar only; no route to the outside.
+  semantic_embedding:
+    internal: true
   alert_notifications:
     internal: true
   monitoring_internal:

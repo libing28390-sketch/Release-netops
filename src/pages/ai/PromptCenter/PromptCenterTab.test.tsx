@@ -151,4 +151,49 @@ describe('PromptCenterTab browser key paths', () => {
     expect(screen.queryByText('sk-live-secret')).toBeNull();
     expect(screen.queryByText('真实业务请求')).toBeNull();
   });
+
+  it('renders the redesigned header, summary bar and template table', async () => {
+    render(<PromptCenterTab />);
+
+    expect(await screen.findByRole('heading', { level: 2, name: /Prompt Center 提示词中心/ })).toBeTruthy();
+    const summary = screen.getByLabelText('Prompt 概览');
+    await waitFor(() => expect(summary.textContent).toContain('匹配模板'));
+    expect(summary.textContent).toContain('1');
+    const list = await screen.findByRole('region', { name: 'Prompt 模板列表' });
+    expect(list.querySelector('table')).toBeTruthy();
+    expect(list.textContent).toContain('CHANGE_PLAN');
+    // The old KPI cards are gone: the primary action exists once, in the header.
+    expect(screen.getAllByRole('button', { name: '添加 Prompt' })).toHaveLength(1);
+  });
+
+  it('shows the empty state with a create action when there are no templates', async () => {
+    getPrompts.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 10, total_pages: 0 } as any);
+    render(<PromptCenterTab />);
+
+    expect(await screen.findByText('还没有 Prompt 模板')).toBeTruthy();
+    expect(screen.getByText('创建模板，把运维场景、模型角色、输入变量和输出契约固定下来。')).toBeTruthy();
+    // Header action + empty-state action.
+    expect(screen.getAllByRole('button', { name: '添加 Prompt' })).toHaveLength(2);
+    expect(screen.queryByRole('region', { name: 'Prompt 模板列表' })).toBeNull();
+  });
+
+  it('shows a filtered empty state that offers to clear the filters', async () => {
+    const user = userEvent.setup();
+    render(<PromptCenterTab />);
+    await screen.findByText('网络变更实施计划');
+
+    getPrompts.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 10, total_pages: 0 } as any);
+    await user.type(screen.getByRole('searchbox'), '不存在的模板');
+    await user.keyboard('{Enter}');
+
+    expect(await screen.findByText('没有匹配的 Prompt 模板')).toBeTruthy();
+    await waitFor(() => expect(getPrompts).toHaveBeenLastCalledWith(expect.objectContaining({ search: '不存在的模板', page: 1 })));
+    // Filter bar + empty state both offer "clear filters"; no create button in the empty state.
+    expect(screen.getAllByRole('button', { name: '清除筛选' })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: '添加 Prompt' })).toHaveLength(1);
+
+    getPrompts.mockResolvedValue({ items: [prompt as any], total: 1, page: 1, page_size: 10, total_pages: 1 });
+    await user.click(screen.getAllByRole('button', { name: '清除筛选' })[1]);
+    expect(await screen.findByText('网络变更实施计划')).toBeTruthy();
+  });
 });
