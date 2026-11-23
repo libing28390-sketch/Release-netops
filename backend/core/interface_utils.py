@@ -64,6 +64,12 @@ INTERFACE_ALIASES = [
     ("aggregatedethernet", "ae"),
     ("loopback", "lo"),
     ("loop", "lo"),
+    # H3C/Comware out-of-band management port: IF-MIB ifName is
+    # ``M-GigabitEthernet0/0/0`` while CLI brief tables print ``MGE0/0/0``.
+    # Map the long forms onto the CLI spelling so both sources share one key.
+    ("m-gigabitethernet", "mge"),
+    ("mgigabitethernet", "mge"),
+    ("m-ge", "mge"),
     ("management", "mgmt"),
     ("mgmteth", "mgmt"),
     ("meth", "mgmt"),

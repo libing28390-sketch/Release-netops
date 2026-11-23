@@ -4044,11 +4044,322 @@ def _try_snmp_endpoint(target_ip: str, **kwargs: Any) -> dict[str, Any] | None:
     return result
 
 
+def _json_timestamp(value: Any) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def _registered_ipam_vip_result(target_ip: str, **kwargs: Any) -> dict[str, Any] | None:
+    """Resolve an active IPAM VIP before interpreting virtual ARP as an endpoint."""
+    try:
+        address = str(ipaddress.ip_address(str(target_ip).strip()))
+    except ValueError:
+        return None
+    if kwargs.get("network_domain_id"):
+        return None
+
+    tenant_id = str(kwargs.get("tenant_id") or "tenant-default").strip() or "tenant-default"
+    site_id = str(kwargs.get("site_id") or "").strip()
+    authorized_device_ids = kwargs.get("authorized_device_ids")
+    allowed_ids = None
+    if authorized_device_ids is not None:
+        allowed_ids = sorted({str(value).strip() for value in authorized_device_ids if str(value).strip()})
+        if not allowed_ids:
+            return None
+
+    where = [
+        "(vip.address = ? OR host(vip.address_inet) = ?)",
+        "LOWER(BTRIM(COALESCE(vip.status, 'active'))) = 'active'",
+        "COALESCE(NULLIF(BTRIM(vip.tenant_id), ''), 'tenant-default') = ?",
+    ]
+    params: list[Any] = [address, address, tenant_id]
+    if site_id:
+        where.append("LOWER(COALESCE(prefix.site_id, '')) = LOWER(?)")
+        params.append(site_id)
+    address_space_id = str(kwargs.get("address_space_id") or "").strip()
+    if address_space_id:
+        where.append("vip.address_space_id = ?")
+        params.append(address_space_id)
+    if allowed_ids is not None:
+        placeholders = ", ".join("?" for _ in allowed_ids)
+        where.append(f"(vip.device_id IN ({placeholders}) OR vip.backup_device_id IN ({placeholders}))")
+        params.extend(allowed_ids)
+        params.extend(allowed_ids)
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        rows = conn.execute(
+            f"""SELECT vip.id, vip.address, vip.vip_type, vip.status, vip.device_id,
+                       vip.backup_device_id, vip.interface_name, vip.address_space_id,
+                       vip.prefix_id, vip.updated_at,
+                       prefix.prefix AS prefix_cidr,
+                       spaces.name AS address_space_name,
+                       primary_device.hostname AS primary_device_name,
+                       primary_device.ip_address AS primary_device_ip,
+                       backup_device.hostname AS backup_device_name,
+                       backup_device.ip_address AS backup_device_ip
+                  FROM ipam_vips vip
+                  LEFT JOIN prefixes prefix ON prefix.id = vip.prefix_id
+                  LEFT JOIN ipam_address_spaces spaces ON spaces.id = vip.address_space_id
+                  LEFT JOIN devices primary_device ON primary_device.id = vip.device_id
+                  LEFT JOIN devices backup_device ON backup_device.id = vip.backup_device_id
+                 WHERE {' AND '.join(where)}
+                 ORDER BY spaces.name, prefix.prefix, vip.id""",
+            tuple(params),
+        ).fetchall()
+        if not rows:
+            return None
+
+        vip_matches: list[dict[str, Any]] = []
+        vip_record_versions: list[dict[str, str]] = []
+        for raw_row in rows:
+            row = dict(raw_row)
+            vip_record_versions.append({
+                "id": str(row.get("id") or ""),
+                "address": str(row.get("address") or ""),
+                "vip_type": str(row.get("vip_type") or ""),
+                "status": str(row.get("status") or "active"),
+                "device_id": str(row.get("device_id") or ""),
+                "backup_device_id": str(row.get("backup_device_id") or ""),
+                "interface_name": str(row.get("interface_name") or ""),
+                "address_space_id": str(row.get("address_space_id") or ""),
+                "prefix_id": str(row.get("prefix_id") or ""),
+                "updated_at": _json_timestamp(row.get("updated_at")) or "",
+            })
+            controller_ids = {
+                str(row.get("device_id") or "").strip(),
+                str(row.get("backup_device_id") or "").strip(),
+            } - {""}
+            visible_controller_ids = controller_ids if allowed_ids is None else controller_ids.intersection(allowed_ids)
+
+            def controller_payload(id_field: str, name_field: str, ip_field: str) -> dict[str, str] | None:
+                device_id = str(row.get(id_field) or "").strip()
+                if not device_id or device_id not in visible_controller_ids:
+                    return None
+                return {
+                    "device_id": device_id,
+                    "hostname": str(row.get(name_field) or row.get(ip_field) or device_id),
+                }
+
+            group: dict[str, Any] | None = None
+            collection_states: list[dict[str, Any]] = []
+            observations: list[dict[str, Any]] = []
+            try:
+                group_row = conn.execute(
+                    """SELECT group_row.id, group_row.protocol, group_row.group_id,
+                              group_row.display_name
+                         FROM ipam_fhrp_group_vips relation
+                         JOIN ipam_fhrp_groups group_row ON group_row.id = relation.group_id
+                        WHERE relation.vip_id = ?
+                          AND group_row.status = 'active'
+                          AND group_row.security_tenant_id = ?
+                        LIMIT 1""",
+                    (str(row.get("id") or ""), tenant_id),
+                ).fetchone()
+                if group_row:
+                    group = dict(group_row)
+            except Exception as exc:
+                logger.debug("[IPLocatorV2] optional FHRP group lookup unavailable: %s", type(exc).__name__)
+
+            protocol = str((group or {}).get("protocol") or row.get("vip_type") or "").strip().lower()
+            if protocol in {"vrrp", "hsrp"} and visible_controller_ids:
+                device_placeholders = ", ".join("?" for _ in visible_controller_ids)
+                try:
+                    state_rows = conn.execute(
+                        f"""SELECT state.device_id, COALESCE(NULLIF(device.hostname, ''), device.ip_address) AS hostname,
+                                   state.latest_status, state.latest_attempt_generation,
+                                   state.last_success_generation, state.last_error_code,
+                                   state.last_attempt_at, state.last_success_at
+                              FROM ipam_current_fhrp_collection_states state
+                              JOIN devices device ON device.id = state.device_id
+                             WHERE state.protocol = ?
+                               AND state.device_id IN ({device_placeholders})
+                             ORDER BY state.device_id""",
+                        tuple([protocol, *sorted(visible_controller_ids)]),
+                    ).fetchall()
+                    collection_states = [
+                        {
+                            "device_id": str(state["device_id"]),
+                            "hostname": str(state["hostname"] or state["device_id"]),
+                            "latest_status": str(state["latest_status"] or "never"),
+                            "last_error_code": str(state["last_error_code"] or ""),
+                            "last_attempt_at": _json_timestamp(state["last_attempt_at"]),
+                            "last_success_at": _json_timestamp(state["last_success_at"]),
+                            "latest_attempt_generation": int(state["latest_attempt_generation"] or 0),
+                            "last_success_generation": int(state["last_success_generation"] or 0),
+                        }
+                        for state in state_rows
+                    ]
+                except Exception as exc:
+                    logger.debug("[IPLocatorV2] optional FHRP collection state unavailable: %s", type(exc).__name__)
+
+                all_controllers_visible = (
+                    allowed_ids is None or controller_ids.issubset(allowed_ids)
+                )
+                states_by_device = {state["device_id"]: state for state in collection_states}
+                states_are_current = bool(controller_ids) and all(
+                    device_id in states_by_device
+                    and states_by_device[device_id]["latest_status"] == "complete"
+                    and states_by_device[device_id]["latest_attempt_generation"]
+                    == states_by_device[device_id]["last_success_generation"]
+                    for device_id in controller_ids
+                )
+                if group and all_controllers_visible and states_are_current:
+                    try:
+                        observation_rows = conn.execute(
+                            f"""SELECT observation.device_id,
+                                       COALESCE(NULLIF(device.hostname, ''), device.ip_address) AS hostname,
+                                       observation.protocol, observation.group_id,
+                                       observation.interface_name, observation.state,
+                                       observation.priority, observation.observed_at,
+                                       observation.virtual_mac
+                                  FROM ipam_current_fhrp_observations observation
+                                  JOIN ipam_current_fhrp_collection_states collection_state
+                                    ON collection_state.device_id = observation.device_id
+                                   AND collection_state.protocol = observation.protocol
+                                  JOIN ipam_fhrp_group_members member
+                                    ON member.group_id = ?
+                                   AND member.device_id = observation.device_id
+                                   AND member.normalized_interface_name = observation.normalized_interface_name
+                                  JOIN devices device ON device.id = observation.device_id
+                                 WHERE observation.protocol = ?
+                                   AND CAST(observation.group_id AS TEXT) = ?
+                                   AND observation.virtual_ip_key = ?
+                                   AND observation.address_family = ?
+                                   AND observation.generation = collection_state.last_success_generation
+                                   AND collection_state.latest_status = 'complete'
+                                   AND collection_state.latest_attempt_generation = collection_state.last_success_generation
+                                   AND member.status = 'active'
+                                   AND observation.device_id IN ({device_placeholders})
+                                 ORDER BY observation.observed_at DESC""",
+                            tuple([
+                                str(group["id"]), protocol, str(group["group_id"]), address,
+                                int(ipaddress.ip_address(address).version), *sorted(visible_controller_ids),
+                            ]),
+                        ).fetchall()
+                        observations = [
+                            {
+                                "device_id": str(observation["device_id"]),
+                                "hostname": str(observation["hostname"] or observation["device_id"]),
+                                "protocol": str(observation["protocol"]),
+                                "group_id": int(observation["group_id"]),
+                                "interface_name": str(observation["interface_name"] or ""),
+                                "state": str(observation["state"] or ""),
+                                "priority": observation["priority"],
+                                "observed_at": _json_timestamp(observation["observed_at"]),
+                                "virtual_mac": str(observation["virtual_mac"] or ""),
+                            }
+                            for observation in observation_rows
+                        ]
+                    except Exception as exc:
+                        logger.debug("[IPLocatorV2] optional FHRP observation unavailable: %s", type(exc).__name__)
+
+            master_observations = [
+                observation for observation in observations
+                if str(observation.get("state") or "").strip().lower() in {"master", "active"}
+            ]
+            masters_by_device = {observation["device_id"]: observation for observation in master_observations}
+            current_master = next(iter(masters_by_device.values())) if len(masters_by_device) == 1 else None
+            vip_matches.append({
+                "id": str(row.get("id") or ""),
+                "address": address,
+                "vip_type": str(row.get("vip_type") or "VIP"),
+                "status": str(row.get("status") or "active"),
+                "interface_name": str(row.get("interface_name") or ""),
+                "prefix_cidr": str(row.get("prefix_cidr") or ""),
+                "address_space_id": str(row.get("address_space_id") or ""),
+                "address_space_name": str(row.get("address_space_name") or ""),
+                "updated_at": _json_timestamp(row.get("updated_at")),
+                "primary": controller_payload("device_id", "primary_device_name", "primary_device_ip"),
+                "backup": controller_payload("backup_device_id", "backup_device_name", "backup_device_ip"),
+                "fhrp_group": {
+                    "protocol": str(group.get("protocol") or ""),
+                    "group_id": str(group.get("group_id") or ""),
+                    "display_name": str(group.get("display_name") or ""),
+                } if group else None,
+                "collection_states": collection_states,
+                "observations": observations,
+                "current_master": current_master,
+            })
+    except Exception as exc:
+        logger.warning("[IPLocatorV2] registered VIP lookup unavailable (%s)", type(exc).__name__)
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+    vrf = _normalise_vrf(kwargs.get("vrf") or "default")
+    scope = {
+        "tenant_id": tenant_id,
+        "site_id": site_id,
+        "network_domain_id": "",
+        "vrf": vrf,
+        "start_device_id": str(kwargs.get("start_device_id") or ""),
+        "authorization_scope_hash": _authorization_scope_hash(allowed_ids),
+    }
+    result = _initial_result(
+        address,
+        vrf,
+        scope,
+        kwargs.get("limits") or TraceLimits(),
+        run_id=str(kwargs.get("durable_run_id") or ""),
+    )
+    ambiguous = len(vip_matches) > 1
+    result.update({
+        "found": True,
+        "status": "needs_context" if ambiguous else "completed",
+        "conclusion": "registered_vip_ambiguous" if ambiguous else "registered_vip",
+        "source": "ipam_vip_registry",
+        "vip_info": {"ambiguous": True, "candidates": vip_matches} if ambiguous else vip_matches[0],
+        "mac": None,
+        "mac_display": None,
+        "arp_source": None,
+        "completed_at": _now_iso(),
+        "cache": {**result.get("cache", {}), "result": "bypassed_for_registered_vip"},
+        "dependency_manifest": {
+            **result.get("dependency_manifest", {}),
+            "type": "ipam_vip_registry",
+            "version": 1,
+            "contract_version": _trace_contract_version(),
+            "target_ip": address,
+            "context": {
+                "tenant_id": tenant_id,
+                "site_id": site_id,
+                "address_space_id": address_space_id,
+                "vrf": vrf,
+                "authorized_device_ids": allowed_ids,
+                "authorization_scope_hash": scope["authorization_scope_hash"],
+            },
+            "evidence": {
+                "vip_count": len(vip_record_versions),
+                "vip_records_digest": hashlib.sha256(
+                    json.dumps(
+                        sorted(vip_record_versions, key=lambda item: item["id"]),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest(),
+            },
+        },
+    })
+    if ambiguous:
+        result["coverage_gaps"].append("同一 IP 在多个地址空间登记为 VIP，需确认 VRF 或地址空间")
+    return result
+
+
 def trace_ip(target_ip: str, **kwargs: Any) -> dict[str, Any]:
-    """Prefer SNMP evidence, then guard the CLI fallback with single-flight."""
+    """Prefer registered VIPs and SNMP evidence, then bounded CLI tracing."""
     # Materialize generators before they are used by both evidence and fallback.
     if kwargs.get("authorized_device_ids") is not None:
         kwargs["authorized_device_ids"] = tuple(kwargs["authorized_device_ids"])
+    vip_result = _registered_ipam_vip_result(target_ip, **kwargs)
+    if vip_result is not None:
+        return vip_result
     try:
         endpoint_result = _try_snmp_endpoint(target_ip, **kwargs)
     except Exception as exc:
@@ -4239,6 +4550,8 @@ def add_legacy_compatibility(result: dict[str, Any]) -> dict[str, Any]:
             "vlan": arp.get("vlan") or "",
         }
     enriched["trace_status"] = {
+        "registered_vip": "virtual_gateway",
+        "registered_vip_ambiguous": "scope_ambiguous",
         "endpoint_evidence_confirmed": "terminal",
         "managed_access_confirmed": "terminal",
         "device_interface": "device_interface",
@@ -4316,7 +4629,7 @@ def add_legacy_compatibility(result: dict[str, Any]) -> dict[str, Any]:
     cache.setdefault("ttl_seconds", 300)
     cache.setdefault("force_refresh", False)
     enriched["cache"] = cache
-    if not isinstance(enriched.get("context"), dict):
+    if not isinstance(enriched.get("context"), dict) and not isinstance(enriched.get("vip_info"), dict):
         target_ip = str(enriched.get("target_ip") or "").strip()
         context_builder = getattr(legacy, "_get_ip_locator_context", None)
         if target_ip and callable(context_builder):

@@ -1037,6 +1037,41 @@ describe('PrefixManagementTab creation defaults', () => {
     expect(new URL(deleteUrl, 'http://localhost').searchParams.get('expected_revision')).toBe('23');
   });
 
+  it('reports confirmed and interrupted suggestion groups and reloads the prefix list', async () => {
+    const prefixes = [
+      { id: 'mgmt', revision: 1, prefix: '10.88.62.0/24', network_type: 'unclassified', suggested_network_type: 'management' },
+      { id: 'transit', revision: 1, prefix: '10.88.63.0/30', network_type: 'unclassified', suggested_network_type: 'transit' },
+    ].map((prefix) => ({
+      ...prefix, status: 'active', total_ips: 4, used_ips: 0, active_ips: 0, utilization: 0,
+    }));
+    let listLoads = 0;
+    const refreshSnapshots: number[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith('/api/ipam/subnets?')) {
+        listLoads++;
+        return response({ items: prefixes, total: prefixes.length });
+      }
+      if (url === '/api/ipam/subnets/batch-update-network-type') {
+        const { network_type: type } = JSON.parse(String(init?.body));
+        if (type === 'management') return response({ updated: 1 });
+        refreshSnapshots.push(listLoads);
+        throw new Error('connection interrupted');
+      }
+      return response([]);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<MemoryRouter><PrefixManagementTab language="zh" t={(key) => key} /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole('button', { name: '采纳推荐用途' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认采纳' }));
+
+    expect(await screen.findByText(/已采纳推荐用途：1 个网段/)).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toContain('连接中断，提交结果待确认');
+    expect(refreshSnapshots).toHaveLength(1);
+    expect(listLoads).toBeGreaterThan(refreshSnapshots[0]);
+  });
+
   it('includes each selected prefix revision in batch purpose and delete writes', async () => {
     const prefix = {
       id: 'prefix-batch', revision: 31, prefix: '10.88.61.0/24', network: '10.88.61.0', prefix_len: 24,

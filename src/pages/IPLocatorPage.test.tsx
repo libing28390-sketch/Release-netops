@@ -41,7 +41,7 @@ describe('IPLocatorPage search controls', () => {
   it('labels the IP field and submits a lookup from the visible action', async () => {
     renderLocator();
 
-    const ipInput = screen.getByRole('textbox', { name: 'IP address' });
+    const ipInput = screen.getByRole('textbox', { name: 'IP or MAC address' });
     const locateButton = screen.getByRole('button', { name: 'Locate' });
     expect((locateButton as HTMLButtonElement).disabled).toBe(true);
 
@@ -63,7 +63,7 @@ describe('IPLocatorPage search controls', () => {
     }));
 
     renderLocator();
-    const ipInput = screen.getByRole('textbox', { name: 'IP address' });
+    const ipInput = screen.getByRole('textbox', { name: 'IP or MAC address' });
     fireEvent.change(ipInput, { target: { value: '198.51.100.25' } });
     const searchForm = ipInput.closest('form');
     expect(searchForm).not.toBeNull();

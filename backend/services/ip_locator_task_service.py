@@ -165,6 +165,99 @@ def _dependency_manifest_current_in_transaction(
 ) -> tuple[bool, list[str]]:
     """Compare captured source evidence with PG authority before publication."""
 
+    if manifest.get("type") == "ipam_vip_registry":
+        context = manifest.get("context")
+        evidence = manifest.get("evidence")
+        target_ip = _non_empty(manifest.get("target_ip"))
+        if (
+            manifest.get("version") != 1
+            or not isinstance(context, Mapping)
+            or not isinstance(evidence, Mapping)
+            or not target_ip
+            or not isinstance(context.get("authorized_device_ids"), list)
+            or not isinstance(evidence.get("vip_count"), int)
+            or evidence.get("vip_count", 0) < 1
+            or not _non_empty(evidence.get("vip_records_digest"))
+        ):
+            return False, ["dependency_manifest_invalid_ipam_vip"]
+
+        tenant_id = _non_empty(context.get("tenant_id"), DEFAULT_TENANT_ID)
+        site_id = _non_empty(context.get("site_id"))
+        address_space_id = _non_empty(context.get("address_space_id"))
+        authorized_device_ids = sorted({
+            str(value).strip()
+            for value in context.get("authorized_device_ids", [])
+            if str(value).strip()
+        })
+        if not authorized_device_ids:
+            return False, ["dependency_manifest_invalid_ipam_vip_scope"]
+
+        where = [
+            "(vip.address = ? OR host(vip.address_inet) = ?)",
+            "LOWER(BTRIM(COALESCE(vip.status, 'active'))) = 'active'",
+            "COALESCE(NULLIF(BTRIM(vip.tenant_id), ''), 'tenant-default') = ?",
+        ]
+        params: list[Any] = [target_ip, target_ip, tenant_id]
+        if site_id:
+            where.append("LOWER(COALESCE(prefix.site_id, '')) = LOWER(?)")
+            params.append(site_id)
+        if address_space_id:
+            where.append("vip.address_space_id = ?")
+            params.append(address_space_id)
+        placeholders = ", ".join("?" for _ in authorized_device_ids)
+        where.append(
+            f"(vip.device_id IN ({placeholders}) OR vip.backup_device_id IN ({placeholders}))"
+        )
+        params.extend(authorized_device_ids)
+        params.extend(authorized_device_ids)
+        suffix = " FOR UPDATE OF vip" if lock else ""
+        current_rows = conn.execute(
+            f"""SELECT vip.id, vip.address, vip.vip_type, vip.status,
+                       vip.device_id, vip.backup_device_id, vip.interface_name,
+                       vip.address_space_id, vip.prefix_id, vip.updated_at
+                  FROM ipam_vips vip
+                  LEFT JOIN prefixes prefix ON prefix.id = vip.prefix_id
+                 WHERE {' AND '.join(where)}
+                 ORDER BY vip.id{suffix}""",
+            tuple(params),
+        ).fetchall()
+
+        def vip_record_version(row: Mapping[str, Any]) -> dict[str, str]:
+            updated_at = row.get("updated_at")
+            if hasattr(updated_at, "isoformat"):
+                updated_at = updated_at.isoformat()
+            return {
+                "id": str(row.get("id") or ""),
+                "address": str(row.get("address") or ""),
+                "vip_type": str(row.get("vip_type") or ""),
+                "status": str(row.get("status") or "active"),
+                "device_id": str(row.get("device_id") or ""),
+                "backup_device_id": str(row.get("backup_device_id") or ""),
+                "interface_name": str(row.get("interface_name") or ""),
+                "address_space_id": str(row.get("address_space_id") or ""),
+                "prefix_id": str(row.get("prefix_id") or ""),
+                "updated_at": str(updated_at or ""),
+            }
+
+        current_versions = sorted(
+            (vip_record_version(dict(row)) for row in current_rows),
+            key=lambda item: item["id"],
+        )
+        current_digest = sha256(
+            json.dumps(
+                current_versions,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        if (
+            len(current_versions) != evidence["vip_count"]
+            or current_digest != evidence["vip_records_digest"]
+        ):
+            return False, ["dependency_changed:ipam_vip_registry"]
+        return True, []
+
     if manifest.get("type") in {"snmp_endpoint", "current_endpoint"}:
         from services.ip_locator_endpoint_evidence import (
             find_current_endpoint_evidence,

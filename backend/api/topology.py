@@ -13,10 +13,12 @@ from core.read_cache import (
     read_cache,
 )
 from services.topology_service import (
+    acquire_topology_discovery_lease,
     create_discovery_run,
     decorate_topology_link_evidence,
     execute_discovery_run,
     get_current_links,
+    find_discovery_run_by_idempotency_key,
     get_discovery_evidence,
     get_discovery_run,
     get_unmanaged_neighbors,
@@ -155,6 +157,63 @@ def _enforce_topology_site_scope(conn, user, site_id: str) -> None:
         )
 
 
+def _same_key_discovery_replay(
+    idempotency_key: str | None,
+    *,
+    requested_by: str,
+    selection: dict,
+) -> dict | None:
+    """Return a compatible replay before competing for the global run lease."""
+    if not str(idempotency_key or '').strip():
+        return None
+    existing = find_discovery_run_by_idempotency_key(idempotency_key or '')
+    if existing is None:
+        return None
+    scope_payload = existing.get('scope_payload') or {}
+    existing_device_ids = scope_payload.get('selected_device_ids')
+    if not isinstance(existing_device_ids, list):
+        existing_device_ids = scope_payload.get('device_ids')
+    current_device_ids = list(selection.get('device_ids') or [])
+    compatible = (
+        str(existing.get('requested_by') or '') == requested_by
+        and str(existing.get('scope') or '') == str(selection.get('scope') or '')
+        and str(existing.get('site_id') or '') == str(selection.get('site_id') or '')
+        and isinstance(existing_device_ids, list)
+        and set(map(str, existing_device_ids)) == set(map(str, current_device_ids))
+        and len(existing_device_ids) == len(current_device_ids)
+    )
+    if not compatible:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                'code': 'topology_idempotency_conflict',
+                'message': 'This idempotency key belongs to another discovery scope.',
+            },
+        )
+    run_id = str(existing.get('id') or '')
+    run_status = str(existing.get('status') or '')
+    if run_status in {'pending', 'running'}:
+        if not bool(existing.get('has_live_lease')):
+            # The same key exists but its worker lease has expired (or it was
+            # never claimed); let the atomic claim below reschedule that run.
+            return None
+        return {
+            'status': 'Discovery started in background',
+            'run_id': run_id,
+            'device_count': len(current_device_ids),
+            'excluded_device_count': len(selection.get('excluded_device_ids') or []),
+            'scope': selection.get('scope'),
+            'site_id': selection.get('site_id'),
+        }
+    return {
+        'status': 'Discovery request already completed',
+        'run_id': run_id,
+        'device_count': int(existing.get('total_devices') or len(current_device_ids)),
+        'excluded_device_count': len(selection.get('excluded_device_ids') or []),
+        'run_status': run_status,
+    }
+
+
 @router.post('/topology/discover')
 async def trigger_discovery(
     request: Request,
@@ -199,38 +258,73 @@ async def trigger_discovery(
         )
 
     requested_by = str(session.get('username') or session.get('user_id') or 'api')
-    run_id = create_discovery_run(
-        device_ids=device_ids,
+    replay = _same_key_discovery_replay(
+        idempotency_key,
         requested_by=requested_by,
-        scope=selection['scope'],
-        site_id=selection['site_id'],
-        scope_payload={
-            **request_payload.model_dump(),
-            'resolved_site_id': selection['site_id'],
-            'selected_device_ids': device_ids,
-            'excluded_device_ids': selection['excluded_device_ids'],
-        },
-        idempotency_key=idempotency_key or '',
+        selection=selection,
     )
-    existing_run = get_discovery_run(run_id)
-    run_status = str((existing_run or {}).get('run', {}).get('status') or 'pending')
-    if run_status not in {'pending', 'running'}:
+    if replay is not None:
+        return replay
+    discovery_lease = acquire_topology_discovery_lease()
+    if discovery_lease is None:
+        # A same-key request can race the first creator between its lookup and
+        # lease claim. Re-read once so retries still converge on that run.
+        replay = _same_key_discovery_replay(
+            idempotency_key,
+            requested_by=requested_by,
+            selection=selection,
+        )
+        if replay is not None:
+            return replay
+        raise HTTPException(
+            status_code=409,
+            detail={
+                'code': 'topology_discovery_active',
+                'message': 'Another topology discovery is already running.',
+            },
+        )
+    try:
+        run_id = create_discovery_run(
+            device_ids=device_ids,
+            requested_by=requested_by,
+            scope=selection['scope'],
+            site_id=selection['site_id'],
+            scope_payload={
+                **request_payload.model_dump(),
+                'resolved_site_id': selection['site_id'],
+                'selected_device_ids': device_ids,
+                'excluded_device_ids': selection['excluded_device_ids'],
+            },
+            idempotency_key=idempotency_key or '',
+        )
+        existing_run = get_discovery_run(run_id)
+        run_status = str((existing_run or {}).get('run', {}).get('status') or 'pending')
+        if run_status not in {'pending', 'running'}:
+            discovery_lease.release()
+            return {
+                'status': 'Discovery request already completed',
+                'run_id': run_id,
+                'device_count': len(device_ids),
+                'excluded_device_count': len(selection['excluded_device_ids']),
+                'run_status': run_status,
+            }
+        background_tasks.add_task(
+            execute_discovery_run,
+            run_id,
+            device_ids,
+            discovery_lease=discovery_lease,
+        )
         return {
-            'status': 'Discovery request already completed',
+            'status': 'Discovery started in background',
             'run_id': run_id,
             'device_count': len(device_ids),
             'excluded_device_count': len(selection['excluded_device_ids']),
-            'run_status': run_status,
+            'scope': selection['scope'],
+            'site_id': selection['site_id'],
         }
-    background_tasks.add_task(execute_discovery_run, run_id, device_ids)
-    return {
-        'status': 'Discovery started in background',
-        'run_id': run_id,
-        'device_count': len(device_ids),
-        'excluded_device_count': len(selection['excluded_device_ids']),
-        'scope': selection['scope'],
-        'site_id': selection['site_id'],
-    }
+    except Exception:
+        discovery_lease.release()
+        raise
 
 
 @router.get('/topology/links')

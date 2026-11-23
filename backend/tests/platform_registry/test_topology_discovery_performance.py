@@ -8,6 +8,14 @@ import services.topology_service as topology_service
 from services.topology_service import execute_discovery_run, _should_retry_discovery
 
 
+class _SyntheticLease:
+    def __enter__(self):
+        return self
+
+    def release(self):
+        return True
+
+
 def test_topology_retry_policy_only_retries_transient_transport_errors() -> None:
     assert _should_retry_discovery('ssh_unreachable', 1, 2) is True
     assert _should_retry_discovery('ssh_authentication_failed', 1, 2) is False
@@ -47,6 +55,7 @@ async def test_execute_discovery_run_uses_bounded_device_concurrency(monkeypatch
         run_updates.append(fields)
 
     monkeypatch.setattr(topology_service, 'DISCOVERY_DEVICE_CONCURRENCY', 2)
+    monkeypatch.setattr(topology_service, 'acquire_topology_discovery_lease', lambda: _SyntheticLease())
     monkeypatch.setattr(topology_service, '_claim_discovery_run', lambda run_id, worker_id: True)
     monkeypatch.setattr(
         topology_service,
@@ -83,6 +92,7 @@ def _stub_discovery_run(monkeypatch, *, cancelled=None):
     updates = []
     device_updates = []
     monkeypatch.setattr(topology_service, 'DISCOVERY_DEVICE_CONCURRENCY', 2)
+    monkeypatch.setattr(topology_service, 'acquire_topology_discovery_lease', lambda: _SyntheticLease())
     monkeypatch.setattr(topology_service, '_claim_discovery_run', lambda *_: True)
     monkeypatch.setattr(topology_service, '_clear_lldp_observation_history_for_run', lambda *_: None)
     monkeypatch.setattr(topology_service, '_get_discovery_run_settings', lambda *_: (30, 1))

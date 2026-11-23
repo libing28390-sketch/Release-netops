@@ -3120,6 +3120,63 @@ def _locator_vlan_member_candidates(
     return candidates
 
 
+def _load_locator_topology_links(conn, device_id: str = '') -> list[dict[str, Any]]:
+    """Current managed LLDP links for locator uplink/path projection.
+
+    Reads the compatibility ``topology_links`` projection first. When it is
+    empty (discovery writes the evidence graph before that projection is
+    rebuilt, or the projection is not maintained), falls back to the physical
+    evidence graph exactly like ``GET /api/topology/links`` does, so the
+    locator and the Topology page agree on which links exist.
+    """
+    rows = [
+        dict(row)
+        for row in conn.execute(
+            '''SELECT source_device_id, source_hostname, source_port,
+                      target_device_id, target_hostname, target_port,
+                      status, last_seen
+               FROM topology_links
+               WHERE COALESCE(status, 'unknown') <> 'stale' '''
+        ).fetchall()
+    ]
+    if rows:
+        return rows
+    tenant_id = 'tenant-default'
+    if device_id:
+        try:
+            tenant_row = conn.execute(
+                "SELECT COALESCE(NULLIF(tenant_id, ''), 'tenant-default') AS tenant_id FROM devices WHERE id = ?",
+                (device_id,),
+            ).fetchone()
+            if tenant_row and tenant_row['tenant_id']:
+                tenant_id = str(tenant_row['tenant_id'])
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+    try:
+        from services.topology_graph_service import get_physical_links
+
+        return [
+            {
+                'source_device_id': link.get('source_device_id') or '',
+                'source_hostname': link.get('source_hostname') or '',
+                'source_port': link.get('source_port') or '',
+                'target_device_id': link.get('target_device_id') or '',
+                'target_hostname': link.get('target_hostname') or '',
+                'target_port': link.get('target_port') or '',
+                'status': link.get('status') or 'active',
+                'last_seen': link.get('last_seen') or '',
+            }
+            for link in get_physical_links(tenant_id=tenant_id, include_stale=False)
+            if str(link.get('status') or 'active').lower() != 'stale'
+        ]
+    except Exception as exc:
+        logger.debug("[IPLocator] evidence-graph link fallback unavailable (%s)", type(exc).__name__)
+        return []
+
+
 def _get_ip_locator_context(
     target_ip: str,
     result: dict[str, Any] | None = None,
@@ -3741,12 +3798,16 @@ def _get_ip_locator_context(
             ).fetchall()
             # Prefer live trace direct-gateway evidence (connected L3 hop /
             # gateway_candidates) over stale or upstream BGP entries in route_table.
+            # ``result`` is optional: context-only callers (and the LLDP
+            # uplink projection below) run without a live locate result.
+            trace_result = result if isinstance(result, dict) else {}
+            arp_source = trace_result.get('arp_source')
             trace_gateways = [
-                item for item in (result.get('gateway_candidates') or [])
+                item for item in (trace_result.get('gateway_candidates') or [])
                 if isinstance(item, dict)
             ]
             trace_l3_paths = [
-                item for item in (result.get('l3_paths') or [])
+                item for item in (trace_result.get('l3_paths') or [])
                 if isinstance(item, dict)
             ]
             connected_hop = next(
@@ -3851,6 +3912,12 @@ def _get_ip_locator_context(
                 })
                 set_if_empty(context['l3'], 'vrf', best_route['vrf_name'])
                 set_if_empty(context['l3'], 'gateway_device', best_route['device_name'])
+                # A connected/direct route identifies the device that owns the
+                # target subnet, i.e. the gateway. Record its id so the LLDP
+                # uplink projection below can run even when the Prefix has no
+                # configured gateway_device_id (interface-generated Prefixes).
+                if str(best_route['protocol'] or '').strip().lower() in {'connected', 'direct', 'local', 'c'}:
+                    set_if_empty(context['l3'], 'gateway_device_id', str(best_route['device_id'] or ''))
 
             # Build only an evidence-backed access-switch -> gateway path from LLDP topology.
             path: list[dict[str, Any]] = []
@@ -3873,18 +3940,19 @@ def _get_ip_locator_context(
                 })
 
             access_id = str(l2.get('switch_id') or '')
-            gateway_id = str(best_prefix['gateway_device_id'] or '') if best_prefix else ''
+            # Interface-generated Prefixes usually have no configured
+            # gateway_device_id; fall back to the gateway device resolved from
+            # live trace / connected-route evidence above.
+            gateway_id = (
+                (str(best_prefix['gateway_device_id'] or '') if best_prefix else '')
+                or str(context['l3'].get('gateway_device_id') or '')
+            )
             if access_id and gateway_id and access_id == gateway_id:
                 # A directly routed subnet can have its gateway SVI on the
                 # same switch as the endpoint. In that case there is no
                 # access-to-gateway BFS to run, but the switch can still have
                 # an LLDP uplink to a distribution/core neighbor.
-                link_rows = conn.execute(
-                    '''SELECT source_device_id, source_hostname, source_port,
-                              target_device_id, target_hostname, target_port
-                       FROM topology_links
-                       WHERE COALESCE(status, 'unknown') <> 'stale' '''
-                ).fetchall()
+                link_rows = _load_locator_topology_links(conn, access_id)
                 upstream_candidates: list[tuple[str, str, str, str]] = []
                 seen_candidates: set[tuple[str, str, str, str]] = set()
                 endpoint_port_key = normalize_interface_name(str(l2.get('port') or '')).lower()
@@ -3939,13 +4007,7 @@ def _get_ip_locator_context(
                     'detail': context['l3']['gateway_interface'] or '',
                 })
             elif access_id and gateway_id and access_id != gateway_id:
-                link_rows = conn.execute(
-                    '''SELECT source_device_id, source_hostname, source_port,
-                              target_device_id, target_hostname, target_port,
-                              status, last_seen
-                       FROM topology_links
-                       WHERE COALESCE(status, 'unknown') <> 'stale' '''
-                ).fetchall()
+                link_rows = _load_locator_topology_links(conn, access_id)
                 adjacency: dict[str, list[tuple[str, str, str, str]]] = {}
                 for link in link_rows:
                     source_id = str(link['source_device_id'] or '')
@@ -5035,6 +5097,120 @@ def _load_prefix_gateway_device_ids() -> set[str]:
         conn.close()
 
 
+_TERMINAL_EXCLUDED_NETWORK_TYPES = frozenset({'loopback', 'transit', 'p2p', 'wan'})
+_LOOPBACK_IF_RE = re.compile(r'^(?:loopback\s?\d*|loop\d+|lo\d*)(?:\.\d+)?$', re.IGNORECASE)
+_SVI_IF_RE = re.compile(r'^(?:vlan[-_ ]?(?:interface|if)?\s?\d+|vlanif\d+|vl\d+|svi\d*|bdif\d+|irb\.\d+)$', re.IGNORECASE)
+
+
+def _terminal_gateway_auto_enabled() -> bool:
+    import os
+    return str(os.getenv('ARP_AUTO_TERMINAL_GATEWAYS', '1')).strip().lower() not in {'0', 'false', 'no', 'off'}
+
+
+def _load_terminal_gateway_device_ids() -> dict[str, str]:
+    """Derive one ARP source device per registered *endpoint* Prefix.
+
+    An endpoint Prefix is a registered, non-stale Prefix that can hold hosts:
+    IPv4 /28 or larger (IPv6 /124 or larger) and not typed loopback/transit/
+    p2p/wan. Its ARP source is, in order: the device whose interface address
+    equals the Prefix gateway IP, else the SVI owner with the lowest address,
+    else the routed-interface owner with the lowest address. Loopback
+    interfaces never qualify. Point-to-point and loopback Prefixes are left to
+    interface-state evidence instead of ARP.
+
+    Returns {device_id: prefix_cidr} for logging. Disabled with
+    ARP_AUTO_TERMINAL_GATEWAYS=0.
+    """
+    if not _terminal_gateway_auto_enabled():
+        return {}
+    import ipaddress as _ip
+    try:
+        conn = get_db_connection()
+    except Exception:
+        return {}
+    try:
+        rows = conn.execute(
+            """SELECT p.id AS prefix_id, p.prefix, COALESCE(p.network_type, '') AS network_type,
+                      COALESCE(p.gateway, '') AS gateway,
+                      ip.address, COALESCE(NULLIF(ip.device_id, ''), i.device_id) AS device_id,
+                      COALESCE(NULLIF(i.interface_name, ''), ip.interface_name, '') AS interface_name
+                 FROM ip_addresses ip
+                 LEFT JOIN interfaces i
+                   ON i.id = ip.interface_id
+                  AND (COALESCE(ip.device_id, '') = '' OR i.device_id = ip.device_id)
+                 JOIN prefixes p ON p.id = ip.subnet_id
+                WHERE COALESCE(NULLIF(ip.device_id, ''), NULLIF(i.device_id, ''), '') <> ''
+                  AND COALESCE(ip.status, 'active') NOT IN ('released', 'available', 'deprecated')
+                  AND COALESCE(p.status, 'active') NOT IN ('stale', 'deprecated', 'container')"""
+        ).fetchall()
+        from services.ipam_service import _current_cmdb_interface_ip_observations
+
+        current_interface_observations = _current_cmdb_interface_ip_observations(conn)
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return {}
+    finally:
+        conn.close()
+
+    actual_interface_ips: set[tuple[str, str, str]] = set()
+    for observation in current_interface_observations:
+        device_id = str(observation.get('device_id') or '').strip()
+        interface_name = str(
+            observation.get('normalized_interface_name')
+            or observation.get('interface_name')
+            or ''
+        ).strip()
+        if not device_id or not interface_name:
+            continue
+        try:
+            observed_ip = str(_ip.ip_address(str(observation.get('ip_address') or '').split('/')[0].strip()))
+        except ValueError:
+            continue
+        actual_interface_ips.add((device_id, normalize_interface_name(interface_name).lower(), observed_ip))
+
+    by_prefix: dict[str, dict] = {}
+    for row in rows:
+        try:
+            network = _ip.ip_network(str(row['prefix'] or ''), strict=False)
+            address = _ip.ip_address(str(row['address'] or '').split('/')[0].strip())
+        except ValueError:
+            continue
+        if address not in network:
+            continue
+        # A formal binding is not enough to add a device to automatic ARP
+        # collection. Corroborate the same address on that device/interface in
+        # the latest successful interface_inventory generation. A stable
+        # interface_id supplies the actual name when legacy IPAM data omitted it.
+        device_id = str(row['device_id'] or '').strip()
+        interface_name = str(row['interface_name'] or '').strip()
+        interface_key = normalize_interface_name(interface_name).lower()
+        if not interface_key or (device_id, interface_key, str(address)) not in actual_interface_ips:
+            continue
+        max_len = 28 if network.version == 4 else 124
+        if network.prefixlen > max_len:
+            continue
+        if str(row['network_type'] or '').strip().lower() in _TERMINAL_EXCLUDED_NETWORK_TYPES:
+            continue
+        interface_name = str(row['interface_name'] or '').strip()
+        if _LOOPBACK_IF_RE.match(interface_name):
+            continue
+        gateway = str(row['gateway'] or '').split('/')[0].strip()
+        is_gateway = bool(gateway) and gateway == str(address)
+        rank = (0 if is_gateway else 1, 0 if _SVI_IF_RE.match(interface_name) else 1, int(address))
+        entry = by_prefix.get(str(row['prefix_id']))
+        if entry is None or rank < entry['rank']:
+            by_prefix[str(row['prefix_id'])] = {
+                'rank': rank, 'device_id': str(row['device_id']), 'prefix': str(network),
+            }
+    selected: dict[str, str] = {}
+    for entry in by_prefix.values():
+        selected.setdefault(entry['device_id'], entry['prefix'])
+    return selected
+
+
 def _load_arp_sweep_devices(
     run_id: str = '',
     device_ids: set[str] | None = None,
@@ -5046,8 +5222,10 @@ def _load_arp_sweep_devices(
         include_snmp_table_platforms=True,
     )
     gateway_device_ids = _load_prefix_gateway_device_ids()
+    terminal_gateway_ids = _load_terminal_gateway_device_ids()
     edge_roles = {'access', 'access-layer-switch', '接入交换机', 'ap', 'wireless-ap', '无线ap', '无线接入点'}
     terminal_devices = []
+    auto_selected: list[str] = []
     for device in all_eligible:
         override = explicit_collector_override(device, 'arp')
         if override is False:
@@ -5057,6 +5235,18 @@ def _load_arp_sweep_devices(
         dev_id = str(device.get('id') or '').strip()
         if override is True or role in edge_roles or (dev_id and dev_id in gateway_device_ids):
             terminal_devices.append(device)
+        elif dev_id and dev_id in terminal_gateway_ids:
+            # Owner of an endpoint Prefix's gateway/SVI: its ARP table is the
+            # authoritative host list for that segment. Role is not consulted.
+            terminal_devices.append(device)
+            auto_selected.append(
+                f"{device.get('hostname') or dev_id}({terminal_gateway_ids[dev_id]})"
+            )
+    if auto_selected:
+        logger.info(
+            "[ARP Sweep] Endpoint-prefix gateway devices added by interface ownership: %s",
+            ", ".join(sorted(auto_selected)),
+        )
     all_eligible = terminal_devices
     if device_ids is not None:
         all_eligible = [device for device in all_eligible if str(device.get('id') or '') in device_ids]
@@ -6019,7 +6209,13 @@ def _run_arp_sweep_locked(device_ids: set[str] | None = None) -> dict[str, Any]:
     gateway_devices, total_eligible, skipped_backoff = _load_arp_sweep_devices(collection_run_id, device_ids)
     # ARP 采集不按角色排除——access 路由器同样拥有 ARP 表
     if not gateway_devices:
-        logger.info("[ARP Sweep] No eligible devices, skipping")
+        if total_eligible and skipped_backoff:
+            logger.info(
+                "[ARP Sweep] All %d eligible device(s) are in retry backoff after earlier failures; skipping this sweep",
+                total_eligible,
+            )
+        else:
+            logger.info("[ARP Sweep] No eligible devices, skipping")
         return {
             'eligible_devices': 0,
             'total_eligible_devices': total_eligible,

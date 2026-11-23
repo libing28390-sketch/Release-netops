@@ -37,6 +37,7 @@ from services.ipam_service import (
     delete_subnets,
     list_addresses,
     list_ip_inventory,
+    get_address_detail,
     create_address,
     update_address,
     delete_address,
@@ -763,12 +764,17 @@ def api_list_subnets(
     classification: str = Query('all', pattern='^(all|auto|manual|unclassified|mixed|conflict|reuse|stale)$'),
     page: int | None = None,
     page_size: int = 20,
+    include_metrics: bool = Query(
+        True,
+        description='Set false for selector lists: skips per-prefix capacity, active-endpoint and purpose-suggestion work',
+    ),
     user=require_permission('prefix', 'view'),
 ):
     allowed_prefix_ids = _authorized_ipam_prefix_ids(user, 'view')
     return list_subnets(
         site=site, status=status, q=q, family=family, classification=classification,
         page=page, page_size=page_size, allowed_prefix_ids=allowed_prefix_ids,
+        include_metrics=include_metrics,
     )
 
 
@@ -1283,6 +1289,25 @@ def api_list_ip_inventory(
             if isinstance(_user, dict) else None
         ),
     )
+
+@router.get('/ipam/addresses/{address_id}/detail')
+def api_get_address_detail(address_id: str, _user=require_permission('ip_address', 'view')):
+    """Read-only detail for one registered address (prefix, device, interface, discovery, history)."""
+    if isinstance(_user, dict) and not authorize_resource(
+        _user, 'ip_address', 'view', **_address_scope(address_id),
+    ):
+        raise HTTPException(status_code=404, detail='Address not found')
+    detail = get_address_detail(
+        address_id,
+        visible_scopes=(
+            _ipam_current_visible_scopes(_user, resource_type='ip_address', action='view')
+            if isinstance(_user, dict) else None
+        ),
+    )
+    if not detail:
+        raise HTTPException(status_code=404, detail='Address not found')
+    return detail
+
 
 @router.get('/ipam/subnets/{subnet_id}/addresses')
 def api_list_addresses(subnet_id: str, q: str = '', status: str = 'all', device_type: str = 'all',
