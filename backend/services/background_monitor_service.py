@@ -501,19 +501,60 @@ def _run_telemetry_maintenance():
     except Exception:
         logger.debug("Notification delivery retention cleanup skipped", exc_info=True)
 
-    # Prune stale topology links not refreshed in the last 24 hours.
-    link_stale_cutoff = (now - timedelta(hours=24)).replace(microsecond=0).isoformat()
+    # Age out topology links with the topology service's own windows so the
+    # ``topology_links`` projection, the evidence graph and the Topology page
+    # agree. A hard-coded 24h cut here used to empty the table one day after
+    # the last (manual-only) discovery while the 48h evidence graph still
+    # showed the links. Links past the TTL are marked stale first; only links
+    # past the stale-retention window are deleted.
     try:
-        deleted = _db_quick(
-            'SELECT COUNT(*) AS cnt FROM topology_links WHERE last_seen IS NOT NULL AND last_seen < ?',
-            (link_stale_cutoff,), fetch=True,
+        from services.topology_service import (
+            TOPOLOGY_LINK_STALE_RETENTION_SECONDS,
+            TOPOLOGY_LINK_TTL_SECONDS,
         )
-        stale_count = deleted['cnt'] if deleted else 0
+    except Exception:
+        TOPOLOGY_LINK_TTL_SECONDS = 172800
+        TOPOLOGY_LINK_STALE_RETENTION_SECONDS = 172800
+    now_iso = now.replace(microsecond=0).isoformat()
+    link_ttl_cutoff = (now - timedelta(seconds=TOPOLOGY_LINK_TTL_SECONDS)).replace(microsecond=0).isoformat()
+    link_delete_cutoff = (
+        now - timedelta(seconds=max(TOPOLOGY_LINK_TTL_SECONDS, TOPOLOGY_LINK_STALE_RETENTION_SECONDS))
+    ).replace(microsecond=0).isoformat()
+    try:
+        expired = _db_quick(
+            'SELECT COUNT(*) AS cnt FROM topology_links WHERE last_seen IS NOT NULL AND last_seen < ?',
+            (link_delete_cutoff,), fetch=True,
+        )
+        expired_count = expired['cnt'] if expired else 0
+        if expired_count > 0:
+            _db_quick(
+                'DELETE FROM topology_links WHERE last_seen IS NOT NULL AND last_seen < ?',
+                (link_delete_cutoff,),
+            )
+            logger.info(
+                "[Maintenance] Pruned %d topology link(s) not seen for more than %d hours",
+                expired_count, max(TOPOLOGY_LINK_TTL_SECONDS, TOPOLOGY_LINK_STALE_RETENTION_SECONDS) // 3600,
+            )
+        stale = _db_quick(
+            """SELECT COUNT(*) AS cnt FROM topology_links
+                WHERE last_seen IS NOT NULL AND last_seen < ?
+                  AND COALESCE(status, 'unknown') <> 'stale'""",
+            (link_ttl_cutoff,), fetch=True,
+        )
+        stale_count = stale['cnt'] if stale else 0
         if stale_count > 0:
-            _db_quick('DELETE FROM topology_links WHERE last_seen IS NOT NULL AND last_seen < ?', (link_stale_cutoff,))
-            logger.info(f"[Maintenance] Pruned {stale_count} stale topology link(s) older than 24 hours")
+            _db_quick(
+                """UPDATE topology_links SET status = 'stale', updated_at = ?
+                    WHERE last_seen IS NOT NULL AND last_seen < ?
+                      AND COALESCE(status, 'unknown') <> 'stale'""",
+                (now_iso, link_ttl_cutoff),
+            )
+            logger.info(
+                "[Maintenance] Marked %d topology link(s) stale (not seen for more than %d hours)",
+                stale_count, TOPOLOGY_LINK_TTL_SECONDS // 3600,
+            )
     except Exception as exc:
-        logger.warning(f"[Maintenance] Failed to prune stale links: {exc}")
+        logger.warning(f"[Maintenance] Failed to age out topology links: {exc}")
 
 # --- GLOBAL TELEMETRY STATE ---
 open_alerts = {}

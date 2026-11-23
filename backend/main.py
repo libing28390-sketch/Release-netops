@@ -563,6 +563,30 @@ def _register_periodic_scheduler_jobs(schedule_cfg: dict) -> None:
         max_instances=1, coalesce=True,
     )
 
+    # Scheduled full-scope LLDP topology discovery (read-only). Disabled unless
+    # TOPOLOGY_AUTOMATIC_DISCOVERY_ENABLED=1; without it topology stays
+    # manual-only and links age out after TOPOLOGY_LINK_TTL_SECONDS.
+    from services.topology_service import (
+        TOPOLOGY_AUTOMATIC_DISCOVERY_ENABLED,
+        TOPOLOGY_AUTOMATIC_DISCOVERY_HOUR,
+        TOPOLOGY_AUTOMATIC_DISCOVERY_JOB_ID,
+        TOPOLOGY_AUTOMATIC_DISCOVERY_MINUTE,
+        run_automatic_topology_discovery,
+    )
+    if TOPOLOGY_AUTOMATIC_DISCOVERY_ENABLED:
+        scheduler.add_job(
+            synchronized_scheduler_job(TOPOLOGY_AUTOMATIC_DISCOVERY_JOB_ID, expire_seconds=600)(
+                run_automatic_topology_discovery
+            ),
+            CronTrigger(hour=TOPOLOGY_AUTOMATIC_DISCOVERY_HOUR, minute=TOPOLOGY_AUTOMATIC_DISCOVERY_MINUTE),
+            id=TOPOLOGY_AUTOMATIC_DISCOVERY_JOB_ID, replace_existing=True,
+            max_instances=1, coalesce=True, misfire_grace_time=3600,
+        )
+        logger.info(
+            "[Scheduler] Automatic topology discovery enabled: daily at %02d:%02d",
+            TOPOLOGY_AUTOMATIC_DISCOVERY_HOUR, TOPOLOGY_AUTOMATIC_DISCOVERY_MINUTE,
+        )
+
     from services.inspection_service import run_scheduled_inspections
     try:
         inspection_trigger = CronTrigger.from_crontab(settings.INSPECTION_MASTER_CRON)
@@ -1280,6 +1304,8 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5010"))
     workers = int(os.environ.get("WORKERS", "1"))
     is_dev = os.environ.get("NODE_ENV") == "development"
+    # The Windows supervisor owns reloads when it sets NEXORA_DEV_RELOAD=0.
+    use_reload = is_dev and os.environ.get("NEXORA_DEV_RELOAD", "1") != "0"
     backend_directory = os.path.dirname(os.path.abspath(__file__))
     reload_kwargs = (
         {
@@ -1296,7 +1322,7 @@ if __name__ == "__main__":
                 os.path.join(backend_directory, 'artifacts'),
             ],
         }
-        if is_dev
+        if use_reload
         else {}
     )
 

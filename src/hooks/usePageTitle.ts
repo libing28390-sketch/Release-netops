@@ -98,16 +98,19 @@ export const usePageTitle = ({
     if (activeTab === 'ipam') {
       const map: Record<string, string> = {
         locate: language === 'zh' ? 'IP 定位' : 'IP Locator',
-        prefixes: language === 'zh' ? 'Prefix管理' : 'Prefix Management',
-        ips: language === 'zh' ? 'IP地址' : 'IP Address Management',
+        prefixes: language === 'zh' ? '网段' : 'Prefixes',
+        ips: language === 'zh' ? 'IP 地址' : 'IP Address Management',
         endpoints: language === 'zh' ? '发现终端' : 'Discovered Endpoints',
         pools: language === 'zh' ? '地址池' : 'IP Pool Management',
         vips: language === 'zh' ? 'VIP管理' : 'VIP Management',
         dhcp: language === 'zh' ? 'DHCP租约' : 'DHCP Leases',
         utilization: language === 'zh' ? '利用率分析' : 'IP Utilization Analysis',
         reconciliation: language === 'zh' ? 'IP对账中心' : 'IP Reconciliation',
+        fhrp: language === 'zh' ? 'FHRP 与 Anycast' : 'FHRP & Anycast',
+        'routing-contexts': language === 'zh' ? '设备上下文映射' : 'Device Context Mappings',
+        resources: language === 'zh' ? '扩展台账' : 'Extended Models',
       };
-      return map[ipamPage] || (language === 'zh' ? 'IPAM管理' : 'IPAM Management');
+      return map[ipamPage] || 'IPAM';
     }
     if (activeTab === 'cmdb') {
       const map: Record<string, string> = {

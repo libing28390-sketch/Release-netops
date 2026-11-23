@@ -9,6 +9,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import PageHero from '../../components/PageHero';
+import { useNavigate } from 'react-router-dom';
 
 interface AnalyticsData {
   network_scope: 'business' | 'all';
@@ -72,6 +73,7 @@ const IPUtilizationTab: React.FC<IPUtilizationTabProps> = ({ language, t }) => {
   const [loadError, setLoadError] = useState('');
   const [retryVersion, setRetryVersion] = useState(0);
   const [networkScope, setNetworkScope] = useState<'business' | 'all'>('business');
+  const navigate = useNavigate();
 
   const authHeaders = useCallback(() => {
     const token = localStorage.getItem('netops_token');
@@ -351,6 +353,27 @@ const IPUtilizationTab: React.FC<IPUtilizationTabProps> = ({ language, t }) => {
           </button>
         </div>
       </div>
+
+      {networkScope === 'business' && Number(overview.prefixes_count || 0) === 0 && Number(overview.scope_excluded_prefixes_count || 0) > 0 && (
+        <div role="note" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+          <div className="min-w-0 flex-1">
+            <p className="font-bold">{zh ? '为什么这里全是 0？' : 'Why is everything zero?'}</p>
+            <p className="mt-0.5 leading-4">
+              {zh
+                ? `“业务网段”只统计用途为服务器网、办公/用户网、无线、存储等业务类的网段。当前 ${overview.scope_excluded_prefixes_count} 个网段都还不是业务用途（多数是“用途未确定”，或是管理网、Loopback、互联），所以没有可计算的容量。请到“网段”页为承载业务的网段设置用途，或先切换到“全部网段”查看。`
+                : `Business scope only counts prefixes with a business purpose. All ${overview.scope_excluded_prefixes_count} prefixes are currently non-business or unclassified. Set purposes on Prefixes, or switch to All prefixes.`}
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <button type="button" onClick={() => setNetworkScope('all')} className="rounded-lg bg-amber-600 px-3 py-1.5 font-bold text-white hover:bg-amber-700 cursor-pointer">
+              {zh ? '查看全部网段' : 'Show all prefixes'}
+            </button>
+            <button type="button" onClick={() => navigate('/ipam/prefixes')} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 font-semibold text-amber-800 hover:bg-amber-100 cursor-pointer dark:bg-zinc-900">
+              {zh ? '去网段设置用途' : 'Set purposes'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Grid Dashboard */}
       <div className="flex-1 overflow-y-auto space-y-4 pr-1">

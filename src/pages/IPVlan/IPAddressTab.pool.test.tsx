@@ -50,7 +50,7 @@ const setup = (options: {
     const method = String(init?.method || 'GET').toUpperCase();
     const parsedUrl = new URL(url, 'http://localhost');
 
-    if (url === '/api/ipam/subnets') return response(prefixes);
+    if (String(url).split('?')[0] === '/api/ipam/subnets') return response(prefixes);
     if (url.startsWith('/api/ipam/addresses?')) {
       if (parsedUrl.searchParams.get('registered_only') === 'true') {
         return response({ items: options.addressRows || [], total: (options.addressRows || []).length });

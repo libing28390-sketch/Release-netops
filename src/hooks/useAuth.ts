@@ -67,6 +67,7 @@ export const useAuth = ({
     setShowUserMenu(false);
     setShowNotifications(false);
     setIsAuthenticated(false);
+    setAuthChecking(false);
   }, [setShowUserMenu, setShowNotifications]);
 
   const fetchWithTimeout = useCallback(async (url: string, options: RequestInit = {}, timeoutMs = 12000) => {
@@ -140,80 +141,81 @@ export const useAuth = ({
   });
 
   useEffect(() => {
-    const token = localStorage.getItem('netops_token');
-    if (!token) {
-      setAuthChecking(false);
-      return;
+    const retryDelays = [1000, 2000, 3000, 5000, 8000];
+    const pollInterval = 60000;
+    let active = true;
+    let timer: number | undefined;
+    let retryIndex = 0;
+    let checkedToken: string | null = null;
+    let verifiedToken: string | null = null;
+
+    async function validateSession() {
+      const token = localStorage.getItem('netops_token');
+      if (token !== checkedToken) {
+        checkedToken = token;
+        retryIndex = 0;
+      }
+      if (!token) {
+        setAuthChecking(false);
+        return pollInterval;
+      }
+
+      const isCurrent = () => active && localStorage.getItem('netops_token') === token;
+      try {
+        const response = await fetchWithTimeout('/api/session', {
+          headers: { Authorization: `Bearer ${token}` },
+        }, verifiedToken === token ? 6000 : 10000);
+        if (!isCurrent()) return pollInterval;
+        if (response.status === 401) {
+          expireLocalSession();
+          return pollInterval;
+        }
+        if (response.ok) {
+          const { user } = await response.json() as { user?: SessionUser };
+          if (!isCurrent()) return pollInterval;
+          if (typeof user?.username === 'string' && user.username.trim()) {
+            const firstVerification = verifiedToken !== token;
+            verifiedToken = token;
+            retryIndex = 0;
+            setCurrentUser(user);
+            writeSessionSnapshot(user);
+            setIsAuthenticated(true);
+            setAuthChecking(false);
+            if (firstVerification) {
+              if (user.preferred_language === 'en' || user.preferred_language === 'zh') {
+                setLanguage(user.preferred_language);
+              }
+              void fetchWithTimeout('/api/grafana/session', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+                credentials: 'same-origin',
+              }, 5000).catch(() => {});
+              checkSetupStatusInBackground(token, user.role, isCurrent);
+            }
+            return pollInterval;
+          }
+        }
+      } catch {
+        // Retain the token and any confirmed snapshot during temporary outages.
+      }
+      return isCurrent() && verifiedToken !== token
+        ? retryDelays[retryIndex++] ?? pollInterval
+        : pollInterval;
     }
 
-    let active = true;
-    (async () => {
-      try {
-        const r = await fetchWithTimeout('/api/session', { headers: { Authorization: `Bearer ${token}` } }, 10000);
-        if (!active) return;
-        if (r.ok) {
-          const data = await r.json();
-          setIsAuthenticated(true);
-          if (data?.user?.username) {
-            setCurrentUser(data.user);
-            writeSessionSnapshot(data.user);
-            if (data.user.preferred_language === 'en' || data.user.preferred_language === 'zh') {
-              setLanguage(data.user.preferred_language);
-            }
-          }
-          // Existing Nexora sessions predate the Grafana bridge cookie. Refresh
-          // it in the background so opening a Grafana tab works without another
-          // login prompt.
-          void fetchWithTimeout(
-            '/api/grafana/session',
-            {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${token}` },
-              credentials: 'same-origin',
-            },
-            5000
-          ).catch(() => {});
-          checkSetupStatusInBackground(token, data?.user?.role, () => active);
-        } else {
-          expireLocalSession();
-        }
-      } catch {
-        if (!active) return;
-        expireLocalSession();
-      } finally {
-        if (active) setAuthChecking(false);
-      }
-    })();
+    async function checkAndSchedule() {
+      const delay = await validateSession();
+      if (active) timer = window.setTimeout(checkAndSchedule, delay);
+    }
 
+    window.addEventListener('netops:auth-expired', expireLocalSession);
+    void checkAndSchedule();
     return () => {
       active = false;
+      window.clearTimeout(timer);
+      window.removeEventListener('netops:auth-expired', expireLocalSession);
     };
-  }, [checkSetupStatusInBackground, expireLocalSession, fetchWithTimeout, setLanguage, setShowSetupWizard]);
-
-  useEffect(() => {
-    const expiryHandler = () => {
-      expireLocalSession();
-    };
-
-    window.addEventListener('netops:auth-expired', expiryHandler);
-    const timer = window.setInterval(async () => {
-      const token = localStorage.getItem('netops_token');
-      if (!token) return;
-      try {
-        const res = await fetchWithTimeout('/api/session', { headers: { Authorization: `Bearer ${token}` } }, 6000);
-        if (!res.ok && res.status === 401) {
-          expireLocalSession();
-        }
-      } catch {
-        // silent polling catch
-      }
-    }, 60000);
-
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener('netops:auth-expired', expiryHandler);
-    };
-  }, [expireLocalSession, fetchWithTimeout, setLanguage, setShowSetupWizard]);
+  }, [checkSetupStatusInBackground, expireLocalSession, fetchWithTimeout, setLanguage]);
 
   const handleLogout = useCallback(() => {
     const token = localStorage.getItem('netops_token');

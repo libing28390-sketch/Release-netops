@@ -54,8 +54,8 @@ const Pagination: React.FC<PaginationProps> = ({
         )}
 
         <div className="flex items-center overflow-hidden rounded border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-          <button type="button" disabled={currentPage <= 1} onClick={() => moveToPage(1)} title={zh ? '第一页' : 'First page'} className="border-r border-slate-200 p-1.5 text-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30 dark:border-slate-700 dark:hover:bg-slate-800"><ChevronsLeft size={14} /></button>
-          <button type="button" disabled={currentPage <= 1} onClick={() => moveToPage(currentPage - 1)} title={zh ? '上一页' : 'Previous page'} className="border-r border-slate-200 p-1.5 text-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30 dark:border-slate-700 dark:hover:bg-slate-800"><ChevronLeft size={14} /></button>
+          <button type="button" disabled={currentPage <= 1} onClick={() => moveToPage(1)} title={zh ? '第一页' : 'First page'} aria-label={zh ? '第一页' : 'First page'} className="border-r border-slate-200 p-1.5 text-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30 dark:border-slate-700 dark:hover:bg-slate-800"><ChevronsLeft size={14} /></button>
+          <button type="button" disabled={currentPage <= 1} onClick={() => moveToPage(currentPage - 1)} title={zh ? '上一页' : 'Previous page'} aria-label={zh ? '上一页' : 'Previous page'} className="border-r border-slate-200 p-1.5 text-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30 dark:border-slate-700 dark:hover:bg-slate-800"><ChevronLeft size={14} /></button>
           <input
             type="number"
             min={1}
@@ -69,8 +69,8 @@ const Pagination: React.FC<PaginationProps> = ({
             aria-label={zh ? '当前页' : 'Current page'}
           />
           <span className="border-l border-slate-200 px-2 text-xs text-slate-400 dark:border-slate-700">/ {totalPages} {zh ? '页' : 'pages'}</span>
-          <button type="button" disabled={currentPage >= totalPages} onClick={() => moveToPage(currentPage + 1)} title={zh ? '下一页' : 'Next page'} className="border-l border-slate-200 p-1.5 text-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30 dark:border-slate-700 dark:hover:bg-slate-800"><ChevronRight size={14} /></button>
-          <button type="button" disabled={currentPage >= totalPages} onClick={() => moveToPage(totalPages)} title={zh ? '最后一页' : 'Last page'} className="border-l border-slate-200 p-1.5 text-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30 dark:border-slate-700 dark:hover:bg-slate-800"><ChevronsRight size={14} /></button>
+          <button type="button" disabled={currentPage >= totalPages} onClick={() => moveToPage(currentPage + 1)} title={zh ? '下一页' : 'Next page'} aria-label={zh ? '下一页' : 'Next page'} className="border-l border-slate-200 p-1.5 text-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30 dark:border-slate-700 dark:hover:bg-slate-800"><ChevronRight size={14} /></button>
+          <button type="button" disabled={currentPage >= totalPages} onClick={() => moveToPage(totalPages)} title={zh ? '最后一页' : 'Last page'} aria-label={zh ? '最后一页' : 'Last page'} className="border-l border-slate-200 p-1.5 text-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30 dark:border-slate-700 dark:hover:bg-slate-800"><ChevronsRight size={14} /></button>
         </div>
       </div>
     </div>

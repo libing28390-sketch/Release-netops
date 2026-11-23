@@ -116,11 +116,44 @@ def _normalize_status(value: Any) -> str:
 _INTERFACE_PREFIXES = (
     "ge", "gigabitethernet", "gi", "eth", "ethernet", "et", "fa", "fastethernet",
     "xge", "tengige", "10ge", "25ge", "40ge", "100ge", "hge", "fge",
+    # Long IF-MIB ifName spellings (H3C/Comware, Cisco). Without these the
+    # SNMP status/MAC of 10G/25G/40G/100G ports was silently skipped.
+    "ten-gigabitethernet", "tengigabitethernet", "twenty-fivegige", "twentyfivegige",
+    "twenty-five-gigabitethernet", "twentyfivegigabitethernet", "fortygige",
+    "fortygigabitethernet", "hundredgige", "hundredgigabitethernet", "200ge", "400ge",
+    "ragg", "bagg",
+    # H3C out-of-band management port (M-GigabitEthernet0/0/0, CLI: MGE0/0/0).
+    "m-gigabitethernet", "mgigabitethernet", "m-ge", "mge",
     "vlanif", "vlan-interface", "vlan", "svi", "bvi", "irb", "loopback", "loop",
     "lo", "null", "inloopback", "meth", "management", "mgmt", "eth-trunk",
     "bridge-aggregation", "route-aggregation", "port-channel", "portchannel", "tunnel",
     "serial", "pos", "atm", "wlan-ess", "wlan-bss", "aux", "console",
 )
+
+
+def _skipped_interface_names(items: Any) -> list[str]:
+    """Names in an SNMP interface list that the name filter would drop."""
+    skipped: list[str] = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if name and not _looks_like_interface_name(name) and name not in skipped:
+            skipped.append(name)
+    return skipped
+
+
+def _log_skipped_interface_names(device: dict[str, Any], items: Any, context: str) -> list[str]:
+    skipped = _skipped_interface_names(items)
+    if skipped:
+        logger.info(
+            "[%s] %s: skipped %d SNMP interface name(s) not recognised as interfaces: %s",
+            context,
+            device.get("hostname") or device.get("id"),
+            len(skipped),
+            ", ".join(skipped[:20]) + (" ..." if len(skipped) > 20 else ""),
+        )
+    return skipped
 
 
 def _looks_like_interface_name(value: Any) -> bool:
@@ -664,6 +697,7 @@ def refresh_snmp_interface_inventory(device_id: str) -> dict[str, Any]:
             "读取设备端口失败，请检查 SNMP 连通性和只读权限。",
         ) from exc
 
+    _log_skipped_interface_names(device, collected, "SNMP interface inventory")
     valid_interfaces = []
     for item in collected or []:
         if not isinstance(item, dict):
@@ -692,6 +726,52 @@ def refresh_snmp_interface_inventory(device_id: str) -> dict[str, Any]:
         "device_id": device_id,
         "interface_count": len(valid_interfaces),
         "updated_count": updated_count,
+    }
+
+
+def refresh_snmp_interface_status(device_id: str) -> dict[str, Any]:
+    """Read one device's IF-MIB status table (name, status, MAC, MTU) on demand.
+
+    Read-only towards the device (SNMP GET/WALK). Only the shared ``interfaces``
+    rows are refreshed; CLI snapshots, ip_inventory, VLANs and IPAM records are
+    left untouched. Unlike ``refresh_snmp_interface_inventory`` (names/indexes
+    only) this also stores ``ifPhysAddress`` so IPAM can show interface MACs.
+    """
+    device = _load_device(device_id)
+    from services.snmp_collection_policy_service import is_snmp_collection_enabled
+
+    if not is_snmp_collection_enabled(device):
+        raise InterfaceInventorySyncError("snmp_collection_disabled", "该设备已关闭 SNMP 采集。")
+    domains = _collect_snmp_interface_domains(device, collect_interfaces=True, collect_vlans=False)
+    errors = domains.get("errors") or {}
+    if not domains.get("configured"):
+        reason = str(errors.get("credentials") or "")
+        if reason == "community_missing":
+            raise InterfaceInventorySyncError("snmp_not_configured", "该设备的 SNMP 团体字为空。")
+        if reason == "target_missing":
+            raise InterfaceInventorySyncError("device_ip_missing", "设备未配置可用于 SNMP 采集的地址。")
+        raise InterfaceInventorySyncError("snmp_not_configured", "该设备尚未配置可用的 SNMP 只读凭据。")
+    interfaces = domains.get("interfaces") if domains["complete"].get("interface_status") else None
+    if not interfaces:
+        logger.info(
+            "On-demand IF-MIB status refresh failed for %s (%s)",
+            device_id, errors.get("interface_status") or "no_rows",
+        )
+        raise InterfaceInventorySyncError(
+            "snmp_interface_read_failed",
+            "读取设备接口表失败，请检查 SNMP 连通性，以及只读视图是否开放 IF-MIB。",
+        )
+    skipped = _log_skipped_interface_names(device, interfaces, "SNMP interface status")
+    updated = _upsert_snmp_interfaces(device, interfaces)
+    with_mac = sum(1 for item in interfaces if str(item.get("mac_address") or "").strip())
+    return {
+        "device_id": device_id,
+        "hostname": device.get("hostname") or device_id,
+        "interface_count": len(interfaces),
+        "updated_count": updated,
+        "mac_count": with_mac,
+        "mac_complete": bool(domains["complete"].get("interface_mac")),
+        "skipped_interfaces": skipped,
     }
 
 
@@ -726,6 +806,10 @@ def _upsert_snmp_interfaces(device: dict[str, Any], snmp_interfaces: list[dict[s
             oper_stat = _normalize_status(item.get("status") or item.get("oper_status"))
             if oper_stat == "unknown" and admin_stat in ("up", "down"):
                 oper_stat = admin_stat
+            complete_state = admin_stat != "unknown" and oper_stat != "unknown"
+            partial_state = not complete_state and (
+                admin_stat != "unknown" or oper_stat != "unknown"
+            )
 
             speed_mbps = item.get("speed_mbps") or 0
             try:
@@ -754,6 +838,10 @@ def _upsert_snmp_interfaces(device: dict[str, Any], snmp_interfaces: list[dict[s
                         """UPDATE interfaces SET
                                admin_status = CASE WHEN ? <> 'unknown' THEN ? ELSE admin_status END,
                                oper_status = CASE WHEN ? <> 'unknown' THEN ? ELSE oper_status END,
+                               status_observed_at = CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE status_observed_at END,
+                               status_observation_source = CASE WHEN ? THEN 'snmp' WHEN ? THEN '' ELSE status_observation_source END,
+                               certified_admin_status = CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE certified_admin_status END,
+                               certified_oper_status = CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE certified_oper_status END,
                                speed = COALESCE(?, speed),
                                mac_address = CASE WHEN ? <> '' THEN ? ELSE mac_address END,
                                mtu = CASE WHEN ? IS NOT NULL THEN ? ELSE mtu END,
@@ -764,6 +852,10 @@ def _upsert_snmp_interfaces(device: dict[str, Any], snmp_interfaces: list[dict[s
                         (
                             admin_stat, admin_stat,
                             oper_stat, oper_stat,
+                            complete_state, observed_at, partial_state,
+                            complete_state, partial_state,
+                            complete_state, admin_stat, partial_state,
+                            complete_state, oper_stat, partial_state,
                             speed_bps,
                             mac_address, mac_address,
                             mtu_value, mtu_value,
@@ -784,11 +876,33 @@ def _upsert_snmp_interfaces(device: dict[str, Any], snmp_interfaces: list[dict[s
                     """INSERT INTO interfaces (
                            id, device_id, interface_name, description, mac_address, mtu,
                            admin_status, oper_status, speed, if_index,
-                           interface_type, switchport_mode, is_l3, ip_enabled, last_seen
-                       ) VALUES (?, ?, ?, ?, ?, COALESCE(?, 1500), ?, ?, ?, ?, ?, ?, FALSE, 0, ?)
+                            interface_type, switchport_mode, is_l3, ip_enabled, last_seen,
+                            status_observed_at, status_observation_source,
+                            certified_admin_status, certified_oper_status
+                        ) VALUES (?, ?, ?, ?, ?, COALESCE(?, 1500), ?, ?, ?, ?, ?, ?, FALSE, 0, ?, ?, ?, ?, ?)
                        ON CONFLICT(id) DO UPDATE SET
-                           admin_status = excluded.admin_status,
-                           oper_status = excluded.oper_status,
+                            admin_status = CASE WHEN excluded.admin_status <> 'unknown' THEN excluded.admin_status ELSE interfaces.admin_status END,
+                            oper_status = CASE WHEN excluded.oper_status <> 'unknown' THEN excluded.oper_status ELSE interfaces.oper_status END,
+                            status_observed_at = CASE
+                                WHEN excluded.status_observed_at IS NOT NULL THEN excluded.status_observed_at
+                                WHEN excluded.admin_status <> 'unknown' OR excluded.oper_status <> 'unknown' THEN NULL
+                                ELSE interfaces.status_observed_at
+                            END,
+                            status_observation_source = CASE
+                                WHEN excluded.status_observed_at IS NOT NULL THEN excluded.status_observation_source
+                                WHEN excluded.admin_status <> 'unknown' OR excluded.oper_status <> 'unknown' THEN ''
+                                ELSE interfaces.status_observation_source
+                            END,
+                            certified_admin_status = CASE
+                                WHEN excluded.status_observed_at IS NOT NULL THEN excluded.certified_admin_status
+                                WHEN excluded.admin_status <> 'unknown' OR excluded.oper_status <> 'unknown' THEN NULL
+                                ELSE interfaces.certified_admin_status
+                            END,
+                            certified_oper_status = CASE
+                                WHEN excluded.status_observed_at IS NOT NULL THEN excluded.certified_oper_status
+                                WHEN excluded.admin_status <> 'unknown' OR excluded.oper_status <> 'unknown' THEN NULL
+                                ELSE interfaces.certified_oper_status
+                            END,
                            speed = COALESCE(excluded.speed, interfaces.speed),
                            mac_address = CASE WHEN excluded.mac_address <> '' THEN excluded.mac_address ELSE interfaces.mac_address END,
                            mtu = CASE WHEN ? IS NOT NULL THEN excluded.mtu ELSE interfaces.mtu END,
@@ -798,8 +912,12 @@ def _upsert_snmp_interfaces(device: dict[str, Any], snmp_interfaces: list[dict[s
                     (
                         new_id, device["id"], raw_name, description, mac_address, mtu_value,
                         admin_stat, oper_stat, speed_bps,
-                        if_index_val,
-                        detected_type, default_mode, observed_at,
+                         if_index_val,
+                         detected_type, default_mode, observed_at,
+                         observed_at if complete_state else None,
+                         "snmp" if complete_state else "",
+                         admin_stat if complete_state else None,
+                         oper_stat if complete_state else None,
                         mtu_value,
                     ),
                 )
@@ -1012,7 +1130,12 @@ def _upsert_qbridge_vlan_data(device_id: str, data: dict[str, Any]) -> dict[str,
         conn.close()
 
 
-def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, Any]]) -> int:
+def _upsert_interfaces(
+    device: dict[str, Any],
+    interface_rows: list[dict[str, Any]],
+    *,
+    status_source: str = "snmp",
+) -> int:
     if not interface_rows:
         return 0
     conn = get_db_connection()
@@ -1063,6 +1186,12 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
             default_mode = "l3" if detected_interface_type in {
                 "svi", "loopback", "tunnel", "sub_interface"
             } else "access"
+            admin_stat = _normalize_status(item.get("admin_status"))
+            oper_stat = _normalize_status(item.get("oper_status"))
+            complete_state = admin_stat != "unknown" and oper_stat != "unknown"
+            partial_state = not complete_state and (
+                admin_stat != "unknown" or oper_stat != "unknown"
+            )
             matching_ids = existing_by_key.get(normalize_interface_name(item["interface_name"]), [])
             if matching_ids:
                 for existing_id in matching_ids:
@@ -1071,6 +1200,10 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
                                description = COALESCE(?, description),
                                admin_status = CASE WHEN ? <> 'unknown' THEN ? ELSE admin_status END,
                                oper_status = CASE WHEN ? <> 'unknown' THEN ? ELSE oper_status END,
+                               status_observed_at = CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE status_observed_at END,
+                               status_observation_source = CASE WHEN ? THEN ? WHEN ? THEN '' ELSE status_observation_source END,
+                               certified_admin_status = CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE certified_admin_status END,
+                               certified_oper_status = CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE certified_oper_status END,
                                primary_ip = ?, ip_address = ?, is_l3 = ?,
                                ip_enabled = ?,
                                ip_prefix_length = ?, ip_version = ?,
@@ -1086,8 +1219,12 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
                            WHERE id = ?""",
                         (
                             item.get("description"),
-                            item["admin_status"], item["admin_status"],
-                            item["oper_status"], item["oper_status"],
+                            admin_stat, admin_stat,
+                            oper_stat, oper_stat,
+                            complete_state, observed_at, partial_state,
+                            complete_state, status_source, partial_state,
+                            complete_state, admin_stat, partial_state,
+                            complete_state, oper_stat, partial_state,
                             interface_ip,
                             interface_ip, l3_enabled, ip_enabled, item.get("prefix_length"), ip_version,
                             detected_interface_type, detected_interface_type, detected_interface_type,
@@ -1100,14 +1237,20 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
                     """INSERT INTO interfaces (
                            id, device_id, interface_name, description,
                            admin_status, oper_status, interface_type,
-                           switchport_mode, primary_ip, ip_address, ip_prefix_length,
-                           ip_version, is_l3, ip_enabled, last_seen
-                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            switchport_mode, primary_ip, ip_address, ip_prefix_length,
+                            ip_version, is_l3, ip_enabled, last_seen,
+                            status_observed_at, status_observation_source,
+                            certified_admin_status, certified_oper_status
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         f"intf-{device['id']}-{re.sub(r'[^a-zA-Z0-9]+', '-', item['interface_name']).strip('-').lower()}",
-                        device["id"], item["interface_name"], item.get("description") or '', item["admin_status"],
-                        item["oper_status"], detected_interface_type, default_mode, interface_ip,
-                        interface_ip, item.get("prefix_length"), ip_version, l3_enabled, ip_enabled, observed_at,
+                         device["id"], item["interface_name"], item.get("description") or '', admin_stat,
+                         oper_stat, detected_interface_type, default_mode, interface_ip,
+                         interface_ip, item.get("prefix_length"), ip_version, l3_enabled, ip_enabled, observed_at,
+                         observed_at if complete_state else None,
+                         status_source if complete_state else "",
+                         admin_stat if complete_state else None,
+                         oper_stat if complete_state else None,
                     ),
                 )
                 new_id = f"intf-{device['id']}-{re.sub(r'[^a-zA-Z0-9]+', '-', item['interface_name']).strip('-').lower()}"
@@ -1257,8 +1400,10 @@ def _collect_interface_status_target(
 
     if snmp_interfaces and cli_interfaces_complete and not domains["complete"]["interface_addresses"]:
         status_records = _merge_cli_interface_addresses(snmp_interfaces, cli_interface_records)
+        status_source = "snmp"
     else:
         status_records = category.get("records") or []
+        status_source = "cli_snapshot" if category is cli_interface_category else "snmp"
     description_category = next(
         (item for item in payload.get("categories", []) if item.get("key") == "interface_description"),
         {},
@@ -1290,7 +1435,7 @@ def _collect_interface_status_target(
         address_snapshot_available=bool(snmp_addresses),
     ) if collect_interfaces else ({}, [])
 
-    updated = _upsert_interfaces(device, rows) if collect_interfaces else 0
+    updated = _upsert_interfaces(device, rows, status_source=status_source) if collect_interfaces else 0
     description_updated = 0
     if description_category.get("success") and description_category.get("parse_status") == "matched":
         description_updated = _upsert_interface_descriptions(device_id, descriptions)

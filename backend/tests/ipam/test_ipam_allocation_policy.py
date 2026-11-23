@@ -552,6 +552,11 @@ def test_inventory_surfaces_the_asset_linked_to_a_device(isolated_db) -> None:
         page_size=None,
         include_facets=False,
         asset_type='all',
+        # Called directly (not through FastAPI), so every Query() parameter
+        # must be passed explicitly; omitted ones keep the Query sentinel.
+        lifecycle_status=None,
+        tag_ids=None,
+        quick_filter=None,
     )
     assert len(device_candidates) == 1
     assert device_candidates[0]['id'] == 'device-ipam-link-001'

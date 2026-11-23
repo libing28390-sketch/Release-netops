@@ -76,7 +76,7 @@ export function getReconciliationEmptyMessage(
   if (state === 'search_no_results') return zh ? '没有匹配当前搜索的记录；清除搜索可查看完整结果。' : 'No rows match the current search. Clear the search to see the full result set.';
   if (state === 'input_counts_unknown') return zh ? '暂时无法获取对账输入数量，请刷新重试。' : 'Comparison input counts are unavailable. Refresh to retry.';
   if (state === 'no_comparable_data') return zh ? '当前没有可比较的 IPAM 地址和发现记录；接口采集快照不属于本页对账来源。' : 'There are no comparable IPAM addresses or discovery records. Interface collection snapshots are not a source for this reconciliation.';
-  if (state === 'cache_unavailable') return zh ? '当前没有可用的活动发现记录，暂时无法完成对账。接口采集快照不属于本页对账来源。' : 'No current active discovery records are available, so reconciliation cannot be completed. Interface collection snapshots are not a source for this page.';
+  if (state === 'cache_unavailable') return zh ? '当前没有处于有效期内的 ARP/MAC 发现记录，暂时无法完成对账。对账只使用最近一个采集周期内的发现结果；“发现终端”里较早采集的记录不会参与。请确认终端采集计划正在运行，或到“发现终端”页点击“刷新”后再回来对账。接口采集快照不属于本页对账来源。' : 'No in-window ARP/MAC discovery records are available. Reconciliation only uses results from the latest collection cycle; older discovered endpoints are excluded. Make sure endpoint collection is running, or refresh Discovered Endpoints, then retry. Interface collection snapshots are not a source for this page.';
   if (state === 'coverage_incomplete') {
     const reason = coverageReason.trim();
     return zh

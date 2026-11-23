@@ -1615,8 +1615,9 @@ const App: React.FC = () => {
 
   if (authChecking) {
     return (
-      <div className="min-h-screen bg-[#00172D] flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-[#00bceb] border-t-transparent rounded-full animate-spin" />
+      <div role="status" className="min-h-screen bg-[#00172D] flex flex-col items-center justify-center gap-4 text-sm text-white">
+        <div aria-hidden="true" className="w-8 h-8 border-2 border-[#00bceb] border-t-transparent rounded-full animate-spin" />
+        <p>{language === 'zh' ? '正在验证登录状态。连接中断时会自动重试。' : 'Verifying your session. We’ll retry if the connection is interrupted.'}</p>
       </div>
     );
   }

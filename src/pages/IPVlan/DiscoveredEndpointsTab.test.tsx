@@ -568,7 +568,7 @@ describe('DiscoveredEndpointsTab', () => {
           sites: [{ id: 'site-1', name: 'WH-DC-01' }], vrfs: [], devices: [{ id: 'switch-1', name: 'SW-01' }],
         });
       }
-      if (url === '/api/ipam/subnets') {
+      if (String(url).split('?')[0] === '/api/ipam/subnets') {
         return response({
           items: [{
             id: 'prefix-10-10-1',

@@ -43,7 +43,7 @@ describe('IPReconciliationTab', () => {
         }
         return response(payload);
       }
-      if (url === '/api/ipam/subnets') return response([{ id: 'subnet-1', prefix: '10.1.1.0/24', site_id: 'site-1', site_name: 'WH-DC-01', vrf_id: 'vrf-1', vrf_name: 'PROD' }]);
+      if (String(url).split('?')[0] === '/api/ipam/subnets') return response([{ id: 'subnet-1', prefix: '10.1.1.0/24', site_id: 'site-1', site_name: 'WH-DC-01', vrf_id: 'vrf-1', vrf_name: 'PROD' }]);
       if (url === '/api/ipam/reconciliation/register' || url === '/api/ipam/reconciliation/calibrate') return response({ ok: true });
       if (url === '/api/ipam/endpoints/obs-1') return response({ ...sourceObservation, observations: [{ source_type: 'arp', observed_at: sourceObservation.observed_at, source_version: 'v3' }] });
       return response({});
@@ -95,7 +95,7 @@ describe('IPReconciliationTab', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.startsWith('/api/ipam/reconciliation?')) return response({ summary: baseSummary, undocumented_endpoints: [sourceObservation], result_total: 1 });
-      if (url === '/api/ipam/subnets') return response([{ id: 'subnet-1', prefix: '10.1.1.0/24', site_id: 'site-1', site_name: 'WH-DC-01' }]);
+      if (String(url).split('?')[0] === '/api/ipam/subnets') return response([{ id: 'subnet-1', prefix: '10.1.1.0/24', site_id: 'site-1', site_name: 'WH-DC-01' }]);
       if (url === '/api/ipam/reconciliation/register') return response({ detail: 'Observation changed after review' }, 409);
       return response({});
     }));
