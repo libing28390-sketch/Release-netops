@@ -8,11 +8,166 @@ never make an incompatible platform or document category eligible.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import re
-from dataclasses import dataclass, field
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field, replace as _dataclass_replace
 from typing import Any, Dict, Iterable, List, Optional, Sequence
+
+logger = logging.getLogger(__name__)
+_APPLICABILITY_KEY_RE = re.compile(r"^[A-Za-z0-9_]{1,64}$")
+
+# ── V2 retrieval engine settings (read per call so operators and tests can
+# switch without a restart) ─────────────────────────────────────────────────
+_RETRIEVAL_ENGINES = {"v1", "shadow", "v2"}
+_RRF_K = 60
+
+
+def _retrieval_engine() -> str:
+    """``v1`` (default), ``shadow`` (serve V1, compare V2) or ``v2``."""
+    value = str(os.environ.get("AI_RETRIEVAL_ENGINE", "v1") or "v1").strip().lower()
+    return value if value in _RETRIEVAL_ENGINES else "v1"
+
+
+_VECTOR_SOURCES = {"legacy", "semantic"}
+
+
+
+
+# ── shadow comparison runtime ─────────────────────────────────────────────
+#
+# AI_RETRIEVAL_SHADOW_MODE        async (default): V2 runs on one background
+#                                 worker after V1 has answered, so the user
+#                                 never waits for it; sync: inline (tests,
+#                                 one-off diagnosis).
+# AI_RETRIEVAL_SHADOW_SAMPLE_RATE share of searches compared (0..1, default 1).
+# AI_RETRIEVAL_SHADOW_MAX_PENDING queued comparisons beyond which new ones are
+#                                 dropped (default 16): shadow work must never
+#                                 build up behind real traffic.
+# AI_RETRIEVAL_SHADOW_STORE_QUERY 1 also stores a sanitised 200-char query
+#                                 preview (default 0: hash only).
+# AI_RETRIEVAL_SHADOW_RETENTION_DAYS rows older than this are pruned (30).
+
+_SHADOW_LOCK = threading.Lock()
+_SHADOW_STATE: Dict[str, Any] = {"executor": None, "pending": 0, "dropped": 0, "recorded": 0, "record_failures": 0}
+_SHADOW_PRUNE_EVERY = 200
+
+
+def _shadow_mode() -> str:
+    value = str(os.environ.get("AI_RETRIEVAL_SHADOW_MODE", "async") or "async").strip().lower()
+    return value if value in {"async", "sync"} else "async"
+
+
+def _shadow_float(name: str, default: float) -> float:
+    try:
+        return max(0.0, min(1.0, float(os.environ.get(name, default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _shadow_executor() -> ThreadPoolExecutor:
+    with _SHADOW_LOCK:
+        executor = _SHADOW_STATE["executor"]
+        if executor is None:
+            # One worker: at most one extra pooled DB connection, and shadow
+            # traffic cannot compete with user searches for CPU.
+            executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rag-shadow")
+            _SHADOW_STATE["executor"] = executor
+        return executor
+
+
+def shadow_runtime_status() -> Dict[str, Any]:
+    with _SHADOW_LOCK:
+        return {key: value for key, value in _SHADOW_STATE.items() if key != "executor"}
+
+
+def wait_for_shadow_jobs(timeout: float = 30.0) -> bool:
+    """Block until queued shadow comparisons finish (tests, benchmarks)."""
+    deadline = time.monotonic() + max(0.0, timeout)
+    while time.monotonic() < deadline:
+        with _SHADOW_LOCK:
+            if not _SHADOW_STATE["pending"]:
+                return True
+        time.sleep(0.02)
+    return False
+
+
+def shutdown_shadow_executor(wait: bool = False) -> None:
+    with _SHADOW_LOCK:
+        executor = _SHADOW_STATE["executor"]
+        _SHADOW_STATE["executor"] = None
+    if executor is not None:
+        executor.shutdown(wait=wait, cancel_futures=True)
+
+def _vector_source() -> str:
+    """Vector signal for the V2 engine: ``legacy`` (embedding_vector, default)
+    or ``semantic`` (bge-m3 embedding_v2).  V1 always uses legacy."""
+    value = str(os.environ.get("AI_RETRIEVAL_VECTOR_SOURCE", "legacy") or "legacy").strip().lower()
+    return value if value in _VECTOR_SOURCES else "legacy"
+
+
+def _env_int(name: str, default: int, low: int, high: int) -> int:
+    try:
+        value = int(str(os.environ.get(name, default)).strip())
+    except (TypeError, ValueError):
+        value = default
+    return max(low, min(value, high))
+
+
+_PGVECTOR_VERSION: tuple[int, ...] | None = None
+_PGVECTOR_LOCK = threading.Lock()
+
+
+_TRGM_IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_./:-]*[A-Za-z0-9]")
+_TRGM_CJK_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]{2,}")
+
+
+def _trgm_terms(query: str, limit: int = 6) -> list[str]:
+    """Distinctive fuzzy-match terms: identifiers with digits or separators,
+    and CJK runs.  Plain Latin words are covered by the FTS leg."""
+    text = str(query or "")[:512]
+    terms: list[str] = []
+    for token in _TRGM_IDENTIFIER_RE.findall(text):
+        if len(token) >= 3 and re.search(r"\d|[-_./:]", token):
+            terms.append(token.lower())
+    for run in _TRGM_CJK_RE.findall(text):
+        terms.append(run[:32])
+    unique = list(dict.fromkeys(terms))
+    unique.sort(key=len, reverse=True)
+    return unique[:limit]
+
+
+def _pgvector_version(cursor) -> tuple[int, ...]:
+    """Installed pgvector version, read once per process."""
+    global _PGVECTOR_VERSION
+    if _PGVECTOR_VERSION is not None:
+        return _PGVECTOR_VERSION
+    with _PGVECTOR_LOCK:
+        if _PGVECTOR_VERSION is None:
+            try:
+                row = cursor.execute("SELECT extversion FROM pg_extension WHERE extname = 'vector'").fetchone()
+                _PGVECTOR_VERSION = tuple(int(part) for part in re.findall(r"\d+", str((row or [""])[0] or "")))[:3]
+            except Exception:
+                _PGVECTOR_VERSION = ()
+    return _PGVECTOR_VERSION
+
+
+def _acl_principals(request: "RetrievalRequest") -> list[str]:
+    """Principals of the caller, encoded like ``ai_document.acl_principals``.
+
+    Mirrors ``rag_policy.document_is_visible``: values are compared as
+    strings without stripping, exactly like the Python policy.
+    """
+    principals = ["*"]
+    if request.user_id:
+        principals.append(f"u:{request.user_id}")
+    principals.extend(f"r:{role}" for role in (request.roles or []) if str(role))
+    principals.extend(f"s:{site}" for site in (request.site_ids or []) if str(site))
+    return principals
 
 from database.core import get_db_connection
 from ai.providers.embedding import embedding_provider
@@ -23,6 +178,7 @@ from ai.schemas.knowledge import KnowledgeQueryPlan
 from ai.services.knowledge_service import _directory_filter_sql
 from ai.services.product_resolver import product_resolver
 from ai.services.retrieval_contract import (
+    score_weights,
     BoundedReranker,
     Reranker,
     UnavailableReranker,
@@ -156,7 +312,17 @@ class RAGRetriever:
         "qos": (r"(?<![a-z0-9])qos(?![a-z0-9])", r"服务质量"),
     }
 
-    def __init__(self, *, reranker: Any = None, cache_enabled: bool | None = None, candidate_pool_size: int | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        reranker: Any = None,
+        cache_enabled: bool | None = None,
+        candidate_pool_size: int | None = None,
+        connection_factory: Any = None,
+        embedder: Any = None,
+    ) -> None:
+        self._connection_factory = connection_factory
+        self._embedder = embedder
         self.last_debug: Dict[str, Any] = {}
         pool_size = int(
             candidate_pool_size
@@ -379,10 +545,20 @@ class RAGRetriever:
         except (TypeError, ValueError):
             return {}
 
-    @staticmethod
-    def _table_columns(cursor, table: str) -> set[str]:
+    _column_cache = threading.local()
+
+    @classmethod
+    def _table_columns(cls, cursor, table: str) -> set[str]:
+        # Within one search the same tables are probed several times (rows,
+        # accelerator scores, V2 legs); probe each table once per search.
+        cache = getattr(cls._column_cache, "tables", None)
+        if cache is not None and table in cache:
+            return cache[table]
         cursor.execute(f"SELECT * FROM {table} WHERE 1 = 0")
-        return {str(description[0]) for description in (cursor.description or [])}
+        columns = {str(description[0]) for description in (cursor.description or [])}
+        if cache is not None:
+            cache[table] = columns
+        return columns
 
     @staticmethod
     def _normalise_os_family(value: Any) -> str:
@@ -671,20 +847,30 @@ class RAGRetriever:
         # Additional applicability arrays are PostgreSQL JSONB hard
         # predicates evaluated before any chunks enter Python.
         for key, requested in (request.applicability or {}).items():
+            key_str = str(key or "").strip()
+            if not _APPLICABILITY_KEY_RE.fullmatch(key_str):
+                raise ValueError("Invalid applicability filter key")
             values = requested if isinstance(requested, (list, tuple, set)) else [requested]
             for value in values:
                 if value is None or "metadata_json" not in columns:
                     continue
-                where.append(f"COALESCE(d.metadata_json -> '{key}', '[]'::jsonb) @> jsonb_build_array(?)")
-                params.append(str(value))
+                where.append("COALESCE(d.metadata_json -> ?, '[]'::jsonb) @> jsonb_build_array(?)")
+                params.extend([key_str, str(value)])
         return " AND ".join(where), params
+
+    def _open_connection(self):
+        factory = self._connection_factory or get_db_connection
+        return factory()
+
+    def _active_embedder(self):
+        return self._embedder or embedding_provider
 
     def _query_rows(
         self,
         request: RetrievalRequest,
         vector_top_n: int,
     ) -> tuple[list[Any], int, Dict[str, Any]]:
-        with get_db_connection() as conn:
+        with self._open_connection() as conn:
             cursor = conn.cursor()
             columns = self._table_columns(cursor, "ai_document")
             chunk_columns = self._table_columns(cursor, "ai_document_chunk")
@@ -694,6 +880,27 @@ class RAGRetriever:
                 params,
             )
             document_count = int((cursor.fetchone() or [0])[0] or 0)
+            if document_count == 0 and any(
+                getattr(request, attr, None)
+                for attr in ("product_series", "product_model", "document_category")
+            ):
+                from dataclasses import replace as _dc_replace
+
+                relaxed_request = _dc_replace(
+                    request,
+                    product_series=None,
+                    product_model=None,
+                    document_category=None,
+                )
+                relaxed_where, relaxed_params = self._filter_sql(relaxed_request, columns)
+                cursor.execute(
+                    f"SELECT COUNT(*) FROM ai_document d WHERE {relaxed_where}",
+                    relaxed_params,
+                )
+                relaxed_count = int((cursor.fetchone() or [0])[0] or 0)
+                if relaxed_count > 0:
+                    where_sql, params = relaxed_where, relaxed_params
+                    document_count = relaxed_count
             document_category_expr = "d.document_category" if "document_category" in columns else "NULL"
             cli_platform_expr = "d.cli_platform" if "cli_platform" in columns else "NULL"
             semantic_document_id_expr = "d.document_id" if "document_id" in columns else "NULL"
@@ -741,6 +948,8 @@ class RAGRetriever:
         self,
         request: RetrievalRequest,
         chunk_ids: Sequence[Any],
+        *,
+        query_vector: Optional[Sequence[float]] = None,
     ) -> tuple[dict[str, dict[str, float]], dict[str, Any]]:
         """Run bounded PostgreSQL FTS/trigram/vector scores.
 
@@ -763,7 +972,7 @@ class RAGRetriever:
         scores: dict[str, dict[str, float]] = {}
         placeholders = ", ".join("?" for _ in chunk_ids)
         try:
-            with get_db_connection() as conn:
+            with self._open_connection() as conn:
                 cursor = conn.cursor()
                 source_table = "ai_document_chunk"
                 columns = self._table_columns(cursor, source_table)
@@ -807,8 +1016,17 @@ class RAGRetriever:
 
                 if "embedding_vector" in columns:
                     try:
-                        query_vector = embedding_provider.embed_query(request.query)
-                        vector_literal = "[" + ",".join(str(float(value)) for value in query_vector) + "]"
+                        active_embedder = self._active_embedder()
+                        resolved_vector = (
+                            list(query_vector)
+                            if query_vector is not None
+                            else (
+                                active_embedder.embed_query(request.query)
+                                if hasattr(active_embedder, "embed_query")
+                                else active_embedder.embed_text(request.query)
+                            )
+                        )
+                        vector_literal = "[" + ",".join(str(float(value)) for value in resolved_vector) + "]"
                         rows = cursor.execute(
                             "SELECT id, GREATEST(0.0, LEAST(1.0, 1 - (embedding_vector <=> CAST(? AS vector)))) "
                             f"FROM {source_table} WHERE {scope_sql}id IN ({placeholders}) AND embedding_vector IS NOT NULL",
@@ -849,12 +1067,998 @@ class RAGRetriever:
         expanded.update(context)
         return expanded
 
+    @staticmethod
+    def _embed_query(embedder: Any, query: str) -> list[float]:
+        try:
+            vector = embedder.embed_query(query) if hasattr(embedder, "embed_query") else embedder.embed_text(query)
+            return list(vector or [])
+        except Exception:
+            return []
+
+    def _candidates_v1(
+        self,
+        request: RetrievalRequest,
+        candidate_hint: int,
+        query_vector: Sequence[float],
+    ) -> tuple[list[Any], Dict[str, Any], Dict[str, Dict[str, float]]]:
+        """V1: every metadata-eligible chunk, scored in Python."""
+        rows, _document_count, debug = self._query_rows(request, candidate_hint)
+        accelerator_scores, accelerator_debug = self._native_accelerator_scores(
+            request,
+            [row[0] for row in rows],
+            query_vector=query_vector if query_vector else None,
+        )
+        debug.update(accelerator_debug)
+        debug["retrieval_engine"] = "v1"
+        return rows, debug, accelerator_scores
+
+    def _candidates_v2(
+        self,
+        request: RetrievalRequest,
+        candidate_hint: int,
+        query_vector: Sequence[float],
+    ) -> tuple[list[Any], Dict[str, Any], Dict[str, Dict[str, float]]]:
+        """V2: indexed recall in PostgreSQL; small candidate sets stay exact.
+
+        When the metadata/ACL filters leave at most
+        AI_RETRIEVAL_V2_EXACT_THRESHOLD chunks, scoring all of them is cheap
+        and exact, so the V1 path is used.  Larger sets go through the
+        bounded FTS + trigram + vector legs fused with RRF.
+        """
+        semantic = self._semantic_query(request) if _vector_source() == "semantic" else None
+        result = self._query_rows_v2(request, query_vector, semantic=semantic)
+        if result is None:
+            rows, debug, scores = self._candidates_v1(request, candidate_hint, query_vector)
+            debug["retrieval_engine"] = "v2_exact_small_set"
+            if semantic is not None:
+                self._apply_semantic_scores(rows, scores, debug, semantic)
+            result = (rows, debug, scores)
+        rows, debug, scores = result
+        debug["vector_source"] = (
+            "semantic" if semantic and semantic.get("vector") else
+            "legacy_fallback" if semantic is not None else "legacy"
+        )
+        if semantic is not None and not semantic.get("vector"):
+            debug.setdefault("capability_degraded", []).append(semantic.get("error_code") or "SEMANTIC_QUERY_EMBEDDING_UNAVAILABLE")
+        return rows, debug, scores
+
+    def _semantic_query(self, request: RetrievalRequest) -> Dict[str, Any]:
+        """Query vector + column contract for the semantic vector source.
+
+        Returns ``{"vector": [], "error_code": ...}`` when unavailable; the
+        caller then keeps the legacy vector signal for *all* rows so that
+        scores from two different models are never mixed.
+        """
+        from ai.providers.embedding import EmbeddingProviderError, semantic_embedding_provider
+
+        try:
+            provider = semantic_embedding_provider()
+        except EmbeddingProviderError:
+            return {"vector": [], "error_code": "SEMANTIC_PROVIDER_MISCONFIGURED"}
+        if provider is None:
+            return {"vector": [], "error_code": "SEMANTIC_PROVIDER_DISABLED"}
+        try:
+            vector = list(provider.embed_query(str(request.query or "")) or [])
+        except Exception:
+            return {"vector": [], "error_code": "SEMANTIC_QUERY_EMBEDDING_UNAVAILABLE"}
+        return {
+            "vector": vector,
+            "model": str(getattr(provider, "model_id", "")),
+            "version": str(getattr(provider, "version", "")),
+            "error_code": None,
+        }
+
+    def _semantic_column_cast(self, cursor) -> str | None:
+        cache = getattr(self._column_cache, "tables", None)
+        if cache is not None and "__embedding_v2_type" in cache:
+            return cache["__embedding_v2_type"]
+        from ai.services.semantic_vectors import semantic_column_type
+
+        column_type = semantic_column_type(cursor)
+        cast = column_type.split("(")[0] if column_type else None
+        if cache is not None:
+            cache["__embedding_v2_type"] = cast
+        return cast
+
+    def _apply_semantic_scores(
+        self,
+        rows: Sequence[Any],
+        scores: Dict[str, Dict[str, float]],
+        debug: Dict[str, Any],
+        semantic: Dict[str, Any],
+    ) -> None:
+        """Replace the vector signal of every candidate row with bge-m3 cosine.
+
+        Rows without a current semantic vector get 0 -- never the legacy
+        score, because the two models' similarities are not comparable.
+        """
+        if not semantic.get("vector") or not rows:
+            return
+        ids = [str(row[0]) for row in rows]
+        computed: Dict[str, float] = {}
+        try:
+            with self._open_connection() as conn:
+                cursor = conn.cursor()
+                cast = self._semantic_column_cast(cursor)
+                if cast is None:
+                    semantic["vector"] = []
+                    semantic["error_code"] = "SEMANTIC_COLUMN_MISSING"
+                    for values in scores.values():
+                        values.pop("vector", None)
+                    return
+                literal = "[" + ",".join(str(float(value)) for value in semantic["vector"]) + "]"
+                for start in range(0, len(ids), 1000):
+                    part = ids[start:start + 1000]
+                    placeholders = ", ".join("?" for _ in part)
+                    for chunk_id, similarity in cursor.execute(
+                        f"SELECT c.id, 1 - (c.embedding_v2 <=> CAST(? AS {cast})) FROM ai_document_chunk c "
+                        f"WHERE c.id IN ({placeholders}) AND c.embedding_v2 IS NOT NULL "
+                        "AND c.embedding_v2_model = ? AND c.embedding_v2_version = ?",
+                        [literal, *part, semantic["model"], semantic["version"]],
+                    ).fetchall():
+                        computed[str(chunk_id)] = max(0.0, min(1.0, float(similarity or 0.0)))
+        except Exception:
+            logger.warning("Semantic rescoring failed; falling back to the legacy vector signal")
+            semantic["vector"] = []
+            semantic["error_code"] = "SEMANTIC_RESCORE_FAILED"
+            # The vector leg may already have stored bge-m3 similarities;
+            # drop them so the legacy fallback never mixes two models.
+            for values in scores.values():
+                values.pop("vector", None)
+            debug["vector_stage"] = "degraded_semantic_rescore_failed"
+            return
+        for chunk_id in ids:
+            scores.setdefault(chunk_id, {})["vector"] = computed.get(chunk_id, 0.0)
+        debug["semantic_scored_chunks"] = len(computed)
+        debug["semantic_missing_chunks"] = len(ids) - len(computed)
+        debug["vector_stage"] = "native_pgvector_semantic"
+
+    @staticmethod
+    def _row_select_list(columns: set[str], chunk_columns: set[str], embedding_expr: str = "c.embedding") -> str:
+        """Same column order as ``_query_rows`` so ``_rank_rows`` can unpack it."""
+        def expr(name: str, available: set[str], alias: str, fallback: str = "NULL") -> str:
+            return f"{alias}.{name}" if name in available else fallback
+
+        return ", ".join([
+            "c.id", "c.content", embedding_expr, "c.metadata_json", "c.section",
+            "d.id", "d.name", expr("source", columns, "d"), expr("knowledge_source_type", columns, "d"),
+            expr("version", columns, "d"), "d.vendor", "d.platform", "d.tenant_id",
+            "d.acl_json", "d.source_trust_level",
+            expr("document_category", columns, "d"), expr("cli_platform", columns, "d"),
+            expr("document_id", columns, "d"),
+            expr("software_train", columns, "d"), expr("software_release", columns, "d"),
+            "COALESCE(c.is_retrieval_candidate, 1)" if "is_retrieval_candidate" in chunk_columns else "1",
+            "c.chunk_role" if "chunk_role" in chunk_columns else "'legacy'",
+            expr("parent_chunk_id", chunk_columns, "c"),
+            "COALESCE(c.ordinal, 0)" if "ordinal" in chunk_columns else "NULL",
+            expr("embedding_model", chunk_columns, "c"),
+            expr("embedding_dimensions", chunk_columns, "c"),
+        ])
+
+    @staticmethod
+    def _stored_tsv_ready(cursor, chunk_columns) -> bool:
+        """m0332 column is used only once its GIN index is built and valid.
+
+        ``fts-index`` builds the index only after every row is filled, and
+        the trigger keeps new rows current, so a valid index means the
+        column is complete.  AI_RETRIEVAL_FTS_SOURCE=expression forces the
+        m0138 expression index (rollback / comparison).
+        """
+        if "search_tsv" not in chunk_columns:
+            return False
+        if str(os.environ.get("AI_RETRIEVAL_FTS_SOURCE", "auto")).strip().lower() == "expression":
+            return False
+        try:
+            row = cursor.execute(
+                "SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
+                "WHERE c.relname = ?",
+                ["ix_ai_chunk_search_tsv"],
+            ).fetchone()
+        except Exception:
+            return False
+        return bool(row and row[0])
+
+    def _query_rows_v2(
+        self,
+        request: RetrievalRequest,
+        query_vector: Sequence[float],
+        *,
+        semantic: Dict[str, Any] | None = None,
+    ) -> tuple[list[Any], Dict[str, Any], Dict[str, Dict[str, float]]] | None:
+        """Bounded hybrid recall; returns None when the exact path should run."""
+        leg_limit = _env_int("AI_RETRIEVAL_V2_LEG_LIMIT", 50, 10, 200)
+        fused_limit = _env_int("AI_RETRIEVAL_V2_FUSED_LIMIT", 150, 10, 500)
+        exact_threshold = _env_int("AI_RETRIEVAL_V2_EXACT_THRESHOLD", 2000, 0, 1_000_000)
+        query_text = str(request.query or "")
+        debug: Dict[str, Any] = {
+            "retrieval_engine": "v2_indexed",
+            "index_source": "v1",
+            "capability_degraded": [],
+            "v2_legs": {},
+        }
+        with self._open_connection() as conn:
+            cursor = conn.cursor()
+            columns = self._table_columns(cursor, "ai_document")
+            chunk_columns = self._table_columns(cursor, "ai_document_chunk")
+            where_sql, params = self._filter_sql(request, columns)
+            scope = f"WHERE {where_sql}"
+            scope_params: list[Any] = list(params)
+            if "is_retrieval_candidate" in chunk_columns:
+                scope += " AND COALESCE(c.is_retrieval_candidate, 1) = 1"
+            if "acl_principals" in columns:
+                # NULL means "not projected yet": let it through; the Python
+                # policy below still decides visibility for every row.
+                scope += " AND (d.acl_principals IS NULL OR d.acl_principals && CAST(? AS TEXT[]))"
+                scope_params.append(_acl_principals(request))
+                debug["acl_stage"] = "sql_and_python"
+            else:
+                debug["acl_stage"] = "python_only"
+                debug["capability_degraded"].append("ACL_PRINCIPALS_COLUMN_MISSING")
+            source = "FROM ai_document_chunk c JOIN ai_document d ON c.document_id = d.id"
+
+            stage_started = time.perf_counter()
+            timing = debug.setdefault("v2_timing_ms", {})
+            eligible = int((cursor.execute(f"SELECT COUNT(*) {source} {scope}", scope_params).fetchone() or [0])[0] or 0)
+            timing["count"] = round((time.perf_counter() - stage_started) * 1000.0, 2)
+            debug["metadata_candidate_chunks"] = eligible
+            if eligible <= exact_threshold:
+                return None
+
+            ranked: Dict[str, list[str]] = {}
+            leg_scores: Dict[str, Dict[str, float]] = {}
+
+            def run_leg(name: str, setup: list[tuple[str, list[Any]]], sql: str, leg_params: list[Any]) -> None:
+                # A failed leg (e.g. an invalid tsquery or a vector dimension
+                # mismatch) must not abort the transaction for the other legs.
+                leg_started = time.perf_counter()
+                try:
+                    cursor.execute("SAVEPOINT rag_v2_leg")
+                    savepoint = True
+                except Exception:
+                    savepoint = False
+                try:
+                    for statement, statement_params in setup:
+                        cursor.execute(statement, statement_params)
+                    rows = cursor.execute(sql, leg_params).fetchall()
+                    if savepoint:
+                        cursor.execute("RELEASE SAVEPOINT rag_v2_leg")
+                except Exception:
+                    if savepoint:
+                        try:
+                            cursor.execute("ROLLBACK TO SAVEPOINT rag_v2_leg")
+                        except Exception as exc:
+                            logger.debug("ROLLBACK TO SAVEPOINT rag_v2_leg failed code=AI_RAG_SAVEPOINT_ROLLBACK_FAILED error=%s", type(exc).__name__)
+                    logger.info("RAG V2 retrieval leg degraded leg=%s", name)
+                    debug["capability_degraded"].append(f"{name.upper()}_LEG_FAILED")
+                    debug["v2_legs"][name] = {"status": "degraded", "candidates": 0}
+                    return
+                ids: list[str] = []
+                for row in rows:
+                    chunk_id = str(row[0])
+                    ids.append(chunk_id)
+                    # The fts/trgm legs match loosely (any term, fuzzy
+                    # words) to widen recall; their scores are kept under a
+                    # separate key so they do not inflate the lexical score
+                    # used for ranking (benchmark 2026-11-22: top-1 agreement
+                    # with v1 went from 0.30 to 1.00 once excluded).  The
+                    # vector leg is a real cosine and is used as before.
+                    score_key = name if name == "vector" else f"{name}_recall"
+                    leg_scores.setdefault(chunk_id, {})[score_key] = max(0.0, min(1.0, float(row[1] or 0.0)))
+                ranked[name] = ids
+                debug["v2_legs"][name] = {
+                    "status": "ok",
+                    "candidates": len(ids),
+                    "ms": round((time.perf_counter() - leg_started) * 1000.0, 2),
+                }
+
+            if "search_text" in chunk_columns:
+                # OR of the query's terms: a natural-language question rarely
+                # contains only words that all appear in one chunk, so an
+                # AND query (websearch_to_tsquery) would recall almost
+                # nothing.  ts_rank_cd still favours chunks matching more
+                # terms.  Only plain alphanumeric terms are used, so the
+                # tsquery syntax cannot be injected.
+                terms = list(dict.fromkeys(re.findall(r"[a-z0-9_]{2,}", query_text.lower())))[:32]
+                if terms:
+                    tsquery = " | ".join(terms)
+                    # m0332 stored tsvector once its index is built (ranking
+                    # reads the stored vector instead of re-parsing every
+                    # match); otherwise the identical m0138 expression index.
+                    use_stored = self._stored_tsv_ready(cursor, chunk_columns)
+                    tsv = "c.search_tsv" if use_stored else "to_tsvector('simple', COALESCE(c.search_text, ''))"
+                    debug["v2_fts_source"] = "search_tsv" if use_stored else "expression"
+                    run_leg(
+                        "fts",
+                        [],
+                        f"SELECT c.id, LEAST(1.0, ts_rank_cd({tsv}, to_tsquery('simple', ?))) {source} {scope} "
+                        f"AND {tsv} @@ to_tsquery('simple', ?) "
+                        "ORDER BY 2 DESC, c.id LIMIT ?",
+                        [tsquery, *scope_params, tsquery, leg_limit],
+                    )
+                else:
+                    debug["v2_legs"]["fts"] = {"status": "skipped_no_terms", "candidates": 0}
+                # word_similarity compares the query with the best-matching
+                # part of a chunk; whole-string similarity of a short query
+                # against a long chunk is close to zero.  Uses the m0138
+                # gin_trgm_ops index through the <% operator.
+                word_threshold = max(0.0, min(1.0, float(os.environ.get("AI_RETRIEVAL_TRGM_WORD_THRESHOLD", "0.5"))))
+                trgm_setup = [("SELECT set_config('pg_trgm.word_similarity_threshold', ?, true)", [str(word_threshold)])]
+                # Modes (2026-11-22 benchmarks, 10k chunks):
+                #   auto  (default) whole-query match, skipped when the query
+                #         has no CJK run, model name, interface or hyphenated
+                #         command: plain Latin words are covered by FTS, and
+                #         the leg costs ~320 ms of a ~500 ms search.
+                #   query always the whole-query match (previous default).
+                #   terms one match per distinctive term (measured slower,
+                #         524 ms vs 321 ms); kept for measurement.
+                trgm_mode = str(os.environ.get("AI_RETRIEVAL_TRGM_MODE", "auto")).strip().lower()
+                if trgm_mode not in {"auto", "query", "terms"}:
+                    trgm_mode = "auto"
+                trgm_terms = _trgm_terms(query_text) if trgm_mode in {"terms", "auto"} else []
+                debug["v2_trgm_mode"] = trgm_mode
+                if trgm_mode == "terms" and trgm_terms:
+                    # Fuzzy matching is only needed where FTS is weak: model
+                    # names / interfaces / hyphenated commands (S5700,
+                    # Eth-Trunk, route-static) and CJK text, which the
+                    # 'simple' parser cannot split.  Short distinctive terms
+                    # are far more selective in the trigram index than the
+                    # whole question (benchmark: ~300 ms for the whole-query
+                    # leg).  Plain words are left to the FTS leg.
+                    match_sql = " OR ".join("? <% c.search_text" for _ in trgm_terms)
+                    score_sql = "GREATEST(" + ", ".join("word_similarity(?, COALESCE(c.search_text, ''))" for _ in trgm_terms) + ")"
+                    run_leg(
+                        "trgm",
+                        trgm_setup,
+                        f"SELECT c.id, {score_sql} {source} {scope} "
+                        f"AND ({match_sql}) ORDER BY 2 DESC, c.id LIMIT ?",
+                        [*trgm_terms, *scope_params, *trgm_terms, leg_limit],
+                    )
+                    debug["v2_trgm_terms"] = len(trgm_terms)
+                elif trgm_mode == "query" or (trgm_mode == "auto" and trgm_terms):
+                    trgm_text = query_text[:256]
+                    run_leg(
+                        "trgm",
+                        trgm_setup,
+                        f"SELECT c.id, word_similarity(?, COALESCE(c.search_text, '')) {source} {scope} "
+                        "AND ? <% c.search_text ORDER BY 2 DESC, c.id LIMIT ?",
+                        [trgm_text, *scope_params, trgm_text, leg_limit],
+                    )
+                else:
+                    debug["v2_legs"]["trgm"] = {"status": "skipped_no_terms", "candidates": 0}
+            else:
+                debug["capability_degraded"].append("SEARCH_TEXT_COLUMN_MISSING")
+
+            semantic_cast = self._semantic_column_cast(cursor) if semantic and semantic.get("vector") else None
+            if semantic and semantic.get("vector") and semantic_cast is None:
+                semantic["vector"] = []
+                semantic["error_code"] = "SEMANTIC_COLUMN_MISSING"
+            if semantic_cast is not None:
+                literal = "[" + ",".join(str(float(value)) for value in semantic["vector"]) + "]"
+                setup = [
+                    ("SELECT set_config('hnsw.ef_search', ?, true)", [str(_env_int("AI_RETRIEVAL_HNSW_EF_SEARCH", 100, 10, 1000))]),
+                ]
+                if _pgvector_version(cursor) >= (0, 8):
+                    setup.append(("SELECT set_config('hnsw.iterative_scan', 'relaxed_order', true)", []))
+                run_leg(
+                    "vector",
+                    setup,
+                    f"SELECT c.id, 1 - (c.embedding_v2 <=> CAST(? AS {semantic_cast})) {source} {scope} "
+                    "AND c.embedding_v2 IS NOT NULL AND c.embedding_v2_model = ? AND c.embedding_v2_version = ? "
+                    f"ORDER BY c.embedding_v2 <=> CAST(? AS {semantic_cast}) LIMIT ?",
+                    [literal, *scope_params, semantic["model"], semantic["version"], literal, leg_limit],
+                )
+            elif "embedding_vector" in chunk_columns and query_vector:
+                vector_literal = "[" + ",".join(str(float(value)) for value in query_vector) + "]"
+                setup: list[tuple[str, list[Any]]] = [
+                    ("SELECT set_config('hnsw.ef_search', ?, true)", [str(_env_int("AI_RETRIEVAL_HNSW_EF_SEARCH", 100, 10, 1000))]),
+                ]
+                if _pgvector_version(cursor) >= (0, 8):
+                    # Keep scanning the HNSW graph until enough rows pass
+                    # the metadata/ACL filters (pgvector >= 0.8).
+                    setup.append(("SELECT set_config('hnsw.iterative_scan', 'relaxed_order', true)", []))
+                model_sql = ""
+                model_params: list[Any] = []
+                current_model = str(getattr(self._active_embedder(), "model_id", "") or "")
+                if current_model and "embedding_model" in chunk_columns:
+                    model_sql = " AND (c.embedding_model IS NULL OR c.embedding_model = ?)"
+                    model_params = [current_model]
+                run_leg(
+                    "vector",
+                    setup,
+                    f"SELECT c.id, 1 - (c.embedding_vector <=> CAST(? AS vector)) {source} {scope} "
+                    f"AND c.embedding_vector IS NOT NULL{model_sql} "
+                    "ORDER BY c.embedding_vector <=> CAST(? AS vector) LIMIT ?",
+                    [vector_literal, *scope_params, *model_params, vector_literal, leg_limit],
+                )
+            elif "embedding_vector" not in chunk_columns:
+                debug["capability_degraded"].append("EMBEDDING_VECTOR_COLUMN_MISSING")
+            else:
+                debug["capability_degraded"].append("QUERY_EMBEDDING_UNAVAILABLE")
+
+            fused: Dict[str, float] = {}
+            for ids in ranked.values():
+                for rank, chunk_id in enumerate(ids, start=1):
+                    fused[chunk_id] = fused.get(chunk_id, 0.0) + 1.0 / (_RRF_K + rank)
+            selected = [chunk_id for chunk_id, _ in sorted(fused.items(), key=lambda item: (-item[1], item[0]))[:fused_limit]]
+            rows: list[Any] = []
+            context_documents: list[str] = []
+            if selected:
+                placeholders = ", ".join("?" for _ in selected)
+                # Context expansion needs the parent/neighbour chunks of the
+                # best documents (V1 had them because it loaded everything).
+                # Load whole documents, but only for the top-ranked ones.
+                owner_rows = cursor.execute(
+                    f"SELECT c.id, c.document_id FROM ai_document_chunk c WHERE c.id IN ({placeholders})",
+                    list(selected),
+                ).fetchall()
+                owner = {str(row[0]): str(row[1]) for row in owner_rows}
+                doc_limit = _env_int("AI_RETRIEVAL_V2_CONTEXT_DOCUMENTS", self.candidate_pool_size, 1, 100)
+                for chunk_id in selected:
+                    document_id = owner.get(chunk_id)
+                    if document_id and document_id not in context_documents:
+                        context_documents.append(document_id)
+                    if len(context_documents) >= doc_limit:
+                        break
+                doc_placeholders = ", ".join("?" for _ in context_documents) or "NULL"
+                max_rows = _env_int("AI_RETRIEVAL_V2_MAX_ROWS", 3000, 100, 50_000)
+                id_filter_sql = f"AND (c.id IN ({placeholders}) OR c.document_id IN ({doc_placeholders})) "
+                id_filter_params = [*selected, *context_documents]
+                embedding_expr = "c.embedding"
+                if semantic_cast is None and "embedding_vector" in chunk_columns and query_vector:
+                    # Score every loaded row in pgvector (the vector leg only
+                    # scored its own top 50).  Rows scored here do not need
+                    # their JSON vector, so it is not transferred either.
+                    scored_started = time.perf_counter()
+                    try:
+                        cursor.execute("SAVEPOINT rag_v2_vector_scores")
+                        score_rows = cursor.execute(
+                            f"SELECT c.id, 1 - (c.embedding_vector <=> CAST(? AS vector)) {source} {scope} "
+                            f"{id_filter_sql}AND c.embedding_vector IS NOT NULL{model_sql} LIMIT ?",
+                            [vector_literal, *scope_params, *id_filter_params, *model_params, max_rows],
+                        ).fetchall()
+                        cursor.execute("RELEASE SAVEPOINT rag_v2_vector_scores")
+                        for score_row in score_rows:
+                            leg_scores.setdefault(str(score_row[0]), {}).setdefault(
+                                "vector", max(0.0, min(1.0, float(score_row[1] or 0.0)))
+                            )
+                        embedding_expr = "CASE WHEN c.embedding_vector IS NULL THEN c.embedding END"
+                        debug["v2_vector_scored_rows"] = len(score_rows)
+                    except Exception:
+                        try:
+                            cursor.execute("ROLLBACK TO SAVEPOINT rag_v2_vector_scores")
+                        except Exception as exc:
+                            logger.debug("ROLLBACK TO SAVEPOINT rag_v2_vector_scores failed code=AI_RAG_SAVEPOINT_ROLLBACK_FAILED error=%s", type(exc).__name__)
+                        logger.info("RAG V2 vector scoring degraded; ranking falls back to Python cosine")
+                        debug["capability_degraded"].append("VECTOR_SCORE_QUERY_FAILED")
+                    timing["vector_scores"] = round((time.perf_counter() - scored_started) * 1000.0, 2)
+                load_started = time.perf_counter()
+                rows = cursor.execute(
+                    f"SELECT {self._row_select_list(columns, chunk_columns, embedding_expr)} {source} {scope} "
+                    f"AND (c.id IN ({placeholders}) OR c.document_id IN ({doc_placeholders})) "
+                    "ORDER BY d.id, " + ("COALESCE(c.ordinal, 0)" if "ordinal" in chunk_columns else "c.id") + ", c.id "
+                    "LIMIT ?",
+                    [*scope_params, *selected, *context_documents, max_rows],
+                ).fetchall()
+                timing["load"] = round((time.perf_counter() - load_started) * 1000.0, 2)
+        debug.update({
+            "metadata_filter": where_sql,
+            "candidate_count": len(rows),
+            "vector_top_n": leg_limit,
+            "v2_fused_candidates": len(selected),
+            "v2_context_documents": len(context_documents),
+            "fts_stage": "native_postgresql" if "fts" in ranked else "disabled",
+            "trgm_stage": "native_postgresql" if "trgm" in ranked else "disabled",
+            "vector_stage": "native_pgvector" if "vector" in ranked else "disabled",
+            "fts_candidates": len(ranked.get("fts", [])),
+            "trgm_candidates": len(ranked.get("trgm", [])),
+            "vector_candidates": len(ranked.get("vector", [])),
+        })
+        if semantic_cast is not None and semantic and semantic.get("vector"):
+            self._apply_semantic_scores(rows, leg_scores, debug, semantic)
+        return rows, debug, leg_scores
+
+    def _shadow_compare(
+        self,
+        request: RetrievalRequest,
+        candidate_hint: int,
+        query_vector: Sequence[float],
+        active_embedder: Any,
+        min_relevance: float,
+        top_k: int,
+        cache_key: Any,
+        v1_ids: Sequence[str],
+    ) -> Dict[str, Any]:
+        """Run V2 next to V1 and report how much the answers agree.
+
+        Never affects the served (V1) result; any V2 failure is reported
+        as a stable code only.
+        """
+        started = time.perf_counter()
+        try:
+            rows, debug, scores = self._candidates_v2(request, candidate_hint, query_vector)
+            v2_payload = self._rank_rows(
+                request, rows, debug, scores, query_vector, active_embedder, min_relevance, top_k, cache_key,
+            )
+        except Exception:
+            logger.warning("RAG shadow V2 retrieval failed")
+            return {"status": "error", "error_code": "RETRIEVAL_V2_SHADOW_FAILED"}
+        v1_ids = [str(value) for value in v1_ids]
+        v2_ids = [str(item.get("document_id")) for item in v2_payload.get("results") or []]
+        overlap = len(set(v1_ids) & set(v2_ids))
+        report = {
+            "status": "ok",
+            "engine": debug.get("retrieval_engine"),
+            "latency_ms": round((time.perf_counter() - started) * 1000.0, 2),
+            "candidate_count": debug.get("candidate_count"),
+            "document_ids": v2_ids,
+            "top1_match": bool(v1_ids and v2_ids and v1_ids[0] == v2_ids[0]),
+            "overlap_at_k": round(overlap / max(1, len(v1_ids)), 4) if v1_ids else (1.0 if not v2_ids else 0.0),
+            "legs": debug.get("v2_legs", {}),
+            "capability_degraded": debug.get("capability_degraded", []),
+            "vector_source": debug.get("vector_source"),
+        }
+        logger.info(
+            "RAG shadow comparison engine=%s top1_match=%s overlap=%.2f v2_candidates=%s v2_latency_ms=%.1f",
+            report["engine"], report["top1_match"], report["overlap_at_k"], report["candidate_count"], report["latency_ms"],
+        )
+        return report
+
+    def _schedule_shadow(
+        self,
+        request: RetrievalRequest,
+        candidate_hint: int,
+        query_vector: Sequence[float],
+        active_embedder: Any,
+        min_relevance: float,
+        top_k: int,
+        cache_key: Any,
+        v1_payload: Dict[str, Any],
+        v1_latency_ms: float,
+    ) -> Dict[str, Any]:
+        """Compare V2 with the served V1 result without delaying the user."""
+        import random
+
+        v1_ids = [str(item.get("document_id")) for item in v1_payload.get("results") or []]
+        sample_rate = _shadow_float("AI_RETRIEVAL_SHADOW_SAMPLE_RATE", 1.0)
+        if sample_rate < 1.0 and random.random() >= sample_rate:
+            return {"status": "sampled_out"}
+        args = (
+            _dataclass_replace(request), candidate_hint, list(query_vector or []), active_embedder,
+            min_relevance, top_k, cache_key, v1_ids, v1_latency_ms,
+        )
+        if _shadow_mode() == "sync":
+            return self._shadow_job(*args)
+        try:
+            max_pending = max(1, int(os.environ.get("AI_RETRIEVAL_SHADOW_MAX_PENDING", "16")))
+        except (TypeError, ValueError):
+            max_pending = 16
+        with _SHADOW_LOCK:
+            if _SHADOW_STATE["pending"] >= max_pending:
+                _SHADOW_STATE["dropped"] += 1
+                return {"status": "dropped_busy"}
+            _SHADOW_STATE["pending"] += 1
+        try:
+            _shadow_executor().submit(self._shadow_job_tracked, *args)
+        except Exception:
+            with _SHADOW_LOCK:
+                _SHADOW_STATE["pending"] -= 1
+                _SHADOW_STATE["dropped"] += 1
+            return {"status": "dropped_unavailable"}
+        return {"status": "scheduled"}
+
+    def _shadow_job_tracked(self, *args: Any) -> None:
+        try:
+            self._shadow_job(*args)
+        except Exception:
+            logger.warning("RAG shadow job failed unexpectedly")
+        finally:
+            with _SHADOW_LOCK:
+                _SHADOW_STATE["pending"] = max(0, _SHADOW_STATE["pending"] - 1)
+
+    def _shadow_job(
+        self,
+        request: RetrievalRequest,
+        candidate_hint: int,
+        query_vector: Sequence[float],
+        active_embedder: Any,
+        min_relevance: float,
+        top_k: int,
+        cache_key: Any,
+        v1_ids: Sequence[str],
+        v1_latency_ms: float,
+    ) -> Dict[str, Any]:
+        # The per-search table-shape cache is thread-local; a background
+        # thread needs its own.
+        previous = getattr(self._column_cache, "tables", None)
+        self._column_cache.tables = {}
+        try:
+            report = self._shadow_compare(
+                request, candidate_hint, query_vector, active_embedder,
+                min_relevance, top_k, cache_key, v1_ids,
+            )
+        finally:
+            self._column_cache.tables = previous
+        self._record_shadow(request, report, v1_ids, v1_latency_ms)
+        return report
+
+    def _record_shadow(
+        self,
+        request: RetrievalRequest,
+        report: Dict[str, Any],
+        v1_ids: Sequence[str],
+        v1_latency_ms: float,
+    ) -> None:
+        """Persist one comparison (metadata only); never raises."""
+        import hashlib
+
+        query = str(request.query or "")
+        preview = None
+        if str(os.environ.get("AI_RETRIEVAL_SHADOW_STORE_QUERY", "0")).strip().lower() in {"1", "true", "yes", "on"}:
+            from ai.security.sanitizer import sanitize_log_text
+
+            preview = sanitize_log_text(query, limit=200)
+        degraded = [str(code)[:64] for code in (report.get("capability_degraded") or [])][:20]
+        values = [
+            str(request.tenant_id or "tenant-default")[:128],
+            hashlib.sha256(query.encode("utf-8")).hexdigest()[:32],
+            preview,
+            str(report.get("status") or "error")[:16],
+            (str(report.get("error_code"))[:64] if report.get("error_code") else None),
+            (str(report.get("engine"))[:32] if report.get("engine") else None),
+            (str(report.get("vector_source"))[:32] if report.get("vector_source") else None),
+            report.get("top1_match") if report.get("status") == "ok" else None,
+            report.get("overlap_at_k") if report.get("status") == "ok" else None,
+            len(v1_ids),
+            len(report.get("document_ids") or []),
+            report.get("candidate_count"),
+            int(round(v1_latency_ms)),
+            (int(round(float(report["latency_ms"]))) if report.get("latency_ms") is not None else None),
+            [str(value)[:128] for value in v1_ids][:20],
+            [str(value)[:128] for value in (report.get("document_ids") or [])][:20],
+            degraded,
+        ]
+        try:
+            with self._open_connection() as conn:
+                conn.execute(
+                    "INSERT INTO ai_retrieval_shadow_comparison (tenant_id, query_hash, query_preview, status, error_code, "
+                    "v2_engine, vector_source, top1_match, overlap_at_k, v1_result_count, v2_result_count, "
+                    "v2_candidate_count, v1_latency_ms, v2_latency_ms, v1_document_ids, v2_document_ids, capability_degraded) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    values,
+                )
+                with _SHADOW_LOCK:
+                    _SHADOW_STATE["recorded"] += 1
+                    prune = _SHADOW_STATE["recorded"] % _SHADOW_PRUNE_EVERY == 0
+                if prune:
+                    try:
+                        days = max(1, int(os.environ.get("AI_RETRIEVAL_SHADOW_RETENTION_DAYS", "30")))
+                    except (TypeError, ValueError):
+                        days = 30
+                    conn.execute(
+                        "DELETE FROM ai_retrieval_shadow_comparison WHERE created_at < now() - make_interval(days => ?)",
+                        [days],
+                    )
+                conn.commit()
+        except Exception:
+            with _SHADOW_LOCK:
+                _SHADOW_STATE["record_failures"] += 1
+                first = _SHADOW_STATE["record_failures"] == 1
+            # Typically the m0333 table is missing (migrations not run).
+            if first:
+                logger.warning("RAG shadow comparison could not be stored code=SHADOW_RECORD_FAILED")
+
+    def _rank_rows(
+        self,
+        request: RetrievalRequest,
+        rows: Sequence[Any],
+        debug: Dict[str, Any],
+        accelerator_scores: Dict[str, Dict[str, float]],
+        query_vector: Sequence[float],
+        active_embedder: Any,
+        min_relevance: float,
+        top_k: int,
+        cache_key: Any,
+    ) -> Dict[str, Any]:
+        """Score candidate rows and build the user-visible payload.
+
+        Shared by the V1 and V2 engines: ACL re-check, feature/version guards,
+        ScoreComponents ranking, document dedup, reranking and context
+        expansion are identical; only how ``rows`` were selected differs.
+        """
+        query_vector = list(query_vector or [])
+        semantic_vector_signal = debug.get("vector_source") == "semantic" or debug.get("vector_stage") == "native_pgvector_semantic"
+        weights = score_weights()
+        # AI_RETRIEVAL_NATIVE_LEXICAL=1 (diagnostic only) also lets the loose
+        # V2 recall-leg scores raise the lexical score.  Default 0: V2 ranks
+        # with the same lexical score as V1.
+        native_lexical = str(os.getenv("AI_RETRIEVAL_NATIVE_LEXICAL", "0")).strip().lower() in {"1", "true", "yes", "on"}
+        rank_started = time.perf_counter()
+        # Per-stage time of the loop below (seconds), reported in
+        # debug["v2_timing_ms"] as rank_<stage>.
+        rank_ms = {"filter": 0.0, "keyword": 0.0, "vector": 0.0, "score": 0.0, "item": 0.0}
+        python_vector_rows = 0
+        scored: list[dict[str, Any]] = []
+        chunks_by_document: Dict[str, list[dict[str, Any]]] = {}
+        incompatible_vectors = 0
+        version_conflicts = 0
+        wrong_vendor_rows = 0
+        feature_scope_filtered = 0
+        current_model = str(getattr(active_embedder, "model_id", "") or "")
+        for row in rows:
+            (
+                c_id, content, embedding_json, meta_json, section,
+                doc_id, doc_name, document_source, knowledge_source_type, document_version, d_vendor, d_platform, d_tenant,
+                acl_json, trust_level, document_category, cli_platform,
+                semantic_document_id, document_software_train, document_software_release,
+                _is_candidate, chunk_role,
+                parent_chunk_id, ordinal, stored_embedding_model, stored_embedding_dimensions,
+            ) = row
+            row_started = time.perf_counter()
+            document = {"id": doc_id, "tenant_id": d_tenant, "acl_json": acl_json}
+            if not document_is_visible(document, tenant_id=request.tenant_id, user_id=request.user_id, roles=request.roles, site_ids=request.site_ids):
+                continue
+            metadata = self._parse_json(meta_json)
+            requested_vendor = str(getattr(request, "vendor", "") or "").strip().lower()
+            actual_vendor = str(metadata.get("vendor") or d_vendor or "").strip().lower()
+            if requested_vendor and actual_vendor and requested_vendor != actual_vendor:
+                wrong_vendor_rows += 1
+            if not self._feature_scope_is_eligible(
+                getattr(request, "feature", None),
+                metadata,
+                content=content,
+                section=section,
+                document_name=doc_name,
+                document_source=document_source,
+                knowledge_source_type=knowledge_source_type,
+            ):
+                feature_scope_filtered += 1
+                continue
+            filter_mark = time.perf_counter()
+            rank_ms["filter"] += filter_mark - row_started
+            row_started = filter_mark
+            keyword_score = self._calc_keyword_relevance(
+                request.query,
+                str(content or ""),
+                str(doc_name or ""),
+                section=str(section or ""),
+                metadata=metadata,
+            )
+            native_scores = accelerator_scores.get(str(c_id), {})
+            # V1 accelerator scores (strict websearch tsquery / similarity).
+            keyword_score = max(
+                keyword_score,
+                float(native_scores.get("fts", 0.0)),
+                float(native_scores.get("trgm", 0.0)),
+            )
+            if native_lexical:
+                keyword_score = max(
+                    keyword_score,
+                    float(native_scores.get("fts_recall", 0.0)),
+                    float(native_scores.get("trgm_recall", 0.0)),
+                )
+            stage_mark = time.perf_counter()
+            rank_ms["keyword"] += stage_mark - row_started
+            stored_dimensions = int(stored_embedding_dimensions or 0)
+            if semantic_vector_signal:
+                # bge-m3 cosine computed in SQL for every candidate; rows
+                # without a current semantic vector score 0.
+                vector_score = float(native_scores.get("vector", 0.0))
+            elif stored_embedding_model and current_model and str(stored_embedding_model) != current_model:
+                vector_score = 0.0
+                incompatible_vectors += 1
+            elif "vector" in native_scores and not (stored_dimensions and len(query_vector) != stored_dimensions):
+                # pgvector already scored this row (same model filter, the
+                # fixed-dimension embedding_vector column).  Parsing the
+                # 1536-float JSON copy and a pure-Python cosine cost ~1 ms
+                # per row and were done even when this score existed,
+                # because dict.get() evaluates its default eagerly.
+                vector_score = float(native_scores["vector"])
+            else:
+                try:
+                    chunk_vector = embedding_json if isinstance(embedding_json, list) else json.loads(str(embedding_json or "[]"))
+                    if not isinstance(chunk_vector, list):
+                        chunk_vector = []
+                except (TypeError, ValueError):
+                    chunk_vector = []
+                vector_incompatible = bool(
+                    stored_dimensions
+                    and (len(chunk_vector) != stored_dimensions or len(query_vector) != stored_dimensions)
+                )
+                if vector_incompatible:
+                    vector_score = 0.0
+                    incompatible_vectors += 1
+                else:
+                    vector_score = self._cosine(query_vector, chunk_vector)
+                    python_vector_rows += 1
+            vector_mark = time.perf_counter()
+            rank_ms["vector"] += vector_mark - stage_mark
+            specificity_fields = ("vendor", "document_category", "product_series", "product_model", "cli_platform", "feature_domain", "feature")
+            requested_count = sum(1 for field_name in specificity_fields if getattr(request, field_name, None))
+            matched_count = 0
+            for field_name in specificity_fields:
+                requested_value = getattr(request, field_name, None)
+                actual_value = metadata.get(field_name)
+                if not requested_value:
+                    continue
+                requested_text = str(requested_value).strip().lower()
+                actual_text = str(actual_value or "").strip().lower()
+                if field_name == "product_series" and re.fullmatch(r"s\d{2,4}", requested_text):
+                    if actual_text.startswith(requested_text):
+                        matched_count += 1
+                elif actual_text == requested_text:
+                    matched_count += 1
+            metadata_score = matched_count / max(1, requested_count)
+            applicable_versions = metadata.get("applicable_versions") or metadata.get("verified_versions") or []
+            version_score, version_evidence = version_compatibility(
+                request.software_train,
+                request.software_release,
+                document_software_train or metadata.get("software_train"),
+                document_software_release or metadata.get("software_release"),
+                applicable_versions if isinstance(applicable_versions, (list, tuple, set)) else [],
+            )
+            trust_score = max(0.0, min(1.0, trust_rank(trust_level) / 4.0))
+            from ai.services.retrieval_contract import ScoreComponents
+            components = ScoreComponents(
+                lexical=keyword_score,
+                vector=vector_score,
+                metadata=metadata_score,
+                trust=trust_score,
+                version=version_score,
+                weights=weights,
+            )
+            score = components.total
+            exact_command_required = bool(self._command_phrases(request.query)) and str(document_category or "") in {"command", "cli_output"}
+            # Product/series questions often use a local alias such as
+            # ``CE6800`` while the verified document stores the canonical
+            # series ``CloudEngine 6800``.  Once SQL has already matched
+            # that exact hardware identity, do not discard the document
+            # merely because the alias has no lexical overlap.
+            exact_hardware_identity = bool(
+                str(document_category or "").lower() == "hardware"
+                and (request.product_series or request.product_model)
+                and metadata_score >= 0.90
+            )
+            if version_score == 0.0 and (request.software_train or request.software_release):
+                # Version conflicts are hard retrieval boundaries.  A
+                # lexical/vector hit must not smuggle a known incompatible
+                # release into an operator answer.
+                version_conflicts += 1
+                continue
+            item_mark = time.perf_counter()
+            rank_ms["score"] += item_mark - vector_mark
+            item = {
+                "chunk_id": c_id,
+                "content": sanitize_text(str(content or "")),
+                "document_name": doc_name,
+                "source": document_source,
+                "knowledge_source_type": knowledge_source_type,
+                "document_version": document_version,
+                "document_status": request.status,
+                "document_id": semantic_document_id or doc_id,
+                "storage_document_id": doc_id,
+                "section": section,
+                "vendor": d_vendor,
+                "platform": cli_platform or d_platform,
+                "cli_platform": cli_platform,
+                "document_category": document_category,
+                "source_trust_level": trust_level or "untrusted",
+                "source_trust_rank": trust_rank(trust_level),
+                "untrusted_data": True,
+                "metadata": metadata,
+                "feature": metadata.get("feature"),
+                "feature_source": metadata.get("feature_source"),
+                "source_kind": metadata.get("source_kind"),
+                "chunk_role": chunk_role or "standalone",
+                "parent_chunk_id": parent_chunk_id,
+                "ordinal": int(ordinal or 0),
+                "keyword_score": round(keyword_score, 4),
+                "vector_score": round(vector_score, 4),
+                "metadata_score": round(metadata_score, 4),
+                "trust_score": round(trust_score, 4),
+                "version_score": round(version_score, 4),
+                "version_evidence": version_evidence,
+                "score_components": components.to_dict(),
+                "relevance_score": round(score, 4),
+            }
+            key = str(doc_id)
+            chunks_by_document.setdefault(key, []).append(item)
+            rank_ms["item"] += time.perf_counter() - item_mark
+            if (score >= min_relevance or exact_hardware_identity) and not (exact_command_required and keyword_score < 0.55):
+                scored.append(item)
+
+        post_started = time.perf_counter()
+        best_by_document: Dict[str, dict[str, Any]] = {}
+        for item in scored:
+            key = str(item["storage_document_id"])
+            previous = best_by_document.get(key)
+            if previous is None or (item["relevance_score"], item["source_trust_rank"]) > (previous["relevance_score"], previous["source_trust_rank"]):
+                best_by_document[key] = item
+        pool_limit = max(top_k, self.candidate_pool_size)
+        candidate_documents = sorted(
+            best_by_document.values(),
+            key=lambda item: (item["relevance_score"], item["source_trust_rank"]),
+            reverse=True,
+        )[:pool_limit]
+        reranked_documents, reranker_debug = self.reranker.apply(request.query, candidate_documents)
+        final_results = [
+            self._expand_document_context(item, chunks_by_document.get(str(item["storage_document_id"]), [item]))
+            for item in reranked_documents[:top_k]
+        ]
+        timing = debug.setdefault("v2_timing_ms", {})
+        finished = time.perf_counter()
+        timing["rank"] = round((finished - rank_started) * 1000.0, 2)
+        timing["rank_post"] = round((finished - post_started) * 1000.0, 2)
+        for stage, seconds in rank_ms.items():
+            timing[f"rank_{stage}"] = round(seconds * 1000.0, 2)
+        debug["rank_python_vector_rows"] = python_vector_rows
+        if len(final_results) >= 2 and reranker_debug.get("stage") in {"skipped", "legacy_pass", None}:
+            from ai.providers.embedding import rerank_documents
+
+            passages = [
+                f"{item.get('document_name') or ''} {item.get('section') or ''}\n{item.get('content') or ''}"
+                for item in final_results
+            ]
+            reranked = rerank_documents(request.query, passages, top_n=len(final_results))
+            if reranked:
+                ordered = []
+                seen_idx = set()
+                for entry in reranked:
+                    idx = entry["index"]
+                    if 0 <= idx < len(final_results) and idx not in seen_idx:
+                        seen_idx.add(idx)
+                        item_copy = dict(final_results[idx])
+                        item_copy["rerank_score"] = round(float(entry["relevance_score"]), 4)
+                        ordered.append(item_copy)
+                for idx, item in enumerate(final_results):
+                    if idx not in seen_idx:
+                        ordered.append(item)
+                final_results = ordered
+                reranker_debug = {
+                    "stage": "applied",
+                    "provider": "db_openai_compatible",
+                    "model": "BAAI/bge-reranker-v2-m3",
+                    "reranked_count": len(final_results),
+                    "top_score": round(float(reranked[0]["relevance_score"]), 4),
+                }
+        debug.update({
+            "candidate_pool_size": len(candidate_documents),
+            "dedup_document_count": len(best_by_document),
+            "incompatible_embedding_chunks": incompatible_vectors,
+            "version_conflict_count": version_conflicts,
+            "wrong_vendor_count": wrong_vendor_rows,
+            "feature_scope_filtered": feature_scope_filtered,
+            "feature_scope_guard": "content_evidence_v1",
+            "expanded_context_chunks": sum(int(item.get("context_chunk_count") or 0) for item in final_results),
+            "final_document_ids": [item["document_id"] for item in final_results],
+            "reranker": reranker_debug,
+            "reranker_config": dict(self.reranker_config),
+            "shadow": reranker_debug if reranker_debug.get("mode") == "shadow" else {},
+            "cache": {"hit": False, "key": cache_key, "enabled": self.cache_enabled},
+            "outcome": "matched" if final_results else "no_match",
+        })
+        explanation = build_retrieval_explanation(request, debug, final_results)
+        payload = {"results": final_results, "debug": debug, "explanation": explanation}
+        return payload
+
     def _search_once(
         self,
         request: RetrievalRequest,
         min_relevance: float = 0.20,
     ) -> Dict[str, Any]:
-        """Execute one bounded retrieval against the V1 document projection."""
+        """Execute one bounded retrieval (engine chosen by AI_RETRIEVAL_ENGINE)."""
+        # Table shapes are probed once per search and forgotten afterwards,
+        # so a schema change (or a test with its own tables) is never masked.
+        self._column_cache.tables = {}
+        try:
+            return self._search_once_impl(request, min_relevance)
+        finally:
+            self._column_cache.tables = None
+
+    def _search_once_impl(
+        self,
+        request: RetrievalRequest,
+        min_relevance: float = 0.20,
+    ) -> Dict[str, Any]:
         top_k = max(1, int(request.top_k or 3))
         candidate_hint = max(top_k * 30, 100)
         cache_key = retrieval_cache_key(
@@ -862,7 +2066,10 @@ class RAGRetriever:
             # The feature-evidence guard changes eligibility.  A new cache
             # namespace prevents a process-local pre-fix result from being
             # served after a rolling code update.
-            index_version="retrieval-v2",
+            index_version=(
+                f"retrieval-v2:{_retrieval_engine()}:{_vector_source()}:"
+                + ",".join(f"{key}={value:g}" for key, value in sorted(score_weights().items()))
+            ),
         )
         if self.cache_enabled:
             cached = retrieval_cache.get(cache_key)
@@ -871,210 +2078,31 @@ class RAGRetriever:
                 self.last_debug = cached.get("debug") or {}
                 return cached
         try:
-            rows, _document_count, debug = self._query_rows(request, candidate_hint)
-            accelerator_scores, accelerator_debug = self._native_accelerator_scores(
-                request,
-                [row[0] for row in rows],
+            engine = _retrieval_engine()
+            active_embedder = self._active_embedder()
+            query_vector = self._embed_query(active_embedder, request.query)
+            started = time.perf_counter()
+            if engine == "v2":
+                rows, debug, accelerator_scores = self._candidates_v2(request, candidate_hint, query_vector)
+            else:
+                rows, debug, accelerator_scores = self._candidates_v1(request, candidate_hint, query_vector)
+            payload = self._rank_rows(
+                request, rows, debug, accelerator_scores, query_vector,
+                active_embedder, min_relevance, top_k, cache_key,
             )
-            debug.update(accelerator_debug)
-            try:
-                query_vector = embedding_provider.embed_text(request.query)
-            except Exception:
-                query_vector = []
-
-            scored: list[dict[str, Any]] = []
-            chunks_by_document: Dict[str, list[dict[str, Any]]] = {}
-            incompatible_vectors = 0
-            version_conflicts = 0
-            wrong_vendor_rows = 0
-            feature_scope_filtered = 0
-            current_model = str(getattr(embedding_provider, "model_id", "") or "")
-            for row in rows:
-                (
-                    c_id, content, embedding_json, meta_json, section,
-                    doc_id, doc_name, document_source, knowledge_source_type, document_version, d_vendor, d_platform, d_tenant,
-                    acl_json, trust_level, document_category, cli_platform,
-                    semantic_document_id, document_software_train, document_software_release,
-                    _is_candidate, chunk_role,
-                    parent_chunk_id, ordinal, stored_embedding_model, stored_embedding_dimensions,
-                ) = row
-                document = {"id": doc_id, "tenant_id": d_tenant, "acl_json": acl_json}
-                if not document_is_visible(document, tenant_id=request.tenant_id, user_id=request.user_id, roles=request.roles, site_ids=request.site_ids):
-                    continue
-                metadata = self._parse_json(meta_json)
-                requested_vendor = str(getattr(request, "vendor", "") or "").strip().lower()
-                actual_vendor = str(metadata.get("vendor") or d_vendor or "").strip().lower()
-                if requested_vendor and actual_vendor and requested_vendor != actual_vendor:
-                    wrong_vendor_rows += 1
-                if not self._feature_scope_is_eligible(
-                    getattr(request, "feature", None),
-                    metadata,
-                    content=content,
-                    section=section,
-                    document_name=doc_name,
-                    document_source=document_source,
-                    knowledge_source_type=knowledge_source_type,
-                ):
-                    feature_scope_filtered += 1
-                    continue
-                keyword_score = self._calc_keyword_relevance(
-                    request.query,
-                    str(content or ""),
-                    str(doc_name or ""),
-                    section=str(section or ""),
-                    metadata=metadata,
-                )
-                native_scores = accelerator_scores.get(str(c_id), {})
-                keyword_score = max(
-                    keyword_score,
-                    float(native_scores.get("fts", 0.0)),
-                    float(native_scores.get("trgm", 0.0)),
-                )
+            debug["retrieval_latency_ms"] = round((time.perf_counter() - started) * 1000.0, 2)
+            if engine == "shadow":
                 try:
-                    chunk_vector = embedding_json if isinstance(embedding_json, list) else json.loads(str(embedding_json or "[]"))
-                    if not isinstance(chunk_vector, list):
-                        chunk_vector = []
-                except (TypeError, ValueError):
-                    chunk_vector = []
-                stored_dimensions = int(stored_embedding_dimensions or 0)
-                vector_incompatible = bool(
-                    stored_dimensions
-                    and (len(chunk_vector) != stored_dimensions or len(query_vector) != stored_dimensions)
-                )
-                if stored_embedding_model and current_model and str(stored_embedding_model) != current_model:
-                    vector_score = 0.0
-                    incompatible_vectors += 1
-                elif vector_incompatible:
-                    vector_score = 0.0
-                    incompatible_vectors += 1
-                else:
-                    vector_score = float(native_scores.get("vector", self._cosine(query_vector, chunk_vector)))
-                specificity_fields = ("vendor", "document_category", "product_series", "product_model", "cli_platform", "feature_domain", "feature")
-                requested_count = sum(1 for field_name in specificity_fields if getattr(request, field_name, None))
-                matched_count = 0
-                for field_name in specificity_fields:
-                    requested_value = getattr(request, field_name, None)
-                    actual_value = metadata.get(field_name)
-                    if not requested_value:
-                        continue
-                    requested_text = str(requested_value).strip().lower()
-                    actual_text = str(actual_value or "").strip().lower()
-                    if field_name == "product_series" and re.fullmatch(r"s\d{2,4}", requested_text):
-                        if actual_text.startswith(requested_text):
-                            matched_count += 1
-                    elif actual_text == requested_text:
-                        matched_count += 1
-                metadata_score = matched_count / max(1, requested_count)
-                applicable_versions = metadata.get("applicable_versions") or metadata.get("verified_versions") or []
-                version_score, version_evidence = version_compatibility(
-                    request.software_train,
-                    request.software_release,
-                    document_software_train or metadata.get("software_train"),
-                    document_software_release or metadata.get("software_release"),
-                    applicable_versions if isinstance(applicable_versions, (list, tuple, set)) else [],
-                )
-                trust_score = max(0.0, min(1.0, trust_rank(trust_level) / 4.0))
-                from ai.services.retrieval_contract import ScoreComponents
-                components = ScoreComponents(
-                    lexical=keyword_score,
-                    vector=vector_score,
-                    metadata=metadata_score,
-                    trust=trust_score,
-                    version=version_score,
-                )
-                score = components.total
-                exact_command_required = bool(self._command_phrases(request.query)) and str(document_category or "") in {"command", "cli_output"}
-                # Product/series questions often use a local alias such as
-                # ``CE6800`` while the verified document stores the canonical
-                # series ``CloudEngine 6800``.  Once SQL has already matched
-                # that exact hardware identity, do not discard the document
-                # merely because the alias has no lexical overlap.
-                exact_hardware_identity = bool(
-                    str(document_category or "").lower() == "hardware"
-                    and (request.product_series or request.product_model)
-                    and metadata_score >= 0.90
-                )
-                if version_score == 0.0 and (request.software_train or request.software_release):
-                    # Version conflicts are hard retrieval boundaries.  A
-                    # lexical/vector hit must not smuggle a known incompatible
-                    # release into an operator answer.
-                    version_conflicts += 1
-                    continue
-                item = {
-                    "chunk_id": c_id,
-                    "content": sanitize_text(str(content or "")),
-                    "document_name": doc_name,
-                    "source": document_source,
-                    "knowledge_source_type": knowledge_source_type,
-                    "document_version": document_version,
-                    "document_status": request.status,
-                    "document_id": semantic_document_id or doc_id,
-                    "storage_document_id": doc_id,
-                    "section": section,
-                    "vendor": d_vendor,
-                    "platform": cli_platform or d_platform,
-                    "cli_platform": cli_platform,
-                    "document_category": document_category,
-                    "source_trust_level": trust_level or "untrusted",
-                    "source_trust_rank": trust_rank(trust_level),
-                    "untrusted_data": True,
-                    "metadata": metadata,
-                    "feature": metadata.get("feature"),
-                    "feature_source": metadata.get("feature_source"),
-                    "source_kind": metadata.get("source_kind"),
-                    "chunk_role": chunk_role or "standalone",
-                    "parent_chunk_id": parent_chunk_id,
-                    "ordinal": int(ordinal or 0),
-                    "keyword_score": round(keyword_score, 4),
-                    "vector_score": round(vector_score, 4),
-                    "metadata_score": round(metadata_score, 4),
-                    "trust_score": round(trust_score, 4),
-                    "version_score": round(version_score, 4),
-                    "version_evidence": version_evidence,
-                    "score_components": components.to_dict(),
-                    "relevance_score": round(score, 4),
-                }
-                key = str(doc_id)
-                chunks_by_document.setdefault(key, []).append(item)
-                if (score >= min_relevance or exact_hardware_identity) and not (exact_command_required and keyword_score < 0.55):
-                    scored.append(item)
-
-            best_by_document: Dict[str, dict[str, Any]] = {}
-            for item in scored:
-                key = str(item["storage_document_id"])
-                previous = best_by_document.get(key)
-                if previous is None or (item["relevance_score"], item["source_trust_rank"]) > (previous["relevance_score"], previous["source_trust_rank"]):
-                    best_by_document[key] = item
-            pool_limit = max(top_k, self.candidate_pool_size)
-            candidate_documents = sorted(
-                best_by_document.values(),
-                key=lambda item: (item["relevance_score"], item["source_trust_rank"]),
-                reverse=True,
-            )[:pool_limit]
-            reranked_documents, reranker_debug = self.reranker.apply(request.query, candidate_documents)
-            final_results = [
-                self._expand_document_context(item, chunks_by_document.get(str(item["storage_document_id"]), [item]))
-                for item in reranked_documents[:top_k]
-            ]
-            debug.update({
-                "candidate_pool_size": len(candidate_documents),
-                "dedup_document_count": len(best_by_document),
-                "incompatible_embedding_chunks": incompatible_vectors,
-                "version_conflict_count": version_conflicts,
-                "wrong_vendor_count": wrong_vendor_rows,
-                "feature_scope_filtered": feature_scope_filtered,
-                "feature_scope_guard": "content_evidence_v1",
-                "expanded_context_chunks": sum(int(item.get("context_chunk_count") or 0) for item in final_results),
-                "final_document_ids": [item["document_id"] for item in final_results],
-                "reranker": reranker_debug,
-                "reranker_config": dict(self.reranker_config),
-                "shadow": reranker_debug if reranker_debug.get("mode") == "shadow" else {},
-                "cache": {"hit": False, "key": cache_key, "enabled": self.cache_enabled},
-                "outcome": "matched" if final_results else "no_match",
-            })
-            explanation = build_retrieval_explanation(request, debug, final_results)
+                    debug["shadow_v2"] = self._schedule_shadow(
+                        request, candidate_hint, query_vector, active_embedder,
+                        min_relevance, top_k, cache_key, payload, debug["retrieval_latency_ms"],
+                    )
+                except Exception:
+                    # Shadow work must never fail the served V1 result.
+                    logger.warning("RAG shadow scheduling failed")
+                    debug["shadow_v2"] = {"status": "error", "error_code": "RETRIEVAL_V2_SHADOW_FAILED"}
+            final_results = payload["results"]
             self.last_debug = debug
-            payload = {"results": final_results, "debug": debug, "explanation": explanation}
             if self.cache_enabled:
                 retrieval_cache.set(
                     cache_key,
@@ -1087,6 +2115,7 @@ class RAGRetriever:
             # Never expose dependency/SQL/provider exception text through the
             # retrieval debug contract.  The stable code is sufficient for an
             # operator to correlate the request with server-side logs.
+            logger.exception("RAG retrieval execution failed")
             self.last_debug = {
                 "error_code": "RETRIEVAL_EXECUTION_FAILED",
                 "candidate_count": 0,
@@ -1095,7 +2124,7 @@ class RAGRetriever:
             return {"results": [], "debug": self.last_debug, "explanation": build_retrieval_explanation(request, self.last_debug, [])}
 
     def search(self, request: RetrievalRequest, min_relevance: float = 0.20) -> Dict[str, Any]:
-        """Return the user-visible result from the single V1 retrieval path."""
+        """Return the user-visible result (engine chosen by AI_RETRIEVAL_ENGINE)."""
         return self._search_once(request, min_relevance)
 
     def retrieve(

@@ -109,4 +109,53 @@ describe('ModelHealthDashboardTab', () => {
     await user.click(screen.getByRole('button', { name: '30天' }));
     await waitFor(() => expect(getSummary).toHaveBeenLastCalledWith(30));
   });
+
+  it('shows the page header and a one-line health summary', async () => {
+    render(<MemoryRouter><ModelHealthDashboardTab /></MemoryRouter>);
+
+    expect(await screen.findByRole('heading', { name: /当前状态：Nexora AI 模型服务/ })).toBeTruthy();
+    const summary = screen.getByLabelText('健康概览');
+    expect(summary.textContent).toContain('90.00%');
+    expect(summary.textContent).toContain('可用率');
+    expect(summary.textContent).toContain('320 ms');
+    expect(screen.getByTestId('ai-health-overall').textContent).toContain('部分模型需要关注');
+    expect(screen.getByRole('button', { name: '90天' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('labels a model that was never probed instead of showing a raw copy key', async () => {
+    const user = userEvent.setup();
+    const base = await getSummary.getMockImplementation()?.(90);
+    getSummary.mockResolvedValueOnce({
+      ...(base as any),
+      services: [{ ...(base as any).services[0], last_health_check_at: null }],
+    });
+    render(<MemoryRouter><ModelHealthDashboardTab /></MemoryRouter>);
+
+    await screen.findByText('DeepSeek Chat');
+    await user.click(screen.getByRole('button', { name: /DeepSeek Chat/ }));
+    expect(await screen.findByText('从未探测')).toBeTruthy();
+    expect(screen.queryByText(/ai\.health\./)).toBeNull();
+  });
+
+  it('shows an empty state when no model is monitored', async () => {
+    getSummary.mockResolvedValueOnce({
+      window_days: 90,
+      window_start: '2026-06-13T00:00:00Z',
+      generated_at: '2026-09-10T08:00:00Z',
+      overall_status: 'unknown',
+      service_count: 0,
+      monitored_service_count: 0,
+      checked_service_count: 0,
+      total_check_count: 0,
+      total_success_count: 0,
+      total_failure_count: 0,
+      availability_percent: null,
+      avg_latency_ms: null,
+      services: [],
+    });
+    render(<MemoryRouter><ModelHealthDashboardTab /></MemoryRouter>);
+
+    expect(await screen.findByText('启用对话或推理模型后，这里会显示它们的探测历史。')).toBeTruthy();
+    expect(screen.queryAllByRole('button', { name: '立即检查' }).length).toBe(0);
+  });
 });

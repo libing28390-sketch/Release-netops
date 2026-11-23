@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
@@ -12,6 +13,12 @@ from typing import Any, Callable, Dict, List, Optional, Type
 from pydantic import BaseModel, ConfigDict
 
 from ai.security.gateway import ai_security_gateway
+from core.config import settings
+
+logger = logging.getLogger(__name__)
+
+# Upper bound on tool calls running at the same time in this process.
+_TOOL_CONCURRENCY = 8
 from ai.tools.read_only_tools import (
     tool_compare_config,
     tool_find_ip_location,
@@ -90,6 +97,9 @@ class ToolSpec:
     read_only: bool = True
     require_confirmation: bool = False
     timeout_seconds: float = 8.0
+    # Tools that log in to devices with stored credentials are gated by
+    # PRODUCTION_CREDENTIALS_ALLOWED in addition to their other checks.
+    uses_device_credentials: bool = False
     supported_vendors: tuple[str, ...] = field(default_factory=tuple)
     supported_platforms: tuple[str, ...] = field(default_factory=tuple)
 
@@ -99,7 +109,9 @@ class ToolRegistry:
 
     def __init__(self):
         self._tools: Dict[str, ToolSpec] = {}
-        self._concurrency = threading.BoundedSemaphore(8)
+        self._concurrency = threading.BoundedSemaphore(_TOOL_CONCURRENCY)
+        # One shared, bounded pool instead of a new executor per call.
+        self._executor = ThreadPoolExecutor(max_workers=_TOOL_CONCURRENCY, thread_name_prefix="ai-tool")
         self._seed_builtin_tools()
 
     def _seed_builtin_tools(self) -> None:
@@ -132,6 +144,7 @@ class ToolRegistry:
         require_confirmation: bool = False,
         supported_vendors: tuple[str, ...] = (),
         supported_platforms: tuple[str, ...] = (),
+        uses_device_credentials: bool = False,
     ) -> None:
         normalized_risk = str(risk_level or "").upper()
         if normalized_risk not in {"R0", "R1", "R2", "R3", "R4"}:
@@ -149,6 +162,7 @@ class ToolRegistry:
             permission_code=permission_code,
             read_only=read_only,
             require_confirmation=require_confirmation or not read_only or normalized_risk in {"R3", "R4"},
+            uses_device_credentials=bool(uses_device_credentials),
             supported_vendors=tuple(str(value).strip() for value in supported_vendors if str(value).strip()),
             supported_platforms=tuple(str(value).strip() for value in supported_platforms if str(value).strip()),
         )
@@ -364,24 +378,42 @@ class ToolRegistry:
         if not spec.read_only and not change_order_id:
             ai_metrics.tool_finished(name, status="blocked")
             return {"success": False, "error_code": "TOOL_CHANGE_ORDER_REQUIRED", "plan": self._safe_plan(plan)}
+        # Deployment-level switches are checked last, right before execution,
+        # so plans and confirmations still behave the same; they only decide
+        # whether the confirmed action may actually run.
+        if not spec.read_only and not bool(getattr(settings, "NETWORK_WRITE_ENABLED", False)):
+            ai_metrics.tool_finished(name, status="blocked")
+            return {"success": False, "error_code": "NETWORK_WRITE_DISABLED", "plan": self._safe_plan(plan)}
+        if spec.uses_device_credentials and not bool(getattr(settings, "PRODUCTION_CREDENTIALS_ALLOWED", False)):
+            ai_metrics.tool_finished(name, status="blocked")
+            return {"success": False, "error_code": "PRODUCTION_CREDENTIALS_DISABLED", "plan": self._safe_plan(plan)}
         started = time.perf_counter()
-        if not self._concurrency.acquire(timeout=max(0.1, float(timeout_seconds or spec.timeout_seconds))):
+        timeout = max(0.1, float(timeout_seconds or spec.timeout_seconds))
+        if not self._concurrency.acquire(timeout=timeout):
             ai_metrics.tool_finished(name, status="busy")
             return {"success": False, "error_code": "TOOL_CONCURRENCY_LIMIT"}
+        submitted = False
         try:
             def invoke():
                 output = spec.handler(**safe_args, tenant_id=tenant_id)
                 if inspect.isawaitable(output):
                     return {"__async__": True}
                 return output
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(invoke)
-                try:
-                    output = future.result(timeout=max(0.1, float(timeout_seconds or spec.timeout_seconds)))
-                except FutureTimeoutError:
-                    future.cancel()
-                    ai_metrics.tool_finished(name, status="timeout")
-                    return {"success": False, "error_code": "TOOL_TIMEOUT", "duration_ms": int((time.perf_counter() - started) * 1000)}
+
+            future = self._executor.submit(invoke)
+            submitted = True
+            # The slot is released when the thread really finishes, not when
+            # the caller stops waiting.  A timed-out tool that is still
+            # holding a DB connection or SSH session keeps counting against
+            # the concurrency limit until it returns.
+            future.add_done_callback(lambda _future: self._concurrency.release())
+            try:
+                output = future.result(timeout=timeout)
+            except FutureTimeoutError:
+                future.cancel()
+                ai_metrics.tool_finished(name, status="timeout")
+                logger.warning("AI tool timed out tool=%s task_id=%s timeout_s=%.1f", name, task_id or "-", timeout)
+                return {"success": False, "error_code": "TOOL_TIMEOUT", "duration_ms": int((time.perf_counter() - started) * 1000)}
             if isinstance(output, dict) and output.get("__async__"):
                 return {"success": False, "error_code": "ASYNC_TOOL_REQUIRES_ASYNC_RUNNER"}
             safe_output = ai_security_gateway.safe_tool_result(output)
@@ -395,13 +427,14 @@ class ToolRegistry:
             }
             ai_metrics.tool_finished(name, status="success")
             return result
-        except Exception:
+        except Exception as exc:
             # Do not return exception strings: SQL/SSH/provider errors can
             # contain credentials or raw device output.
             ai_metrics.tool_finished(name, status="error")
+            logger.warning("AI tool failed tool=%s task_id=%s error=%s", name, task_id or "-", type(exc).__name__)
             return {"success": False, "error_code": "TOOL_EXECUTION_FAILED"}
         finally:
-            self._concurrency.release()
-
+            if not submitted:
+                self._concurrency.release()
 
 tool_registry = ToolRegistry()

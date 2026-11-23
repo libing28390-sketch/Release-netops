@@ -14,6 +14,10 @@ export interface NavChild {
   icon?: string;
   /** Route path */
   path: string;
+  /** Optional sub-group heading rendered above this item inside a long group (e.g. AI 中心 → 基础设施) */
+  groupLabel?: string;
+  /** English sub-group heading */
+  groupLabelEn?: string;
   /** Badge key to look up in alertCounts */
   badge?: 'monitoring' | 'alerts';
   /** Whether badge should use critical (red) styling */

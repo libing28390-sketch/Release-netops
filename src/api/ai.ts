@@ -1,4 +1,5 @@
 import { apiRequest, authHeaders, createClientRequestId } from './http';
+import { readSSEStream } from './sseParser';
 
 export interface AIProvider {
   id: string;
@@ -208,6 +209,8 @@ export interface AISecurityDryRunResult {
   finding_categories: string[];
   payload_bytes?: number;
   reason?: string;
+  reason_code?: string;
+  user_message?: string;
   external_call_made: false;
   security_mode?: 'blacklist' | 'classification' | string;
 }
@@ -311,6 +314,7 @@ export interface AIUsageSummary {
   avg_latency_ms: number;
   scene_breakdown: Record<string, number>;
   estimated_cost_usd?: number;
+  daily_estimated_cost_usd?: number;
   budget_usd?: number;
   budget_percent?: number;
   budget_alert?: boolean;
@@ -402,7 +406,41 @@ export async function rotateAIProviderKey(id: string, api_key: string): Promise<
 }
 
 export async function invalidateAIProviderKey(id: string, reason?: string): Promise<AIProvider> {
-  return apiRequest<AIProvider>(`/api/ai/providers/${id}/invalidate-key`, { method: 'POST', body: JSON.stringify({ reason }) });
+  // The server defaults the reason to "manual_invalidation"; an empty string
+  // would fail its min_length check, so it is omitted instead.
+  const trimmed = reason?.trim();
+  return apiRequest<AIProvider>(`/api/ai/providers/${id}/invalidate-key`, { method: 'POST', body: JSON.stringify(trimmed ? { reason: trimmed } : {}) });
+}
+
+/** One stored key version. The server never returns key material here. */
+export interface AIProviderKeyVersion {
+  key_version: number;
+  status: 'active' | 'retired' | 'invalidated' | string;
+  created_by?: string | null;
+  created_at?: string | null;
+  retired_at?: string | null;
+  invalidated_at?: string | null;
+  /** Whether the encrypted secret of this version is still stored. */
+  ciphertext_retained: boolean;
+}
+
+export interface AIProviderKeyAuditEntry {
+  key_version?: number | null;
+  action: 'rotate' | 'invalidate' | string;
+  actor?: string | null;
+  reason_code?: string | null;
+  created_at?: string | null;
+}
+
+export interface AIProviderKeyHistory {
+  provider_id: string;
+  retention_days: number;
+  versions: AIProviderKeyVersion[];
+  audit: AIProviderKeyAuditEntry[];
+}
+
+export async function getAIProviderKeyHistory(id: string): Promise<AIProviderKeyHistory> {
+  return apiRequest<AIProviderKeyHistory>(`/api/ai/providers/${encodeURIComponent(id)}/key-history`);
 }
 
 export async function getAIProviderDeletePreview(id: string): Promise<AIProviderDeletePreview> {
@@ -644,6 +682,12 @@ export async function upsertAIModelRoute(data: Partial<AIModelRoute>): Promise<A
   });
 }
 
+export async function deleteAIModelRoute(scene: string): Promise<void> {
+  return apiRequest<void>(`/api/ai/models/routes/${encodeURIComponent(scene)}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function getAIPrompts(): Promise<AIPrompt[]> {
   return apiRequest<AIPrompt[]>('/api/ai/prompts');
 }
@@ -655,6 +699,12 @@ export interface AIPromptPage {
   page_size: number;
   total_pages: number;
   filters?: { search?: string; scene?: string; enabled?: boolean | null };
+  facets?: {
+    total_all?: number;
+    enabled_count?: number;
+    max_version?: number;
+    scene_counts?: Record<string, number>;
+  };
 }
 
 export async function getAIPromptsPage(query: { page?: number; page_size?: number; search?: string; scene?: string; enabled?: boolean } = {}): Promise<AIPromptPage> {
@@ -817,6 +867,7 @@ export interface AIAuditLog {
   prompt_id?: string | null;
   input_tokens?: number | null;
   output_tokens?: number | null;
+  cached_tokens?: number | null;
   latency_ms?: number | null;
   status: string;
   error_code?: string | null;
@@ -848,6 +899,8 @@ export interface AssistantProcessStep {
 }
 
 export interface AssistantStreamDoneMeta {
+  /** "length" when the model stopped at its output limit (answer incomplete). */
+  finish_reason?: string;
   event_version?: string;
   stream_id?: string;
   sequence?: number;
@@ -856,6 +909,7 @@ export interface AssistantStreamDoneMeta {
   latency_ms?: number;
   input_tokens?: number;
   output_tokens?: number;
+  cached_tokens?: number;
   model_id?: string;
   provider_id?: string;
   route_reason?: string;
@@ -864,7 +918,7 @@ export interface AssistantStreamDoneMeta {
   token_source?: AITokenSource;
 }
 
-export type AIExecutionMode = 'local_knowledge' | 'local_operation' | 'local_clarification' | 'local_sensitive_identifier' | 'provider_generated' | 'local_fallback' | 'legacy_unknown';
+export type AIExecutionMode = 'local_knowledge' | 'local_operation' | 'local_clarification' | 'local_sensitive_identifier' | 'local_security_block' | 'provider_generated' | 'local_fallback' | 'legacy_unknown';
 export type AITokenSource = 'provider_reported' | 'estimated' | 'local_zero';
 
 export interface AssistantStreamCitation {
@@ -946,6 +1000,8 @@ export interface AssistantStreamMeta {
   stream_id?: string;
   sequence?: number;
   intent?: string;
+  assistant_message_id?: string;
+  conversation_id?: string;
   citations?: any[];
   facts_retrieved?: boolean;
   retrieval?: AssistantRetrievalTrace;
@@ -956,6 +1012,7 @@ export interface AssistantStreamMeta {
   provider_id?: string;
   input_tokens?: number;
   output_tokens?: number;
+  cached_tokens?: number;
   latency_ms?: number;
   route_reason?: string;
   selection_source?: string;
@@ -976,7 +1033,7 @@ export interface CopilotContract {
   next_checks?: string[];
   source_labels?: string[];
   recognized?: { vendor?: string; model?: string; os?: string; version?: string; ambiguous_candidates?: string[] };
-  runtime?: { device_connected?: boolean; cli_executed?: boolean; external_egress?: boolean; provider_id?: string; model_id?: string; execution_mode?: AIExecutionMode; input_tokens?: number; output_tokens?: number; latency_ms?: number };
+  runtime?: { device_connected?: boolean; cli_executed?: boolean; external_egress?: boolean; provider_id?: string; model_id?: string; execution_mode?: AIExecutionMode; input_tokens?: number; output_tokens?: number; latency_ms?: number; knowledge_fallback?: 'cloud_web_reference' | 'cloud_general_reference' | null };
   context_budget?: { limit_chars?: number; used_chars?: number; truncated?: boolean; summary?: string };
   engineer_evidence?: { citations?: any[]; trace_available?: boolean };
   developer_trace?: Record<string, unknown>;
@@ -1029,6 +1086,7 @@ export interface AIConversationMessage {
   external_egress?: boolean | null;
   input_tokens?: number | null;
   output_tokens?: number | null;
+  cached_tokens?: number | null;
   latency_ms?: number | null;
   token_source?: AITokenSource | null;
   created_at: string;
@@ -1182,75 +1240,62 @@ export async function chatAssistantStream(
   const reader = response.body?.getReader();
   if (!reader) return;
 
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let currentEvent = 'token';
-  let pendingEventId: string | null = null;
   let activeStreamId: string | null = streamId || response.headers?.get?.('X-Stream-ID') || null;
   let lastSequence = activeRequestLastEventId;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  // Spec-compliant parsing (see ./sseParser): an event's type applies to that
+  // event only, multi-line data is joined, comments/heartbeats are ignored.
+  await readSSEStream(reader, (event) => {
+    const dataStr = event.data.trim();
+    if (!dataStr) return;
+    let parsed: any;
+    try {
+      parsed = JSON.parse(dataStr);
+    } catch {
+      // Ignore a malformed SSE data payload.
+      return;
+    }
+    // Events without an `event:` field default to "message"; the assistant
+    // stream treats those as tokens, as the previous parser did.
+    const currentEvent = event.type === 'message' ? 'token' : event.type;
+    const eventId = event.id;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith('event:')) {
-        currentEvent = trimmed.slice(6).trim();
-      } else if (trimmed.startsWith('id:')) {
-        pendingEventId = trimmed.slice(3).trim();
-      } else if (trimmed.startsWith('data:')) {
-        const dataStr = trimmed.slice(5).trim();
-        if (!dataStr) continue;
-        let parsed: any;
-        try {
-          parsed = JSON.parse(dataStr);
-        } catch {
-          // Ignore an incomplete or malformed SSE data line.
-          continue;
-        }
-
-        const parsedStreamId = typeof parsed?.stream_id === 'string'
-          ? parsed.stream_id
-          : pendingEventId?.includes(':') ? pendingEventId.slice(0, pendingEventId.lastIndexOf(':')) : null;
-        const parsedSequence = typeof parsed?.sequence === 'number'
-          ? parsed.sequence
-          : pendingEventId?.includes(':') ? Number(pendingEventId.slice(pendingEventId.lastIndexOf(':') + 1)) : null;
-        pendingEventId = null;
-        if (parsedStreamId) {
-          if (activeStreamId && parsedStreamId !== activeStreamId) continue;
-          activeStreamId = parsedStreamId;
-          if (typeof parsedSequence === 'number' && Number.isFinite(parsedSequence)) {
-            if (parsedSequence <= lastSequence) continue;
-            lastSequence = parsedSequence;
-            onStreamPosition?.({ stream_id: activeStreamId, last_event_id: lastSequence });
-          }
-        }
-
-        if (currentEvent === 'meta' && onMeta) {
-          onMeta(parsed);
-        } else if (currentEvent === 'progress' && onProgress) {
-          onProgress(parsed);
-        } else if (currentEvent === 'citation' && onCitation && parsed.citation && typeof parsed.citation === 'object') {
-          onCitation(parsed as AssistantStreamCitation);
-        } else if (currentEvent === 'done' && onDone) {
-          onDone(parsed);
-        } else if (currentEvent === 'error') {
-          if (onError) {
-            onError(parsed);
-          } else if (parsed.code) {
-            throw new Error(parsed.code);
-          }
-        } else if (currentEvent === 'token' && parsed.content) {
-          onToken(parsed.content);
-        }
+    const parsedStreamId = typeof parsed?.stream_id === 'string'
+      ? parsed.stream_id
+      : eventId?.includes(':') ? eventId.slice(0, eventId.lastIndexOf(':')) : null;
+    const parsedSequence = typeof parsed?.sequence === 'number'
+      ? parsed.sequence
+      : eventId?.includes(':') ? Number(eventId.slice(eventId.lastIndexOf(':') + 1)) : null;
+    if (parsedStreamId) {
+      if (activeStreamId && parsedStreamId !== activeStreamId) return;
+      activeStreamId = parsedStreamId;
+      if (typeof parsedSequence === 'number' && Number.isFinite(parsedSequence)) {
+        if (parsedSequence <= lastSequence) return;
+        lastSequence = parsedSequence;
+        onStreamPosition?.({ stream_id: activeStreamId, last_event_id: lastSequence });
       }
     }
-  }
+
+    if (parsed?.type === 'persisted' && parsed?.assistant_message_id && onMeta) {
+      onMeta(parsed);
+    } else if (currentEvent === 'meta' && onMeta) {
+      onMeta(parsed);
+    } else if (currentEvent === 'progress' && onProgress) {
+      onProgress(parsed);
+    } else if (currentEvent === 'citation' && onCitation && parsed.citation && typeof parsed.citation === 'object') {
+      onCitation(parsed as AssistantStreamCitation);
+    } else if (currentEvent === 'done' && onDone) {
+      onDone(parsed);
+    } else if (currentEvent === 'error') {
+      if (onError) {
+        onError(parsed);
+      } else if (parsed.code) {
+        throw new Error(parsed.code);
+      }
+    } else if (currentEvent === 'token' && parsed.content) {
+      onToken(parsed.content);
+    }
+  });
 }
 
 export async function locateIP(ip: string): Promise<any> {
@@ -1268,6 +1313,24 @@ export async function locateMAC(mac: string): Promise<any> {
 }
 
 // P3 Agent APIs
+export interface RegisteredAgent {
+  id: string;
+  code: string;
+  name: string;
+  description: string;
+  system_prompt?: string;
+  allowed_tools: string[];
+  max_steps: number;
+  timeout: number;
+  enabled: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export async function getRegisteredAgents(): Promise<RegisteredAgent[]> {
+  return apiRequest<RegisteredAgent[]>('/api/ai/agents');
+}
+
 export async function getRegisteredTools(): Promise<any[]> {
   return apiRequest<any[]>('/api/ai/agents/tools');
 }
@@ -1291,7 +1354,7 @@ export async function generateAIConfig(intent: string, vendor = 'Huawei', platfo
   });
 }
 
-export async function createChangeDraft(data: { title: string; device_id: string; commands: string[]; verification_commands?: string[]; rollback_commands?: string[] }): Promise<any> {
+export async function createChangeDraft(data: { title: string; device_id: string; commands: string[]; verification_commands?: string[]; rollback_commands?: string[]; plan_token: string; risk_acknowledged?: boolean }): Promise<any> {
   return apiRequest('/api/ai/governance/create-draft', {
     method: 'POST',
     body: JSON.stringify(data),
@@ -2461,12 +2524,18 @@ export async function getKnowledgeDocument(docId: string): Promise<KnowledgeDocu
 }
 
 export async function listKnowledgeDocumentVersions(docId: string): Promise<KnowledgeDocumentVersion[]> {
-  return apiRequest<KnowledgeDocumentVersion[]>(`/api/knowledge/documents/${encodeURIComponent(docId)}/versions`);
+  const payload = await apiRequest<KnowledgeDocumentVersion[] | { data?: { items?: KnowledgeDocumentVersion[] } }>(`/api/knowledge/documents/${encodeURIComponent(docId)}/versions`);
+  if (Array.isArray(payload)) return payload;
+  return Array.isArray(payload?.data?.items) ? payload.data.items : [];
 }
 
 export async function compareKnowledgeDocumentVersions(docId: string, leftVersionId: string, rightVersionId: string): Promise<KnowledgeDocumentVersionComparison> {
   const params = new URLSearchParams({ left_version_id: leftVersionId, right_version_id: rightVersionId });
-  return apiRequest<KnowledgeDocumentVersionComparison>(`/api/knowledge/documents/${encodeURIComponent(docId)}/versions/compare?${params.toString()}`);
+  const payload = await apiRequest<KnowledgeDocumentVersionComparison | { data?: KnowledgeDocumentVersionComparison }>(`/api/knowledge/documents/${encodeURIComponent(docId)}/versions/compare?${params.toString()}`);
+  if (payload && typeof payload === 'object' && 'data' in payload && payload.data) {
+    return payload.data;
+  }
+  return payload as KnowledgeDocumentVersionComparison;
 }
 
 export async function publishKnowledgeDocumentVersion(docId: string, versionId: string, reason = 'published by knowledge administrator'): Promise<Record<string, unknown>> {
@@ -2840,4 +2909,89 @@ export async function batchDeleteKnowledgeDocuments(docIds: string[], reason = '
     method: 'POST',
     body: JSON.stringify({ doc_ids: docIds, confirm: true, reason }),
   });
+}
+
+export interface CopilotToolDefinition {
+  name: string;
+  cmd: string;
+  label: string;
+  title: string;
+  description: string;
+  hint: string;
+  category: string;
+  risk_level: string;
+  prompt_template: string;
+  enable_web?: boolean;
+  mcp_callable?: boolean;
+}
+
+export interface ParsedCopilotAttachment {
+  filename: string;
+  extension: string;
+  size_bytes: number;
+  char_count: number;
+  truncated: boolean;
+  decision: string;
+  user_message: string;
+  text: string;
+}
+
+export async function getCopilotTools(): Promise<{ tools: CopilotToolDefinition[]; mcp_endpoint: string }> {
+  return apiRequest<{ tools: CopilotToolDefinition[]; mcp_endpoint: string }>('/api/ai/assistant/tools');
+}
+
+export async function parseCopilotAttachment(file: File): Promise<ParsedCopilotAttachment> {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiRequest<ParsedCopilotAttachment>('/api/ai/assistant/attachments/parse', {
+    method: 'POST',
+    body: formData,
+  });
+}
+
+export interface SemanticEmbeddingStatusResponse {
+  available?: boolean;
+  configured?: boolean;
+  enabled?: boolean;
+  model?: string;
+  dimensions?: number;
+  provider?: string;
+  reason?: string;
+  configured_embedding_models?: Array<{
+    id: string;
+    name: string;
+    model_code: string;
+    provider_name: string;
+    enabled: boolean;
+  }>;
+  chunk_stats?: {
+    total_chunks: number;
+    semantic_v2_chunks: number;
+    local_v1_chunks: number;
+  };
+}
+
+export interface KnowledgeReindexJobResponse {
+  job_id?: string;
+  id?: string;
+  status?: string;
+  total_documents?: number;
+  processed_documents?: number;
+  failed_documents?: number;
+  message?: string;
+}
+
+export async function getSemanticEmbeddingStatus(): Promise<SemanticEmbeddingStatusResponse> {
+  return apiRequest<SemanticEmbeddingStatusResponse>('/api/ai/models/semantic-embedding/status');
+}
+
+export async function startKnowledgeReindex(payload: { scope?: string; reason?: string } = {}): Promise<KnowledgeReindexJobResponse> {
+  return apiRequest<KnowledgeReindexJobResponse>('/api/ai/assistant/knowledge-reindex', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getKnowledgeReindexStatus(jobId: string): Promise<KnowledgeReindexJobResponse> {
+  return apiRequest<KnowledgeReindexJobResponse>(`/api/ai/assistant/knowledge-reindex/${encodeURIComponent(jobId)}`);
 }

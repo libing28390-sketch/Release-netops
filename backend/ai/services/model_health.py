@@ -221,13 +221,81 @@ async def check_model_health(
         return _non_probe_result(model, status="disabled", error_code="AI_MODEL_DISABLED", message="model is disabled")
     if not model[5]:
         return _non_probe_result(model, status="disabled", error_code="AI_PROVIDER_DISABLED", message="provider is disabled")
-    if str(model[3] or "chat").lower() not in {"chat", "reasoning"}:
+    model_type_lower = str(model[3] or "chat").lower()
+    if model_type_lower not in {"chat", "reasoning", "embedding"}:
         return _non_probe_result(
             model,
             status="not_supported",
             error_code="AI_MODEL_HEALTH_UNSUPPORTED_TYPE",
-            message="health probes support chat and reasoning models only",
+            message="health probes support chat, reasoning, and embedding models only",
         )
+
+    if model_type_lower == "embedding":
+        import httpx
+        from ai.security.crypto import decrypt_api_key
+
+        started = time.perf_counter()
+        with get_db_connection() as conn:
+            prov = conn.execute(
+                """
+                SELECT p.base_url, p.api_key_encrypted, p.proxy_url, p.id
+                FROM ai_model m
+                JOIN ai_provider p ON p.id = m.provider_id
+                WHERE m.id = ?
+                """,
+                (model_id,),
+            ).fetchone()
+        base_url = str((prov[0] if prov else "") or "").rstrip("/")
+        api_key = decrypt_api_key(prov[1], provider_id=str(prov[3])) if (prov and prov[1]) else ""
+        timeout_sec = 20.0
+        proxy_url = str(prov[2]).strip() if (prov and prov[2]) else None
+        endpoint = base_url if base_url.endswith("/embeddings") else f"{base_url}/embeddings"
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        try:
+            async with httpx.AsyncClient(timeout=timeout_sec, proxy=proxy_url or None) as client:
+                resp = await client.post(endpoint, headers=headers, json={"model": model[2], "input": "ping"})
+            latency_ms = max(1, int(round((time.perf_counter() - started) * 1000)))
+            if resp.status_code == 200:
+                payload = resp.json()
+                emb = ((payload.get("data") or [{}])[0] or {}).get("embedding") or []
+                dim = len(emb) if isinstance(emb, list) else 0
+                if dim > 0:
+                    checked_at = datetime.now(timezone.utc).isoformat()
+                    sla = _record_model_health(model_id, status="healthy", checked_at=checked_at, latency_ms=latency_ms, error_code=None)
+                    return {
+                        "model_id": model[0],
+                        "model_name": model[1],
+                        "model_code": model[2],
+                        "success": True,
+                        "health_status": "healthy",
+                        "latency_ms": latency_ms,
+                        "last_health_check_at": checked_at,
+                        "error_code": None,
+                        "message": f"embedding probe succeeded (dim={dim})",
+                        "sla": sla,
+                    }
+            err_msg = f"HTTP {resp.status_code}: {resp.text[:200]}"
+            err_code = "AI_EMBEDDING_PROBE_FAILED"
+        except Exception as exc:
+            latency_ms = max(1, int(round((time.perf_counter() - started) * 1000)))
+            err_msg = str(exc)
+            err_code = "AI_EMBEDDING_PROBE_ERROR"
+        checked_at = datetime.now(timezone.utc).isoformat()
+        sla = _record_model_health(model_id, status="unhealthy", checked_at=checked_at, latency_ms=latency_ms, error_code=err_code)
+        return {
+            "model_id": model[0],
+            "model_name": model[1],
+            "model_code": model[2],
+            "success": False,
+            "health_status": "unhealthy",
+            "latency_ms": latency_ms,
+            "last_health_check_at": checked_at,
+            "error_code": err_code,
+            "message": err_msg,
+            "sla": sla,
+        }
 
     # Keep manual retries bounded as well as scheduled probes.  This mirrors
     # the provider-level health backoff and prevents a double-click/retry loop
@@ -308,7 +376,7 @@ async def check_model_health(
 
 
 def cleanup_model_health_history() -> None:
-    retention_days = max(1, int(getattr(settings, "AI_MODEL_HEALTH_RETENTION_DAYS", 30)))
+    retention_days = max(1, int(getattr(settings, "AI_MODEL_HEALTH_RETENTION_DAYS", 90)))
     cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
     with get_db_connection() as conn:
         conn.execute("DELETE FROM ai_model_health_check WHERE checked_at < ?", (cutoff,))

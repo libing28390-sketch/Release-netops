@@ -47,6 +47,12 @@ REQUIRED_KEYS = frozenset(
         "AI_GATEWAY_MODE",
         "DATA_CLASSIFICATION",
         "DEVICE_CREDENTIAL_SOURCE",
+        "AI_RETRIEVAL_ENGINE",
+        "AI_RETRIEVAL_VECTOR_SOURCE",
+        "AI_SEMANTIC_EMBEDDING_PROVIDER",
+        "AI_EMBEDDING_SIDECAR_URL",
+        "AI_SEMANTIC_EMBEDDING_DIMENSIONS",
+        "AI_EMBEDDING_QUERY_TIMEOUT_MS",
     }
 )
 
@@ -67,10 +73,13 @@ SAFE_DEFAULTS = {
     "AI_GATEWAY_MODE": "offline",
     "DATA_CLASSIFICATION": "synthetic",
     "DEVICE_CREDENTIAL_SOURCE": "fixture",
+    "AI_RETRIEVAL_ENGINE": "v1",
+    "AI_RETRIEVAL_VECTOR_SOURCE": "legacy",
+    "AI_SEMANTIC_EMBEDDING_PROVIDER": "none",
 }
 
 _ALLOWED_ENDPOINT_HOSTS = frozenset(
-    {"127.0.0.1", "localhost", "::1", "reranker-sidecar", "docling", "docling-service", "langfuse", "netops"}
+    {"127.0.0.1", "localhost", "::1", "reranker-sidecar", "embedding-sidecar", "docling", "docling-service", "langfuse", "netops"}
 )
 _SECRET_VALUE_MARKERS = re.compile(
     r"(?i)(?:sk_live_|sk-proj-|gho_|github_pat_|bearer\s+[A-Za-z0-9._-]{12,}|"
@@ -153,6 +162,27 @@ def _validate_endpoint(values: dict[str, str], key: str, errors: list[str], *, a
         errors.append(f"{key.lower()}_outside_allowlist")
 
 
+_WEIGHT_KEYS = frozenset({"lexical", "vector", "metadata", "trust", "version"})
+
+
+def _score_weights_valid(raw: str) -> bool:
+    """Same rule as retrieval_contract.parse_score_weights, without importing the backend."""
+    parsed: dict[str, float] = {}
+    for part in raw.split(","):
+        key, sep, value = part.partition("=")
+        key = key.strip().lower()
+        if not sep or key not in _WEIGHT_KEYS or key in parsed:
+            return False
+        try:
+            number = float(value)
+        except ValueError:
+            return False
+        if not 0.0 <= number <= 1.0:
+            return False
+        parsed[key] = number
+    return set(parsed) == _WEIGHT_KEYS and abs(sum(parsed.values()) - 1.0) <= 1e-6
+
+
 def validate_mapping(values: dict[str, str]) -> None:
     """Validate release-safe defaults and bounded sidecar configuration."""
 
@@ -172,6 +202,24 @@ def validate_mapping(values: dict[str, str]) -> None:
     _int_value(values, "AI_EMBEDDING_DIMENSIONS", errors, minimum=0, maximum=16_384)
     _int_value(values, "AI_CONFIG_CLARIFICATION_ROLLOUT_PERCENT", errors, minimum=0, maximum=100)
     _int_value(values, "AI_RERANKER_TIMEOUT_MS", errors, minimum=1, maximum=5_000)
+    _int_value(values, "AI_SEMANTIC_EMBEDDING_DIMENSIONS", errors, minimum=1, maximum=4_096)
+    _int_value(values, "AI_EMBEDDING_QUERY_TIMEOUT_MS", errors, minimum=50, maximum=30_000)
+    _validate_endpoint(values, "AI_EMBEDDING_SIDECAR_URL", errors)
+    if values.get("AI_RETRIEVAL_ENGINE", "").strip().lower() not in {"v1", "shadow", "v2"}:
+        errors.append("retrieval_engine_invalid")
+    # Optional keys (older env files may not have them); validated when set.
+    shadow_mode = values.get("AI_RETRIEVAL_SHADOW_MODE", "").strip().lower()
+    if shadow_mode and shadow_mode not in {"async", "sync"}:
+        errors.append("retrieval_shadow_mode_invalid")
+    if values.get("AI_RETRIEVAL_SHADOW_SAMPLE_RATE", "").strip():
+        _float_value(values, "AI_RETRIEVAL_SHADOW_SAMPLE_RATE", errors, minimum=0.0, maximum=1.0)
+    if values.get("AI_RETRIEVAL_SHADOW_MAX_PENDING", "").strip():
+        _int_value(values, "AI_RETRIEVAL_SHADOW_MAX_PENDING", errors, minimum=1, maximum=1_000)
+    if values.get("AI_RETRIEVAL_SHADOW_RETENTION_DAYS", "").strip():
+        _int_value(values, "AI_RETRIEVAL_SHADOW_RETENTION_DAYS", errors, minimum=1, maximum=365)
+    weights = values.get("AI_RETRIEVAL_SCORE_WEIGHTS", "").strip()
+    if weights and not _score_weights_valid(weights):
+        errors.append("retrieval_score_weights_invalid")
     _float_value(values, "AI_DOCLING_TIMEOUT_SECONDS", errors, minimum=0.01, maximum=60.0)
     _int_value(values, "AI_DOCLING_MAX_PAGES", errors, minimum=1, maximum=10_000)
     _float_value(values, "LANGFUSE_TIMEOUT_SECONDS", errors, minimum=0.01, maximum=60.0)

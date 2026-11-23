@@ -4,6 +4,8 @@ FastAPI Router for AI Audit Logs & Token Usage Statistics
 
 from __future__ import annotations
 
+import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, Query
 from database.core import get_db_connection
@@ -13,6 +15,8 @@ from ai.services.job_observability import snapshot as job_observability_snapshot
 from ai.services.database_observability import snapshot as database_observability_snapshot
 from core.config import settings
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["AI Audit & Usage"])
 
 
@@ -20,9 +24,13 @@ router = APIRouter(tags=["AI Audit & Usage"])
 def list_ai_audit_logs(
     limit: int = Query(50, ge=1, le=500),
     scene: Optional[str] = None,
-    user=Depends(require_ai_permission("ai.audit.view"))
+    user=Depends(require_ai_permission("ai.usage.view"))
 ):
-    """List AI Request Audit Logs."""
+    """List AI Request Audit Logs.
+
+    Request logs cover every user, so they need ``ai.usage.view``
+    (Administrator by default) rather than the broader ``ai.audit.view``.
+    """
     with get_db_connection() as conn:
         cursor = conn.cursor()
         query = """
@@ -61,7 +69,7 @@ def list_ai_audit_logs(
 
 
 @router.get("/usage/summary", response_model=Dict[str, Any])
-def get_usage_summary(user=Depends(require_ai_permission("ai.audit.view"))):
+def get_usage_summary(user=Depends(require_ai_permission("ai.usage.view"))):
     """Get overall Token Usage & Request Aggregations."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
@@ -88,16 +96,29 @@ def get_usage_summary(user=Depends(require_ai_permission("ai.audit.view"))):
         scene_breakdown = {r[0]: r[1] for r in cursor.fetchall()}
 
         estimated_cost = 0.0
+        daily_estimated_cost = 0.0
+        today_key = datetime.now(timezone.utc).date().isoformat()
         provider_breakdown: dict[str, dict[str, Any]] = {}
         try:
             try:
-                cursor.execute("SELECT provider_id, model_id, SUM(requests), SUM(input_tokens), SUM(output_tokens), SUM(estimated_cost), AVG(avg_latency), SUM(success_count), SUM(error_count) FROM ai_usage_daily GROUP BY provider_id, model_id ORDER BY SUM(estimated_cost) DESC")
+                cursor.execute(
+                    "SELECT provider_id, model_id, SUM(requests), SUM(input_tokens), SUM(output_tokens), "
+                    "SUM(estimated_cost), "
+                    "COALESCE(SUM(avg_latency * requests) / NULLIF(SUM(requests), 0), 0), "
+                    "SUM(success_count), SUM(error_count) "
+                    "FROM ai_usage_daily GROUP BY provider_id, model_id ORDER BY SUM(estimated_cost) DESC"
+                )
                 usage_rows = cursor.fetchall()
             except Exception:
                 # Older installations may not have the additive success/error
                 # counters yet; keep the cost/latency view readable there.
                 conn.rollback()
-                cursor.execute("SELECT provider_id, model_id, SUM(requests), SUM(input_tokens), SUM(output_tokens), SUM(estimated_cost), AVG(avg_latency) FROM ai_usage_daily GROUP BY provider_id, model_id ORDER BY SUM(estimated_cost) DESC")
+                cursor.execute(
+                    "SELECT provider_id, model_id, SUM(requests), SUM(input_tokens), SUM(output_tokens), "
+                    "SUM(estimated_cost), "
+                    "COALESCE(SUM(avg_latency * requests) / NULLIF(SUM(requests), 0), 0) "
+                    "FROM ai_usage_daily GROUP BY provider_id, model_id ORDER BY SUM(estimated_cost) DESC"
+                )
                 usage_rows = [(*item, None, None) for item in cursor.fetchall()]
             for item in usage_rows:
                 cost = float(item[5] or 0)
@@ -114,8 +135,14 @@ def get_usage_summary(user=Depends(require_ai_permission("ai.audit.view"))):
                     "output_tokens": int(item[4] or 0), "estimated_cost_usd": round(cost, 6),
                     "avg_latency_ms": round(float(item[6] or 0), 2),
                 }
-        except Exception:
-            pass
+            daily_row = cursor.execute(
+                "SELECT COALESCE(SUM(estimated_cost), 0) FROM ai_usage_daily WHERE date = ?",
+                (today_key,),
+            ).fetchone()
+            daily_estimated_cost = float((daily_row or [0])[0] or 0)
+        except Exception as exc:
+            # Totals above are still valid; only the cost/provider breakdown is missing.
+            logger.warning("AI usage cost/provider breakdown unavailable; returning totals only code=AI_USAGE_BREAKDOWN_FAILED error=%s", type(exc).__name__)
         budget = float(getattr(settings, "AI_DAILY_BUDGET_USD", 0) or 0)
 
         return {
@@ -126,15 +153,16 @@ def get_usage_summary(user=Depends(require_ai_permission("ai.audit.view"))):
             "avg_latency_ms": round(avg_latency_ms, 2),
             "scene_breakdown": scene_breakdown,
             "estimated_cost_usd": round(estimated_cost, 6),
+            "daily_estimated_cost_usd": round(daily_estimated_cost, 6),
             "budget_usd": budget,
-            "budget_percent": round((estimated_cost / budget) * 100, 2) if budget > 0 else 0,
-            "budget_alert": bool(budget > 0 and estimated_cost >= budget * 0.8),
+            "budget_percent": round((daily_estimated_cost / budget) * 100, 2) if budget > 0 else 0,
+            "budget_alert": bool(budget > 0 and daily_estimated_cost >= budget * 0.8),
             "provider_breakdown": provider_breakdown,
         }
 
 
 @router.get("/metrics", response_model=Dict[str, Any])
-def get_ai_metrics(user=Depends(require_ai_permission("ai.audit.view"))):
+def get_ai_metrics(user=Depends(require_ai_permission("ai.usage.view"))):
     """Return low-cardinality provider/tool/agent metrics without payloads."""
     metrics = ai_metrics.snapshot()
     metrics["jobs"]["observability"] = job_observability_snapshot()

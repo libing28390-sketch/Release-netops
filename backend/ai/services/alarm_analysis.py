@@ -5,12 +5,32 @@ AI Service for Alarm Incident Root Cause and Evidence Analysis
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Any, List, Optional
 from ai.gateway.llm_gateway import llm_gateway
 from ai.prompts.manager import prompt_manager
 from ai.prompts.renderer import prompt_renderer
 from ai.schemas.analysis import AlarmAnalysisRequest, AlarmAnalysisResponse
 from ai.security.sanitizer import sanitize_text
+
+
+def _coerce_confidence(value: Any, default: float = 0.8) -> float:
+    if value is None or isinstance(value, bool):
+        return default
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return default
+    if numeric > 1.0 and numeric <= 100.0:
+        numeric = numeric / 100.0
+    return max(0.0, min(1.0, numeric))
+
+
+def _coerce_str_list(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if item is not None and str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
 
 
 class AlarmAnalysisService:
@@ -19,7 +39,9 @@ class AlarmAnalysisService:
     async def analyze(
         self,
         req: AlarmAnalysisRequest,
-        user_id: Optional[str] = None
+        user_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        roles: Optional[List[str]] = None,
     ) -> AlarmAnalysisResponse:
         sanitized_raw = sanitize_text(req.raw_content or "")
 
@@ -59,7 +81,9 @@ class AlarmAnalysisService:
             response_format={"type": "json_object"},
             prompt_id=p_id,
             prompt_version=p_ver,
-            user_id=user_id
+            user_id=user_id,
+            tenant_id=tenant_id,
+            roles=roles,
         )
 
         content = res.get("content", "")
@@ -73,18 +97,19 @@ class AlarmAnalysisService:
                     clean_json = clean_json[3:]
                 if clean_json.endswith("```"):
                     clean_json = clean_json[:-3]
-                parsed = json.loads(clean_json.strip())
+                loaded = json.loads(clean_json.strip())
+                parsed = loaded if isinstance(loaded, dict) else {}
             except Exception:
                 parsed = {}
 
         return AlarmAnalysisResponse(
             request_id=res["request_id"],
-            incident_summary=parsed.get("incident_summary") or f"Alarm Analysis for '{req.alarm_title}'",
-            suspected_root_cause=parsed.get("suspected_root_cause") or (content if content else "Root cause analysis completed."),
-            confidence=float(parsed.get("confidence", 0.8)),
-            evidence=parsed.get("evidence") if isinstance(parsed.get("evidence"), list) else [],
-            affected_scope=parsed.get("affected_scope") if isinstance(parsed.get("affected_scope"), list) else [],
-            recommended_actions=parsed.get("recommended_actions") if isinstance(parsed.get("recommended_actions"), list) else []
+            incident_summary=str(parsed.get("incident_summary") or f"Alarm Analysis for '{req.alarm_title}'"),
+            suspected_root_cause=str(parsed.get("suspected_root_cause") or (content if content else "Root cause analysis completed.")),
+            confidence=_coerce_confidence(parsed.get("confidence"), default=0.8),
+            evidence=_coerce_str_list(parsed.get("evidence")),
+            affected_scope=_coerce_str_list(parsed.get("affected_scope")),
+            recommended_actions=_coerce_str_list(parsed.get("recommended_actions")),
         )
 
 

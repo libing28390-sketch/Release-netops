@@ -58,6 +58,9 @@ _BLOCKED_QUERY_CATEGORIES = frozenset({
     "mac_address",
     "email",
     "phone",
+    # Chinese identity-card and bank-card numbers (batch 6).
+    "cn_id_card",
+    "bank_card",
     "serial_number",
     "site_name",
     "business_name",
@@ -426,7 +429,7 @@ class WebRetrievalService:
     """One generic search/read capability shared by all public questions."""
 
     async def retrieve(self, query: str, *, tenant_id: str | None = None) -> dict[str, Any]:
-        if not bool(getattr(settings, "AI_WEB_SEARCH_ENABLED", True)):
+        if not bool(getattr(settings, "AI_WEB_SEARCH_ENABLED", False)):
             return {"status": "disabled", "provider": "generic_web", "items": [], "citations": []}
         raw_query = _bounded_text(query, 512)
         if not raw_query:

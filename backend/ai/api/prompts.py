@@ -183,6 +183,12 @@ def list_prompts(
             _prompt_select() + f" {where_sql} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
             tuple([*params, page_size, (effective_page - 1) * page_size]),
         ).fetchall()
+        global_stats = cursor.execute(
+            "SELECT COUNT(*), SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END), COALESCE(MAX(version), 0) FROM ai_prompt"
+        ).fetchone()
+        scene_rows = cursor.execute(
+            "SELECT scene, COUNT(*) FROM ai_prompt GROUP BY scene"
+        ).fetchall()
         return AIPromptPageResponse(
             items=[_prompt_response(row) for row in rows],
             total=total,
@@ -190,6 +196,12 @@ def list_prompts(
             page_size=page_size,
             total_pages=total_pages,
             filters={"search": search, "scene": scene, "enabled": enabled},
+            facets={
+                "total_all": int((global_stats or [0])[0] or 0),
+                "enabled_count": int((global_stats or [0, 0])[1] or 0),
+                "max_version": int((global_stats or [0, 0, 0])[2] or 0),
+                "scene_counts": {str(r[0]): int(r[1] or 0) for r in scene_rows if r[0]},
+            },
         )
 
 

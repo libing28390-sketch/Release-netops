@@ -62,10 +62,17 @@ def test_directory_tree_seeds_once_and_supports_nested_crud(monkeypatch):
     with pytest.raises(ValueError, match="同级目录"):
         service.create_knowledge_directory("kb-1", "HUAWEI_DEVICES", parent_id=product["id"], tenant_id="tenant-a")
 
-    service.delete_knowledge_directory(renamed["id"], tenant_id="tenant-a")
+    # Seeded (built-in) directories may be renamed but never deleted.
+    with pytest.raises(ValueError, match="系统内置目录不可删除"):
+        service.delete_knowledge_directory(renamed["id"], tenant_id="tenant-a")
+
+    # A user-created directory is deletable; it moved with its renamed parent.
+    service.delete_knowledge_directory(custom["id"], tenant_id="tenant-a")
     after_delete = service.list_knowledge_directories("kb-1", tenant_id=None)
-    assert after_delete["total"] == 29
-    assert all(node["name"] != "huawei_devices" for node in after_delete["items"][0]["children"])
+    assert after_delete["total"] == 30
+    huawei_devices = after_delete["items"][0]["children"][0]
+    assert huawei_devices["name"] == "huawei_devices"
+    assert not huawei_devices.get("children")
 
 
 def test_directory_tree_lists_historical_tenants_and_new_roots_use_default(monkeypatch):

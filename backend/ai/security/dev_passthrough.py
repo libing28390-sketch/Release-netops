@@ -26,13 +26,39 @@ def _now() -> datetime:
 class DevPassthroughController:
     def __init__(self) -> None:
         self._lock = RLock()
+        self._boot_at: datetime = _now()
         self._expires_at: datetime | None = None
 
+    def sync_peer_expiration(self, expires_at_iso: str | None, *, activated_at_iso: str | None = None) -> None:
+        """Apply a peer worker's expiration if it was activated after this process booted."""
+        with self._lock:
+            if not expires_at_iso or not self.is_supported():
+                self._expires_at = None
+                return
+            try:
+                if activated_at_iso:
+                    activated_at = datetime.fromisoformat(str(activated_at_iso))
+                    if activated_at.tzinfo is None:
+                        activated_at = activated_at.replace(tzinfo=timezone.utc)
+                    if activated_at < self._boot_at:
+                        return
+                expires_at = datetime.fromisoformat(str(expires_at_iso))
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                self._expires_at = expires_at if expires_at > _now() else None
+            except ValueError:
+                return
+
     def is_supported(self) -> bool:
-        return bool(
-            getattr(settings, "AI_ENABLED", False)
-            and getattr(settings, "EXTERNAL_AI_ENABLED", False)
-        )
+        if not bool(getattr(settings, "AI_ENABLED", False)):
+            return False
+        if bool(getattr(settings, "EXTERNAL_AI_ENABLED", False)):
+            return True
+        try:
+            from ai.security.gateway import ai_security_gateway
+            return bool(ai_security_gateway.policy.external_ai_enabled)
+        except Exception:
+            return False
 
     def is_active(self) -> bool:
         with self._lock:

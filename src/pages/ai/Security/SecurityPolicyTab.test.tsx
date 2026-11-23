@@ -1,5 +1,5 @@
 import React from 'react';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SecurityPolicyTab from './SecurityPolicyTab';
@@ -7,6 +7,7 @@ import {
   getAISecurityEventsPage,
   getAISecurityIncidentsPage,
   getAISecurityPolicy,
+  resolveAISecurityIncident,
   setAIDevPassthrough,
   testAISecurityPayload,
   updateAISecurityPolicy,
@@ -88,6 +89,44 @@ describe('SecurityPolicyTab browser key paths', () => {
     getPolicy.mockRejectedValueOnce(new Error('安全策略服务不可用'));
     render(<SecurityPolicyTab />);
     expect((await screen.findByRole('alert')).textContent).toContain('安全策略服务不可用');
+  });
+
+  it('renders the shared page header, summary bar and empty states', async () => {
+    render(<SecurityPolicyTab />);
+    expect(await screen.findByRole('heading', { level: 2, name: /AI 安全网关/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '刷新状态' })).toBeTruthy();
+
+    const summary = screen.getByLabelText('AI 安全网关概览');
+    expect(summary.textContent).toContain('外部 AI 出口');
+    expect(summary.textContent).toContain('默认拒绝');
+    expect(summary.textContent).toContain('250 KB');
+
+    expect(await screen.findByText('当前筛选没有匹配的安全事件')).toBeTruthy();
+    expect(await screen.findByText('当前筛选没有匹配的审计事件')).toBeTruthy();
+    expect(screen.getByText('尚未运行检查')).toBeTruthy();
+  });
+
+  it('shows incident severity and status as badges and resolves an open incident', async () => {
+    const user = userEvent.setup();
+    getIncidents.mockResolvedValue({
+      items: [{ id: 'inc-1', incident_type: 'AI_SECURITY_BLOCKED', severity: 'high', status: 'open', created_at: '2026-11-22T08:00:00Z' }],
+      total: 1,
+      page: 1,
+      page_size: 10,
+      total_pages: 1,
+    } as any);
+    vi.mocked(resolveAISecurityIncident).mockResolvedValue(undefined as any);
+
+    render(<SecurityPolicyTab />);
+    // Scope to the incident row: the status filter <select> also has
+    // "待处理" / "已解决" options, so page-wide text queries match twice.
+    const row = (await screen.findByText('AI_SECURITY_BLOCKED')).closest('li') as HTMLElement;
+    expect(within(row).getByText('待处理')).toBeTruthy();
+    expect(within(row).getByText('high')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '标记已解决' }));
+    await waitFor(() => expect(resolveAISecurityIncident).toHaveBeenCalledWith('inc-1'));
+    expect(await within(row).findByText('已解决')).toBeTruthy();
+    expect(within(row).queryByRole('button', { name: '标记已解决' })).toBeNull();
   });
 
   it('enables the administrator-controlled temporary AI test mode for a bounded window', async () => {

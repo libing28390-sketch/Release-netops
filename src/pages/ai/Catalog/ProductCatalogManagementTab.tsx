@@ -4,15 +4,11 @@ import {
   AlertTriangle,
   ChevronRight,
   Database,
-  Eye,
-  Filter,
   Pencil,
-  Layers,
   Loader2,
   Plus,
   RefreshCw,
   Search,
-  ShieldCheck,
   Sparkles,
   Tag,
   Trash2,
@@ -41,6 +37,12 @@ import { fetchAllPaginatedItems } from '../../../utils/pagination';
 
 import { ActionIconButton } from '../../../components/ui/ActionIconButton';
 import { TableActionCell, TableActionHeader } from '../../../components/ui/TableActionColumn';
+import { PageHeader } from '../../../components/ui/PageHeader';
+import { SummaryBar } from '../../../components/ui/SummaryBar';
+import { Panel, PanelHeader } from '../../../components/ui/Panel';
+import { StatusBadge, type StatusTone } from '../../../components/ui/StatusBadge';
+import { EmptyState } from '../../../components/ui/EmptyState';
+import { catalogCopy } from './ProductCatalogManagementTab.copy';
 type TextVariables = Record<string, string | number>;
 
 type CatalogPanel = 'models' | 'aliases';
@@ -78,20 +80,38 @@ function scopeValue(model: KnowledgeCatalogModel | undefined, key: string, empty
   return String(model?.software_scope?.[key] ?? emptyLabel);
 }
 
-function statusTone(status: string): string {
-  if (status === 'active' || status === 'manual_approved') return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300';
-  if (status === 'ambiguous_pending_review' || status === 'draft' || status === 'pending_review') return 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300';
-  if (status === 'rejected' || status === 'disabled') return 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300';
-  return 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300';
+function statusTone(status: string): StatusTone {
+  if (status === 'active' || status === 'manual_approved') return 'success';
+  if (status === 'ambiguous_pending_review' || status === 'draft' || status === 'pending_review') return 'warning';
+  if (status === 'rejected' || status === 'disabled') return 'danger';
+  return 'neutral';
 }
+
+function resolutionTone(outcome: string): StatusTone {
+  if (outcome === 'unique') return 'success';
+  if (outcome === 'unknown') return 'neutral';
+  return 'warning';
+}
+
+// Shared control styles (token classes, light/dark via --ui-* variables).
+const INPUT_CLASS = 'w-full rounded-lg border border-line bg-surface px-3 py-2 text-[13px] text-fg outline-none placeholder:text-fg-subtle focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/30 disabled:bg-surface-muted disabled:text-fg-muted';
+const SELECT_CLASS = 'mt-1 w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-[13px] text-fg outline-none focus:border-accent';
+const FIELD_LABEL_CLASS = 'text-xs font-medium text-fg-muted';
+const SECONDARY_BUTTON = 'inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-fg hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50';
+const PRIMARY_BUTTON = 'inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50';
+const HIERARCHY_ITEM = 'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors';
+const HIERARCHY_ACTIVE = 'bg-accent-subtle font-medium text-accent';
+const HIERARCHY_IDLE = 'text-fg hover:bg-surface-muted';
 
 export const ProductCatalogManagementTab: React.FC = () => {
   const { language, showToast, currentUser } = useCoreApp();
   const tx = (key: string, variables?: TextVariables) => aiAdminText(key, language, variables);
+  const copy = catalogCopy(language);
   const canManageCatalog = currentUser?.role === 'Administrator' || currentUser?.role_profile === 'Platform Maintainer';
   const [panel, setPanel] = useState<CatalogPanel>('models');
   const [models, setModels] = useState<KnowledgeCatalogModel[]>([]);
   const [aliases, setAliases] = useState<KnowledgeCatalogAlias[]>([]);
+  const [totalConflictCount, setTotalConflictCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [vendorFilter, setVendorFilter] = useState('');
@@ -140,6 +160,7 @@ export const ProductCatalogManagementTab: React.FC = () => {
       } else {
         const aliasResponse = await getKnowledgeCatalogAliases({ alias: appliedSearch, alias_kind: kindFilter, page, page_size: pageSize });
         setAliases(aliasResponse.items);
+        setTotalConflictCount(Array.isArray(aliasResponse.conflicts) ? aliasResponse.conflicts.length : null);
         setTotal(aliasResponse.meta?.pagination.total ?? aliasResponse.total);
         if (aliasResponse.meta?.pagination.page && aliasResponse.meta.pagination.page !== page) setPage(aliasResponse.meta.pagination.page);
       }
@@ -161,7 +182,7 @@ export const ProductCatalogManagementTab: React.FC = () => {
   const selectedVendorNode = hierarchy.find((item) => item.vendor_id === vendorFilter);
   const selectedFamilyNode = selectedVendorNode?.families.find((item) => item.family_code === familyFilter);
   const selectedSeriesNode = selectedFamilyNode?.series.find((item) => item.series_code === seriesFilter);
-  const conflictCount = aliases.filter((item) => item.conflict_status === 'ambiguous_pending_review').length;
+  const conflictCount = totalConflictCount ?? aliases.filter((item) => item.conflict_status === 'ambiguous_pending_review').length;
 
   const applySearch = (event?: React.FormEvent) => {
     event?.preventDefault();
@@ -372,173 +393,304 @@ export const ProductCatalogManagementTab: React.FC = () => {
     };
   };
 
-  return (
-    <div className="w-full space-y-5 pb-8">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-indigo-500"><Layers className="h-4 w-4" />{tx('ai.catalog.eyebrow')}</div>
-          <h1 className="nx-page-title text-gray-900 dark:text-white">{tx('ai.catalog.title')}</h1>
-           <p className="nx-page-description mt-1 max-w-3xl text-gray-500 dark:text-gray-400">{tx('ai.catalog.description')}</p>
-         </div>
-         <div className="flex items-center gap-2"><button type="button" onClick={() => void loadCatalog()} disabled={loading} className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 shadow-sm hover:border-indigo-300 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />{tx('ai.common.refresh')}</button>{canManageCatalog && panel === 'models' && <button type="button" onClick={openCreateCatalogModel} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700"><Plus className="h-4 w-4" />{tx('ai.catalog.add')}</button>}</div>
-      </header>
+  const hasHierarchySelection = Boolean(vendorFilter || familyFilter || seriesFilter || modelFilter);
+  const hierarchyPath = [selectedVendorNode?.vendor_name || vendorFilter, selectedFamilyNode?.family_name || familyFilter, selectedSeriesNode?.series_name || seriesFilter, modelFilter].filter(Boolean);
 
-      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-xs text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200">
-        <ShieldCheck className="h-4 w-4 shrink-0" />
-         <span className="font-semibold">{tx(catalogReadOnly ? 'ai.catalog.seed' : 'ai.catalog.officialAndCustom')}</span>
-         <span>{tx(catalogReadOnly ? 'ai.catalog.readOnlyBody' : 'ai.catalog.customBody')}</span>
-        {conflictCount > 0 && <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 font-semibold dark:bg-amber-900/50"><AlertTriangle className="h-3.5 w-3.5" />{tx('ai.catalog.pending', { count: conflictCount })}</span>}
+  const hierarchyColumn = (titleKey: string, count: number, body: React.ReactNode) => (
+    <div className="min-w-0 rounded-lg border border-line bg-surface-muted/40 p-2.5">
+      <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
+        <span className="text-xs font-medium text-fg-muted">{tx(titleKey)}</span>
+        <span className="text-xs tabular-nums text-fg-subtle" title={`${count} ${copy.hierarchyCount}`}>{count}</span>
       </div>
+      {body}
+    </div>
+  );
 
-      {error && <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/70 dark:bg-red-950/30 dark:text-red-300"><AlertTriangle className="h-4 w-4" />{error}</div>}
+  const hierarchyHint = (key: string) => <div className="px-1 py-5 text-center text-xs text-fg-subtle">{tx(key)}</div>;
+
+  return (
+    <div className="w-full space-y-4 pb-8">
+      <PageHeader
+        title={tx('ai.catalog.title')}
+        description={tx('ai.catalog.description')}
+        info={tx(catalogReadOnly ? 'ai.catalog.readOnlyBody' : 'ai.catalog.customBody')}
+        infoLabel={copy.infoLabel}
+        actions={(
+          <>
+            <button type="button" onClick={() => void loadCatalog()} disabled={loading} className={SECONDARY_BUTTON}>
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin motion-reduce:animate-none' : ''}`} aria-hidden="true" />{tx('ai.common.refresh')}
+            </button>
+            {canManageCatalog && panel === 'models' && (
+              <button type="button" onClick={openCreateCatalogModel} className={PRIMARY_BUTTON}>
+                <Plus className="h-4 w-4" aria-hidden="true" />{tx('ai.catalog.add')}
+              </button>
+            )}
+          </>
+        )}
+      />
+
+      <SummaryBar
+        label={copy.summaryLabel}
+        items={[
+          { key: 'total', value: loading ? '…' : total, label: panel === 'models' ? copy.modelsTotal : copy.aliasesTotal, tone: 'accent' },
+          conflictCount > 0
+            ? { key: 'conflicts', value: conflictCount, label: copy.conflicts, tone: 'warning' }
+            : { key: 'conflicts', value: '0', label: copy.noConflicts, tone: 'success' },
+          { key: 'mode', value: catalogReadOnly ? copy.seedMode : copy.customMode, label: '', tone: catalogReadOnly ? 'neutral' : 'accent' },
+        ]}
+      />
+
+      {error && (
+        <div role="alert" className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger-subtle px-3 py-2 text-[13px] text-danger">
+          <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />{error}
+        </div>
+      )}
 
       {panel === 'models' && (
-        <section className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-4 shadow-sm dark:border-indigo-900/60 dark:bg-indigo-950/20" aria-label={tx('ai.catalog.browse.aria')}>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <div className="flex items-center gap-2 text-sm font-semibold text-indigo-950 dark:text-indigo-100"><Layers className="h-4 w-4 text-indigo-500" />{tx('ai.catalog.browse.title')}</div>
-              <p className="mt-1 text-[11px] leading-5 text-indigo-800/70 dark:text-indigo-200/70">{tx('ai.catalog.browse.body')}</p>
-            </div>
-            <button type="button" onClick={clearCatalogFilters} disabled={!vendorFilter && !familyFilter && !seriesFilter && !modelFilter} className="rounded-lg border border-indigo-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-indigo-700 hover:border-indigo-400 disabled:cursor-not-allowed disabled:opacity-40 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-200">{tx('ai.catalog.browse.clear')}</button>
+        <Panel aria-label={tx('ai.catalog.browse.aria')}>
+          <PanelHeader
+            title={tx('ai.catalog.browse.title')}
+            description={tx('ai.catalog.browse.body')}
+            actions={<button type="button" onClick={clearCatalogFilters} disabled={!hasHierarchySelection} className={SECONDARY_BUTTON}>{tx('ai.catalog.browse.clear')}</button>}
+          />
+          <div className="p-3">
+            {hierarchy.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-line-strong px-3 py-4 text-center text-[13px] text-fg-muted">{tx('ai.catalog.browse.empty')}</div>
+            ) : (
+              <div className="grid gap-2.5 xl:grid-cols-4">
+                {hierarchyColumn('ai.catalog.hierarchy.vendor', hierarchy.length, (
+                  <div className="space-y-0.5">
+                    {hierarchy.map((item) => (
+                      <button key={item.vendor_id} type="button" onClick={() => selectHierarchyVendor(item.vendor_id)} aria-pressed={vendorFilter === item.vendor_id && !familyFilter} className={`${HIERARCHY_ITEM} ${vendorFilter === item.vendor_id ? HIERARCHY_ACTIVE : HIERARCHY_IDLE}`}>
+                        <span className="min-w-0 flex-1 truncate" title={item.vendor_name}>{item.vendor_name}</span>
+                        <span className="text-xs tabular-nums text-fg-subtle">{item.model_count}</span>
+                        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-fg-subtle" aria-hidden="true" />
+                      </button>
+                    ))}
+                  </div>
+                ))}
+                {hierarchyColumn('ai.catalog.hierarchy.family', selectedVendorNode?.families.length || 0, selectedVendorNode ? (
+                  <div className="space-y-0.5">
+                    {selectedVendorNode.families.map((item) => (
+                      <button key={item.family_code} type="button" onClick={() => selectHierarchyFamily(selectedVendorNode.vendor_id, item.family_code)} aria-pressed={familyFilter === item.family_code && !seriesFilter} className={`${HIERARCHY_ITEM} ${familyFilter === item.family_code ? HIERARCHY_ACTIVE : HIERARCHY_IDLE}`}>
+                        <span className="min-w-0 flex-1 truncate" title={item.family_name}>{item.family_name}</span>
+                        <span className="font-mono text-xs text-fg-subtle">{item.family_code}</span>
+                        <span className="text-xs tabular-nums text-fg-subtle">{item.model_count}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : hierarchyHint('ai.catalog.browse.selectVendor'))}
+                {hierarchyColumn('ai.catalog.hierarchy.series', selectedFamilyNode?.series.length || 0, selectedFamilyNode ? (
+                  <div className="space-y-0.5">
+                    {selectedFamilyNode.series.map((item) => (
+                      <button key={item.series_code} type="button" onClick={() => selectHierarchySeries(selectedVendorNode!.vendor_id, selectedFamilyNode.family_code, item.series_code)} aria-pressed={seriesFilter === item.series_code && !modelFilter} className={`${HIERARCHY_ITEM} ${seriesFilter === item.series_code ? HIERARCHY_ACTIVE : HIERARCHY_IDLE}`}>
+                        <span className="min-w-0 flex-1 truncate" title={item.series_name}>{item.series_name}</span>
+                        <span className="font-mono text-xs text-fg-subtle">{item.series_code}</span>
+                        <span className="text-xs tabular-nums text-fg-subtle">{item.model_count}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : hierarchyHint('ai.catalog.browse.selectFamily'))}
+                {hierarchyColumn('ai.catalog.hierarchy.model', selectedSeriesNode?.models.length || 0, selectedSeriesNode ? (
+                  <div className="space-y-0.5">
+                    {selectedSeriesNode.models.map((item) => (
+                      <button key={item.product_model_id} type="button" onClick={() => selectHierarchyModel(selectedVendorNode!.vendor_id, selectedFamilyNode!.family_code, selectedSeriesNode.series_code, item.model_code)} aria-pressed={modelFilter === item.model_code} className={`${HIERARCHY_ITEM} items-start ${modelFilter === item.model_code ? HIERARCHY_ACTIVE : HIERARCHY_IDLE}`}>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate">{item.model_code}</span>
+                          <span className="mt-0.5 block truncate text-xs text-fg-muted" title={item.display_name}>{item.display_name}</span>
+                        </span>
+                        <StatusBadge tone={statusTone(item.status)}>{catalogLabel(tx, CATALOG_STATUS_LABELS, item.status)}</StatusBadge>
+                      </button>
+                    ))}
+                  </div>
+                ) : hierarchyHint('ai.catalog.browse.selectSeries'))}
+              </div>
+            )}
+            {hasHierarchySelection && (
+              <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs text-fg-muted">
+                <span className="font-medium">{tx('ai.catalog.browse.path')}</span>
+                {hierarchyPath.map((item, index) => (
+                  <React.Fragment key={`${item}-${index}`}>
+                    <span className="rounded-md bg-surface-muted px-2 py-0.5 font-mono text-fg">{item}</span>
+                    {index < hierarchyPath.length - 1 && <ChevronRight className="h-3 w-3 text-fg-subtle" aria-hidden="true" />}
+                  </React.Fragment>
+                ))}
+              </div>
+            )}
           </div>
-          {hierarchy.length === 0 ? (
-            <div className="mt-3 rounded-xl border border-dashed border-indigo-200 bg-white/60 px-3 py-4 text-center text-xs text-indigo-700/60 dark:border-indigo-800 dark:bg-indigo-950/20 dark:text-indigo-300/60">{tx('ai.catalog.browse.empty')}</div>
-          ) : (
-            <div className="mt-3 grid gap-3 xl:grid-cols-4">
-              <div className="min-w-0 rounded-xl border border-indigo-100 bg-white/70 p-3 dark:border-indigo-900/50 dark:bg-slate-900/30">
-                <div className="mb-2 flex items-center justify-between gap-2"><span className="text-[10px] font-bold uppercase tracking-[0.12em] text-indigo-700/70 dark:text-indigo-300/70">{tx('ai.catalog.hierarchy.vendor')}</span><span className="text-[10px] text-slate-400">{hierarchy.length}</span></div>
-                <div className="space-y-1">
-                  {hierarchy.map((item) => <button key={item.vendor_id} type="button" onClick={() => selectHierarchyVendor(item.vendor_id)} aria-pressed={vendorFilter === item.vendor_id && !familyFilter} className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition ${vendorFilter === item.vendor_id ? 'bg-indigo-600 font-semibold text-white' : 'text-slate-700 hover:bg-indigo-50 dark:text-slate-200 dark:hover:bg-indigo-950/40'}`}><span className="min-w-0 flex-1 truncate">{item.vendor_name}</span><span className="text-[10px] opacity-70">{item.model_count}</span><ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-60" /></button>)}
-                </div>
-              </div>
-              <div className="min-w-0 rounded-xl border border-indigo-100 bg-white/70 p-3 dark:border-indigo-900/50 dark:bg-slate-900/30">
-                <div className="mb-2 flex items-center justify-between gap-2"><span className="text-[10px] font-bold uppercase tracking-[0.12em] text-indigo-700/70 dark:text-indigo-300/70">{tx('ai.catalog.hierarchy.family')}</span><span className="text-[10px] text-slate-400">{selectedVendorNode?.families.length || 0}</span></div>
-               {selectedVendorNode ? <div className="space-y-1">{selectedVendorNode.families.map((item) => <button key={item.family_code} type="button" onClick={() => selectHierarchyFamily(selectedVendorNode.vendor_id, item.family_code)} aria-pressed={familyFilter === item.family_code && !seriesFilter} className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition ${familyFilter === item.family_code ? 'bg-indigo-600 font-semibold text-white' : 'text-slate-700 hover:bg-indigo-50 dark:text-slate-200 dark:hover:bg-indigo-950/40'}`}><span className="min-w-0 flex-1 truncate">{item.family_name}</span><span className="font-mono text-[10px] opacity-70">{item.family_code}</span><span className="text-[10px] opacity-70">{item.model_count}</span></button>)}</div> : <div className="py-5 text-center text-[11px] text-slate-400">{tx('ai.catalog.browse.selectVendor')}</div>}
-              </div>
-              <div className="min-w-0 rounded-xl border border-indigo-100 bg-white/70 p-3 dark:border-indigo-900/50 dark:bg-slate-900/30">
-                <div className="mb-2 flex items-center justify-between gap-2"><span className="text-[10px] font-bold uppercase tracking-[0.12em] text-indigo-700/70 dark:text-indigo-300/70">{tx('ai.catalog.hierarchy.series')}</span><span className="text-[10px] text-slate-400">{selectedFamilyNode?.series.length || 0}</span></div>
-               {selectedFamilyNode ? <div className="space-y-1">{selectedFamilyNode.series.map((item) => <button key={item.series_code} type="button" onClick={() => selectHierarchySeries(selectedVendorNode!.vendor_id, selectedFamilyNode.family_code, item.series_code)} aria-pressed={seriesFilter === item.series_code && !modelFilter} className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition ${seriesFilter === item.series_code ? 'bg-indigo-600 font-semibold text-white' : 'text-slate-700 hover:bg-indigo-50 dark:text-slate-200 dark:hover:bg-indigo-950/40'}`}><span className="min-w-0 flex-1 truncate">{item.series_name}</span><span className="font-mono text-[10px] opacity-70">{item.series_code}</span><span className="text-[10px] opacity-70">{item.model_count}</span></button>)}</div> : <div className="py-5 text-center text-[11px] text-slate-400">{tx('ai.catalog.browse.selectFamily')}</div>}
-              </div>
-              <div className="min-w-0 rounded-xl border border-indigo-100 bg-white/70 p-3 dark:border-indigo-900/50 dark:bg-slate-900/30">
-                <div className="mb-2 flex items-center justify-between gap-2"><span className="text-[10px] font-bold uppercase tracking-[0.12em] text-indigo-700/70 dark:text-indigo-300/70">{tx('ai.catalog.hierarchy.model')}</span><span className="text-[10px] text-slate-400">{selectedSeriesNode?.models.length || 0}</span></div>
-                {selectedSeriesNode ? <div className="space-y-1">{selectedSeriesNode.models.map((item) => <button key={item.product_model_id} type="button" onClick={() => selectHierarchyModel(selectedVendorNode!.vendor_id, selectedFamilyNode!.family_code, selectedSeriesNode.series_code, item.model_code)} aria-pressed={modelFilter === item.model_code} className={`flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition ${modelFilter === item.model_code ? 'bg-indigo-600 font-semibold text-white' : 'text-slate-700 hover:bg-indigo-50 dark:text-slate-200 dark:hover:bg-indigo-950/40'}`}><span className="min-w-0 flex-1"><span className="block truncate">{item.model_code}</span><span className="mt-0.5 block truncate text-[10px] opacity-65">{item.display_name}</span></span><span className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[9px] ${modelFilter === item.model_code ? 'bg-white/20' : statusTone(item.status)}`}>{item.status}</span></button>)}</div> : <div className="py-5 text-center text-[11px] text-slate-400">{tx('ai.catalog.browse.selectSeries')}</div>}
-              </div>
-            </div>
-          )}
-          {(vendorFilter || familyFilter || seriesFilter || modelFilter) && <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-indigo-800 dark:text-indigo-200"><span className="font-semibold">{tx('ai.catalog.browse.path')}</span>{[selectedVendorNode?.vendor_name || vendorFilter, selectedFamilyNode?.family_name || familyFilter, selectedSeriesNode?.series_name || seriesFilter, modelFilter].filter(Boolean).map((item, index) => <React.Fragment key={`${item}-${index}`}><span className="rounded-full bg-white px-2 py-1 font-mono dark:bg-indigo-950/50">{item}</span>{index < [selectedVendorNode?.vendor_name || vendorFilter, selectedFamilyNode?.family_name || familyFilter, selectedSeriesNode?.series_name || seriesFilter, modelFilter].filter(Boolean).length - 1 && <ChevronRight className="h-3 w-3 opacity-50" />}</React.Fragment>)}</div>}
-        </section>
+        </Panel>
       )}
 
-      <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2"><Filter className="h-4 w-4 text-indigo-500" /><span className="text-sm font-semibold text-gray-800 dark:text-gray-100">{tx('ai.catalog.filter.title')}</span></div>
-          <div className="flex rounded-xl bg-gray-100 p-1 dark:bg-gray-900">
-            <button type="button" onClick={() => changePanel('models')} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${panel === 'models' ? 'bg-white text-indigo-700 shadow-sm dark:bg-gray-700 dark:text-indigo-300' : 'text-gray-500'}`}><Database className="mr-1 inline h-3.5 w-3.5" />{tx('ai.catalog.filter.models')}</button>
-            <button type="button" onClick={() => changePanel('aliases')} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${panel === 'aliases' ? 'bg-white text-indigo-700 shadow-sm dark:bg-gray-700 dark:text-indigo-300' : 'text-gray-500'}`}><Tag className="mr-1 inline h-3.5 w-3.5" />{tx('ai.catalog.filter.aliases')}</button>
+      <Panel>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+          <h3 className="text-base font-semibold text-fg">{tx('ai.catalog.filter.title')}</h3>
+          <div className="flex rounded-lg border border-line bg-surface-muted p-0.5">
+            <button type="button" onClick={() => changePanel('models')} aria-pressed={panel === 'models'} className={`inline-flex items-center gap-1 rounded-md px-3 py-1 text-[13px] font-medium ${panel === 'models' ? 'bg-surface text-fg shadow-sm' : 'text-fg-muted hover:text-fg'}`}><Database className="h-3.5 w-3.5" aria-hidden="true" />{tx('ai.catalog.filter.models')}</button>
+            <button type="button" onClick={() => changePanel('aliases')} aria-pressed={panel === 'aliases'} className={`inline-flex items-center gap-1 rounded-md px-3 py-1 text-[13px] font-medium ${panel === 'aliases' ? 'bg-surface text-fg shadow-sm' : 'text-fg-muted hover:text-fg'}`}><Tag className="h-3.5 w-3.5" aria-hidden="true" />{tx('ai.catalog.filter.aliases')}</button>
           </div>
         </div>
-        <form onSubmit={applySearch} className="mb-3 flex flex-wrap gap-2">
-          <div className="relative min-w-[260px] flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-gray-400" /><input type="search" value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder={panel === 'models' ? tx('ai.catalog.filter.searchModels') : tx('ai.catalog.filter.searchAliases')} className="w-full rounded-xl border border-gray-200 bg-white py-2 pl-9 pr-3 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100" /></div>
-        </form>
-        {panel === 'models' ? <div className="grid gap-2 md:grid-cols-4">
-          <label className="text-[11px] font-semibold text-gray-500">{tx('ai.catalog.filter.vendor')}<select value={vendorFilter} onChange={(event) => { setVendorFilter(event.target.value); setPage(1); }} className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"><option value="">{tx('ai.catalog.filter.allVendor')}</option>{vendors.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-          <label className="text-[11px] font-semibold text-gray-500">{tx('ai.catalog.filter.family')}<select value={familyFilter} onChange={(event) => { setFamilyFilter(event.target.value); setPage(1); }} className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"><option value="">{tx('ai.catalog.filter.allFamily')}</option>{families.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-          <label className="text-[11px] font-semibold text-gray-500">{tx('ai.catalog.filter.series')}<select value={seriesFilter} onChange={(event) => { setSeriesFilter(event.target.value); setPage(1); }} className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"><option value="">{tx('ai.catalog.filter.allSeries')}</option>{series.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-          <label className="text-[11px] font-semibold text-gray-500">{tx('ai.catalog.filter.softwareVersion')}<select value={softwareVersionFilter} onChange={(event) => { setSoftwareVersionFilter(event.target.value); setPage(1); }} className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"><option value="">{tx('ai.catalog.filter.allVersion')}</option>{softwareVersions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-        </div> : <div className="max-w-xs"><label className="text-[11px] font-semibold text-gray-500">{tx('ai.catalog.filter.aliasKind')}<select value={kindFilter} onChange={(event) => { setKindFilter(event.target.value); setPage(1); }} className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"><option value="">{tx('ai.catalog.filter.allKinds')}</option>{Object.entries(KIND_LABELS).map(([key, labelKey]) => <option key={key} value={key}>{tx(labelKey)}</option>)}</select></label></div>}
-        <div className="mt-3 flex justify-end"><button type="button" onClick={clearCatalogFilters} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 hover:border-indigo-300 dark:border-gray-600 dark:text-gray-300">{tx('ai.common.clearFilters')}</button></div>
-      </section>
+        <div className="space-y-3 p-4">
+          <form onSubmit={applySearch} className="flex flex-wrap gap-2">
+            <div className="relative min-w-[260px] flex-1">
+              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-fg-subtle" aria-hidden="true" />
+              <input type="search" value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder={panel === 'models' ? tx('ai.catalog.filter.searchModels') : tx('ai.catalog.filter.searchAliases')} className={`${INPUT_CLASS} pl-9`} />
+            </div>
+          </form>
+          {panel === 'models' ? (
+            <div className="grid gap-3 md:grid-cols-4">
+              <label className={FIELD_LABEL_CLASS}>{tx('ai.catalog.filter.vendor')}<select value={vendorFilter} onChange={(event) => { setVendorFilter(event.target.value); setPage(1); }} className={SELECT_CLASS}><option value="">{tx('ai.catalog.filter.allVendor')}</option>{vendors.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+              <label className={FIELD_LABEL_CLASS}>{tx('ai.catalog.filter.family')}<select value={familyFilter} onChange={(event) => { setFamilyFilter(event.target.value); setPage(1); }} className={SELECT_CLASS}><option value="">{tx('ai.catalog.filter.allFamily')}</option>{families.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+              <label className={FIELD_LABEL_CLASS}>{tx('ai.catalog.filter.series')}<select value={seriesFilter} onChange={(event) => { setSeriesFilter(event.target.value); setPage(1); }} className={SELECT_CLASS}><option value="">{tx('ai.catalog.filter.allSeries')}</option>{series.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+              <label className={FIELD_LABEL_CLASS}>{tx('ai.catalog.filter.softwareVersion')}<select value={softwareVersionFilter} onChange={(event) => { setSoftwareVersionFilter(event.target.value); setPage(1); }} className={SELECT_CLASS}><option value="">{tx('ai.catalog.filter.allVersion')}</option>{softwareVersions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+            </div>
+          ) : (
+            <div className="max-w-xs">
+              <label className={FIELD_LABEL_CLASS}>{tx('ai.catalog.filter.aliasKind')}<select value={kindFilter} onChange={(event) => { setKindFilter(event.target.value); setPage(1); }} className={SELECT_CLASS}><option value="">{tx('ai.catalog.filter.allKinds')}</option>{Object.entries(KIND_LABELS).map(([key, labelKey]) => <option key={key} value={key}>{tx(labelKey)}</option>)}</select></label>
+            </div>
+          )}
+          <div className="flex justify-end"><button type="button" onClick={clearCatalogFilters} className={SECONDARY_BUTTON}>{tx('ai.common.clearFilters')}</button></div>
+        </div>
+      </Panel>
 
       {panel === 'models' ? (
-        <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
-           <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-700"><div><h2 className="text-sm font-semibold text-gray-800 dark:text-gray-100">{tx('ai.catalog.master.title')}</h2><p className="text-[11px] text-gray-500">{tx('ai.catalog.master.summary', { total, page })}</p></div><Eye className="h-4 w-4 text-gray-400" /></div>
-           {loading ? <div className="flex items-center justify-center gap-2 p-10 text-xs text-gray-400"><Loader2 className="h-4 w-4 animate-spin" />{tx('ai.common.loading')}</div> : <div className="overflow-x-auto">
-             <DataTable unstyled exportConfig={{ filename: 'product-model-catalog', language, disabled: total === 0, exportData: exportCatalogModels }} className="nx-data-table min-w-full text-left">
-               <thead><tr>
-                 <th>{tx('ai.catalog.filter.vendor')}</th><th>{tx('ai.catalog.editor.familyName')}</th><th>{tx('ai.catalog.editor.familyCode')}</th>
-                 <th>{tx('ai.catalog.editor.seriesName')}</th><th>{tx('ai.catalog.editor.seriesCode')}</th><th>{tx('ai.catalog.editor.modelCode')}</th>
-                 <th>{language === 'zh' ? 'OS 系列' : 'OS Family'}</th><th>{language === 'zh' ? '软件 Train' : 'Software Train'}</th>
-                 <th>{tx('ai.catalog.editor.softwareVersion')}</th><th>{tx('ai.knowledge.ingestion.compatibleVersion')}</th>
-                 <th>{tx('ai.catalog.master.status')}</th><th>{language === 'zh' ? '审核状态' : 'Review Status'}</th>
-                 {canManageCatalog && <TableActionHeader>{tx('ai.catalog.master.actions')}</TableActionHeader>}
-               </tr></thead>
-               <tbody>{models.map((item) => <tr key={item.product_model_id}>
-                 <td className="font-semibold text-gray-800 dark:text-gray-100">{item.vendor_name}</td>
-                 <td>{item.family_name}</td><td className="font-mono text-xs">{item.family_code}</td>
-                 <td className="font-medium text-gray-700 dark:text-gray-200">{item.series_name}</td><td className="font-mono text-xs">{item.series_code}</td>
-                 <td><div data-export-primary className="font-semibold text-indigo-700 dark:text-indigo-300">{item.model_code}</div><div data-export-ignore className="nx-micro-text max-w-[260px] truncate text-gray-500">{item.product_model_id}</div></td>
-                 <td>{scopeValue(item, 'os_family', tx('ai.common.na'))}</td><td>{scopeValue(item, 'software_train', tx('ai.common.na'))}</td>
-                 <td>{scopeValue(item, 'primary_version', tx('ai.common.na'))}</td><td>{scopeValue(item, 'compatibility_version', tx('ai.common.na'))}</td>
-                 <td><span className={`nx-micro-text rounded-full px-2 py-1 font-semibold ${statusTone(item.status)}`}>{catalogLabel(tx, CATALOG_STATUS_LABELS, item.status)}</span></td>
-                 <td>{catalogLabel(tx, CATALOG_STATUS_LABELS, item.review_status)}</td>
-                 {canManageCatalog && <TableActionCell>{item.mutable ? <div className="flex items-center gap-1">
-                   <ActionIconButton icon={Pencil} label={`${tx('ai.catalog.master.edit')} ${item.display_name}`} tooltip={tx('ai.catalog.master.edit')} variant="accent" onClick={() => openEditCatalogModel(item)} />
-                   {item.status !== 'deleted' && <ActionIconButton icon={Trash2} label={`${tx('ai.catalog.master.archive')} ${item.display_name}`} tooltip={tx('ai.catalog.master.archive')} variant="danger" onClick={() => void archiveCatalogModel(item)} />}
-                 </div> : <span className="nx-micro-text text-gray-400">{tx('ai.catalog.master.readOnly')}</span>}</TableActionCell>}
-               </tr>)}</tbody>
-             </DataTable>
-           </div>}
-           <Pagination currentPage={page} totalItems={total} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }} language={language} alwaysVisible />
-        </section>
+        <Panel className="overflow-hidden">
+          <PanelHeader title={tx('ai.catalog.master.title')} description={tx('ai.catalog.master.summary', { total, page })} />
+          {loading ? (
+            <div role="status" className="flex items-center justify-center gap-2 p-10 text-[13px] text-fg-muted"><Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />{tx('ai.common.loading')}</div>
+          ) : total === 0 && models.length === 0 ? (
+            <EmptyState
+              icon={Database}
+              title={copy.emptyModelsTitle}
+              description={copy.emptyModelsBody}
+              className="m-4"
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <DataTable unstyled exportConfig={{ filename: 'product-model-catalog', language, disabled: total === 0, exportData: exportCatalogModels }} className="nx-data-table min-w-full text-left">
+                <thead><tr>
+                  <th>{tx('ai.catalog.filter.vendor')}</th><th>{tx('ai.catalog.editor.familyName')}</th><th>{tx('ai.catalog.editor.familyCode')}</th>
+                  <th>{tx('ai.catalog.editor.seriesName')}</th><th>{tx('ai.catalog.editor.seriesCode')}</th><th>{tx('ai.catalog.editor.modelCode')}</th>
+                  <th>{language === 'zh' ? 'OS 系列' : 'OS Family'}</th><th>{language === 'zh' ? '软件 Train' : 'Software Train'}</th>
+                  <th>{tx('ai.catalog.editor.softwareVersion')}</th><th>{tx('ai.knowledge.ingestion.compatibleVersion')}</th>
+                  <th>{tx('ai.catalog.master.status')}</th><th>{language === 'zh' ? '审核状态' : 'Review Status'}</th>
+                  {canManageCatalog && <TableActionHeader>{tx('ai.catalog.master.actions')}</TableActionHeader>}
+                </tr></thead>
+                <tbody>{models.map((item) => <tr key={item.product_model_id}>
+                  <td className="font-medium text-fg">{item.vendor_name}</td>
+                  <td>{item.family_name}</td><td className="font-mono text-xs text-fg-muted">{item.family_code}</td>
+                  <td className="text-fg">{item.series_name}</td><td className="font-mono text-xs text-fg-muted">{item.series_code}</td>
+                  <td><div data-export-primary className="font-medium text-accent">{item.model_code}</div><div data-export-ignore className="max-w-[260px] truncate text-xs text-fg-subtle" title={item.product_model_id}>{item.product_model_id}</div></td>
+                  <td>{scopeValue(item, 'os_family', tx('ai.common.na'))}</td><td>{scopeValue(item, 'software_train', tx('ai.common.na'))}</td>
+                  <td>{scopeValue(item, 'primary_version', tx('ai.common.na'))}</td><td>{scopeValue(item, 'compatibility_version', tx('ai.common.na'))}</td>
+                  <td><StatusBadge tone={statusTone(item.status)} dot>{catalogLabel(tx, CATALOG_STATUS_LABELS, item.status)}</StatusBadge></td>
+                  <td>{catalogLabel(tx, CATALOG_STATUS_LABELS, item.review_status)}</td>
+                  {canManageCatalog && <TableActionCell>{item.mutable ? <div className="flex items-center gap-1">
+                    <ActionIconButton icon={Pencil} label={`${tx('ai.catalog.master.edit')} ${item.display_name}`} tooltip={tx('ai.catalog.master.edit')} variant="accent" onClick={() => openEditCatalogModel(item)} />
+                    {item.status !== 'deleted' && <ActionIconButton icon={Trash2} label={`${tx('ai.catalog.master.archive')} ${item.display_name}`} tooltip={tx('ai.catalog.master.archive')} variant="danger" onClick={() => void archiveCatalogModel(item)} />}
+                  </div> : <span className="text-xs text-fg-subtle">{tx('ai.catalog.master.readOnly')}</span>}</TableActionCell>}
+                </tr>)}</tbody>
+              </DataTable>
+            </div>
+          )}
+          <Pagination currentPage={page} totalItems={total} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }} language={language} alwaysVisible />
+        </Panel>
       ) : (
-        <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
-           <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-700"><div><h2 className="text-sm font-semibold text-gray-800 dark:text-gray-100">{tx('ai.catalog.alias.title')}</h2><p className="text-[11px] text-gray-500">{tx('ai.catalog.alias.body')}</p></div><Tag className="h-4 w-4 text-gray-400" /></div>
-           {loading ? <div className="flex items-center justify-center gap-2 p-10 text-xs text-gray-400"><Loader2 className="h-4 w-4 animate-spin" />{tx('ai.common.loading')}</div> : <div className="overflow-x-auto">
-             <DataTable unstyled exportConfig={{ filename: 'product-model-aliases', language, disabled: total === 0, exportData: exportCatalogAliases }} className="nx-data-table min-w-full text-left">
-               <thead><tr>
-                 <th>{tx('ai.catalog.alias.alias')}</th><th>{language === 'zh' ? '规范化别名' : 'Normalized Alias'}</th>
-                 <th>{tx('ai.catalog.alias.kind')}</th><th>{tx('ai.catalog.alias.target')}</th>
-                 <th>{tx('ai.catalog.filter.vendor')}</th><th>{tx('ai.catalog.editor.seriesCode')}</th>
-                 <th>{language === 'zh' ? '冲突状态' : 'Conflict Status'}</th><th>{language === 'zh' ? '种子状态' : 'Seed Status'}</th>
-                 <TableActionHeader>{tx('ai.catalog.alias.action')}</TableActionHeader>
-               </tr></thead>
-               <tbody>{aliases.map((item) => <tr key={item.id}>
-                 <td className="font-semibold text-gray-800 dark:text-gray-100">{item.alias}</td>
-                 <td className="font-mono text-xs text-gray-500">{item.normalized_alias}</td>
-                 <td><span className="nx-micro-text rounded-full bg-indigo-50 px-2 py-1 font-semibold text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300">{catalogLabel(tx, KIND_LABELS, item.alias_kind)}</span></td>
-                 <td className="font-medium text-gray-700 dark:text-gray-200">{item.model?.model_code || tx('ai.common.na')}</td>
-                 <td>{item.model?.vendor_name || tx('ai.common.na')}</td><td className="font-mono text-xs">{item.model?.series_code || ''}</td>
-                 <td><span className={`nx-micro-text rounded-full px-2 py-1 font-semibold ${statusTone(item.conflict_status)}`}>{catalogLabel(tx, CATALOG_STATUS_LABELS, item.conflict_status)}</span></td>
-                 <td>{catalogLabel(tx, CATALOG_STATUS_LABELS, item.seed_status)}</td>
-                 <TableActionCell><ActionIconButton icon={Search} label={tx('ai.catalog.alias.useForResolution')} variant="accent" onClick={() => setQuery(item.alias)} /></TableActionCell>
-               </tr>)}</tbody>
-             </DataTable>
-           </div>}
-           <Pagination currentPage={page} totalItems={total} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }} language={language} alwaysVisible />
-        </section>
+        <Panel className="overflow-hidden">
+          <PanelHeader title={tx('ai.catalog.alias.title')} description={tx('ai.catalog.alias.body')} />
+          {loading ? (
+            <div role="status" className="flex items-center justify-center gap-2 p-10 text-[13px] text-fg-muted"><Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />{tx('ai.common.loading')}</div>
+          ) : total === 0 && aliases.length === 0 ? (
+            <EmptyState icon={Tag} title={copy.emptyAliasesTitle} description={copy.emptyAliasesBody} className="m-4" />
+          ) : (
+            <div className="overflow-x-auto">
+              <DataTable unstyled exportConfig={{ filename: 'product-model-aliases', language, disabled: total === 0, exportData: exportCatalogAliases }} className="nx-data-table min-w-full text-left">
+                <thead><tr>
+                  <th>{tx('ai.catalog.alias.alias')}</th><th>{language === 'zh' ? '规范化别名' : 'Normalized Alias'}</th>
+                  <th>{tx('ai.catalog.alias.kind')}</th><th>{tx('ai.catalog.alias.target')}</th>
+                  <th>{tx('ai.catalog.filter.vendor')}</th><th>{tx('ai.catalog.editor.seriesCode')}</th>
+                  <th>{language === 'zh' ? '冲突状态' : 'Conflict Status'}</th><th>{language === 'zh' ? '种子状态' : 'Seed Status'}</th>
+                  <TableActionHeader>{tx('ai.catalog.alias.action')}</TableActionHeader>
+                </tr></thead>
+                <tbody>{aliases.map((item) => <tr key={item.id}>
+                  <td className="font-medium text-fg">{item.alias}</td>
+                  <td className="font-mono text-xs text-fg-muted">{item.normalized_alias}</td>
+                  <td><StatusBadge tone="accent">{catalogLabel(tx, KIND_LABELS, item.alias_kind)}</StatusBadge></td>
+                  <td className="text-fg">{item.model?.model_code || tx('ai.common.na')}</td>
+                  <td>{item.model?.vendor_name || tx('ai.common.na')}</td><td className="font-mono text-xs text-fg-muted">{item.model?.series_code || ''}</td>
+                  <td><StatusBadge tone={statusTone(item.conflict_status)} dot>{catalogLabel(tx, CATALOG_STATUS_LABELS, item.conflict_status)}</StatusBadge></td>
+                  <td>{catalogLabel(tx, CATALOG_STATUS_LABELS, item.seed_status)}</td>
+                  <TableActionCell><ActionIconButton icon={Search} label={tx('ai.catalog.alias.useForResolution')} variant="accent" onClick={() => setQuery(item.alias)} /></TableActionCell>
+                </tr>)}</tbody>
+              </DataTable>
+            </div>
+          )}
+          <Pagination currentPage={page} totalItems={total} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }} language={language} alwaysVisible />
+        </Panel>
       )}
 
-      <section className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 dark:border-indigo-900/50 dark:bg-indigo-950/20">
-        <div className="mb-3 flex items-center gap-2"><Sparkles className="h-4 w-4 text-indigo-500" /><h2 className="text-sm font-semibold text-indigo-900 dark:text-indigo-200">{tx('ai.catalog.resolve.title')}</h2><span className="rounded-full bg-white/70 px-2 py-1 text-[10px] font-semibold text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-300">dry-run</span></div>
-        <form onSubmit={(event) => void runResolution(event)} className="flex flex-wrap gap-2"><div className="relative min-w-[240px] flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-gray-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tx('ai.catalog.resolve.input')} className="w-full rounded-xl border border-indigo-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-indigo-400 dark:border-indigo-800 dark:bg-gray-900 dark:text-white" /></div><button type="submit" disabled={resolving || !query.trim()} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50">{resolving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}{tx('ai.catalog.resolve.action')}</button></form>
-        {resolution && <div className="mt-3 rounded-xl border border-indigo-100 bg-white p-3 dark:border-indigo-900/60 dark:bg-gray-900"><div className="flex flex-wrap items-center gap-2 text-xs"><span className={`rounded-full px-2 py-1 font-semibold ${resolution.outcome === 'unique' ? 'bg-emerald-50 text-emerald-700' : resolution.outcome === 'unknown' ? 'bg-gray-100 text-gray-600' : 'bg-amber-50 text-amber-700'}`}>{catalogLabel(tx, RESOLUTION_OUTCOME_LABELS, resolution.outcome)}</span><span className="text-gray-500">{tx('ai.catalog.resolve.candidates', { count: resolution.candidate_count })}</span>{resolution.requires_clarification && <span className="font-semibold text-amber-600">{tx('ai.catalog.resolve.clarify')}</span>}<span className="ml-auto text-[10px] text-gray-400">{resolution.driver_selection_allowed ? tx('ai.catalog.resolve.allowed') : tx('ai.catalog.resolve.blocked')}</span></div>{resolution.candidates.length > 0 && <div className="mt-2 grid gap-2 md:grid-cols-2">{resolution.candidates.map((candidate) => <div key={String(candidate.id || candidate.product_model_id)} className="rounded-lg border border-gray-100 p-2 text-xs dark:border-gray-700"><div className="font-semibold text-gray-800 dark:text-gray-100">{candidate.model?.model_code || String(candidate.product_model_id || tx('ai.catalog.resolve.unknown'))}</div><div className="text-[11px] text-gray-500">{candidate.model?.vendor_id} / {candidate.model?.series_code} · {catalogLabel(tx, KIND_LABELS, String(candidate.alias_kind || ''))}</div></div>)}</div>}</div>}
-      </section>
+      <Panel>
+        <PanelHeader
+          title={<span className="inline-flex items-center gap-2"><Sparkles className="h-4 w-4 text-accent" aria-hidden="true" />{tx('ai.catalog.resolve.title')}<StatusBadge mono>dry-run</StatusBadge></span>}
+        />
+        <div className="p-4">
+          <form onSubmit={(event) => void runResolution(event)} className="flex flex-wrap gap-2">
+            <div className="relative min-w-[240px] flex-1">
+              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-fg-subtle" aria-hidden="true" />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tx('ai.catalog.resolve.input')} className={`${INPUT_CLASS} pl-9`} />
+            </div>
+            <button type="submit" disabled={resolving || !query.trim()} className={PRIMARY_BUTTON}>{resolving ? <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <Search className="h-4 w-4" aria-hidden="true" />}{tx('ai.catalog.resolve.action')}</button>
+          </form>
+          {resolution && (
+            <div className="mt-3 rounded-lg border border-line bg-surface-muted/40 p-3">
+              <div className="flex flex-wrap items-center gap-2 text-[13px]">
+                <StatusBadge tone={resolutionTone(resolution.outcome)} dot>{catalogLabel(tx, RESOLUTION_OUTCOME_LABELS, resolution.outcome)}</StatusBadge>
+                <span className="text-fg-muted">{tx('ai.catalog.resolve.candidates', { count: resolution.candidate_count })}</span>
+                {resolution.requires_clarification && <span className="font-medium text-warning">{tx('ai.catalog.resolve.clarify')}</span>}
+                <span className="ml-auto text-xs text-fg-subtle">{resolution.driver_selection_allowed ? tx('ai.catalog.resolve.allowed') : tx('ai.catalog.resolve.blocked')}</span>
+              </div>
+              {resolution.candidates.length > 0 && (
+                <div className="mt-2 grid gap-2 md:grid-cols-2">
+                  {resolution.candidates.map((candidate) => (
+                    <div key={String(candidate.id || candidate.product_model_id)} className="rounded-md border border-line bg-surface p-2 text-[13px]">
+                      <div className="font-medium text-fg">{candidate.model?.model_code || String(candidate.product_model_id || tx('ai.catalog.resolve.unknown'))}</div>
+                      <div className="text-xs text-fg-muted">{candidate.model?.vendor_id} / {candidate.model?.series_code} · {catalogLabel(tx, KIND_LABELS, String(candidate.alias_kind || ''))}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </Panel>
 
       {catalogModalOpen && (
-        <div ref={catalogDialogRef} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="catalog-model-editor-title" tabIndex={-1}>
-          <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl dark:bg-slate-900">
-            <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4 dark:border-gray-800">
-              <div>
-                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-indigo-500"><Database className="h-4 w-4" />{tx(editingModel ? 'ai.catalog.editor.editEyebrow' : 'ai.catalog.editor.addEyebrow')}</div>
-                <h3 id="catalog-model-editor-title" className="mt-2 text-xl font-bold text-gray-900 dark:text-white">{editingModel ? editingModel.display_name : tx('ai.catalog.editor.title')}</h3>
-                <p className="mt-1 text-xs text-gray-500">{tx('ai.catalog.editor.body')}</p>
+        <div ref={catalogDialogRef} className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="catalog-model-editor-title" tabIndex={-1}>
+          <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-xl">
+            <div className="flex items-start justify-between gap-3 border-b border-line px-5 py-4">
+              <div className="min-w-0">
+                <div className="text-xs font-medium text-fg-muted">{tx(editingModel ? 'ai.catalog.editor.editEyebrow' : 'ai.catalog.editor.addEyebrow')}</div>
+                <h3 id="catalog-model-editor-title" className="mt-1 truncate text-lg font-semibold text-fg">{editingModel ? editingModel.display_name : tx('ai.catalog.editor.title')}</h3>
+                <p className="mt-1 text-[13px] text-fg-muted">{tx('ai.catalog.editor.body')}</p>
               </div>
-              <button type="button" onClick={() => setCatalogModalOpen(false)} aria-label={tx('ai.catalog.editor.close')} className="rounded-xl p-2 text-gray-400 hover:bg-gray-100"><X className="h-5 w-5" /></button>
+              <button type="button" onClick={() => setCatalogModalOpen(false)} aria-label={tx('ai.catalog.editor.close')} className="rounded-md p-1.5 text-fg-subtle hover:bg-surface-muted hover:text-fg"><X className="h-5 w-5" aria-hidden="true" /></button>
             </div>
             <form onSubmit={submitCatalogModel} className="min-h-0 overflow-y-auto px-5 py-5">
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {([['vendor_code', 'ai.catalog.editor.vendorCode'], ['vendor_name', 'ai.catalog.editor.vendorName'], ['family_code', 'ai.catalog.editor.familyCode'], ['family_name', 'ai.catalog.editor.familyName'], ['series_code', 'ai.catalog.editor.seriesCode'], ['series_name', 'ai.catalog.editor.seriesName'], ['model_code', 'ai.catalog.editor.modelCode'], ['display_name', 'ai.catalog.editor.displayName']] as const).map(([key, labelKey]) => (
-                  <label key={key} className="text-xs font-bold text-gray-700 dark:text-gray-300">
+                  <label key={key} className={FIELD_LABEL_CLASS}>
                     <span>{tx(labelKey)}{editingModel && ['vendor_code', 'vendor_name', 'family_code', 'family_name', 'series_code', 'series_name', 'model_code'].includes(key) ? tx('ai.catalog.editor.readOnly') : ''}</span>
-                    <input required={!editingModel || key === 'display_name'} disabled={Boolean(editingModel && key !== 'display_name')} value={catalogForm[key]} onChange={(event) => setCatalogForm((current) => ({ ...current, [key]: event.target.value }))} className="mt-1.5 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-normal text-gray-900 outline-none focus:border-indigo-500 disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-950 dark:text-white" />
+                    <input required={!editingModel || key === 'display_name'} disabled={Boolean(editingModel && key !== 'display_name')} value={catalogForm[key]} onChange={(event) => setCatalogForm((current) => ({ ...current, [key]: event.target.value }))} className={`mt-1.5 ${INPUT_CLASS}`} />
                   </label>
                 ))}
-                <label className="text-xs font-bold text-gray-700 dark:text-gray-300">{tx('ai.catalog.editor.status')}<select value={catalogForm.status} onChange={(event) => setCatalogForm((current) => ({ ...current, status: event.target.value as typeof current.status }))} className="mt-1.5 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-normal dark:border-gray-700 dark:bg-gray-950 dark:text-white">{(['draft', 'active', 'disabled', 'archived'] as const).map((status) => <option key={status} value={status}>{catalogLabel(tx, CATALOG_STATUS_LABELS, status)}</option>)}</select></label>
-                <label className="text-xs font-bold text-gray-700 dark:text-gray-300">{tx('ai.catalog.editor.softwareVersion')}<input value={catalogForm.software_version} onChange={(event) => setCatalogForm((current) => ({ ...current, software_version: event.target.value }))} placeholder={tx('ai.catalog.editor.versionPlaceholder')} className="mt-1.5 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-normal dark:border-gray-700 dark:bg-gray-950 dark:text-white" /></label>
-                <label className="text-xs font-bold text-gray-700 dark:text-gray-300 sm:col-span-2 lg:col-span-3">{tx('ai.catalog.editor.description')}<textarea rows={2} value={catalogForm.description} onChange={(event) => setCatalogForm((current) => ({ ...current, description: event.target.value }))} className="mt-1.5 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-normal dark:border-gray-700 dark:bg-gray-950 dark:text-white" /></label>
-                <label className="text-xs font-bold text-gray-700 dark:text-gray-300 sm:col-span-2 lg:col-span-3">{tx(editingModel ? 'ai.catalog.editor.reason' : 'ai.catalog.editor.reasonOptional')}<textarea required={Boolean(editingModel)} rows={2} value={catalogForm.change_reason} onChange={(event) => setCatalogForm((current) => ({ ...current, change_reason: event.target.value }))} placeholder={tx('ai.catalog.editor.reasonPlaceholder')} className="mt-1.5 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-normal dark:border-gray-700 dark:bg-gray-950 dark:text-white" /></label>
+                <label className={FIELD_LABEL_CLASS}>{tx('ai.catalog.editor.status')}<select value={catalogForm.status} onChange={(event) => setCatalogForm((current) => ({ ...current, status: event.target.value as typeof current.status }))} className={`mt-1.5 ${INPUT_CLASS}`}>{(['draft', 'active', 'disabled', 'archived'] as const).map((status) => <option key={status} value={status}>{catalogLabel(tx, CATALOG_STATUS_LABELS, status)}</option>)}</select></label>
+                <label className={FIELD_LABEL_CLASS}>{tx('ai.catalog.editor.softwareVersion')}<input value={catalogForm.software_version} onChange={(event) => setCatalogForm((current) => ({ ...current, software_version: event.target.value }))} placeholder={tx('ai.catalog.editor.versionPlaceholder')} className={`mt-1.5 ${INPUT_CLASS}`} /></label>
+                <label className={`${FIELD_LABEL_CLASS} sm:col-span-2 lg:col-span-3`}>{tx('ai.catalog.editor.description')}<textarea rows={2} value={catalogForm.description} onChange={(event) => setCatalogForm((current) => ({ ...current, description: event.target.value }))} className={`mt-1.5 ${INPUT_CLASS}`} /></label>
+                <label className={`${FIELD_LABEL_CLASS} sm:col-span-2 lg:col-span-3`}>{tx(editingModel ? 'ai.catalog.editor.reason' : 'ai.catalog.editor.reasonOptional')}<textarea required={Boolean(editingModel)} rows={2} value={catalogForm.change_reason} onChange={(event) => setCatalogForm((current) => ({ ...current, change_reason: event.target.value }))} placeholder={tx('ai.catalog.editor.reasonPlaceholder')} className={`mt-1.5 ${INPUT_CLASS}`} /></label>
               </div>
-              <div className="mt-5 flex justify-end gap-2 border-t border-gray-100 pt-4 dark:border-gray-800"><button type="button" onClick={() => setCatalogModalOpen(false)} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-gray-500">{tx('ai.catalog.editor.cancel')}</button><button type="submit" disabled={catalogSubmitting} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"><RefreshCw className={catalogSubmitting ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />{catalogSubmitting ? tx('ai.catalog.editor.saving') : editingModel ? tx('ai.catalog.editor.save') : tx('ai.catalog.editor.create')}</button></div>
+              <div className="mt-5 flex justify-end gap-2 border-t border-line pt-4">
+                <button type="button" onClick={() => setCatalogModalOpen(false)} className={SECONDARY_BUTTON}>{tx('ai.catalog.editor.cancel')}</button>
+                <button type="submit" disabled={catalogSubmitting} className={PRIMARY_BUTTON}>{catalogSubmitting && <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />}{catalogSubmitting ? tx('ai.catalog.editor.saving') : editingModel ? tx('ai.catalog.editor.save') : tx('ai.catalog.editor.create')}</button>
+              </div>
             </form>
           </div>
         </div>

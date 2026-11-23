@@ -3,16 +3,16 @@ import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import JSZip from 'jszip';
 import {
   BookOpen,
+  ChevronDown,
+  MoreHorizontal,
   Database,
   Layers,
-  ShieldCheck,
   Plus,
   Trash2,
   CheckCircle2,
   Upload,
   FileText,
   HelpCircle,
-  Server,
   Sparkles,
   AlertTriangle,
   FileCode,
@@ -36,7 +36,7 @@ import {
   Pencil,
   Info,
 } from 'lucide-react';
-import { getKnowledgeStats, getKnowledgeDocuments, exportKnowledgeDocuments, importKnowledgeBundle, getKnowledgeDocument, getKnowledgeDocumentFacets, getKnowledgeAssetOptions, getKnowledgeDirectories, createKnowledgeDirectory, renameKnowledgeDirectory, deleteKnowledgeDirectory, addKnowledgeDocument, importKnowledgeEnterpriseSop, importKnowledgeEnterpriseSopBatch, previewKnowledgeDocumentMetadata, clearSampleKnowledge, getKnowledgeDocumentActionImpact, deleteKnowledgeDocument, disableKnowledgeDocument, enableKnowledgeDocument, reparseKnowledgeDocument, rechunkKnowledgeDocument, reindexKnowledgeDocument, batchDeleteKnowledgeDocuments, compareKnowledgeDocumentVersions, publishKnowledgeDocumentVersion, supersedeKnowledgeDocumentVersion, rollbackKnowledgeDocumentVersion, type KnowledgeAssetOptionsResponse, type KnowledgeDirectoryNode, type KnowledgeDocument, type KnowledgeDocumentDetail, type KnowledgeDocumentFacets, type KnowledgeDocumentAction, type KnowledgeDocumentActionImpact, type KnowledgeDocumentVersionComparison, type KnowledgeMetadataPreview } from '../../../api/ai';
+import { getKnowledgeStats, getKnowledgeDocuments, exportKnowledgeDocuments, importKnowledgeBundle, getKnowledgeDocument, getKnowledgeDocumentFacets, getKnowledgeAssetOptions, getKnowledgeDirectories, createKnowledgeDirectory, renameKnowledgeDirectory, deleteKnowledgeDirectory, addKnowledgeDocument, importKnowledgeEnterpriseSop, importKnowledgeEnterpriseSopBatch, previewKnowledgeDocumentMetadata, clearSampleKnowledge, getKnowledgeDocumentActionImpact, deleteKnowledgeDocument, disableKnowledgeDocument, enableKnowledgeDocument, reparseKnowledgeDocument, rechunkKnowledgeDocument, reindexKnowledgeDocument, batchDeleteKnowledgeDocuments, compareKnowledgeDocumentVersions, publishKnowledgeDocumentVersion, supersedeKnowledgeDocumentVersion, rollbackKnowledgeDocumentVersion, getSemanticEmbeddingStatus, startKnowledgeReindex, type KnowledgeAssetOptionsResponse, type KnowledgeDirectoryNode, type KnowledgeDocument, type KnowledgeDocumentDetail, type KnowledgeDocumentFacets, type KnowledgeDocumentAction, type KnowledgeDocumentActionImpact, type KnowledgeDocumentVersionComparison, type KnowledgeMetadataPreview, type SemanticEmbeddingStatusResponse } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
 import type { TableExportData } from '../../../components/ui/TableExportMenu';
 import { VENDOR_PLATFORMS } from '../../AssetManagement/constants';
@@ -54,6 +54,12 @@ import { useEscapeClose } from '../../../hooks/useEscapeClose';
 import { useFocusTrap } from '../../../hooks/useFocusTrap';
 
 import { TableActionCell, TableActionHeader } from '../../../components/ui/TableActionColumn';
+import { PageHeader } from '../../../components/ui/PageHeader';
+import { SummaryBar } from '../../../components/ui/SummaryBar';
+import { Panel } from '../../../components/ui/Panel';
+import { EmptyState } from '../../../components/ui/EmptyState';
+import { StatusBadge, type StatusTone } from '../../../components/ui/StatusBadge';
+import { knowledgePageCopy } from './KnowledgeManagementTab.copy';
 /* ── Types ── */
 interface FolderCategory {
   id: string;
@@ -221,6 +227,7 @@ export const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
   const [draftName, setDraftName] = useState('');
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
+  const [actionMenuNodeId, setActionMenuNodeId] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState('');
 
@@ -314,7 +321,7 @@ export const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
     const rowBusy = Boolean(busyAction && (busyAction === 'create' || busyAction.endsWith(`:${node.id}`)));
     return (
       <React.Fragment key={node.id}>
-        <div className="flex items-center gap-1 py-0.5" style={{ paddingLeft: `${Math.min(node.depth, 8) * 14}px` }}>
+        <div className="group relative flex items-center gap-1 py-0.5" style={{ paddingLeft: `${Math.min(node.depth, 8) * 14}px` }}>
           <button
             type="button"
             onClick={() => setExpandedIds((previous) => {
@@ -322,7 +329,7 @@ export const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
               if (next.has(node.id)) next.delete(node.id); else next.add(node.id);
               return next;
             })}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-fg-subtle hover:bg-surface-muted "
             aria-label={expanded ? tx('ai.knowledge.directory.collapse') : tx('ai.knowledge.directory.expand')}
           >
             {node.children.length > 0 ? <ChevronRight className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-90' : ''}`} /> : <span className="w-3.5" />}
@@ -334,32 +341,87 @@ export const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
                 value={editingName}
                 onChange={(event) => setEditingName(event.target.value)}
                 disabled={rowBusy}
-                className="min-w-0 flex-1 rounded-lg border border-indigo-300 bg-white px-2 py-1 text-xs dark:border-indigo-700 dark:bg-gray-900 dark:text-white"
+                className="min-w-0 flex-1 rounded-lg border border-accent/30 bg-surface px-2 py-1 text-xs "
               />
-              <button type="submit" disabled={rowBusy || !editingName.trim()} className="rounded-lg p-1 text-emerald-600 hover:bg-emerald-50 disabled:opacity-50 dark:hover:bg-emerald-950/40" title={tx('ai.knowledge.directory.saveRename')}><CheckCircle2 className="h-3.5 w-3.5" /></button>
-              <button type="button" onClick={() => setEditingNodeId(null)} disabled={rowBusy} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700" title={tx('ai.knowledge.common.cancel')}><X className="h-3.5 w-3.5" /></button>
+              <button type="submit" disabled={rowBusy || !editingName.trim()} className="rounded-lg p-1 text-success hover:bg-success-subtle disabled:opacity-50 " title={tx('ai.knowledge.directory.saveRename')}><CheckCircle2 className="h-3.5 w-3.5" /></button>
+              <button type="button" onClick={() => setEditingNodeId(null)} disabled={rowBusy} className="rounded-lg p-1 text-fg-subtle hover:bg-surface-muted " title={tx('ai.knowledge.common.cancel')}><X className="h-3.5 w-3.5" /></button>
             </form>
           ) : (
             <button
               type="button"
               onClick={() => { onSelect(node); setOpen(false); }}
               disabled={disabled}
-              className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition ${selected ? 'bg-indigo-50 font-semibold text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300' : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'}`}
+              className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition ${selected ? 'bg-accent-subtle font-semibold text-accent ' : 'text-fg hover:bg-surface-muted '}`}
               title={tx('ai.knowledge.directory.generic', { path: node.path })}
             >
-              {expanded ? <FolderOpen className="h-3.5 w-3.5 shrink-0 text-indigo-500" /> : <Folder className="h-3.5 w-3.5 shrink-0 text-indigo-400" />}
+              {expanded ? <FolderOpen className="h-3.5 w-3.5 shrink-0 text-accent" /> : <Folder className="h-3.5 w-3.5 shrink-0 text-accent" />}
               <span className="truncate">{getKnowledgeDirectoryDisplayName(node, language)}</span>
             </button>
           )}
           {!editing && canManage && (
-            <ActionIconGroup className="flex shrink-0 items-center gap-0.5" label={tx('ai.knowledge.directory.actions')}>
-              {onUpload && (
-                <ActionIconButton icon={UploadCloud} label={tx('ai.knowledge.directory.uploadHere')} size="xs" variant="success" onClick={() => onUpload(node)} disabled={disabled || Boolean(busyAction)} />
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                aria-label={tx('ai.knowledge.directory.actions')}
+                aria-expanded={actionMenuNodeId === node.id}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setActionMenuNodeId((prev) => (prev === node.id ? null : node.id));
+                }}
+                disabled={disabled || Boolean(busyAction)}
+                className={`flex h-6 w-6 items-center justify-center rounded-md text-fg-subtle transition hover:bg-surface-muted hover:text-fg ${
+                  actionMenuNodeId === node.id ? 'opacity-100 bg-surface-muted text-fg' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+                }`}
+              >
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </button>
+              {actionMenuNodeId === node.id && (
+                <div
+                  role="menu"
+                  className="absolute right-0 top-7 z-30 min-w-[136px] rounded-xl border border-line bg-surface p-1 shadow-lg"
+                  onMouseLeave={() => setActionMenuNodeId(null)}
+                >
+                  {onUpload && (
+                    <button
+                      type="button"
+                      onClick={() => { setActionMenuNodeId(null); onUpload(node); }}
+                      disabled={disabled || Boolean(busyAction)}
+                      className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-fg hover:bg-surface-muted"
+                    >
+                      <UploadCloud className="h-3.5 w-3.5 text-success" />
+                      <span>{tx('ai.knowledge.directory.uploadHere')}</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => { setActionMenuNodeId(null); beginCreate(node.id); }}
+                    disabled={disabled || Boolean(busyAction)}
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-fg hover:bg-surface-muted"
+                  >
+                    <Plus className="h-3.5 w-3.5 text-accent" />
+                    <span>{tx('ai.knowledge.directory.createChild')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setActionMenuNodeId(null); beginRename(node); }}
+                    disabled={disabled || Boolean(busyAction)}
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-fg hover:bg-surface-muted"
+                  >
+                    <Pencil className="h-3.5 w-3.5 text-fg-muted" />
+                    <span>{tx('ai.knowledge.directory.rename')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setActionMenuNodeId(null); void handleDelete(node); }}
+                    disabled={disabled || Boolean(busyAction)}
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-danger hover:bg-danger-subtle"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>{tx('ai.knowledge.directory.delete')}</span>
+                  </button>
+                </div>
               )}
-              <ActionIconButton icon={Plus} label={tx('ai.knowledge.directory.createChild')} size="xs" variant="accent" onClick={() => beginCreate(node.id)} disabled={disabled || Boolean(busyAction)} />
-              <ActionIconButton icon={Pencil} label={tx('ai.knowledge.directory.rename')} size="xs" onClick={() => beginRename(node)} disabled={disabled || Boolean(busyAction)} />
-              <ActionIconButton icon={Trash2} label={tx('ai.knowledge.directory.delete')} size="xs" variant="danger" onClick={() => void handleDelete(node)} disabled={disabled || Boolean(busyAction)} />
-            </ActionIconGroup>
+            </div>
           )}
         </div>
         {editing && node.children.length > 0 && expanded && node.children.map(renderNode)}
@@ -376,31 +438,193 @@ export const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
           type="button"
           onClick={() => setOpen((value) => !value)}
           disabled={disabled}
-          className="flex w-full items-center justify-between gap-2 rounded-xl border border-gray-300 bg-white px-3 py-2 text-left text-xs text-gray-700 shadow-sm transition hover:border-indigo-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
+          className="flex w-full items-center justify-between gap-2 rounded-xl border border-line-strong bg-surface px-3 py-2 text-left text-xs text-fg shadow-sm transition hover:border-accent disabled:cursor-not-allowed disabled:opacity-60 "
         >
-          <span className="flex min-w-0 items-center gap-2"><FolderOpen className="h-3.5 w-3.5 shrink-0 text-indigo-500" /><span className="truncate">{selectedPath ? tx('ai.knowledge.directory.generic', { path: selectedPath }) : tx('ai.knowledge.directory.select')}</span></span>
-          <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} />
+          <span className="flex min-w-0 items-center gap-2"><FolderOpen className="h-3.5 w-3.5 shrink-0 text-accent" /><span className="truncate">{selectedPath ? tx('ai.knowledge.directory.generic', { path: selectedPath }) : tx('ai.knowledge.directory.select')}</span></span>
+          <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-fg-subtle transition-transform ${open ? 'rotate-90' : ''}`} />
         </button>
       )}
       {showTree && (
-        <div className={inline ? 'overflow-hidden rounded-xl border border-gray-200 bg-white p-2 dark:border-gray-700 dark:bg-gray-800' : 'absolute left-0 right-0 z-40 mt-1 overflow-hidden rounded-xl border border-gray-200 bg-white p-2 shadow-xl dark:border-gray-700 dark:bg-gray-800'}>
-          <div className="flex items-center justify-between gap-2 border-b border-gray-100 pb-2 dark:border-gray-700">
-            <span className="text-[11px] font-semibold text-gray-700 dark:text-gray-200">{title || tx('ai.knowledge.directory.pickerTitle')}</span>
-            {canManage && <button type="button" onClick={() => beginCreate(null)} disabled={disabled || Boolean(busyAction)} className="inline-flex items-center gap-1 rounded-lg bg-indigo-50 px-2 py-1 text-[10px] font-semibold text-indigo-600 hover:bg-indigo-100 disabled:opacity-40 dark:bg-indigo-950/40 dark:text-indigo-300" title={tx('ai.knowledge.directory.createRoot')}><Plus className="h-3 w-3" />{tx('ai.knowledge.directory.create')}</button>}
+        <div className={inline ? 'overflow-hidden rounded-xl border border-line bg-surface p-2 ' : 'absolute left-0 right-0 z-40 mt-1 overflow-hidden rounded-xl border border-line bg-surface p-2 shadow-xl '}>
+          <div className="flex items-center justify-between gap-2 border-b border-line pb-2">
+            <span className="min-w-0 truncate text-xs font-semibold text-fg" title={title || tx('ai.knowledge.directory.pickerTitle')}>{title || tx('ai.knowledge.directory.pickerTitle')}</span>
+            {canManage && <button type="button" onClick={() => beginCreate(null)} disabled={disabled || Boolean(busyAction)} className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg bg-accent-subtle px-2 py-1 text-xs font-semibold text-accent hover:bg-accent-subtle disabled:opacity-40" title={tx('ai.knowledge.directory.createRoot')}><Plus className="h-3 w-3 shrink-0" />{tx('ai.knowledge.directory.create')}</button>}
           </div>
           {canManage && creatingParentId !== undefined && (
-            <form onSubmit={(event) => void submitCreate(event)} className="mt-2 rounded-lg border border-indigo-100 bg-indigo-50/60 p-2 dark:border-indigo-900/60 dark:bg-indigo-950/30">
-              <div className="mb-1 text-[10px] text-indigo-700 dark:text-indigo-300">{tx('ai.knowledge.directory.createUnder', { scope: creatingParentId ? tx('ai.knowledge.directory.selectedChild') : tx('ai.knowledge.directory.root') })}</div>
+            <form onSubmit={(event) => void submitCreate(event)} className="mt-2 rounded-lg border border-accent/30 bg-accent-subtle p-2 ">
+              <div className="mb-1 text-xs text-accent ">{tx('ai.knowledge.directory.createUnder', { scope: creatingParentId ? tx('ai.knowledge.directory.selectedChild') : tx('ai.knowledge.directory.root') })}</div>
               <div className="flex items-center gap-1">
-                <input autoFocus value={draftName} onChange={(event) => setDraftName(event.target.value)} placeholder={tx('ai.knowledge.directory.namePlaceholder')} disabled={busyAction === 'create'} className="min-w-0 flex-1 rounded-lg border border-indigo-200 bg-white px-2 py-1.5 text-xs dark:border-indigo-800 dark:bg-gray-900 dark:text-white" />
-                <button type="submit" disabled={busyAction === 'create' || !draftName.trim()} className="rounded-lg bg-indigo-600 px-2 py-1.5 text-[10px] font-semibold text-white disabled:opacity-50">{busyAction === 'create' ? <Loader2 className="h-3 w-3 animate-spin" /> : tx('ai.knowledge.directory.create')}</button>
-                <button type="button" onClick={() => setCreatingParentId(undefined)} disabled={busyAction === 'create'} className="rounded-lg p-1.5 text-gray-400 hover:bg-white dark:hover:bg-gray-700" title={tx('ai.knowledge.common.cancel')}><X className="h-3.5 w-3.5" /></button>
+                <input autoFocus value={draftName} onChange={(event) => setDraftName(event.target.value)} placeholder={tx('ai.knowledge.directory.namePlaceholder')} disabled={busyAction === 'create'} className="min-w-0 flex-1 rounded-lg border border-accent/30 bg-surface px-2 py-1.5 text-xs " />
+                <button type="submit" disabled={busyAction === 'create' || !draftName.trim()} className="rounded-lg bg-accent px-2 py-1.5 text-xs font-semibold text-white disabled:opacity-50">{busyAction === 'create' ? <Loader2 className="h-3 w-3 animate-spin" /> : tx('ai.knowledge.directory.create')}</button>
+                <button type="button" onClick={() => setCreatingParentId(undefined)} disabled={busyAction === 'create'} className="rounded-lg p-1.5 text-fg-subtle hover:bg-surface " title={tx('ai.knowledge.common.cancel')}><X className="h-3.5 w-3.5" /></button>
               </div>
             </form>
           )}
-          {(error || actionError) && <div className="mt-2 rounded-lg bg-red-50 px-2 py-1.5 text-[10px] text-red-600 dark:bg-red-950/30 dark:text-red-300">{actionError || error}</div>}
-           <div className={`mt-2 overflow-y-auto pr-1 ${inline ? 'max-h-[320px]' : 'max-h-72'}`}>
-            {loading ? <div className="flex items-center gap-2 px-2 py-5 text-xs text-gray-400"><Loader2 className="h-4 w-4 animate-spin" />{tx('ai.knowledge.directory.loading')}</div> : nodes.length === 0 ? <div className="px-2 py-5 text-center text-xs text-gray-400">{tx('ai.knowledge.directory.empty')}</div> : nodes.map(renderNode)}
+          {(error || actionError) && <div className="mt-2 rounded-lg bg-danger-subtle px-2 py-1.5 text-xs text-danger ">{actionError || error}</div>}
+           <div className={`mt-2 overflow-y-auto pr-1 ${inline ? 'max-h-[480px]' : 'max-h-72'}`}>
+            {loading ? <div className="flex items-center gap-2 px-2 py-5 text-xs text-fg-subtle"><Loader2 className="h-4 w-4 animate-spin" />{tx('ai.knowledge.directory.loading')}</div> : nodes.length === 0 ? <div className="px-2 py-5 text-center text-xs text-fg-subtle">{tx('ai.knowledge.directory.empty')}</div> : nodes.map(renderNode)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+interface SearchableFacetSelectProps {
+  label: string;
+  placeholder: string;
+  disabledPlaceholder: string;
+  searchPlaceholder: string;
+  allLabel: string;
+  emptyLabel: string;
+  value: string;
+  options: Array<{ value: string; count: number }>;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}
+
+const SearchableFacetSelect: React.FC<SearchableFacetSelectProps> = ({
+  label,
+  placeholder,
+  disabledPlaceholder,
+  searchPlaceholder,
+  allLabel,
+  emptyLabel,
+  value,
+  options,
+  disabled = false,
+  onChange,
+}) => {
+  const [open, setOpen] = useState(false);
+  const [keyword, setKeyword] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const knownOptions = useMemo(
+    () => options.filter((item) => item.value.trim() && item.value.trim().toUpperCase() !== 'UNKNOWN'),
+    [options],
+  );
+  const filteredOptions = useMemo(() => {
+    const q = keyword.trim().toLowerCase();
+    if (!q) return knownOptions;
+    return knownOptions.filter((item) => item.value.toLowerCase().includes(q));
+  }, [knownOptions, keyword]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (disabled && open) setOpen(false);
+  }, [disabled, open]);
+
+  return (
+    <div ref={containerRef} className="relative min-w-0">
+      <button
+        type="button"
+        disabled={disabled}
+        aria-label={label}
+        aria-expanded={open}
+        onClick={() => {
+          if (disabled) return;
+          setOpen((prev) => !prev);
+          setKeyword('');
+        }}
+        className={`flex w-full items-center justify-between gap-1.5 rounded-xl border px-2.5 py-2 text-left text-xs transition ${
+          disabled
+            ? 'cursor-not-allowed border-line bg-surface-muted/60 text-fg-subtle opacity-65'
+            : value
+              ? 'border-accent bg-accent/5 font-medium text-accent'
+              : 'border-line bg-surface-muted text-fg hover:border-accent/60'
+        }`}
+      >
+        <span className="min-w-0 flex-1 truncate">
+          {disabled ? disabledPlaceholder : value || placeholder}
+        </span>
+        <span className="flex shrink-0 items-center gap-1">
+          {value && !disabled && (
+            <span
+              role="button"
+              tabIndex={-1}
+              aria-label={`清除${label}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onChange('');
+                setOpen(false);
+              }}
+              className="rounded p-0.5 text-fg-subtle hover:bg-surface hover:text-fg"
+            >
+              ×
+            </span>
+          )}
+          <ChevronDown className={`h-3.5 w-3.5 text-fg-subtle transition-transform ${open ? 'rotate-180' : ''}`} />
+        </span>
+      </button>
+
+      {open && !disabled && (
+        <div className="absolute left-0 right-0 z-30 mt-1 rounded-xl border border-line bg-surface p-2 shadow-lg">
+          <div className="relative mb-1.5">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-fg-subtle" />
+            <input
+              type="search"
+              autoFocus
+              value={keyword}
+              onChange={(event) => setKeyword(event.target.value)}
+              placeholder={searchPlaceholder}
+              className="w-full rounded-lg border border-line bg-surface-muted py-1.5 pl-7 pr-2 text-xs text-fg placeholder:text-fg-subtle focus:border-accent focus:outline-none"
+            />
+          </div>
+          <div className="max-h-56 overflow-y-auto space-y-0.5">
+            {!keyword.trim() && (
+              <button
+                type="button"
+                onClick={() => {
+                  onChange('');
+                  setOpen(false);
+                }}
+                className={`flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-xs transition ${
+                  !value ? 'bg-accent/10 font-semibold text-accent' : 'text-fg-muted hover:bg-surface-muted'
+                }`}
+              >
+                <span>{allLabel}</span>
+              </button>
+            )}
+            {filteredOptions.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                onClick={() => {
+                  onChange(item.value);
+                  setOpen(false);
+                }}
+                className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition ${
+                  value === item.value
+                    ? 'bg-accent text-white font-semibold'
+                    : 'text-fg hover:bg-surface-muted'
+                }`}
+              >
+                <span className="min-w-0 flex-1 truncate">{item.value}</span>
+                <span className={`shrink-0 text-[11px] ${value === item.value ? 'text-white/80' : 'text-fg-subtle'}`}>
+                  {item.count}
+                </span>
+              </button>
+            ))}
+            {filteredOptions.length === 0 && (
+              <div className="px-2 py-3 text-center text-xs text-fg-subtle">{emptyLabel}</div>
+            )}
           </div>
         </div>
       )}
@@ -428,6 +652,7 @@ function getDirectoryImportPath(directoryPath: string, vendor: string, language:
 export const KnowledgeManagementTab: React.FC = () => {
   const { currentUser, language } = useCoreApp();
   const tx = (key: string, variables: Record<string, string | number> = {}) => aiAdminText(key, language, variables);
+  const copy = language === 'zh' ? knowledgePageCopy.zh : knowledgePageCopy.en;
   const canManageDirectories = currentUser.role === 'Administrator';
 
   function getKnowledgeLifecycleStatusLabel(status?: string | null): string {
@@ -541,6 +766,41 @@ export const KnowledgeManagementTab: React.FC = () => {
   const [versionAdminNotice, setVersionAdminNotice] = useState('');
   const [versionCompareResult, setVersionCompareResult] = useState<KnowledgeDocumentVersionComparison | null>(null);
   const [knowledgeAdminView, setKnowledgeAdminView] = useState<KnowledgeAdminView>('documents');
+  const [embeddingStatus, setEmbeddingStatus] = useState<SemanticEmbeddingStatusResponse | null>(null);
+  const [rebuildingEmbeddings, setRebuildingEmbeddings] = useState(false);
+
+  const loadEmbeddingStatus = useCallback(async () => {
+    try {
+      const data = await getSemanticEmbeddingStatus();
+      setEmbeddingStatus(data || null);
+    } catch {
+      // Optional status bar: keep silent if unavailable
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadEmbeddingStatus();
+  }, [loadEmbeddingStatus]);
+
+  const handleRebuildEmbeddings = async () => {
+    if (rebuildingEmbeddings) return;
+    setRebuildingEmbeddings(true);
+    try {
+      const res = await startKnowledgeReindex({});
+      const jobId = res?.job_id || res?.id || '';
+      setDocumentActionNotice(
+        language === 'zh'
+          ? `已启动全量向量重建任务${jobId ? `（${jobId}）` : ''}，完成后请刷新查看覆盖率。`
+          : `Full embedding reindex started${jobId ? ` (${jobId})` : ''}.`,
+      );
+      void loadEmbeddingStatus();
+      void fetchStatsAndDocs();
+    } catch (err: any) {
+      setDocumentActionNotice(err?.message || (language === 'zh' ? '启动全量向量重建失败' : 'Failed to start reindex'));
+    } finally {
+      setRebuildingEmbeddings(false);
+    }
+  };
   const [operationsOpen, setOperationsOpen] = useState(false);
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
 
@@ -554,7 +814,7 @@ export const KnowledgeManagementTab: React.FC = () => {
   const documentDetailRequestIdRef = useRef(0);
   const documentsAbortRef = useRef<AbortController | null>(null);
   const documentTableRef = useRef<HTMLDivElement>(null);
-  const filtersSectionRef = useRef<HTMLElement>(null);
+  const filtersSectionRef = useRef<HTMLDivElement>(null);
 
   const folders: FolderCategory[] = [
     { id: 'all', name: tx('ai.knowledge.scope.all.label'), icon: '📂', description: tx('ai.knowledge.scope.all.description') },
@@ -1555,13 +1815,7 @@ export const KnowledgeManagementTab: React.FC = () => {
     if (!metadataPreview) return;
 
     setSubmitting(true);
-    setIndexingStep(1);
-
-    const steps = [1, 2, 3, 4, 5, 6];
-    for (const step of steps) {
-      setIndexingStep(step);
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
+    setIndexingStep(2);
 
     try {
       await addKnowledgeDocument({
@@ -1587,16 +1841,16 @@ export const KnowledgeManagementTab: React.FC = () => {
     }
   };
 
-  const sourceBadges: Record<string, { label: string; bg: string; color: string }> = {
-    official_vendor: { label: tx('ai.knowledge.scope.official.label'), bg: 'bg-blue-50 dark:bg-blue-950/60', color: 'text-blue-600 dark:text-blue-400' },
-    official_url: { label: tx('ai.knowledge.source.officialUrl'), bg: 'bg-blue-50 dark:bg-blue-950/60', color: 'text-blue-600 dark:text-blue-400' },
-    official_local: { label: tx('ai.knowledge.source.officialLocal'), bg: 'bg-blue-50 dark:bg-blue-950/60', color: 'text-blue-600 dark:text-blue-400' },
-    official_template: { label: tx('ai.knowledge.source.officialTemplate'), bg: 'bg-cyan-50 dark:bg-cyan-950/60', color: 'text-cyan-600 dark:text-cyan-400' },
-    internal_sop: { label: tx('ai.knowledge.scope.internalSop.label'), bg: 'bg-emerald-50 dark:bg-emerald-950/60', color: 'text-emerald-600 dark:text-emerald-400' },
-    internal_standard: { label: tx('ai.knowledge.scope.standard.label'), bg: 'bg-indigo-50 dark:bg-indigo-950/60', color: 'text-indigo-600 dark:text-indigo-400' },
-    case: { label: tx('ai.knowledge.source.case'), bg: 'bg-amber-50 dark:bg-amber-950/60', color: 'text-amber-600 dark:text-amber-400' },
-    user_document: { label: tx('ai.knowledge.source.userDocument'), bg: 'bg-purple-50 dark:bg-purple-950/60', color: 'text-purple-600 dark:text-purple-400' },
-    sample: { label: tx('ai.knowledge.scope.sample.label'), bg: 'bg-gray-100 dark:bg-gray-800', color: 'text-gray-600 dark:text-gray-300' },
+  const sourceBadges: Record<string, { label: string; bg: string; color: string; tone: StatusTone }> = {
+    official_vendor: { label: tx('ai.knowledge.scope.official.label'), bg: 'bg-accent-subtle ', color: 'text-accent ', tone: 'accent' },
+    official_url: { label: tx('ai.knowledge.source.officialUrl'), bg: 'bg-accent-subtle ', color: 'text-accent ', tone: 'accent' },
+    official_local: { label: tx('ai.knowledge.source.officialLocal'), bg: 'bg-accent-subtle ', color: 'text-accent ', tone: 'accent' },
+    official_template: { label: tx('ai.knowledge.source.officialTemplate'), bg: 'bg-accent-subtle ', color: 'text-accent ', tone: 'accent' },
+    internal_sop: { label: tx('ai.knowledge.scope.internalSop.label'), bg: 'bg-success-subtle ', color: 'text-success ', tone: 'success' },
+    internal_standard: { label: tx('ai.knowledge.scope.standard.label'), bg: 'bg-accent-subtle ', color: 'text-accent ', tone: 'accent' },
+    case: { label: tx('ai.knowledge.source.case'), bg: 'bg-warning-subtle ', color: 'text-warning ', tone: 'warning' },
+    user_document: { label: tx('ai.knowledge.source.userDocument'), bg: 'bg-accent-subtle ', color: 'text-accent ', tone: 'accent' },
+    sample: { label: tx('ai.knowledge.scope.sample.label'), bg: 'bg-surface-muted ', color: 'text-fg-muted ', tone: 'neutral' },
   };
 
   const pipelineSteps = [
@@ -1651,7 +1905,18 @@ export const KnowledgeManagementTab: React.FC = () => {
   };
 
   const setSemanticFilter = (key: keyof typeof semanticFilters, value: string) => {
-    setSemanticFilters((current) => ({ ...current, [key]: value }));
+    setSemanticFilters((current) => {
+      if (key === 'vendor') {
+        return { ...current, vendor: value, productFamily: '', productSeries: '', productModel: '' };
+      }
+      if (key === 'productFamily') {
+        return { ...current, productFamily: value, productSeries: '', productModel: '' };
+      }
+      if (key === 'productSeries') {
+        return { ...current, productSeries: value, productModel: '' };
+      }
+      return { ...current, [key]: value };
+    });
     setCurrentPage(1);
     setSelectedDocIds(new Set());
   };
@@ -1722,14 +1987,15 @@ export const KnowledgeManagementTab: React.FC = () => {
   };
 
   const compareSelectedVersions = async (versionId: string) => {
-    if (!selectedDocument?.document_id) return;
+    const targetDocId = selectedDocument?.id || selectedDocument?.document_id;
+    if (!targetDocId) return;
     const history = selectedDocument.source_version_history || [];
     const latest = history[0];
     if (!latest || latest.id === versionId) return;
     setVersionAdminBusy(`compare:${versionId}`);
     setVersionAdminNotice('');
     try {
-      const comparison = await compareKnowledgeDocumentVersions(selectedDocument.document_id, versionId, latest.id);
+      const comparison = await compareKnowledgeDocumentVersions(targetDocId, versionId, latest.id);
       setVersionCompareResult(comparison);
     } catch (err: any) {
       setVersionAdminNotice(err?.message || tx('ai.knowledge.error.versionCompare'));
@@ -1739,7 +2005,8 @@ export const KnowledgeManagementTab: React.FC = () => {
   };
 
   const runVersionAdminAction = async (action: 'publish' | 'supersede' | 'rollback', versionId: string, replacementVersionId?: string) => {
-    if (!selectedDocument?.document_id) return;
+    const targetDocId = selectedDocument?.id || selectedDocument?.document_id;
+    if (!targetDocId) return;
     const history = selectedDocument.source_version_history || [];
     const version = history.find((item) => item.id === versionId);
     const label = action === 'publish' ? tx('ai.knowledge.action.publish') : action === 'supersede' ? tx('ai.knowledge.action.supersede') : tx('ai.knowledge.action.rollback');
@@ -1754,9 +2021,9 @@ export const KnowledgeManagementTab: React.FC = () => {
     setVersionAdminBusy(`${action}:${versionId}`);
     setVersionAdminNotice('');
     try {
-      if (action === 'publish') await publishKnowledgeDocumentVersion(selectedDocument.document_id, versionId);
-      if (action === 'supersede') await supersedeKnowledgeDocumentVersion(selectedDocument.document_id, versionId, replacementVersionId || '');
-      if (action === 'rollback') await rollbackKnowledgeDocumentVersion(selectedDocument.document_id, versionId);
+      if (action === 'publish') await publishKnowledgeDocumentVersion(targetDocId, versionId);
+      if (action === 'supersede') await supersedeKnowledgeDocumentVersion(targetDocId, versionId, replacementVersionId || '');
+      if (action === 'rollback') await rollbackKnowledgeDocumentVersion(targetDocId, versionId);
       setVersionAdminNotice(tx('ai.knowledge.version.actionDone', { label }));
       setVersionCompareResult(null);
       await refreshSelectedDocument();
@@ -1772,42 +2039,42 @@ export const KnowledgeManagementTab: React.FC = () => {
     const history = selectedDocument.source_version_history || [];
     const latest = history[0];
     return (
-      <section className="rounded-2xl border border-indigo-100 bg-indigo-50/40 p-4 shadow-sm dark:border-indigo-900/60 dark:bg-indigo-950/20">
+      <Panel className="p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <div className="text-xs font-semibold text-indigo-900 dark:text-indigo-100">{tx('ai.knowledge.version.title')}</div>
-            <div className="mt-1 text-[10px] text-indigo-700/75 dark:text-indigo-200/70">{tx('ai.knowledge.version.body')}</div>
+            <div className="text-xs font-semibold text-fg ">{tx('ai.knowledge.version.title')}</div>
+            <div className="mt-1 text-xs text-fg-muted ">{tx('ai.knowledge.version.body')}</div>
           </div>
-          {versionAdminBusy && <Loader2 className="h-4 w-4 animate-spin text-indigo-500" />}
+          {versionAdminBusy && <Loader2 className="h-4 w-4 animate-spin text-accent" />}
         </div>
         <div className="mt-3 space-y-2">
           {history.map((version) => {
             const status = version.lifecycle_status || version.status || 'draft';
             const isLatest = version.id === latest?.id;
             return (
-              <div key={version.id} className="flex flex-wrap items-center gap-2 rounded-xl bg-white/80 px-3 py-2 text-[10px] dark:bg-slate-900/70">
-                <span className="font-semibold text-slate-800 dark:text-slate-100">v{version.version_no}</span>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600 dark:bg-slate-800 dark:text-slate-300">{getKnowledgeLifecycleStatusLabel(status)}</span>
-                <span className="font-mono text-slate-500">{version.content_hash ? `${version.content_hash.slice(0, 10)}…` : tx('ai.knowledge.version.hashMissing')}</span>
+              <div key={version.id} className="flex flex-wrap items-center gap-2 rounded-xl bg-surface px-3 py-2 text-xs ">
+                <span className="font-semibold text-fg ">v{version.version_no}</span>
+                <StatusBadge dot tone={status === 'active' || status === 'published' ? 'success' : status === 'quarantined' || status === 'disabled' ? 'danger' : status === 'superseded' ? 'neutral' : 'warning'}>{getKnowledgeLifecycleStatusLabel(status)}</StatusBadge>
+                <span className="font-mono text-fg-muted">{version.content_hash ? `${version.content_hash.slice(0, 10)}…` : tx('ai.knowledge.version.hashMissing')}</span>
                 <div className="ml-auto flex flex-wrap gap-1">
-                  {!isLatest && <button type="button" onClick={() => void compareSelectedVersions(version.id)} disabled={Boolean(versionAdminBusy)} className="rounded-lg border border-indigo-200 px-2 py-1 font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-800 dark:text-indigo-300">{tx('ai.knowledge.action.compareLatest')}</button>}
-                  {status !== 'active' && status !== 'published' && <button type="button" onClick={() => void runVersionAdminAction('publish', version.id)} disabled={Boolean(versionAdminBusy)} className="rounded-lg border border-emerald-200 px-2 py-1 font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300">{tx('ai.knowledge.action.publish')}</button>}
-                  {!isLatest && (latest?.lifecycle_status === 'published' || latest?.status === 'active') && status !== 'superseded' && <button type="button" onClick={() => void runVersionAdminAction('supersede', version.id, latest.id)} disabled={Boolean(versionAdminBusy)} className="rounded-lg border border-amber-200 px-2 py-1 font-semibold text-amber-700 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:text-amber-300">{tx('ai.knowledge.action.supersede')}</button>}
-                  {!isLatest && status !== 'quarantined' && status !== 'disabled' && <button type="button" onClick={() => void runVersionAdminAction('rollback', version.id)} disabled={Boolean(versionAdminBusy)} className="rounded-lg border border-rose-200 px-2 py-1 font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-50 dark:border-rose-800 dark:text-rose-300">{tx('ai.knowledge.action.rollback')}</button>}
+                  {!isLatest && <button type="button" onClick={() => void compareSelectedVersions(version.id)} disabled={Boolean(versionAdminBusy)} className="rounded-lg border border-accent/30 px-2 py-1 font-semibold text-accent hover:bg-accent-subtle disabled:opacity-50 ">{tx('ai.knowledge.action.compareLatest')}</button>}
+                  {status !== 'active' && status !== 'published' && <button type="button" onClick={() => void runVersionAdminAction('publish', version.id)} disabled={Boolean(versionAdminBusy)} className="rounded-lg border border-success/30 px-2 py-1 font-semibold text-success hover:bg-success-subtle disabled:opacity-50 ">{tx('ai.knowledge.action.publish')}</button>}
+                  {!isLatest && (latest?.lifecycle_status === 'published' || latest?.status === 'active') && status !== 'superseded' && <button type="button" onClick={() => void runVersionAdminAction('supersede', version.id, latest.id)} disabled={Boolean(versionAdminBusy)} className="rounded-lg border border-warning/30 px-2 py-1 font-semibold text-warning hover:bg-warning-subtle disabled:opacity-50 ">{tx('ai.knowledge.action.supersede')}</button>}
+                  {!isLatest && status !== 'quarantined' && status !== 'disabled' && <button type="button" onClick={() => void runVersionAdminAction('rollback', version.id)} disabled={Boolean(versionAdminBusy)} className="rounded-lg border border-danger/30 px-2 py-1 font-semibold text-danger hover:bg-danger-subtle disabled:opacity-50 ">{tx('ai.knowledge.action.rollback')}</button>}
                 </div>
               </div>
             );
           })}
         </div>
-        {versionAdminNotice && <div className="mt-2 rounded-lg bg-white/80 px-3 py-2 text-[10px] text-indigo-800 dark:bg-slate-900/70 dark:text-indigo-200">{versionAdminNotice}</div>}
+        {versionAdminNotice && <div className="mt-2 rounded-lg bg-surface px-3 py-2 text-xs text-accent ">{versionAdminNotice}</div>}
         {versionCompareResult && (
-          <div className="mt-3 rounded-xl border border-indigo-200 bg-white/80 p-3 text-[10px] text-slate-700 dark:border-indigo-800 dark:bg-slate-900/70 dark:text-slate-200">
-            <div className="flex items-center justify-between gap-2 font-semibold"><span>v{versionCompareResult.left.version_no} → v{versionCompareResult.right.version_no}</span><button type="button" onClick={() => setVersionCompareResult(null)} className="text-slate-400 hover:text-slate-700" aria-label={tx('ai.knowledge.action.closeComparison')}>×</button></div>
+          <div className="mt-3 rounded-xl border border-accent/30 bg-surface p-3 text-xs text-fg ">
+            <div className="flex items-center justify-between gap-2 font-semibold"><span>v{versionCompareResult.left.version_no} → v{versionCompareResult.right.version_no}</span><button type="button" onClick={() => setVersionCompareResult(null)} className="text-fg-subtle hover:text-fg" aria-label={tx('ai.knowledge.action.closeComparison')}>×</button></div>
             <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4"><span>{tx('ai.knowledge.version.content')}{versionCompareResult.content_changed ? tx('ai.knowledge.version.changed') : tx('ai.knowledge.version.unchanged')}</span><span>Metadata: {versionCompareResult.metadata_changed ? tx('ai.knowledge.version.changed') : tx('ai.knowledge.version.unchanged')}</span><span>{tx('ai.knowledge.version.addedLines')}{versionCompareResult.line_diff.added_lines}</span><span>{tx('ai.knowledge.version.removedLines')}{versionCompareResult.line_diff.removed_lines}</span></div>
-            <div className="mt-2 text-slate-500 dark:text-slate-400">{tx('ai.knowledge.version.changedFields')}{versionCompareResult.changed_fields.join(language === 'zh' ? '、' : ', ') || tx('ai.knowledge.version.none')}</div>
+            <div className="mt-2 text-fg-muted ">{tx('ai.knowledge.version.changedFields')}{versionCompareResult.changed_fields.join(language === 'zh' ? '、' : ', ') || tx('ai.knowledge.version.none')}</div>
           </div>
         )}
-      </section>
+      </Panel>
     );
   })() : null;
 
@@ -1901,265 +2168,214 @@ export const KnowledgeManagementTab: React.FC = () => {
         className="hidden"
         aria-hidden="true"
       />
-      {/* Header Title & Primary Action Buttons */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="nx-page-title flex items-center gap-2 text-gray-900 dark:text-white">
-            <BookOpen className="w-6 h-6 text-indigo-500" />
-            {tx('ai.knowledge.header.title')}
-          </h2>
-          <p className="nx-page-description mt-1 text-gray-500 dark:text-gray-400">
-            {tx('ai.knowledge.header.description')}
-          </p>
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400">
-            <span className="inline-flex items-center gap-1"><Info className="h-3 w-3 text-indigo-500" />{tx('ai.knowledge.header.tip')}</span>
-            <a href="/downloads/nexora-knowledge-document-template.md" download="nexora-knowledge-document-template.md" className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 font-semibold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-300"><FileText className="h-3 w-3" />{tx('ai.knowledge.header.markdownTemplate')}</a>
-            <a href="/downloads/nexora-knowledge-document-template.json" download="nexora-knowledge-document-template.json" className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 font-semibold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-300"><FileCode className="h-3 w-3" />{tx('ai.knowledge.header.jsonTemplate')}</a>
-            <a href="/downloads/nexora-knowledge-import-format.md" download="nexora-knowledge-import-format.md" className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"><HelpCircle className="h-3 w-3" />{tx('ai.knowledge.header.formatGuide')}</a>
-          </div>
-        </div>
-        <button type="button" onClick={() => { setShowModal(true); setInputMode('upload'); setIngestionError(''); }} className="hidden items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700 sm:inline-flex">
-          <UploadCloud className="h-3.5 w-3.5" />{tx('ai.knowledge.header.upload')}
-        </button>
-      </div>
+      {/* Header: title, one line, template downloads and the primary upload action */}
+      <PageHeader
+        title={<span className="inline-flex items-center gap-2"><BookOpen className="h-5 w-5 text-accent" aria-hidden="true" />{tx('ai.knowledge.header.title')}</span>}
+        description={tx('ai.knowledge.header.description')}
+        info={tx('ai.knowledge.header.tip')}
+        infoLabel={tx('ai.knowledge.header.title')}
+        actions={(
+          <>
+            <a href="/downloads/nexora-knowledge-document-template.md" download="nexora-knowledge-document-template.md" className="inline-flex items-center gap-1 rounded-lg border border-accent/30 bg-accent-subtle px-2 py-1 font-semibold text-accent hover:bg-accent-subtle "><FileText className="h-3 w-3" />{tx('ai.knowledge.header.markdownTemplate')}</a>
+            <a href="/downloads/nexora-knowledge-document-template.json" download="nexora-knowledge-document-template.json" className="inline-flex items-center gap-1 rounded-lg border border-accent/30 bg-accent-subtle px-2 py-1 font-semibold text-accent hover:bg-accent-subtle "><FileCode className="h-3 w-3" />{tx('ai.knowledge.header.jsonTemplate')}</a>
+            <a href="/downloads/nexora-knowledge-import-format.md" download="nexora-knowledge-import-format.md" className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-1 font-semibold text-fg-muted hover:bg-surface-muted "><HelpCircle className="h-3 w-3" />{tx('ai.knowledge.header.formatGuide')}</a>
+          <button type="button" onClick={() => { setShowModal(true); setInputMode('upload'); setIngestionError(''); }} className="hidden items-center gap-2 rounded-xl bg-accent px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-accent-hover sm:inline-flex">
+            <UploadCloud className="h-3.5 w-3.5" />{tx('ai.knowledge.header.upload')}
+          </button>
+          </>
+        )}
+      />
 
       <details
-        className="rounded-xl border border-slate-200/80 bg-white px-3 py-2 shadow-xs dark:border-slate-700/80 dark:bg-slate-800"
+        className="rounded-xl border border-line bg-surface px-3 py-2 shadow-xs "
         open={operationsOpen}
         onToggle={(event) => setOperationsOpen(event.currentTarget.open)}
       >
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-lg py-1 [&::-webkit-details-marker]:hidden">
           <span className="flex min-w-0 items-center gap-2">
-            <UploadCloud className="h-4 w-4 shrink-0 text-indigo-500" />
+            <UploadCloud className="h-4 w-4 shrink-0 text-accent" />
             <span className="min-w-0">
-              <span className="block text-xs font-bold text-slate-900 dark:text-white">{tx('ai.knowledge.ingestion.groupTitle')}</span>
-              <span className="mt-0.5 block truncate text-[10px] text-slate-500 dark:text-slate-400">{tx('ai.knowledge.ingestion.groupBody')}</span>
+              <span className="block text-xs font-bold text-fg ">{tx('ai.knowledge.ingestion.groupTitle')}</span>
+              <span className="mt-0.5 block truncate text-xs text-fg-muted ">{tx('ai.knowledge.ingestion.groupBody')}</span>
             </span>
           </span>
-          <span className="shrink-0 text-[10px] font-semibold text-indigo-600 dark:text-indigo-300">{operationsOpen ? tx('ai.knowledge.ingestion.groupCollapse') : tx('ai.knowledge.ingestion.groupExpand')}</span>
+          <span className="shrink-0 text-xs font-semibold text-accent ">{operationsOpen ? tx('ai.knowledge.ingestion.groupCollapse') : tx('ai.knowledge.ingestion.groupExpand')}</span>
         </summary>
-        <div className="mt-3 space-y-3 border-t border-slate-100 pt-3 dark:border-slate-700">
-          <section className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 dark:border-slate-700 dark:bg-slate-900/40" aria-label={tx('ai.knowledge.ingestion.aria')}>
+        <div className="mt-3 space-y-3 border-t border-line pt-3 ">
+          <section className="rounded-xl border border-line bg-surface-muted p-3 " aria-label={tx('ai.knowledge.ingestion.aria')}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white">{tx('ai.knowledge.ingestion.title')}</h3>
-                <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">{tx('ai.knowledge.ingestion.body')}</p>
+                <h3 className="text-sm font-bold text-fg ">{tx('ai.knowledge.ingestion.title')}</h3>
+                <p className="mt-1 text-xs text-fg-muted ">{tx('ai.knowledge.ingestion.body')}</p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={() => { setIngestionMode('enterprise_sop'); setIngestionError(''); setIngestionMessage(''); }} className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${ingestionMode === 'enterprise_sop' ? 'bg-emerald-600 text-white' : 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200'}`}>
+                <button type="button" onClick={() => { setIngestionMode('enterprise_sop'); setIngestionError(''); setIngestionMessage(''); }} className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${ingestionMode === 'enterprise_sop' ? 'bg-success text-white' : 'border border-success/30 bg-success-subtle text-success hover:bg-success-subtle '}`}>
                   <span className="mr-1.5">📄</span>{tx('ai.knowledge.ingestion.enterprise')}
                 </button>
-                {ingestionMode && <button type="button" onClick={closeIngestionPanel} disabled={ingestionSubmitting} className="rounded-xl px-2.5 py-2 text-xs text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700" aria-label={tx('ai.knowledge.ingestion.close')}><X className="h-3.5 w-3.5" /></button>}
+                {ingestionMode && <button type="button" onClick={closeIngestionPanel} disabled={ingestionSubmitting} className="rounded-xl px-2.5 py-2 text-xs text-fg-subtle hover:bg-surface-muted " aria-label={tx('ai.knowledge.ingestion.close')}><X className="h-3.5 w-3.5" /></button>}
               </div>
             </div>
             {ingestionMode === 'enterprise_sop' && (
-              <form onSubmit={handleEnterpriseSopImport} className="mt-4 grid gap-3 border-t border-emerald-100 pt-4 dark:border-emerald-900/50 md:grid-cols-2 xl:grid-cols-4">
-                <label className="text-[11px] text-slate-600 dark:text-slate-300 md:col-span-2">{tx('ai.knowledge.ingestion.file')}<input type="file" accept=".md,.markdown,.txt,.log,.html,.htm,.docx,.pdf,.json,.yaml,.yml,.csv,.xml,.conf,.cfg,.ini" onChange={(event) => setEnterpriseSopFile(event.target.files?.[0] || null)} className="mt-1 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
-                <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.titleField')}<input value={enterpriseTitle} onChange={(event) => setEnterpriseTitle(event.target.value)} placeholder={tx('ai.knowledge.ingestion.titlePlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
-                <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.owner')}<input value={enterpriseOwner} onChange={(event) => setEnterpriseOwner(event.target.value)} placeholder={tx('ai.knowledge.ingestion.ownerPlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
-                <label className="text-[11px] text-slate-600 dark:text-slate-300">{tx('ai.knowledge.ingestion.department')}<input value={enterpriseDepartment} onChange={(event) => setEnterpriseDepartment(event.target.value)} placeholder={tx('ai.knowledge.ingestion.departmentPlaceholder')} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
-                <div className="flex items-end gap-2"><span className="flex-1 rounded-xl bg-emerald-50 px-3 py-2 text-[10px] text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-200">{tx('ai.knowledge.ingestion.internalFixed')}</span><button type="submit" disabled={ingestionSubmitting} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">{ingestionSubmitting ? tx('ai.knowledge.ingestion.submitting') : tx('ai.knowledge.ingestion.submitEnterprise')}</button></div>
+              <form onSubmit={handleEnterpriseSopImport} className="mt-4 grid gap-3 border-t border-success/30 pt-4 md:grid-cols-2 xl:grid-cols-4">
+                <label className="text-[11px] text-fg-muted md:col-span-2">{tx('ai.knowledge.ingestion.file')}<input type="file" accept=".md,.markdown,.txt,.log,.html,.htm,.docx,.pdf,.json,.yaml,.yml,.csv,.xml,.conf,.cfg,.ini" onChange={(event) => setEnterpriseSopFile(event.target.files?.[0] || null)} className="mt-1 block w-full rounded-xl border border-line bg-surface px-3 py-2 text-xs " required /></label>
+                <label className="text-[11px] text-fg-muted ">{tx('ai.knowledge.ingestion.titleField')}<input value={enterpriseTitle} onChange={(event) => setEnterpriseTitle(event.target.value)} placeholder={tx('ai.knowledge.ingestion.titlePlaceholder')} className="mt-1 w-full rounded-xl border border-line bg-surface px-3 py-2 text-xs " required /></label>
+                <label className="text-[11px] text-fg-muted ">{tx('ai.knowledge.ingestion.owner')}<input value={enterpriseOwner} onChange={(event) => setEnterpriseOwner(event.target.value)} placeholder={tx('ai.knowledge.ingestion.ownerPlaceholder')} className="mt-1 w-full rounded-xl border border-line bg-surface px-3 py-2 text-xs " required /></label>
+                <label className="text-[11px] text-fg-muted ">{tx('ai.knowledge.ingestion.department')}<input value={enterpriseDepartment} onChange={(event) => setEnterpriseDepartment(event.target.value)} placeholder={tx('ai.knowledge.ingestion.departmentPlaceholder')} className="mt-1 w-full rounded-xl border border-line bg-surface px-3 py-2 text-xs " required /></label>
+                <div className="flex items-end gap-2"><span className="flex-1 rounded-xl bg-success-subtle px-3 py-2 text-xs text-success ">{tx('ai.knowledge.ingestion.internalFixed')}</span><button type="submit" disabled={ingestionSubmitting} className="rounded-xl bg-success px-3 py-2 text-xs font-semibold text-white hover:bg-success disabled:opacity-50">{ingestionSubmitting ? tx('ai.knowledge.ingestion.submitting') : tx('ai.knowledge.ingestion.submitEnterprise')}</button></div>
               </form>
             )}
-            {(ingestionError || ingestionMessage) && <div className={`mt-3 rounded-xl px-3 py-2 text-[11px] ${ingestionError ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/30 dark:text-rose-300' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'}`}>{ingestionError || ingestionMessage}</div>}
+            {(ingestionError || ingestionMessage) && <div className={`mt-3 rounded-xl px-3 py-2 text-[11px] ${ingestionError ? 'bg-danger-subtle text-danger ' : 'bg-success-subtle text-success '}`}>{ingestionError || ingestionMessage}</div>}
           </section>
           {operationsOpen && <OfficialSeedPanel language={language} onCompleted={() => void fetchStatsAndDocs()} />}
           {operationsOpen && <IngestionJobsPanel />}
         </div>
       </details>
 
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs shadow-xs dark:border-slate-700/80 dark:bg-slate-800">
-        <div className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300" title={tx('ai.knowledge.stat.documentsHelp')}><FileText className="h-3.5 w-3.5 text-indigo-500" /><span>{tx('ai.knowledge.stat.documents')}</span><strong className="font-mono text-slate-900 dark:text-white">{stats.total_documents}</strong></div>
-        <div className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300" title={tx('ai.knowledge.stat.chunksHelp')}><Layers className="h-3.5 w-3.5 text-emerald-500" /><span>{tx('ai.knowledge.stat.chunks')}</span><strong className="font-mono text-slate-900 dark:text-white">{stats.total_chunks}</strong></div>
-        <div className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300" title="Cisco / Huawei / H3C / Ruijie"><Server className="h-3.5 w-3.5 text-blue-500" /><span>{tx('ai.knowledge.stat.vendors')}</span><strong className="font-mono text-slate-900 dark:text-white">{stats.total_vendors || 4}</strong></div>
-        <div className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300" title={tx('ai.knowledge.stat.indexHelp')}><ShieldCheck className="h-3.5 w-3.5 text-amber-500" /><span>{tx('ai.knowledge.stat.index')}</span><strong className="font-mono text-emerald-600 dark:text-emerald-400">{stats.ready_indexes}</strong></div>
-      </div>
+      <SummaryBar
+        label={tx('ai.knowledge.header.title')}
+        items={[
+          { key: 'documents', value: stats.total_documents, label: <span title={tx('ai.knowledge.stat.documentsHelp')}>{tx('ai.knowledge.stat.documents')}</span> },
+          { key: 'chunks', value: stats.total_chunks, label: <span title={tx('ai.knowledge.stat.chunksHelp')}>{tx('ai.knowledge.stat.chunks')}</span> },
+          { key: 'vendors', value: stats.total_vendors || 0, label: <span title="Cisco / Huawei / H3C / Ruijie / Juniper / Fortinet / Aruba">{tx('ai.knowledge.stat.vendors')}</span> },
+          { key: 'indexes', value: stats.ready_indexes, tone: stats.ready_indexes ? 'success' : 'warning', label: <span title={tx('ai.knowledge.stat.indexHelp')}>{tx('ai.knowledge.stat.index')}</span> },
+        ]}
+      />
+
+      {/* Semantic Embedding Engine Status & Reindex Bar */}
+      {(() => {
+        const activeModel = embeddingStatus?.configured_embedding_models?.find((item) => item.enabled);
+        const semanticReady = Boolean(embeddingStatus?.available || activeModel);
+        const semanticChunks = embeddingStatus?.chunk_stats?.semantic_v2_chunks ?? 0;
+        const totalChunks = embeddingStatus?.chunk_stats?.total_chunks ?? stats.total_chunks ?? 0;
+        return (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-surface px-3.5 py-2 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <Sparkles className="h-3.5 w-3.5 text-accent" />
+              <span className="font-semibold text-fg">{language === 'zh' ? '语义向量引擎 (Embedding)' : 'Semantic Embedding Engine'}</span>
+              <StatusBadge tone={semanticReady ? 'success' : 'warning'}>
+                {semanticReady
+                  ? (activeModel ? `${activeModel.provider_name} · ${activeModel.model_code}` : (embeddingStatus?.model || 'bge-m3'))
+                  : (language === 'zh' ? '本地特征向量（待配置语义模型）' : 'Local fallback (no semantic model)')}
+              </StatusBadge>
+              <span className="text-[11px] text-fg-subtle">
+                {language === 'zh'
+                  ? `语义向量切片：${semanticChunks} / ${totalChunks}`
+                  : `Semantic chunks: ${semanticChunks} / ${totalChunks}`}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <a
+                href="/ai/models"
+                className="rounded-lg border border-line bg-surface-muted px-2.5 py-1 text-xs font-medium text-fg transition hover:border-accent hover:text-accent"
+              >
+                {language === 'zh' ? '配置 Embedding 模型' : 'Configure Embedding'}
+              </a>
+              {!permissionDenied && (
+                <button
+                  type="button"
+                  disabled={rebuildingEmbeddings}
+                  onClick={() => void handleRebuildEmbeddings()}
+                  className="rounded-lg border border-accent/30 bg-accent-subtle px-2.5 py-1 text-xs font-semibold text-accent transition hover:bg-accent hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {rebuildingEmbeddings
+                    ? (language === 'zh' ? '重建中...' : 'Rebuilding...')
+                    : (language === 'zh' ? '全量重建向量索引' : 'Rebuild Embeddings')}
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Full-Width Document Management Section */}
       <div className="w-full space-y-3">
         <div className="flex flex-wrap items-center gap-2" aria-label={tx('ai.knowledge.filter.scopeAria')}>
-          <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{tx('ai.knowledge.filter.scopeAria')}</span>
+          <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-fg-muted ">{tx('ai.knowledge.filter.scopeAria')}</span>
             {([
-              ['all', 'ai.knowledge.filter.scopeAll', 'ai.knowledge.filter.scopeAllBody', 'bg-slate-50 border-slate-200 text-slate-700 dark:bg-slate-900/50 dark:border-slate-700 dark:text-slate-200'],
-              ['official', 'ai.knowledge.filter.scopeOfficial', 'ai.knowledge.filter.scopeOfficialBody', 'bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-950/30 dark:border-blue-900 dark:text-blue-200'],
-              ['enterprise', 'ai.knowledge.filter.scopeEnterprise', 'ai.knowledge.filter.scopeEnterpriseBody', 'bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-950/30 dark:border-emerald-900 dark:text-emerald-200'],
+              ['all', 'ai.knowledge.filter.scopeAll', 'ai.knowledge.filter.scopeAllBody', 'bg-surface-muted border-line text-fg '],
+              ['official', 'ai.knowledge.filter.scopeOfficial', 'ai.knowledge.filter.scopeOfficialBody', 'bg-accent-subtle border-accent/30 text-accent '],
+              ['enterprise', 'ai.knowledge.filter.scopeEnterprise', 'ai.knowledge.filter.scopeEnterpriseBody', 'bg-success-subtle border-success/30 text-success '],
             ] as const).map(([scope, titleKey, descriptionKey, tone]) => (
               <button
                 key={scope}
                 type="button"
                 onClick={() => handleKnowledgeScopeChange(scope)}
-                className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition hover:border-indigo-300 hover:shadow-sm ${tone} ${knowledgeScope === scope ? 'ring-2 ring-indigo-400 ring-offset-1 dark:ring-offset-gray-900' : ''}`}
+                className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition hover:border-accent/30 hover:shadow-sm ${tone} ${knowledgeScope === scope ? 'ring-2 ring-accent ring-offset-1 dark:ring-offset-gray-900' : ''}`}
                 aria-pressed={knowledgeScope === scope}
                 title={tx(descriptionKey)}
               >
                 <span>{tx(titleKey)}</span>
-                {knowledgeScope === scope && <CheckCircle2 className="h-3.5 w-3.5 text-indigo-500" />}
+                {knowledgeScope === scope && <CheckCircle2 className="h-3.5 w-3.5 text-accent" />}
               </button>
             ))}
         </div>
-          <section className="grid items-start gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/40 p-3 shadow-xs dark:border-indigo-900/60 dark:bg-indigo-950/15 lg:grid-cols-[minmax(240px,320px)_minmax(0,1fr)]" aria-label={tx('ai.knowledge.directory.sectionAria')}>
-            <div className="min-w-0">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-sm font-bold text-indigo-950 dark:text-indigo-100">{tx('ai.knowledge.directory.sectionTitle')}</h3>
-                  <p className="mt-0.5 text-[10px] text-indigo-700/70 dark:text-indigo-300/70">{tx('ai.knowledge.directory.sectionBody')}</p>
-                </div>
-                <FolderOpen className="h-4 w-4 shrink-0 text-indigo-500" />
-              </div>
-              <button
-                type="button"
-                onClick={clearDirectorySelection}
-                className={`mb-2 flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left text-xs transition ${!selectedDirectoryPath ? 'border-indigo-500 bg-indigo-600 font-semibold text-white shadow-sm' : 'border-indigo-200 bg-white text-indigo-800 hover:border-indigo-400 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-200'}`}
-                aria-pressed={!selectedDirectoryPath}
-              >
-                <Database className="h-3.5 w-3.5 shrink-0" />
-                <span className="min-w-0 flex-1 truncate">{tx('ai.knowledge.directory.all')}</span>
-                <span className="text-[10px] opacity-70">{tx('ai.knowledge.directory.documentCount', { count: allDirectoryDocuments })}</span>
-              </button>
-              <DirectoryTreePicker
-                nodes={directoryTree}
-                selectedPath={selectedDirectoryPath}
-                loading={directoryTreeLoading}
-                error={directoryTreeError}
-                disabled={permissionDenied}
-                canManage={canManageDirectories}
-                inline
-                title={tx('ai.knowledge.directory.treeAria')}
-                onUpload={handleDirectoryUpload}
-                onSelect={handleDirectorySelect}
-                onCreate={handleCreateDirectory}
-                onRename={handleRenameDirectory}
-                onDelete={handleDeleteDirectory}
-              />
+        <div className="grid items-start gap-4 lg:grid-cols-[272px_minmax(0,1fr)]" aria-label={tx('ai.knowledge.directory.sectionAria')}>
+          <Panel className="min-w-0 p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h3 className="text-xs font-bold uppercase tracking-wide text-fg-muted">{tx('ai.knowledge.directory.sectionTitle')}</h3>
+              <StatusBadge tone="accent">{flattenDirectoryNodes(directoryTree).length}</StatusBadge>
             </div>
-            <div className="min-w-0 self-start rounded-xl border border-white/80 bg-white/70 p-3 dark:border-indigo-900/40 dark:bg-slate-900/35">
-              <div>
-                <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.14em] text-indigo-500"><Filter className="h-3.5 w-3.5" />{tx('ai.knowledge.directory.currentFilter')}</div>
-                <div className="mt-2 break-all font-mono text-base font-bold text-slate-900 dark:text-white">{selectedDirectoryPath || tx('ai.knowledge.directory.all')}</div>
-                <p className="mt-2 max-w-2xl text-xs leading-5 text-slate-500 dark:text-slate-400">
-                  {tx('ai.knowledge.directory.filterBody')}
-                </p>
-              </div>
-              <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-indigo-100 pt-3 text-xs text-slate-600 dark:border-indigo-900/50 dark:text-slate-300">
-                <span>{tx('ai.knowledge.directory.overviewDocuments')} <strong className="font-mono text-slate-900 dark:text-white">{totalDocuments}</strong></span>
-                <span>{tx('ai.knowledge.directory.overviewNodes')} <strong className="font-mono text-slate-900 dark:text-white">{flattenDirectoryNodes(directoryTree).length}</strong></span>
-                <span>{tx('ai.knowledge.directory.overviewVendors')} <strong className="font-mono text-slate-900 dark:text-white">{knowledgeVendorOptions.length}</strong></span>
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400">
-                <span className="rounded-full bg-indigo-100 px-2 py-1 font-semibold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">{tx('ai.knowledge.directory.rootCount', { count: directoryTree.length })}</span>
-                {!selectedDirectoryPath && <span className="rounded-full bg-slate-100 px-2 py-1 dark:bg-slate-800">{tx('ai.knowledge.directory.documentCount', { count: allDirectoryDocuments })}</span>}
-                <button type="button" onClick={() => handleKnowledgeScopeChange('official')} className="rounded-full border border-blue-200 bg-blue-50 px-2 py-1 font-semibold text-blue-700 hover:bg-blue-100 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">{tx('ai.knowledge.directory.officialShortcut')}</button>
-                {selectedDirectoryPath && <button type="button" onClick={clearDirectorySelection} className="rounded-full border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">{tx('ai.knowledge.directory.clearShortcut')}</button>}
-              </div>
-              {!selectedDirectoryPath && (
-                <div className="mt-4 flex min-h-[170px] items-center justify-center rounded-xl border border-dashed border-indigo-200 bg-white/55 px-6 py-8 text-center dark:border-indigo-800 dark:bg-slate-950/20">
-                  <div className="max-w-sm">
-                    <FolderOpen className="mx-auto h-7 w-7 text-indigo-300 dark:text-indigo-600" />
-                    <div className="mt-2 text-xs font-semibold text-slate-700 dark:text-slate-200">{tx('ai.knowledge.directory.selectHintTitle')}</div>
-                    <p className="mt-1 text-[10px] leading-5 text-slate-500 dark:text-slate-400">{tx('ai.knowledge.directory.selectHintBody')}</p>
-                  </div>
-                </div>
-              )}
-              {selectedDirectoryPath && activeFilterChips.length > 0 && (
-                <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/60 px-3 py-2.5 dark:border-indigo-900/60 dark:bg-indigo-950/25">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">{tx('ai.knowledge.directory.activeFilters')}</span>
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {activeFilterChips.map((filter, index) => (
-                      <span key={`${filter}-${index}`} className="max-w-full truncate rounded-full bg-white px-2 py-1 text-[10px] text-indigo-800 shadow-xs dark:bg-slate-900/70 dark:text-indigo-200">{filter}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {!selectedDirectoryPath && (
-                <div className="mt-3 flex justify-end">
-                  <button type="button" onClick={() => filtersSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="rounded-full border border-indigo-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-indigo-600 transition hover:border-indigo-400 hover:text-indigo-900 dark:border-indigo-800 dark:bg-slate-900 dark:text-indigo-300 dark:hover:text-indigo-100">
-                    {tx('ai.knowledge.directory.manageFilters')}
-                  </button>
-                </div>
-              )}
+            <button
+              type="button"
+              onClick={clearDirectorySelection}
+              className={`mb-2 flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left text-xs transition ${!selectedDirectoryPath ? 'border-accent bg-accent font-semibold text-white shadow-sm' : 'border-accent/30 bg-surface text-accent hover:border-accent '}`}
+              aria-pressed={!selectedDirectoryPath}
+            >
+              <Database className="h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 flex-1 truncate">{tx('ai.knowledge.directory.all')}</span>
+              <span className="text-xs opacity-75">{allDirectoryDocuments}</span>
+            </button>
+            <DirectoryTreePicker
+              nodes={directoryTree}
+              selectedPath={selectedDirectoryPath}
+              loading={directoryTreeLoading}
+              error={directoryTreeError}
+              disabled={permissionDenied}
+              canManage={canManageDirectories}
+              inline
+              title={tx('ai.knowledge.directory.treeAria')}
+              onUpload={handleDirectoryUpload}
+              onSelect={handleDirectorySelect}
+              onCreate={handleCreateDirectory}
+              onRename={handleRenameDirectory}
+              onDelete={handleDeleteDirectory}
+            />
+          </Panel>
+          {/* Search, classification, and document list share one main column. */}
+          <div className="min-w-0 space-y-3">
+          <div ref={filtersSectionRef} className="min-w-0 scroll-mt-4">
+          <Panel className="p-3" aria-label={tx('ai.knowledge.directory.manageFilters')}>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-line pb-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-sm font-bold text-fg">{selectedDirectoryPath || tx('ai.knowledge.directory.all')}</h3>
+              <StatusBadge tone="accent">{tx('ai.knowledge.directory.documentCount', { count: totalDocuments })}</StatusBadge>
+              {!selectedDirectoryPath && <span className="text-xs text-fg-muted">{tx('ai.knowledge.directory.selectHintTitle')}</span>}
               {selectedDirectoryPath && (
-                <div className="mt-4 border-t border-indigo-100 pt-3 dark:border-indigo-900/50">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2 text-[11px] font-semibold text-indigo-950 dark:text-indigo-100">
-                      <FileText className="h-3.5 w-3.5 shrink-0 text-indigo-500" />
-                      <span className="truncate">{tx('ai.knowledge.directory.resultsTitle')}</span>
-                    </div>
-                    <span className="shrink-0 rounded-full bg-indigo-100 px-2 py-1 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
-                      {tx('ai.knowledge.directory.documentCount', { count: totalDocuments })}
-                    </span>
-                  </div>
-                  <div className="mt-2 max-h-[280px] overflow-y-auto rounded-xl border border-indigo-100 bg-white/80 dark:border-indigo-900/60 dark:bg-slate-950/30">
-                    {loading ? (
-                      <div className="flex items-center gap-2 px-3 py-4 text-xs text-slate-400"><Loader2 className="h-3.5 w-3.5 animate-spin" />{tx('ai.common.loading')}</div>
-                    ) : loadError ? (
-                      <div className="px-3 py-4 text-xs text-rose-600 dark:text-rose-300">{loadError}</div>
-                    ) : documents.length === 0 ? (
-                      <div className="flex items-center gap-2 px-3 py-4 text-xs text-slate-400"><BookOpen className="h-3.5 w-3.5 shrink-0" />{tx('ai.knowledge.empty.filtered')}</div>
-                    ) : (
-                      <div className="divide-y divide-indigo-100 dark:divide-indigo-900/50">
-                        {documents.map((doc) => {
-                          const badge = sourceBadges[doc.knowledge_source_type] || sourceBadges.user_document;
-                          const classification = [
-                            doc.vendor ? getVendorDisplayLabel(doc.vendor, language) : '',
-                            doc.product_family || doc.product_model || doc.document_category || '',
-                          ].filter(Boolean).join(' · ');
-                          return (
-                            <button
-                              key={`directory-preview-${doc.id}`}
-                              type="button"
-                              onClick={() => void openDocument(doc)}
-                              className="group flex w-full items-center gap-2 px-3 py-2.5 text-left transition hover:bg-indigo-50/70 dark:hover:bg-indigo-950/30"
-                              title={tx('ai.knowledge.action.viewDocument')}
-                            >
-                              <FileCode className="h-4 w-4 shrink-0 text-indigo-500" />
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-xs font-semibold text-slate-800 group-hover:text-indigo-700 dark:text-slate-100 dark:group-hover:text-indigo-300">{doc.name}</span>
-                                <span className="mt-0.5 block truncate text-[10px] text-slate-400 dark:text-slate-500">{classification || badge.label}</span>
-                              </span>
-                              <span className={`hidden shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold sm:inline-flex ${badge.bg} ${badge.color}`}>{badge.label}</span>
-                              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-indigo-500" />
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                  <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-slate-400 dark:text-slate-500">
-                    <span className="min-w-0 truncate">{tx('ai.knowledge.directory.resultsHint')}</span>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <button type="button" onClick={() => filtersSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="font-semibold text-indigo-600 hover:text-indigo-800 dark:text-indigo-300 dark:hover:text-indigo-100">
-                        {tx('ai.knowledge.directory.manageFilters')}
-                      </button>
-                      {totalDocuments > documents.length && <button type="button" onClick={() => documentTableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="font-semibold text-indigo-600 hover:text-indigo-800 dark:text-indigo-300 dark:hover:text-indigo-100">
-                        {tx('ai.knowledge.directory.fullList')}
-                      </button>}
-                    </div>
-                  </div>
-                </div>
+                <button type="button" onClick={clearDirectorySelection} className="rounded-full border border-line bg-surface px-2 py-0.5 text-[11px] font-medium text-fg-muted hover:bg-surface-muted">
+                  {tx('ai.knowledge.directory.clearShortcut')}
+                </button>
               )}
             </div>
-          </section>
-          {/* Search, classification, and advanced filters share one query surface. */}
-          <section ref={filtersSectionRef} className="scroll-mt-4 rounded-2xl border border-gray-200/80 bg-white p-3 shadow-xs dark:border-gray-700/80 dark:bg-gray-800" aria-label={tx('ai.knowledge.directory.manageFilters')}>
-          <div className="mb-3 flex flex-wrap items-start justify-between gap-2 border-b border-gray-100 pb-3 dark:border-gray-700/80">
-            <div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white">{tx('ai.knowledge.directory.manageFilters')}</h3>
-              <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">{tx('ai.knowledge.directory.manageFiltersHint')}</p>
-            </div>
-            {selectedDirectoryPath && <span className="max-w-full truncate rounded-full bg-indigo-50 px-2 py-1 font-mono text-[10px] text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300">{selectedDirectoryPath}</span>}
+            {activeFilterChips.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {activeFilterChips.slice(0, 4).map((filter, index) => (
+                  <span key={`${filter}-${index}`} className="max-w-[180px] truncate rounded-full bg-accent-subtle px-2 py-0.5 text-[11px] text-accent">{filter}</span>
+                ))}
+              </div>
+            )}
           </div>
           <div className="flex items-end justify-between gap-4">
             <div className="relative flex-1 max-w-md">
-              <label htmlFor="knowledge-full-text-search" className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{tx('ai.knowledge.search.label')}</label>
+              <label htmlFor="knowledge-full-text-search" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-fg-muted ">{tx('ai.knowledge.search.label')}</label>
               <div className="relative">
-                <Search className="w-4 h-4 absolute left-3 top-2.5 text-gray-400" />
+                <Search className="w-4 h-4 absolute left-3 top-2.5 text-fg-subtle" />
                 <input
                   id="knowledge-full-text-search"
                   type="search"
                   placeholder={tx('ai.knowledge.search.placeholder')}
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
-                  className="w-full pl-9 pr-3 py-1.5 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:border-indigo-500 dark:text-white"
+                  className="w-full pl-9 pr-3 py-1.5 text-xs bg-surface-muted border border-line rounded-xl focus:outline-none focus:border-accent "
                 />
               </div>
             </div>
@@ -2169,7 +2385,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                 type="button"
                 onClick={() => void handleKnowledgeExport()}
                 disabled={exporting || loading || permissionDenied || totalDocuments === 0}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 shadow-xs transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-900 dark:bg-indigo-950/30 dark:text-indigo-200"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-accent/30 bg-accent-subtle px-3 py-1.5 text-xs font-semibold text-accent shadow-xs transition hover:bg-accent-subtle disabled:cursor-not-allowed disabled:opacity-50 "
                 title={tx('ai.knowledge.action.export')}
               >
                 {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PackageOpen className="h-3.5 w-3.5" />}
@@ -2180,34 +2396,38 @@ export const KnowledgeManagementTab: React.FC = () => {
                   {deleting ? tx('ai.knowledge.action.deleting') : tx('ai.knowledge.action.batchDelete', { count: selectedDocIds.size })}
                 </ActionButton>
               )}
-              <div className="text-xs text-gray-500 dark:text-gray-400">
+              <div className="text-xs text-fg-muted ">
                 {tx('ai.knowledge.search.total', { count: totalDocuments })}
               </div>
             </div>
           </div>
           {documentActionNotice && (
-            <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/25 dark:text-emerald-200" role="status">
+            <div className="mt-3 rounded-xl border border-success/30 bg-success-subtle px-3 py-2 text-xs text-success " role="status">
               {documentActionNotice}
             </div>
           )}
 
-          <div className="mt-3 border-t border-indigo-100 pt-3 dark:border-indigo-900/60" aria-label={tx('ai.knowledge.product.title')}>
-            <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-semibold text-indigo-900 dark:text-indigo-200">{tx('ai.knowledge.product.title')}</span>
-                  {selectedClassification && <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-semibold text-white">{tx('ai.knowledge.product.selected', { value: selectedClassification })}</span>}
-                </div>
-                <p className="mt-1 text-[10px] text-indigo-700/70 dark:text-indigo-300/70">{tx('ai.knowledge.product.body')}</p>
+          <div className="mt-2.5 border-t border-line pt-2.5" aria-label={tx('ai.knowledge.product.title')}>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-fg-muted">{tx('ai.knowledge.product.title')}</span>
+                <span className="text-[11px] text-fg-subtle">
+                  {language === 'zh' ? '先选厂商，再逐层下拉检索产品族、系列与型号' : 'Select vendor first, then drill down by family, series, and model'}
+                </span>
+                {selectedClassification && <StatusBadge tone="accent">{tx('ai.knowledge.product.selected', { value: selectedClassification })}</StatusBadge>}
               </div>
-              {selectedClassification && (
-                <button type="button" onClick={() => { setSemanticFilter('vendor', ''); setSemanticFilter('productFamily', ''); setSemanticFilter('productSeries', ''); }} className="text-[10px] font-semibold text-indigo-700 hover:text-indigo-900 dark:text-indigo-300 dark:hover:text-indigo-100">
+              {(selectedClassification || semanticFilters.productModel) && (
+                <button
+                  type="button"
+                  onClick={() => setSemanticFilter('vendor', '')}
+                  className="text-xs font-semibold text-accent hover:text-fg"
+                >
                   {tx('ai.knowledge.product.clear')}
                 </button>
               )}
             </div>
             {unknownFacetCount > 0 && (
-              <div className="mb-3 flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] leading-4 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200" role="status">
+              <div className="mb-2.5 flex items-start justify-between gap-3 rounded-xl border border-warning/30 bg-warning-subtle px-3 py-2 text-xs leading-4 text-warning " role="status">
                 <div className="flex min-w-0 items-start gap-2">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>{tx('ai.knowledge.product.unknown', { count: unknownFacetCount })}</span>
@@ -2215,66 +2435,73 @@ export const KnowledgeManagementTab: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setSemanticFilter('metadataGovernanceStatus', semanticFilters.metadataGovernanceStatus === 'pending_review' ? '' : 'pending_review')}
-                  className="shrink-0 font-semibold text-amber-900 underline underline-offset-2 hover:text-amber-700 dark:text-amber-100 dark:hover:text-white"
+                  className="shrink-0 font-semibold text-warning underline underline-offset-2 hover:text-warning "
                 >
                   {semanticFilters.metadataGovernanceStatus === 'pending_review' ? tx('ai.knowledge.governance.showAll') : tx('ai.knowledge.governance.viewPending')}
                 </button>
               </div>
             )}
-            <div className="grid gap-3 md:grid-cols-3">
-              {([
-                ['vendor', tx('ai.knowledge.product.vendor'), documentFacets.vendors],
-                ['productFamily', tx('ai.knowledge.product.family'), documentFacets.families],
-                ['productSeries', tx('ai.knowledge.product.series'), documentFacets.series],
-              ] as const).map(([filterKey, label, items]) => {
-                const knownItems = items.filter((item) => item.value.trim() && item.value.trim().toUpperCase() !== 'UNKNOWN');
-                const expanded = Boolean(expandedFacetGroups[filterKey]);
-                const visibleItems = expanded ? knownItems : knownItems.slice(0, 12);
-                return (
-                  <div key={filterKey} className="min-w-0 rounded-xl border border-indigo-100/80 bg-white/60 p-2 dark:border-indigo-900/50 dark:bg-indigo-950/20">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <div className="text-[10px] font-semibold uppercase tracking-wide text-indigo-700/70 dark:text-indigo-300/70">{label}</div>
-                      <span className="text-[10px] text-indigo-700/50 dark:text-indigo-300/50">{knownItems.length}</span>
-                    </div>
-                    <div className="flex min-h-8 flex-wrap gap-1.5">
-                      {visibleItems.map((item) => (
-                        <button
-                          key={`${filterKey}-${item.value}`}
-                          type="button"
-                          onClick={() => setSemanticFilter(filterKey, semanticFilters[filterKey] === item.value ? '' : item.value)}
-                          className={`rounded-full border px-2 py-1 text-[10px] font-medium transition ${semanticFilters[filterKey] === item.value ? 'border-indigo-500 bg-indigo-600 text-white' : 'border-indigo-200 bg-white text-indigo-800 hover:border-indigo-400 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200'}`}
-                          title={tx('ai.knowledge.product.filter', { value: item.value })}
-                        >
-                          {item.value} <span className="opacity-60">{item.count}</span>
-                        </button>
-                      ))}
-                      {knownItems.length === 0 && <span className="text-[10px] text-indigo-700/50 dark:text-indigo-300/50">{tx('ai.knowledge.product.empty')}</span>}
-                    </div>
-                    {knownItems.length > 12 && (
-                      <button type="button" onClick={() => setExpandedFacetGroups((current) => ({ ...current, [filterKey]: !expanded }))} className="mt-2 text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 dark:text-indigo-300 dark:hover:text-indigo-100">
-                        {expanded ? tx('ai.knowledge.product.collapse') : tx('ai.knowledge.product.showAll', { count: knownItems.length })}
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              <SearchableFacetSelect
+                label={tx('ai.knowledge.product.vendor')}
+                placeholder={language === 'zh' ? '1. 选择厂商...' : '1. Select vendor...'}
+                disabledPlaceholder={language === 'zh' ? '1. 选择厂商...' : '1. Select vendor...'}
+                searchPlaceholder={language === 'zh' ? '搜索厂商...' : 'Search vendor...'}
+                allLabel={language === 'zh' ? '全部厂商' : 'All vendors'}
+                emptyLabel={tx('ai.knowledge.product.empty')}
+                value={semanticFilters.vendor}
+                options={documentFacets.vendors}
+                onChange={(next) => setSemanticFilter('vendor', next)}
+              />
+              <SearchableFacetSelect
+                label={tx('ai.knowledge.product.family')}
+                placeholder={language === 'zh' ? '2. 选择产品族...' : '2. Select family...'}
+                disabledPlaceholder={language === 'zh' ? '2. 请先选择厂商' : '2. Select vendor first'}
+                searchPlaceholder={language === 'zh' ? '搜索产品族...' : 'Search family...'}
+                allLabel={language === 'zh' ? '全部产品族' : 'All families'}
+                emptyLabel={tx('ai.knowledge.product.empty')}
+                value={semanticFilters.productFamily}
+                options={documentFacets.families}
+                disabled={!semanticFilters.vendor}
+                onChange={(next) => setSemanticFilter('productFamily', next)}
+              />
+              <SearchableFacetSelect
+                label={tx('ai.knowledge.product.series')}
+                placeholder={language === 'zh' ? '3. 选择系列...' : '3. Select series...'}
+                disabledPlaceholder={language === 'zh' ? '3. 请先选择产品族' : '3. Select family first'}
+                searchPlaceholder={language === 'zh' ? '搜索系列...' : 'Search series...'}
+                allLabel={language === 'zh' ? '全部系列' : 'All series'}
+                emptyLabel={tx('ai.knowledge.product.empty')}
+                value={semanticFilters.productSeries}
+                options={documentFacets.series}
+                disabled={!semanticFilters.productFamily}
+                onChange={(next) => setSemanticFilter('productSeries', next)}
+              />
+              <input
+                type="search"
+                value={semanticFilters.productModel}
+                onChange={(event) => setSemanticFilter('productModel', event.target.value)}
+                placeholder={language === 'zh' ? '4. 搜索具体型号...' : '4. Search model...'}
+                className="rounded-xl border border-line bg-surface-muted px-2.5 py-2 text-xs text-fg placeholder:text-fg-subtle focus:border-accent focus:outline-none"
+                aria-label={tx('ai.knowledge.filter.modelLabel')}
+              />
             </div>
           </div>
 
-          <details className="mt-3 border-t border-gray-200/80 pt-3 dark:border-gray-700/80" open={advancedFiltersOpen} onToggle={(event) => setAdvancedFiltersOpen(event.currentTarget.open)} aria-label={tx('ai.knowledge.filter.semantic')}>
+          <details className="mt-2.5 border-t border-line pt-2.5" open={advancedFiltersOpen} onToggle={(event) => setAdvancedFiltersOpen(event.currentTarget.open)} aria-label={tx('ai.knowledge.filter.semantic')}>
             <summary className="flex cursor-pointer list-none items-start justify-between gap-2 rounded-lg [&::-webkit-details-marker]:hidden">
               <div>
-                <span className="text-[11px] font-semibold text-gray-600 dark:text-gray-300">{tx('ai.knowledge.filter.semantic')}</span>
-                <p className="mt-1 text-[10px] text-gray-500 dark:text-gray-400">{tx('ai.knowledge.filter.semanticBody')}</p>
+                <span className="text-[11px] font-semibold text-fg-muted ">{tx('ai.knowledge.filter.semantic')}</span>
+                <p className="mt-1 text-xs text-fg-muted ">{tx('ai.knowledge.filter.semanticBody')}</p>
               </div>
-              <span className="shrink-0 text-[10px] font-semibold text-indigo-600 dark:text-indigo-300">{advancedFiltersOpen ? tx('ai.knowledge.filter.collapse') : tx('ai.knowledge.filter.expand')}</span>
+              <span className="shrink-0 text-xs font-semibold text-accent ">{advancedFiltersOpen ? tx('ai.knowledge.filter.collapse') : tx('ai.knowledge.filter.expand')}</span>
             </summary>
             <div className="mt-3 flex justify-end">
               <button
                 type="button"
                 onClick={(event) => { event.preventDefault(); clearSemanticFilters(); }}
                 disabled={!Object.entries(semanticFilters).some(([key, value]) => key === 'status' ? value !== 'active' : Boolean(value))}
-                className="text-[10px] font-medium text-indigo-600 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-40 dark:text-indigo-300"
+                className="text-xs font-medium text-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 "
               >
                 {tx('ai.knowledge.action.clearFilters')}
               </button>
@@ -2283,43 +2510,36 @@ export const KnowledgeManagementTab: React.FC = () => {
               <select
                 value={selectedFolder}
                 onChange={(event) => handleFolderChange(event.target.value)}
-                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                className="rounded-xl border border-line bg-surface-muted px-2.5 py-2 text-[11px] text-fg "
                 aria-label={tx('ai.knowledge.filter.sourceLabel')}
               >
                 {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
               </select>
               <input type="search"
-                value={semanticFilters.productModel}
-                onChange={(event) => setSemanticFilter('productModel', event.target.value)}
-                placeholder={tx('ai.knowledge.filter.modelPlaceholder')}
-                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
-                aria-label={tx('ai.knowledge.filter.modelLabel')}
-              />
-              <input type="search"
                 value={semanticFilters.osFamily}
                 onChange={(event) => setSemanticFilter('osFamily', event.target.value)}
                 placeholder="OS Family"
-                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                className="rounded-xl border border-line bg-surface-muted px-2.5 py-2 text-[11px] text-fg placeholder:text-fg-subtle "
                 aria-label={tx('ai.knowledge.filter.osLabel')}
               />
               <input type="search"
                 value={semanticFilters.softwareRelease}
                 onChange={(event) => setSemanticFilter('softwareRelease', event.target.value)}
                 placeholder={tx('ai.knowledge.filter.versionPlaceholder')}
-                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                className="rounded-xl border border-line bg-surface-muted px-2.5 py-2 text-[11px] text-fg placeholder:text-fg-subtle "
                 aria-label={tx('ai.knowledge.filter.versionLabel')}
               />
               <input type="search"
                 value={semanticFilters.featureDomain}
                 onChange={(event) => setSemanticFilter('featureDomain', event.target.value)}
                 placeholder={tx('ai.knowledge.filter.featurePlaceholder')}
-                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                className="rounded-xl border border-line bg-surface-muted px-2.5 py-2 text-[11px] text-fg placeholder:text-fg-subtle "
                 aria-label={tx('ai.knowledge.filter.featureLabel')}
               />
               <select
                 value={semanticFilters.documentCategory}
                 onChange={(event) => setSemanticFilter('documentCategory', event.target.value)}
-                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                className="rounded-xl border border-line bg-surface-muted px-2.5 py-2 text-[11px] text-fg "
                 aria-label={tx('ai.knowledge.filter.typeLabel')}
               >
                 <option value="">{tx('ai.knowledge.filter.allDocumentTypes')}</option>
@@ -2328,7 +2548,7 @@ export const KnowledgeManagementTab: React.FC = () => {
               <select
                 value={semanticFilters.status}
                 onChange={(event) => setSemanticFilter('status', event.target.value)}
-                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                className="rounded-xl border border-line bg-surface-muted px-2.5 py-2 text-[11px] text-fg "
                 aria-label={tx('ai.knowledge.filter.lifecycleLabel')}
               >
                 <option value="active">{tx('ai.knowledge.status.active')}</option>
@@ -2341,7 +2561,7 @@ export const KnowledgeManagementTab: React.FC = () => {
               <select
                 value={semanticFilters.metadataGovernanceStatus}
                 onChange={(event) => setSemanticFilter('metadataGovernanceStatus', event.target.value)}
-                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                className="rounded-xl border border-line bg-surface-muted px-2.5 py-2 text-[11px] text-fg "
                 aria-label={tx('ai.knowledge.governance.filterLabel')}
               >
                 <option value="">{tx('ai.knowledge.governance.filterAll')}</option>
@@ -2351,108 +2571,112 @@ export const KnowledgeManagementTab: React.FC = () => {
             </div>
           </details>
 
-          </section>
+          </Panel>
+          </div>
 
           {/* Table Container */}
-          <div ref={documentTableRef} className="bg-white dark:bg-gray-800 border border-gray-200/80 dark:border-gray-700/80 rounded-2xl overflow-hidden shadow-xs">
-            {loading ? (
-              <div className="p-8 text-center text-xs text-gray-400">{tx('ai.common.loading')}</div>
+          <div ref={documentTableRef}>
+          <Panel as="div" className="overflow-hidden" aria-label={copy.documentsAria}>
+            {loading && documents.length === 0 ? (
+              <div className="p-8 text-center text-xs text-fg-subtle">{tx('ai.common.loading')}</div>
             ) : loadError ? (
-              <div className="p-10 text-center">
-                <XCircle className={`mx-auto h-8 w-8 ${permissionDenied ? 'text-amber-400' : 'text-rose-400'}`} />
-                <div className={`mt-3 text-sm font-semibold ${permissionDenied ? 'text-amber-700 dark:text-amber-300' : 'text-rose-700 dark:text-rose-300'}`}>{permissionDenied ? tx('ai.knowledge.empty.permission') : tx('ai.knowledge.empty.load')}</div>
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{loadError}</p>
-                {!permissionDenied && <button type="button" onClick={() => void fetchStatsAndDocs()} className="mt-4 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700">{tx('ai.common.retry')}</button>}
-              </div>
+              <EmptyState
+                className="rounded-none border-0"
+                icon={XCircle}
+                title={permissionDenied ? tx('ai.knowledge.empty.permission') : tx('ai.knowledge.empty.load')}
+                description={loadError}
+                action={!permissionDenied ? <button type="button" onClick={() => void fetchStatsAndDocs()} className="rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white hover:bg-accent-hover">{tx('ai.common.retry')}</button> : undefined}
+              />
             ) : documents.length === 0 ? (
-              <div className="p-12 text-center space-y-3">
-                <BookOpen className="w-8 h-8 text-gray-300 mx-auto" />
-                <div className="text-sm font-semibold text-gray-700 dark:text-gray-300">{tx('ai.knowledge.empty.filtered')}</div>
-                <p className="text-xs text-gray-400">{tx('ai.knowledge.empty.body')}</p>
-              </div>
+              <EmptyState
+                className="rounded-none border-0"
+                icon={BookOpen}
+                title={tx('ai.knowledge.empty.filtered')}
+                description={tx('ai.knowledge.empty.body')}
+              />
             ) : (
-              <div className="overflow-x-auto">
-                <DataTable unstyled exportConfig={{ filename: 'knowledge-documents', language: language === 'zh' ? 'zh' : 'en', disabled: loading || permissionDenied || totalDocuments === 0, exportData: exportKnowledgeTable }} className="nx-data-table min-w-[1900px] text-left">
-                <thead className="sticky top-0 z-10 bg-gray-50 shadow-sm dark:bg-gray-900/95 text-gray-500 dark:text-gray-400 font-semibold">
+              <div className={`overflow-x-auto transition-opacity ${loading ? 'opacity-60 pointer-events-none' : ''}`}>
+                <DataTable unstyled exportConfig={{ filename: 'knowledge-documents', language: language === 'zh' ? 'zh' : 'en', disabled: loading || permissionDenied || totalDocuments === 0, exportData: exportKnowledgeTable }} className="nx-data-table w-full text-left">
+                <thead className="sticky top-0 z-10 bg-surface-muted shadow-sm text-fg-muted font-semibold">
                   <tr>
-                    <th className="px-3 py-3 w-10">
+                    <th className="px-2.5 py-2.5 w-9">
                       <input
                         type="checkbox"
                         checked={documents.length > 0 && documents.every((doc) => selectedDocIds.has(doc.id))}
                         onChange={toggleSelectAll}
-                        className="w-3.5 h-3.5 rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                        className="w-3.5 h-3.5 rounded border-line-strong text-accent focus:ring-accent cursor-pointer"
                         title={tx('ai.knowledge.table.selectAll')}
                       />
                     </th>
-                    <th className="px-4 py-3">{tx('ai.knowledge.table.name')}</th>
-                    <th className="px-4 py-3">{tx('ai.knowledge.table.source')}</th>
-                    <th className="px-4 py-3">{tx('ai.knowledge.table.category')}</th>
-                    <th className="px-4 py-3">{tx('ai.knowledge.table.family')}</th>
-                    <th className="px-4 py-3">{tx('ai.knowledge.table.model')}</th>
-                    <th className="px-4 py-3">{tx('ai.knowledge.table.vendor')}</th>
-                    <th className="px-4 py-3">{tx('ai.knowledge.table.platform')}</th>
-                    <th className="px-4 py-3">{tx('ai.knowledge.table.osFamily')}</th>
-                    <th className="px-4 py-3">{tx('ai.knowledge.table.release')}</th>
-                    <th className="px-4 py-3">{tx('ai.knowledge.table.chunks')}</th>
-                    <th className="px-4 py-3">{tx('ai.knowledge.table.index')}</th>
-                    <th className="px-4 py-3">{tx('ai.knowledge.table.created')}</th>
-                    <TableActionHeader className="px-4 py-3 text-center">{tx('ai.knowledge.table.actions')}</TableActionHeader>
+                    <th className="px-3 py-2.5">{tx('ai.knowledge.table.name')}</th>
+                    <th className="px-3 py-2.5 whitespace-nowrap">{tx('ai.knowledge.table.source')}</th>
+                    <th className="px-3 py-2.5 whitespace-nowrap">{tx('ai.knowledge.table.category')}</th>
+                    <th className="px-3 py-2.5 whitespace-nowrap">{tx('ai.knowledge.table.index')}</th>
+                    <th className="px-3 py-2.5 whitespace-nowrap">{tx('ai.knowledge.table.created')}</th>
+                    <TableActionHeader className="px-3 py-2.5 text-right">{tx('ai.knowledge.table.actions')}</TableActionHeader>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800">
+                <tbody className="divide-y divide-line bg-surface ">
                   {documents.map((doc) => {
                     const badge = sourceBadges[doc.knowledge_source_type] || sourceBadges.user_document;
                     const isSelected = selectedDocIds.has(doc.id);
+                    const metaSubtitle = [
+                      doc.vendor ? getVendorDisplayLabel(doc.vendor, language) : '',
+                      doc.product_model || doc.product_family || '',
+                      getPlatformDisplayLabel(doc.vendor, doc.platform, language),
+                      doc.software_release || doc.os_family || '',
+                    ].filter((v) => v && v !== '—').join(' · ');
                     return (
-                      <tr key={doc.id} className={`hover:bg-gray-50 dark:hover:bg-gray-700/50 transition ${isSelected ? 'bg-indigo-50/40 dark:bg-indigo-950/20' : ''}`}>
-                        <td className="px-3 py-3">
+                      <tr key={doc.id} className={`hover:bg-surface-muted transition ${isSelected ? 'bg-accent-subtle ' : ''}`}>
+                        <td className="px-2.5 py-2.5 align-top">
                           <input
                             type="checkbox"
                             checked={isSelected}
                             onChange={() => toggleDocSelection(doc.id)}
-                            className="w-3.5 h-3.5 rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                            className="mt-1 w-3.5 h-3.5 rounded border-line-strong text-accent focus:ring-accent cursor-pointer"
                           />
                         </td>
-                        <td className="px-4 py-3 font-semibold text-gray-900 dark:text-white">
-                          <button
-                            type="button"
-                            onClick={() => void openDocument(doc)}
-                            className="group flex max-w-[260px] items-center gap-2 text-left transition hover:text-indigo-600 dark:hover:text-indigo-300"
-                            title={tx('ai.knowledge.action.viewDocument')}
-                          >
-                            <FileCode className="w-4 h-4 flex-shrink-0 text-indigo-500" />
-                            <span className="min-w-0">
-                              <span className="block truncate underline-offset-4 group-hover:underline">{doc.name}</span>
-                            </span>
-                            <Eye className="h-3.5 w-3.5 flex-shrink-0 text-slate-300 opacity-0 transition group-hover:text-indigo-400 group-hover:opacity-100" />
-                          </button>
+                        <td className="px-3 py-2.5 align-top">
+                          <div className="max-w-[340px]">
+                            <button
+                              type="button"
+                              onClick={() => void openDocument(doc)}
+                              className="group flex max-w-full items-center gap-2 text-left transition hover:text-accent"
+                              title={tx('ai.knowledge.action.viewDocument')}
+                            >
+                              <FileCode className="w-4 h-4 flex-shrink-0 text-accent" />
+                              <span className="min-w-0">
+                                <span className="block truncate font-semibold text-fg underline-offset-4 group-hover:text-accent group-hover:underline">{doc.name}</span>
+                              </span>
+                              <Eye className="h-3.5 w-3.5 flex-shrink-0 text-fg-subtle opacity-0 transition group-hover:text-accent group-hover:opacity-100" />
+                            </button>
+                            {metaSubtitle && (
+                              <div className="mt-0.5 pl-6 truncate font-mono text-[11px] font-normal text-fg-muted">{metaSubtitle}</div>
+                            )}
+                          </div>
                         </td>
-                        <td className="px-4 py-3">
-                          <span className={`px-2 py-0.5 rounded-full font-medium text-[11px] ${badge.bg} ${badge.color}`}>
+                        <td className="px-3 py-2.5 align-top whitespace-nowrap">
+                          <StatusBadge tone={badge.tone}>
                             {badge.label}
-                          </span>
+                          </StatusBadge>
                         </td>
-                        <td className="px-4 py-3">{doc.document_category || '—'}</td>
-                        <td className="px-4 py-3">{doc.product_family || '—'}</td>
-                        <td className="px-4 py-3">{doc.product_model || '—'}</td>
-                        <td className="px-4 py-3 font-mono text-gray-600 dark:text-gray-300">{doc.vendor ? getVendorDisplayLabel(doc.vendor, language) : '—'}</td>
-                        <td className="px-4 py-3 font-mono text-gray-600 dark:text-gray-300">{getPlatformDisplayLabel(doc.vendor, doc.platform, language)}</td>
-                        <td className="px-4 py-3">{doc.os_family || '—'}</td>
-                        <td className="px-4 py-3">{doc.software_release || '—'}</td>
-                        <td className="px-4 py-3 font-mono text-gray-700 dark:text-gray-200">
-                          {tx('ai.knowledge.table.chunkCount', { count: doc.chunk_count || 1 })}
+                        <td className="px-3 py-2.5 align-top whitespace-nowrap text-xs text-fg-muted">{doc.document_category || '—'}</td>
+                        <td className="px-3 py-2.5 align-top whitespace-nowrap">
+                          <div className="flex flex-col items-start gap-1">
+                            <StatusBadge tone={doc.status === 'active' && !doc.exclude_from_rag ? 'success' : 'warning'}>
+                              {doc.status === 'active' && !doc.exclude_from_rag ? <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> : <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" />}
+                              {getDocumentStatusLabel(doc)}
+                            </StatusBadge>
+                            <span className="font-mono text-[11px] text-fg-muted">
+                              {tx('ai.knowledge.table.chunkCount', { count: doc.chunk_count || 1 })}
+                            </span>
+                          </div>
                         </td>
-                        <td className="px-4 py-3">
-                          <span className={`inline-flex items-center gap-1 font-medium ${doc.status === 'active' && !doc.exclude_from_rag ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
-                            {doc.status === 'active' && !doc.exclude_from_rag ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
-                            {getDocumentStatusLabel(doc)}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-gray-400 font-mono text-[11px]">
+                        <td className="px-3 py-2.5 align-top whitespace-nowrap text-fg-subtle font-mono text-[11px]">
                           {new Date(doc.created_at).toLocaleDateString()}
                         </td>
-                        <TableActionCell className="px-4 py-3 text-center">
-                          <div className="flex items-center justify-end gap-1">
+                        <TableActionCell className="px-3 py-2.5 align-top text-right">
+                          <div className="flex items-center justify-end gap-0.5">
                             <ActionIconButton
                               icon={doc.status === 'disabled' ? CheckCircle2 : Archive}
                               label={doc.status === 'disabled' ? tx('ai.knowledge.action.enable') : tx('ai.knowledge.action.disable')}
@@ -2516,8 +2740,11 @@ export const KnowledgeManagementTab: React.FC = () => {
                 language={language}
               />
             )}
+          </Panel>
+          </div>
           </div>
         </div>
+      </div>
 
       {/* Document Content Viewer */}
       {selectedDocument && (
@@ -2531,52 +2758,52 @@ export const KnowledgeManagementTab: React.FC = () => {
           onClick={closeDocument}
         >
           <aside
-            className="ml-auto flex h-full w-full max-w-3xl flex-col border-l border-white/60 bg-white shadow-2xl shadow-slate-950/20 dark:border-slate-700 dark:bg-slate-900"
+            className="ml-auto flex h-full w-full max-w-3xl flex-col border-l border-line bg-surface shadow-2xl shadow-slate-950/20 "
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-5 dark:border-slate-800 sm:px-7">
+            <div className="flex items-start justify-between gap-4 border-b border-line px-5 py-5 sm:px-7">
               <div className="min-w-0">
-                <div className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-indigo-500">
+                <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.16em] text-accent">
                   <BookOpen className="h-3.5 w-3.5" />
                   {tx('ai.knowledge.viewer.title')}
                 </div>
-                <h2 id="knowledge-document-title" className="truncate text-xl font-bold tracking-tight text-slate-950 dark:text-white">{selectedDocument.name}</h2>
-                <p className="mt-1 truncate font-mono text-[11px] text-slate-400" title={selectedDocument.id}>{selectedDocument.id}</p>
+                <h2 id="knowledge-document-title" className="truncate text-xl font-bold tracking-tight text-fg ">{selectedDocument.name}</h2>
+                <p className="mt-1 truncate font-mono text-[11px] text-fg-subtle" title={selectedDocument.id}>{selectedDocument.id}</p>
               </div>
-              <button type="button" data-knowledge-document-close aria-label={tx('ai.knowledge.action.closeViewer')} title={tx('ai.knowledge.action.closeViewer')} onClick={closeDocument} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
+              <button type="button" data-knowledge-document-close aria-label={tx('ai.knowledge.action.closeViewer')} title={tx('ai.knowledge.action.closeViewer')} onClick={closeDocument} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-fg-subtle transition hover:bg-surface-muted hover:text-fg ">
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-5 py-4 dark:border-slate-800 sm:px-7">
+            <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-4 sm:px-7">
               {(() => {
                 const badge = sourceBadges[selectedDocument.knowledge_source_type] || sourceBadges.user_document;
-                return <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${badge.bg} ${badge.color}`}>{badge.label}</span>;
+                return <StatusBadge tone={badge.tone}>{badge.label}</StatusBadge>;
               })()}
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">{getVendorDisplayLabel(selectedDocument.vendor, language)} / {getPlatformDisplayLabel(selectedDocument.vendor, selectedDocument.platform, language)}</span>
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" />{selectedDocument.status === 'active' ? tx('ai.knowledge.viewer.ready') : getKnowledgeLifecycleStatusLabel(selectedDocument.status)}</span>
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] text-slate-500 dark:bg-slate-800 dark:text-slate-400"><Layers className="h-3.5 w-3.5" />{tx('ai.knowledge.viewer.chunkCount', { count: selectedDocument.chunk_count })}</span>
+              <StatusBadge>{getVendorDisplayLabel(selectedDocument.vendor, language)} / {getPlatformDisplayLabel(selectedDocument.vendor, selectedDocument.platform, language)}</StatusBadge>
+              <StatusBadge tone={selectedDocument.status === 'active' ? 'success' : 'warning'}><CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />{selectedDocument.status === 'active' ? tx('ai.knowledge.viewer.ready') : getKnowledgeLifecycleStatusLabel(selectedDocument.status)}</StatusBadge>
+              <StatusBadge><Layers className="h-3.5 w-3.5" aria-hidden="true" />{tx('ai.knowledge.viewer.chunkCount', { count: selectedDocument.chunk_count })}</StatusBadge>
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7">
               {documentDetailLoading ? (
                 <div className="space-y-4" aria-label={tx('ai.knowledge.viewer.actionLoading')}>
-                  {[0, 1, 2].map((item) => <div key={item} className="animate-pulse rounded-2xl border border-slate-100 p-4 dark:border-slate-800"><div className="h-4 w-1/3 rounded bg-slate-100 dark:bg-slate-800" /><div className="mt-4 h-20 rounded-xl bg-slate-100 dark:bg-slate-800" /></div>)}
+                  {[0, 1, 2].map((item) => <div key={item} className="animate-pulse rounded-2xl border border-line p-4 "><div className="h-4 w-1/3 rounded bg-surface-muted " /><div className="mt-4 h-20 rounded-xl bg-surface-muted " /></div>)}
                 </div>
               ) : documentDetailError ? (
-                <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-300">
-                  <div className="flex items-start gap-3"><XCircle className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="font-semibold">{tx('ai.knowledge.error.documentLoad')}</p><p className="mt-1 text-xs leading-5 opacity-80">{documentDetailError}</p><button type="button" onClick={() => void openDocument(selectedDocument)} className="mt-3 rounded-lg bg-white/80 px-3 py-1.5 text-xs font-semibold dark:bg-rose-900/30">{tx('ai.knowledge.viewer.retry')}</button></div></div>
+                <div className="rounded-2xl border border-danger/30 bg-danger-subtle p-5 text-sm text-danger ">
+                  <div className="flex items-start gap-3"><XCircle className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="font-semibold">{tx('ai.knowledge.error.documentLoad')}</p><p className="mt-1 text-xs leading-5 opacity-80">{documentDetailError}</p><button type="button" onClick={() => void openDocument(selectedDocument)} className="mt-3 rounded-lg bg-surface px-3 py-1.5 text-xs font-semibold ">{tx('ai.knowledge.viewer.retry')}</button></div></div>
                 </div>
               ) : selectedDocument.chunks.length === 0 ? (
                 <div className="space-y-4">
                   <div className="grid gap-3 md:grid-cols-2">
-                    <section className="rounded-2xl border border-slate-200/90 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50">
-                      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{tx('ai.knowledge.viewer.rawSource')}</div>
-                      <div className="mt-2 text-xs font-medium text-slate-700 dark:text-slate-200">{selectedDocument.raw_source?.source || selectedDocument.source || tx('ai.knowledge.viewer.sourceNotRecorded')}</div>
+                    <section className="rounded-2xl border border-line bg-surface-muted p-4 ">
+                      <div className="text-xs font-semibold uppercase tracking-[0.12em] text-fg-subtle">{tx('ai.knowledge.viewer.rawSource')}</div>
+                      <div className="mt-2 text-xs font-medium text-fg ">{selectedDocument.raw_source?.source || selectedDocument.source || tx('ai.knowledge.viewer.sourceNotRecorded')}</div>
                     </section>
-                    <section className="rounded-2xl border border-slate-200/90 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50">
-                      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Version / Index</div>
-                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-700 dark:text-slate-200">
+                    <section className="rounded-2xl border border-line bg-surface-muted p-4 ">
+                      <div className="text-xs font-semibold uppercase tracking-[0.12em] text-fg-subtle">Version / Index</div>
+                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-fg ">
                         <span>{tx('ai.knowledge.viewer.documentVersion')}{selectedDocument.document_version || tx('ai.knowledge.status.notRecorded')}</span>
                         <span>{tx('ai.knowledge.viewer.indexVersion')}{selectedDocument.index_version || tx('ai.knowledge.status.notRecorded')}</span>
                         <span>{tx('ai.knowledge.viewer.parser')}{selectedDocument.parser_version || tx('ai.knowledge.status.notRecorded')}</span>
@@ -2585,22 +2812,22 @@ export const KnowledgeManagementTab: React.FC = () => {
                     </section>
                   </div>
                   {versionManagementPanel}
-                  {selectedDocument.original_content && <details className="rounded-2xl border border-slate-200/90 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950/40"><summary className="cursor-pointer px-4 py-3 text-xs font-semibold text-slate-700 dark:text-slate-200">{tx('ai.knowledge.viewer.original')}</summary><pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words border-t border-slate-100 px-4 py-4 font-mono text-xs leading-6 text-slate-700 dark:border-slate-800 dark:text-slate-300">{selectedDocument.original_content}</pre></details>}
-                  <div className="rounded-2xl border border-dashed border-slate-300 px-5 py-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">{tx('ai.knowledge.viewer.noChunksTitle')}</div>
+                  {selectedDocument.original_content && <details className="rounded-2xl border border-line bg-surface shadow-sm "><summary className="cursor-pointer px-4 py-3 text-xs font-semibold text-fg ">{tx('ai.knowledge.viewer.original')}</summary><pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words border-t border-line px-4 py-4 font-mono text-xs leading-6 text-fg ">{selectedDocument.original_content}</pre></details>}
+                  <EmptyState className="py-8" icon={Layers} title={tx('ai.knowledge.viewer.noChunksTitle')} description={copy.noChunksBody} />
                 </div>
               ) : (
                 <div className="space-y-4">
                   <div className="grid gap-3 md:grid-cols-2">
-                    <section className="rounded-2xl border border-slate-200/90 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50">
-                      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{tx('ai.knowledge.viewer.rawSource')}</div>
-                      <div className="mt-2 text-xs font-medium text-slate-700 dark:text-slate-200">{selectedDocument.raw_source?.source || selectedDocument.source || tx('ai.knowledge.viewer.sourceNotRecorded')}</div>
+                    <section className="rounded-2xl border border-line bg-surface-muted p-4 ">
+                      <div className="text-xs font-semibold uppercase tracking-[0.12em] text-fg-subtle">{tx('ai.knowledge.viewer.rawSource')}</div>
+                      <div className="mt-2 text-xs font-medium text-fg ">{selectedDocument.raw_source?.source || selectedDocument.source || tx('ai.knowledge.viewer.sourceNotRecorded')}</div>
                       {selectedDocument.raw_source?.references?.map((reference, index) => (
-                        <div key={`${String(reference.source_registry_id || 'source')}-${index}`} className="mt-1 truncate text-[10px] text-slate-500 dark:text-slate-400" title={String(reference.canonical_url || '')}>{String(reference.canonical_url || reference.source_version_id || tx('ai.knowledge.viewer.sourceObservation'))}</div>
+                        <div key={`${String(reference.source_registry_id || 'source')}-${index}`} className="mt-1 truncate text-xs text-fg-muted " title={String(reference.canonical_url || '')}>{String(reference.canonical_url || reference.source_version_id || tx('ai.knowledge.viewer.sourceObservation'))}</div>
                       ))}
                     </section>
-                    <section className="rounded-2xl border border-slate-200/90 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50">
-                      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Version / Index</div>
-                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-700 dark:text-slate-200">
+                    <section className="rounded-2xl border border-line bg-surface-muted p-4 ">
+                      <div className="text-xs font-semibold uppercase tracking-[0.12em] text-fg-subtle">Version / Index</div>
+                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-fg ">
                         <span>{tx('ai.knowledge.viewer.documentVersion')}{selectedDocument.document_version || tx('ai.knowledge.status.notRecorded')}</span>
                         <span>{tx('ai.knowledge.viewer.indexVersion')}{selectedDocument.index_version || tx('ai.knowledge.status.notRecorded')}</span>
                         <span>{tx('ai.knowledge.viewer.parser')}{selectedDocument.parser_version || tx('ai.knowledge.status.notRecorded')}</span>
@@ -2610,57 +2837,57 @@ export const KnowledgeManagementTab: React.FC = () => {
                   </div>
                   {versionManagementPanel}
                   {selectedDocument.original_content && (
-                    <details className="rounded-2xl border border-slate-200/90 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950/40">
-                      <summary className="cursor-pointer px-4 py-3 text-xs font-semibold text-slate-700 dark:text-slate-200">{tx('ai.knowledge.viewer.original')}</summary>
-                      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words border-t border-slate-100 px-4 py-4 font-mono text-xs leading-6 text-slate-700 dark:border-slate-800 dark:text-slate-300">{selectedDocument.original_content}</pre>
+                    <details className="rounded-2xl border border-line bg-surface shadow-sm ">
+                      <summary className="cursor-pointer px-4 py-3 text-xs font-semibold text-fg ">{tx('ai.knowledge.viewer.original')}</summary>
+                      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words border-t border-line px-4 py-4 font-mono text-xs leading-6 text-fg ">{selectedDocument.original_content}</pre>
                     </details>
                   )}
-                  <div className="flex items-center gap-2 rounded-2xl border border-indigo-100 bg-indigo-50/60 px-4 py-3 text-xs leading-5 text-indigo-900/70 dark:border-indigo-900/60 dark:bg-indigo-950/20 dark:text-indigo-200/70"><Info className="h-4 w-4 shrink-0 text-indigo-500" />{tx('ai.knowledge.viewer.chunkInfo')}</div>
+                  <div className="flex items-center gap-2 rounded-2xl border border-accent/30 bg-accent-subtle px-4 py-3 text-xs leading-5 text-fg "><Info className="h-4 w-4 shrink-0 text-accent" />{tx('ai.knowledge.viewer.chunkInfo')}</div>
                   {selectedDocument.chunks.map((chunk, index) => (
-                    <section key={chunk.id} className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950/40">
-                      <div className="flex items-start gap-3 border-b border-slate-100 bg-slate-50/80 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/70">
-                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-[11px] font-bold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">{String(chunk.page || index + 1).padStart(2, '0')}</span>
+                    <section key={chunk.id} className="overflow-hidden rounded-2xl border border-line bg-surface shadow-sm ">
+                      <div className="flex items-start gap-3 border-b border-line bg-surface-muted px-4 py-3 ">
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-accent-subtle text-[11px] font-bold text-accent ">{String(chunk.page || index + 1).padStart(2, '0')}</span>
                         <div className="min-w-0">
-                          <h3 className="truncate text-sm font-bold text-slate-800 dark:text-slate-100">{chunk.section || 'General Overview'}</h3>
-                          <p className="mt-0.5 text-[10px] uppercase tracking-[0.12em] text-slate-400">{tx('ai.knowledge.viewer.chunkHeading', { index: index + 1, ordinal: chunk.ordinal ?? index })}</p>
+                          <h3 className="truncate text-sm font-bold text-fg ">{chunk.section || 'General Overview'}</h3>
+                          <p className="mt-0.5 text-xs uppercase tracking-[0.12em] text-fg-subtle">{tx('ai.knowledge.viewer.chunkHeading', { index: index + 1, ordinal: chunk.ordinal ?? index })}</p>
                         </div>
-                        <div className="ml-auto flex shrink-0 flex-wrap justify-end gap-1 text-[10px]">
-                          {chunk.chunk_role && <span className="rounded-full bg-indigo-100 px-2 py-0.5 font-medium text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">{chunk.chunk_role}</span>}
-                          {chunk.chunk_type && <span className="rounded-full bg-slate-200 px-2 py-0.5 font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">{chunk.chunk_type}</span>}
+                        <div className="ml-auto flex shrink-0 flex-wrap justify-end gap-1 text-xs">
+                          {chunk.chunk_role && <StatusBadge tone="accent">{chunk.chunk_role}</StatusBadge>}
+                          {chunk.chunk_type && <StatusBadge>{chunk.chunk_type}</StatusBadge>}
                         </div>
                       </div>
-                      <pre className="whitespace-pre-wrap break-words px-4 py-4 font-mono text-xs leading-6 text-slate-700 dark:text-slate-300">{chunk.content}</pre>
-                      <div className="grid gap-2 border-t border-slate-100 bg-slate-50/50 px-4 py-3 text-[10px] dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2">
-                        <div className="flex flex-wrap items-center gap-1.5 text-slate-500 dark:text-slate-400">
-                          <span className="font-semibold text-slate-600 dark:text-slate-300">{tx('ai.knowledge.viewer.retrievable')}</span>{chunk.is_retrieval_candidate === false ? tx('ai.knowledge.viewer.retrievalNo') : tx('ai.knowledge.viewer.retrievalYes')}
-                          <span className="ml-2 font-semibold text-slate-600 dark:text-slate-300">{tx('ai.knowledge.viewer.token')}</span>{chunk.token_count ?? 0}
+                      <pre className="whitespace-pre-wrap break-words px-4 py-4 font-mono text-xs leading-6 text-fg ">{chunk.content}</pre>
+                      <div className="grid gap-2 border-t border-line bg-surface-muted px-4 py-3 text-xs sm:grid-cols-2">
+                        <div className="flex flex-wrap items-center gap-1.5 text-fg-muted ">
+                          <span className="font-semibold text-fg-muted ">{tx('ai.knowledge.viewer.retrievable')}</span>{chunk.is_retrieval_candidate === false ? tx('ai.knowledge.viewer.retrievalNo') : tx('ai.knowledge.viewer.retrievalYes')}
+                          <span className="ml-2 font-semibold text-fg-muted ">{tx('ai.knowledge.viewer.token')}</span>{chunk.token_count ?? 0}
                           {chunk.content_hash && <span className="ml-2 font-mono" title={chunk.content_hash}>{tx('ai.knowledge.viewer.hash', { value: chunk.content_hash.slice(0, 10) })}</span>}
                         </div>
-                        <div className="text-right text-slate-400">{chunk.chunking_version || tx('ai.knowledge.viewer.chunkerNotRecorded')} · {chunk.parser_version || selectedDocument.parser_version || tx('ai.knowledge.viewer.parserNotRecorded')}</div>
+                        <div className="text-right text-fg-subtle">{chunk.chunking_version || tx('ai.knowledge.viewer.chunkerNotRecorded')} · {chunk.parser_version || selectedDocument.parser_version || tx('ai.knowledge.viewer.parserNotRecorded')}</div>
                       </div>
                       {(chunk.parent_chunk || (chunk.neighbors && chunk.neighbors.length > 0)) && (
-                        <div className="space-y-2 border-t border-slate-100 px-4 py-3 dark:border-slate-800">
+                        <div className="space-y-2 border-t border-line px-4 py-3 ">
                           {chunk.parent_chunk && (
-                            <details className="rounded-xl border border-amber-200/80 bg-amber-50/50 px-3 py-2 dark:border-amber-900/60 dark:bg-amber-950/20">
-                              <summary className="cursor-pointer text-[10px] font-semibold text-amber-800 dark:text-amber-200">{tx('ai.knowledge.viewer.parent', { name: chunk.parent_chunk.section || chunk.parent_chunk.id })}</summary>
-                              <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap break-words border-t border-amber-200/60 pt-2 font-mono text-[10px] leading-5 text-amber-900/80 dark:border-amber-900/50 dark:text-amber-100/80">{chunk.parent_chunk.content || tx('ai.knowledge.viewer.parentEmpty')}</pre>
+                            <details className="rounded-xl border border-warning/30 bg-warning-subtle px-3 py-2 ">
+                              <summary className="cursor-pointer text-xs font-semibold text-warning ">{tx('ai.knowledge.viewer.parent', { name: chunk.parent_chunk.section || chunk.parent_chunk.id })}</summary>
+                              <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap break-words border-t border-warning/30 pt-2 font-mono text-xs leading-5 text-warning ">{chunk.parent_chunk.content || tx('ai.knowledge.viewer.parentEmpty')}</pre>
                             </details>
                           )}
                           {chunk.neighbors && chunk.neighbors.length > 0 && (
-                            <details className="rounded-xl border border-sky-200/80 bg-sky-50/50 px-3 py-2 dark:border-sky-900/60 dark:bg-sky-950/20">
-                              <summary className="cursor-pointer text-[10px] font-semibold text-sky-800 dark:text-sky-200">{tx('ai.knowledge.viewer.neighbors', { count: chunk.neighbors.length })}</summary>
-                              <div className="mt-2 space-y-2 border-t border-sky-200/60 pt-2 dark:border-sky-900/50">
-                                {chunk.neighbors.map((neighbor) => <div key={neighbor.id} className="rounded-lg bg-white/70 p-2 dark:bg-slate-950/40"><div className="font-semibold text-[10px] text-sky-800 dark:text-sky-200">{tx('ai.knowledge.viewer.ordinal', { name: neighbor.section || neighbor.id, ordinal: neighbor.ordinal ?? '—' })}</div><pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-5 text-slate-600 dark:text-slate-300">{neighbor.content || tx('ai.knowledge.viewer.neighborEmpty')}</pre></div>)}
+                            <details className="rounded-xl border border-accent/30 bg-accent-subtle px-3 py-2 ">
+                              <summary className="cursor-pointer text-xs font-semibold text-accent ">{tx('ai.knowledge.viewer.neighbors', { count: chunk.neighbors.length })}</summary>
+                              <div className="mt-2 space-y-2 border-t border-accent/30 pt-2 ">
+                                {chunk.neighbors.map((neighbor) => <div key={neighbor.id} className="rounded-lg bg-surface p-2 "><div className="font-semibold text-xs text-accent ">{tx('ai.knowledge.viewer.ordinal', { name: neighbor.section || neighbor.id, ordinal: neighbor.ordinal ?? '—' })}</div><pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-5 text-fg-muted ">{neighbor.content || tx('ai.knowledge.viewer.neighborEmpty')}</pre></div>)}
                               </div>
                             </details>
                           )}
                         </div>
                       )}
-                      <details className="border-t border-slate-100 px-4 py-3 dark:border-slate-800">
-                        <summary className="cursor-pointer text-[10px] font-semibold text-slate-600 dark:text-slate-300">{tx('ai.knowledge.viewer.metadataFields')}</summary>
-                        <div className="mt-2 grid gap-3 border-t border-slate-100 pt-2 dark:border-slate-800 sm:grid-cols-2">
-                          <div><div className="mb-1 text-[10px] font-semibold text-slate-400">{tx('ai.knowledge.viewer.metadata')}</div><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950/[0.03] p-2 font-mono text-[10px] leading-5 text-slate-600 dark:bg-white/[0.04] dark:text-slate-300">{JSON.stringify(chunk.metadata || {}, null, 2)}</pre></div>
-                          <div><div className="mb-1 text-[10px] font-semibold text-slate-400">{tx('ai.knowledge.viewer.sourceLocator')}</div><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950/[0.03] p-2 font-mono text-[10px] leading-5 text-slate-600 dark:bg-white/[0.04] dark:text-slate-300">{JSON.stringify(chunk.source_locator || {}, null, 2)}</pre><div className="mt-2 text-[10px] text-slate-400">{tx('ai.knowledge.viewer.documentIndex', { document: chunk.document_version || selectedDocument.document_version || tx('ai.knowledge.status.notRecorded'), index: chunk.index_version || selectedDocument.index_version || tx('ai.knowledge.status.notRecorded') })}</div></div>
+                      <details className="border-t border-line px-4 py-3 ">
+                        <summary className="cursor-pointer text-xs font-semibold text-fg-muted ">{tx('ai.knowledge.viewer.metadataFields')}</summary>
+                        <div className="mt-2 grid gap-3 border-t border-line pt-2 sm:grid-cols-2">
+                          <div><div className="mb-1 text-xs font-semibold text-fg-subtle">{tx('ai.knowledge.viewer.metadata')}</div><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950/[0.03] p-2 font-mono text-xs leading-5 text-fg-muted dark:bg-white/[0.04] ">{JSON.stringify(chunk.metadata || {}, null, 2)}</pre></div>
+                          <div><div className="mb-1 text-xs font-semibold text-fg-subtle">{tx('ai.knowledge.viewer.sourceLocator')}</div><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950/[0.03] p-2 font-mono text-xs leading-5 text-fg-muted dark:bg-white/[0.04] ">{JSON.stringify(chunk.source_locator || {}, null, 2)}</pre><div className="mt-2 text-xs text-fg-subtle">{tx('ai.knowledge.viewer.documentIndex', { document: chunk.document_version || selectedDocument.document_version || tx('ai.knowledge.status.notRecorded'), index: chunk.index_version || selectedDocument.index_version || tx('ai.knowledge.status.notRecorded') })}</div></div>
                         </div>
                       </details>
                     </section>
@@ -2669,19 +2896,19 @@ export const KnowledgeManagementTab: React.FC = () => {
               )}
             </div>
 
-            <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-5 py-4 text-xs text-slate-400 dark:border-slate-800 sm:px-7"><span className="inline-flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5" />{tx('ai.knowledge.viewer.indexedAt')}{new Date(selectedDocument.created_at).toLocaleString()}</span><button type="button" onClick={closeDocument} className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">{tx('ai.knowledge.viewer.close')}</button></div>
+            <div className="flex items-center justify-between gap-3 border-t border-line px-5 py-4 text-xs text-fg-subtle sm:px-7"><span className="inline-flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5" />{tx('ai.knowledge.viewer.indexedAt')}{new Date(selectedDocument.created_at).toLocaleString()}</span><button type="button" onClick={closeDocument} className="rounded-xl bg-surface-muted px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface-emphasis ">{tx('ai.knowledge.viewer.close')}</button></div>
           </aside>
         </div>
       )}
 
       {pendingDocumentAction && (
         <div ref={documentActionDialogRef} className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-labelledby="knowledge-action-impact-title" tabIndex={-1}>
-          <div className="w-full max-w-xl rounded-2xl border border-rose-200 bg-white p-5 shadow-2xl dark:border-rose-900/60 dark:bg-slate-900">
+          <div className="w-full max-w-xl rounded-2xl border border-danger/30 bg-surface p-5 shadow-2xl ">
             <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300"><AlertTriangle className="h-5 w-5" /></div>
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-danger-subtle text-danger "><AlertTriangle className="h-5 w-5" /></div>
               <div className="min-w-0">
-                <h3 id="knowledge-action-impact-title" className="text-base font-bold text-slate-950 dark:text-white">{tx('ai.knowledge.danger.title')}</h3>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{tx('ai.knowledge.danger.before', { action: documentActionLabels[pendingDocumentAction.action], name: pendingDocumentAction.preview.name })}</p>
+                <h3 id="knowledge-action-impact-title" className="text-base font-bold text-fg ">{tx('ai.knowledge.danger.title')}</h3>
+                <p className="mt-1 text-xs text-fg-muted ">{tx('ai.knowledge.danger.before', { action: documentActionLabels[pendingDocumentAction.action], name: pendingDocumentAction.preview.name })}</p>
               </div>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -2691,26 +2918,26 @@ export const KnowledgeManagementTab: React.FC = () => {
                 [tx('ai.knowledge.danger.indexes'), pendingDocumentAction.preview.impact.indexes],
                 [tx('ai.knowledge.danger.references'), pendingDocumentAction.preview.impact.references],
               ] as const).map(([label, value]) => (
-                <div key={label} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-950/50">
-                  <div className="text-[10px] text-slate-400">{label}</div>
-                  <div className="mt-1 font-mono text-lg font-bold text-slate-900 dark:text-white">{value}</div>
+                <div key={label} className="rounded-xl border border-line bg-surface-muted px-3 py-2 ">
+                  <div className="text-xs text-fg-subtle">{label}</div>
+                  <div className="mt-1 font-mono text-lg font-bold text-fg ">{value}</div>
                 </div>
               ))}
             </div>
             {pendingDocumentAction.preview.impact.reference_details && pendingDocumentAction.preview.impact.reference_details.length > 0 && (
-              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-200">
+              <div className="mt-3 rounded-xl border border-warning/30 bg-warning-subtle px-3 py-2 text-[11px] text-warning ">
                 {tx('ai.knowledge.danger.referenceDetails')}{pendingDocumentAction.preview.impact.reference_details.map((item) => `${item.type} ${item.count}`).join(tx('ai.knowledge.danger.referenceSeparator'))}
               </div>
             )}
-            <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/70 px-3 py-2 text-[11px] leading-5 text-indigo-900 dark:border-indigo-900/60 dark:bg-indigo-950/25 dark:text-indigo-200">
+            <div className="mt-3 rounded-xl border border-accent/30 bg-accent-subtle px-3 py-2 text-[11px] leading-5 text-fg ">
               <span className="font-semibold">{tx('ai.knowledge.danger.recovery')}</span>{pendingDocumentAction.preview.recovery[pendingDocumentAction.action] || tx('ai.knowledge.danger.defaultRecovery')}
             </div>
-            <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] leading-5 text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/25 dark:text-rose-200">
+            <div className="mt-3 rounded-xl border border-danger/30 bg-danger-subtle px-3 py-2 text-[11px] leading-5 text-danger ">
               {pendingDocumentAction.action === 'delete' ? tx('ai.knowledge.danger.deleteWarning') : tx('ai.knowledge.danger.taskWarning')}
             </div>
             <div className="mt-5 flex justify-end gap-2">
-              <button type="button" data-knowledge-action-cancel onClick={() => setPendingDocumentAction(null)} disabled={Boolean(documentActionBusy)} className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-800">{tx('ai.knowledge.danger.cancel')}</button>
-              <button type="button" onClick={() => void confirmDocumentAction()} disabled={Boolean(documentActionBusy)} className="rounded-xl bg-rose-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-rose-700 disabled:cursor-wait disabled:opacity-50">{tx('ai.knowledge.danger.confirm', { action: documentActionLabels[pendingDocumentAction.action] })}</button>
+              <button type="button" data-knowledge-action-cancel onClick={() => setPendingDocumentAction(null)} disabled={Boolean(documentActionBusy)} className="rounded-xl px-4 py-2 text-xs font-semibold text-fg-muted transition hover:bg-surface-muted disabled:opacity-40 ">{tx('ai.knowledge.danger.cancel')}</button>
+              <button type="button" onClick={() => void confirmDocumentAction()} disabled={Boolean(documentActionBusy)} className="rounded-xl bg-danger px-4 py-2 text-xs font-semibold text-white transition hover:bg-danger disabled:cursor-wait disabled:opacity-50">{tx('ai.knowledge.danger.confirm', { action: documentActionLabels[pendingDocumentAction.action] })}</button>
             </div>
           </div>
         </div>
@@ -2719,20 +2946,20 @@ export const KnowledgeManagementTab: React.FC = () => {
       {/* Upload File & Create Document Modal */}
       {showModal && (
         <div ref={uploadDialogRef} className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="knowledge-upload-title" tabIndex={-1}>
-          <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-700 pb-3">
-              <h3 id="knowledge-upload-title" className="text-base font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                <UploadCloud className="w-5 h-5 text-indigo-500" />
+          <div className="bg-surface rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-line pb-3">
+              <h3 id="knowledge-upload-title" className="text-base font-bold text-fg flex items-center gap-2">
+                <UploadCloud className="w-5 h-5 text-accent" />
                 {tx('ai.knowledge.upload.title')}
               </h3>
               <div className="flex items-center gap-2">
-                <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-700 p-1 rounded-xl text-xs font-semibold">
+                <div className="flex items-center gap-1 bg-surface-muted p-1 rounded-xl text-xs font-semibold">
                   <button
                     type="button"
                     onClick={() => setInputMode('upload')}
                     aria-pressed={inputMode === 'upload'}
                     className={`px-3 py-1 rounded-lg transition cursor-pointer ${
-                      inputMode === 'upload' ? 'bg-white dark:bg-gray-800 text-indigo-600 dark:text-indigo-400 shadow-2xs' : 'text-gray-500'
+ inputMode === 'upload' ? 'bg-surface text-accent shadow-2xs' : 'text-fg-muted'
                     }`}
                   >
                     📁 {tx('ai.knowledge.upload.batch')}
@@ -2742,7 +2969,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                     onClick={() => setInputMode('paste')}
                     aria-pressed={inputMode === 'paste'}
                     className={`px-3 py-1 rounded-lg transition cursor-pointer ${
-                      inputMode === 'paste' ? 'bg-white dark:bg-gray-800 text-indigo-600 dark:text-indigo-400 shadow-2xs' : 'text-gray-500'
+ inputMode === 'paste' ? 'bg-surface text-accent shadow-2xs' : 'text-fg-muted'
                     }`}
                   >
                     📝 {tx('ai.knowledge.upload.manual')}
@@ -2755,7 +2982,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                   data-knowledge-upload-close
                   aria-label={tx('ai.knowledge.upload.close')}
                   title={tx('ai.knowledge.upload.close')}
-                  className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40"
+                  className="p-1.5 text-fg-subtle hover:text-fg rounded-lg hover:bg-surface-muted disabled:opacity-40"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -2763,9 +2990,9 @@ export const KnowledgeManagementTab: React.FC = () => {
             </div>
 
             <div className={`rounded-xl px-3 py-2 text-[11px] ${
-              assetOptionsError || directoryVendorOptions.length === 0
-                ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300'
-                : 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/30 dark:text-indigo-300'
+ assetOptionsError || directoryVendorOptions.length === 0
+ ? 'bg-warning-subtle text-warning '
+                : 'bg-accent-subtle text-accent '
             }`}>
               {assetOptionsLoading
                 ? tx('ai.knowledge.upload.assetSyncing')
@@ -2786,11 +3013,11 @@ export const KnowledgeManagementTab: React.FC = () => {
                   onDrop={handleDrop}
                   onClick={() => fileInputRef.current?.click()}
                   className={`border-2 border-dashed rounded-2xl p-6 text-center transition cursor-pointer ${
-                    isDragOver
-                      ? 'border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/40'
+ isDragOver
+ ? 'border-accent bg-accent-subtle '
                       : fileQueue.length > 0
-                      ? 'border-emerald-400 bg-emerald-50/30 dark:bg-emerald-950/20'
-                      : 'border-gray-300 dark:border-gray-600 hover:border-indigo-400 bg-gray-50/50 dark:bg-gray-900/50'
+                      ? 'border-success bg-success-subtle '
+                      : 'border-line-strong hover:border-accent bg-surface-muted '
                   }`}
                 >
                   <input
@@ -2804,13 +3031,13 @@ export const KnowledgeManagementTab: React.FC = () => {
 
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-center gap-3">
-                      <UploadCloud className="w-7 h-7 text-indigo-500" />
-                      <Archive className="w-6 h-6 text-amber-500" />
+                      <UploadCloud className="w-7 h-7 text-accent" />
+                      <Archive className="w-6 h-6 text-warning" />
                     </div>
-                    <div className="text-xs font-semibold text-gray-800 dark:text-gray-200">
+                    <div className="text-xs font-semibold text-fg ">
                       {tx('ai.knowledge.upload.chooseFiles')}
                     </div>
-                    <div className="text-[11px] text-gray-400 space-y-0.5">
+                    <div className="text-[11px] text-fg-subtle space-y-0.5">
                       <div>
                         {tx('ai.knowledge.upload.textFormatsFull')}
                       </div>
@@ -2823,7 +3050,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                       <div>
                         {tx('ai.knowledge.upload.binaryFull')}
                       </div>
-                      <div className="pt-1 text-indigo-500 dark:text-indigo-300">
+                      <div className="pt-1 text-accent ">
                         {tx('ai.knowledge.upload.restoreNote')}
                       </div>
                     </div>
@@ -2833,7 +3060,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                 {/* Metadata selectors (shared for all files in batch) */}
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.knowledge.upload.category')}</label>
+                    <label className="block text-xs font-medium text-fg mb-1">{tx('ai.knowledge.upload.category')}</label>
                     <DirectoryTreePicker
                       nodes={directoryTree}
                       selectedPath={knowledgeDirectory}
@@ -2850,11 +3077,11 @@ export const KnowledgeManagementTab: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.knowledge.upload.source')}</label>
+                    <label className="block text-xs font-medium text-fg mb-1">{tx('ai.knowledge.upload.source')}</label>
                     <select
                       value={sourceType}
                       onChange={(e) => setSourceType(e.target.value)}
-                      className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white"
+                      className="w-full px-3 py-2 text-xs border border-line-strong rounded-xl "
                     >
                       <option value="internal_sop">{tx('ai.knowledge.upload.source.internalSop')}</option>
                       <option value="internal_standard">{tx('ai.knowledge.upload.source.internalStandard')}</option>
@@ -2864,7 +3091,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.knowledge.upload.vendor')}</label>
+                    <label className="block text-xs font-medium text-fg mb-1">{tx('ai.knowledge.upload.vendor')}</label>
                     <select
                       value={vendor}
                       onChange={(e) => {
@@ -2874,7 +3101,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                         setPlatform(nextOption?.platforms[0]?.value || '');
                       }}
                       disabled={assetOptionsLoading || directoryVendorOptions.length === 0}
-                      className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white"
+                      className="w-full px-3 py-2 text-xs border border-line-strong rounded-xl "
                     >
                       <option value="">{tx('ai.knowledge.upload.selectVendor')}</option>
                       {directoryVendorOptions.map((item) => (
@@ -2884,12 +3111,12 @@ export const KnowledgeManagementTab: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.knowledge.upload.platform')}</label>
+                    <label className="block text-xs font-medium text-fg mb-1">{tx('ai.knowledge.upload.platform')}</label>
                     <select
                       value={platform}
                       onChange={(e) => setPlatform(e.target.value)}
                       disabled={assetOptionsLoading || !selectedVendorOption}
-                      className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white"
+                      className="w-full px-3 py-2 text-xs border border-line-strong rounded-xl "
                     >
                       <option value="">{tx('ai.knowledge.upload.selectPlatform')}</option>
                       {(selectedVendorOption?.platforms || []).map((item) => (
@@ -2899,31 +3126,31 @@ export const KnowledgeManagementTab: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-[11px] text-indigo-800 dark:border-indigo-900/60 dark:bg-indigo-950/20 dark:text-indigo-200">
+                <div className="rounded-xl border border-accent/30 bg-accent-subtle px-3 py-2 text-[11px] text-accent ">
                   {tx('ai.knowledge.upload.directoryPrefix')}<span className="font-mono font-semibold">{getDirectoryImportPath(knowledgeDirectory, vendor, language)}</span>
-                  <span className="ml-2 text-indigo-600/70 dark:text-indigo-300/70">{tx('ai.knowledge.upload.zipPathNote')}</span>
+                  <span className="ml-2 text-accent ">{tx('ai.knowledge.upload.zipPathNote')}</span>
                 </div>
 
                 {/* File Queue List */}
                 {fileQueue.length > 0 && (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">
-                        <FileUp className="w-4 h-4 text-indigo-500" />
+                      <div className="text-xs font-semibold text-fg flex items-center gap-2">
+                        <FileUp className="w-4 h-4 text-accent" />
                         {tx('ai.knowledge.upload.fileQueue')}
-                        <span className="text-[10px] font-mono text-gray-400">
+                        <span className="text-xs font-mono text-fg-subtle">
                           ({tx('ai.knowledge.upload.fileCount', { count: fileQueue.length, size: formatFileSize(totalQueueSize) })})
                         </span>
                       </div>
-                      <div className="flex items-center gap-3 text-[10px] font-mono">
-                        {pendingCount > 0 && <span className="text-blue-500">{tx('ai.knowledge.upload.pending', { count: pendingCount })}</span>}
-                        {doneCount > 0 && <span className="text-emerald-500">{tx('ai.knowledge.upload.done', { count: doneCount })}</span>}
-                        {errorCount > 0 && <span className="text-red-500">{tx('ai.knowledge.upload.failed', { count: errorCount })}</span>}
+                      <div className="flex items-center gap-3 text-xs font-mono">
+                        {pendingCount > 0 && <span className="text-accent">{tx('ai.knowledge.upload.pending', { count: pendingCount })}</span>}
+                        {doneCount > 0 && <span className="text-success">{tx('ai.knowledge.upload.done', { count: doneCount })}</span>}
+                        {errorCount > 0 && <span className="text-danger">{tx('ai.knowledge.upload.failed', { count: errorCount })}</span>}
                         <button
                           type="button"
                           onClick={clearQueue}
                           disabled={batchSubmitting}
-                          className="text-gray-400 hover:text-red-500 transition cursor-pointer disabled:opacity-40"
+                          className="text-fg-subtle hover:text-danger transition cursor-pointer disabled:opacity-40"
                         >
                           {tx('ai.knowledge.upload.clearQueue')}
                         </button>
@@ -2937,39 +3164,39 @@ export const KnowledgeManagementTab: React.FC = () => {
                         <div
                           key={item.id}
                           className={`flex items-center gap-3 px-3 py-2 rounded-xl text-xs transition ${
-                            item.status === 'done'
-                              ? 'bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200/60 dark:border-emerald-800/60'
+ item.status === 'done'
+                              ? 'bg-success-subtle border border-success/30 '
                               : item.status === 'error'
-                              ? 'bg-red-50 dark:bg-red-950/30 border border-red-200/60 dark:border-red-800/60'
+                              ? 'bg-danger-subtle border border-danger/30 '
                               : item.status === 'indexing'
-                              ? 'bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200/60 dark:border-indigo-800/60'
-                              : 'bg-gray-50 dark:bg-gray-900/50 border border-gray-200/60 dark:border-gray-700/60'
+                              ? 'bg-accent-subtle border border-accent/30 '
+                              : 'bg-surface-muted border border-line '
                           }`}
                         >
                           {/* Status icon */}
                           <div className="flex-shrink-0">
-                            {item.status === 'done' && <CheckCircle className="w-4 h-4 text-emerald-500" />}
-                            {item.status === 'error' && <XCircle className="w-4 h-4 text-red-500" />}
-                            {item.status === 'indexing' && <Loader2 className="w-4 h-4 text-indigo-500 animate-spin" />}
-                            {item.status === 'pending' && <FileText className="w-4 h-4 text-gray-400" />}
+                            {item.status === 'done' && <CheckCircle className="w-4 h-4 text-success" />}
+                            {item.status === 'error' && <XCircle className="w-4 h-4 text-danger" />}
+                            {item.status === 'indexing' && <Loader2 className="w-4 h-4 text-accent animate-spin" />}
+                            {item.status === 'pending' && <FileText className="w-4 h-4 text-fg-subtle" />}
                           </div>
 
                           {item.status === 'pending' && (
-                            <div className="w-full basis-full rounded-xl border border-slate-200 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/60">
-                              <div className="mb-1 flex items-center justify-between gap-2 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                            <div className="w-full basis-full rounded-xl border border-line bg-surface p-2 ">
+                              <div className="mb-1 flex items-center justify-between gap-2 text-xs font-semibold text-fg-muted ">
                                 <span>{tx('ai.knowledge.upload.preview')}</span>
-                                <span className={metadata.validation === 'error' ? 'text-rose-600' : metadata.validation === 'warning' ? 'text-amber-600' : 'text-emerald-600'}>{metadata.validation === 'error' ? tx('ai.knowledge.upload.metadata.needsFix') : metadata.validation === 'warning' ? tx('ai.knowledge.upload.metadata.confirm') : tx('ai.knowledge.upload.metadata.ready')}</span>
+                                <span className={metadata.validation === 'error' ? 'text-danger' : metadata.validation === 'warning' ? 'text-warning' : 'text-success'}>{metadata.validation === 'error' ? tx('ai.knowledge.upload.metadata.needsFix') : metadata.validation === 'warning' ? tx('ai.knowledge.upload.metadata.confirm') : tx('ai.knowledge.upload.metadata.ready')}</span>
                               </div>
                               <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
-                                <select value={metadata.vendor} onChange={(event) => updateQueueMetadata(item.id, 'vendor', event.target.value)} className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[10px] dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" aria-label={`${item.fileName} Vendor Metadata`}>
+                                <select value={metadata.vendor} onChange={(event) => updateQueueMetadata(item.id, 'vendor', event.target.value)} className="rounded-lg border border-line bg-surface-muted px-2 py-1.5 text-xs " aria-label={`${item.fileName} Vendor Metadata`}>
                                   <option value="">Vendor</option>
                                   {directoryVendorOptions.map((option) => <option key={option.value} value={option.value}>{option.value}</option>)}
                                 </select>
-                                <select value={metadata.platform} onChange={(event) => updateQueueMetadata(item.id, 'platform', event.target.value)} className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[10px] dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" aria-label={`${item.fileName} Platform Metadata`}>
+                                <select value={metadata.platform} onChange={(event) => updateQueueMetadata(item.id, 'platform', event.target.value)} className="rounded-lg border border-line bg-surface-muted px-2 py-1.5 text-xs " aria-label={`${item.fileName} Platform Metadata`}>
                                   <option value="">CLI Platform</option>
                                   {(directoryVendorOptions.find((option) => option.value === metadata.vendor)?.platforms || []).map((option) => <option key={option.value} value={option.value}>{option.value}</option>)}
                                 </select>
-                                <select value={metadata.sourceType} onChange={(event) => updateQueueMetadata(item.id, 'sourceType', event.target.value)} className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[10px] dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" aria-label={`${item.fileName} source type Metadata`}>
+                                <select value={metadata.sourceType} onChange={(event) => updateQueueMetadata(item.id, 'sourceType', event.target.value)} className="rounded-lg border border-line bg-surface-muted px-2 py-1.5 text-xs " aria-label={`${item.fileName} source type Metadata`}>
                                   <option value="internal_sop">{tx('ai.knowledge.upload.source.internalSop')}</option>
                                   <option value="internal_standard">{tx('ai.knowledge.upload.source.internalStandard')}</option>
                                   <option value="case">{tx('ai.knowledge.upload.source.case')}</option>
@@ -2977,38 +3204,38 @@ export const KnowledgeManagementTab: React.FC = () => {
                                   <option value="user_document">{tx('ai.knowledge.upload.source.userDocument')}</option>
                                 </select>
                               </div>
-                              <div className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">{tx('ai.knowledge.upload.metadata.directory', { path: metadata.directoryPath, issue: metadata.issue ? ` · ${metadata.issue}` : '' })}</div>
+                              <div className="mt-1 text-xs text-fg-muted ">{tx('ai.knowledge.upload.metadata.directory', { path: metadata.directoryPath, issue: metadata.issue ? ` · ${metadata.issue}` : '' })}</div>
                             </div>
                           )}
 
                           {/* File info */}
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className="font-semibold text-gray-800 dark:text-gray-200 truncate">{item.fileName}</span>
-                              <span className="text-[10px] text-gray-400 font-mono flex-shrink-0">{formatFileSize(item.fileSize)}</span>
+                              <span className="font-semibold text-fg truncate">{item.fileName}</span>
+                              <span className="text-xs text-fg-subtle font-mono flex-shrink-0">{formatFileSize(item.fileSize)}</span>
                             </div>
                             {item.fromZip && (
-                              <div className="text-[10px] text-amber-500 flex items-center gap-1 mt-0.5">
+                              <div className="text-xs text-warning flex items-center gap-1 mt-0.5">
                                 <PackageOpen className="w-3 h-3" />
                                 {tx('ai.knowledge.upload.fromZip', { name: item.fromZip })}
                               </div>
                             )}
                             {item.relativePath && (
-                              <div className="text-[10px] text-indigo-500 truncate mt-0.5" title={item.relativePath}>
+                              <div className="text-xs text-accent truncate mt-0.5" title={item.relativePath}>
                                 {tx('ai.knowledge.upload.relativePath', { path: item.relativePath })}
                               </div>
                             )}
                             {item.error && (
-                              <div className="text-[10px] text-red-500 mt-0.5">{item.error}</div>
+                              <div className="text-xs text-danger mt-0.5">{item.error}</div>
                             )}
                           </div>
 
                           {/* Status label */}
-                          <div className="flex-shrink-0 text-[10px] font-mono">
-                            {item.status === 'pending' && <span className="text-blue-500">{tx('ai.knowledge.upload.queueStatus.pending')}</span>}
-                            {item.status === 'indexing' && <span className="text-indigo-500">{tx('ai.knowledge.upload.queueStatus.indexing')}</span>}
-                            {item.status === 'done' && <span className="text-emerald-500">{tx('ai.knowledge.upload.queueStatus.done')}</span>}
-                            {item.status === 'error' && <span className="text-red-500">{tx('ai.knowledge.upload.queueStatus.error')}</span>}
+                          <div className="flex-shrink-0 text-xs font-mono">
+                            {item.status === 'pending' && <span className="text-accent">{tx('ai.knowledge.upload.queueStatus.pending')}</span>}
+                            {item.status === 'indexing' && <span className="text-accent">{tx('ai.knowledge.upload.queueStatus.indexing')}</span>}
+                            {item.status === 'done' && <span className="text-success">{tx('ai.knowledge.upload.queueStatus.done')}</span>}
+                            {item.status === 'error' && <span className="text-danger">{tx('ai.knowledge.upload.queueStatus.error')}</span>}
                           </div>
 
                           {/* Remove button */}
@@ -3017,7 +3244,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                               type="button"
                               onClick={(e) => { e.stopPropagation(); removeFromQueue(item.id); }}
                               disabled={batchSubmitting}
-                              className="flex-shrink-0 p-1 text-gray-400 hover:text-red-500 transition cursor-pointer disabled:opacity-40"
+                              className="flex-shrink-0 p-1 text-fg-subtle hover:text-danger transition cursor-pointer disabled:opacity-40"
                             >
                               <X className="w-3.5 h-3.5" />
                             </button>
@@ -3029,17 +3256,17 @@ export const KnowledgeManagementTab: React.FC = () => {
 
                     {/* Batch progress bar */}
                     {batchSubmitting && (
-                      <div className="p-3 bg-indigo-50 dark:bg-indigo-950/30 rounded-xl border border-indigo-200/60 dark:border-indigo-800/60 space-y-2">
-                        <div className="flex items-center justify-between text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+                      <div className="p-3 bg-accent-subtle rounded-xl border border-accent/30 space-y-2">
+                        <div className="flex items-center justify-between text-xs font-semibold text-accent ">
                           <span className="flex items-center gap-2">
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
                             {tx('ai.knowledge.upload.parsing')}
                           </span>
                           <span className="font-mono">{batchProgress.done} / {batchProgress.total}</span>
                         </div>
-                        <div className="w-full bg-indigo-200 dark:bg-indigo-900 rounded-full h-1.5">
+                        <div className="w-full bg-accent-subtle rounded-full h-1.5">
                           <div
-                            className="bg-indigo-600 h-1.5 rounded-full transition-all duration-300"
+                            className="bg-accent h-1.5 rounded-full transition-all duration-300"
                             style={{ width: `${batchProgress.total > 0 ? (batchProgress.done / batchProgress.total) * 100 : 0}%` }}
                           />
                         </div>
@@ -3049,12 +3276,12 @@ export const KnowledgeManagementTab: React.FC = () => {
                 )}
 
                 {/* Action buttons */}
-                <div className="flex justify-end gap-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+                <div className="flex justify-end gap-3 pt-3 border-t border-line ">
                   <button
                     type="button"
                     onClick={closeModal}
                     disabled={batchSubmitting}
-                    className="px-4 py-2 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl cursor-pointer disabled:opacity-40"
+                    className="px-4 py-2 text-xs text-fg-muted hover:bg-surface-muted rounded-xl cursor-pointer disabled:opacity-40"
                   >
                     {tx('ai.knowledge.common.cancel')}
                   </button>
@@ -3062,7 +3289,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                     type="button"
                     onClick={handleBatchSubmit}
                     disabled={batchSubmitting || pendingCount === 0 || !vendor || !platform || assetOptionsLoading}
-                    className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold disabled:opacity-50 transition shadow-xs cursor-pointer flex items-center gap-2"
+                    className="px-5 py-2 bg-accent hover:bg-accent-hover text-white rounded-xl text-xs font-semibold disabled:opacity-50 transition shadow-xs cursor-pointer flex items-center gap-2"
                   >
                     {batchSubmitting ? (
                       <>
@@ -3084,20 +3311,20 @@ export const KnowledgeManagementTab: React.FC = () => {
             {inputMode === 'paste' && (
               <form onSubmit={handleCreateDocument} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.knowledge.upload.documentTitle')}</label>
+                  <label className="block text-xs font-medium text-fg mb-1">{tx('ai.knowledge.upload.documentTitle')}</label>
                   <input
                     type="text"
                     required
                     placeholder={tx('ai.knowledge.upload.documentTitlePlaceholder')}
                     value={docName}
                     onChange={(e) => setDocName(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white"
+                    className="w-full px-3 py-2 text-xs border border-line-strong rounded-xl "
                   />
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.knowledge.upload.category')}</label>
+                    <label className="block text-xs font-medium text-fg mb-1">{tx('ai.knowledge.upload.category')}</label>
                     <DirectoryTreePicker
                       nodes={directoryTree}
                       selectedPath={knowledgeDirectory}
@@ -3114,11 +3341,11 @@ export const KnowledgeManagementTab: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.knowledge.upload.source')}</label>
+                    <label className="block text-xs font-medium text-fg mb-1">{tx('ai.knowledge.upload.source')}</label>
                     <select
                       value={sourceType}
                       onChange={(e) => setSourceType(e.target.value)}
-                      className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white"
+                      className="w-full px-3 py-2 text-xs border border-line-strong rounded-xl "
                     >
                       <option value="internal_sop">{tx('ai.knowledge.upload.source.internalSop')}</option>
                       <option value="internal_standard">{tx('ai.knowledge.upload.source.internalStandard')}</option>
@@ -3128,7 +3355,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.knowledge.upload.vendor')}</label>
+                    <label className="block text-xs font-medium text-fg mb-1">{tx('ai.knowledge.upload.vendor')}</label>
                     <select
                       value={vendor}
                       onChange={(e) => {
@@ -3138,7 +3365,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                         setPlatform(nextOption?.platforms[0]?.value || '');
                       }}
                       disabled={assetOptionsLoading || directoryVendorOptions.length === 0}
-                      className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white"
+                      className="w-full px-3 py-2 text-xs border border-line-strong rounded-xl "
                     >
                       <option value="">{tx('ai.knowledge.upload.selectVendor')}</option>
                       {directoryVendorOptions.map((item) => (
@@ -3148,12 +3375,12 @@ export const KnowledgeManagementTab: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{tx('ai.knowledge.upload.platform')}</label>
+                    <label className="block text-xs font-medium text-fg mb-1">{tx('ai.knowledge.upload.platform')}</label>
                     <select
                       value={platform}
                       onChange={(e) => setPlatform(e.target.value)}
                       disabled={assetOptionsLoading || !selectedVendorOption}
-                      className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white"
+                      className="w-full px-3 py-2 text-xs border border-line-strong rounded-xl "
                     >
                       <option value="">{tx('ai.knowledge.upload.selectPlatform')}</option>
                       {(selectedVendorOption?.platforms || []).map((item) => (
@@ -3163,13 +3390,13 @@ export const KnowledgeManagementTab: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-[11px] text-indigo-800 dark:border-indigo-900/60 dark:bg-indigo-950/20 dark:text-indigo-200">
+                <div className="rounded-xl border border-accent/30 bg-accent-subtle px-3 py-2 text-[11px] text-accent ">
                   {tx('ai.knowledge.upload.directory')}<span className="font-mono font-semibold">{getDirectoryImportPath(knowledgeDirectory, vendor, language)}</span>
-                  <span className="ml-2 text-indigo-600/70 dark:text-indigo-300/70">{tx('ai.knowledge.upload.sourceNote')}</span>
+                  <span className="ml-2 text-accent ">{tx('ai.knowledge.upload.sourceNote')}</span>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-xs font-medium text-fg mb-1">
                     {tx('ai.knowledge.upload.contentPreview')}
                   </label>
                   <textarea
@@ -3178,14 +3405,14 @@ export const KnowledgeManagementTab: React.FC = () => {
                     placeholder={tx('ai.knowledge.upload.contentPlaceholder')}
                     value={content}
                     onChange={(e) => setContent(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white font-mono leading-relaxed"
+                    className="w-full px-3 py-2 text-xs border border-line-strong rounded-xl font-mono leading-relaxed"
                   />
                 </div>
 
                 {/* 6-Step Indexing Stepper */}
                 {submitting && (
-                  <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 space-y-2">
-                    <div className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 flex items-center justify-between">
+                  <div className="p-3 bg-surface-muted rounded-xl border border-line space-y-2">
+                    <div className="text-xs font-semibold text-accent flex items-center justify-between">
                       <span>{tx('ai.knowledge.upload.pipeline')}</span>
                       <span>{indexingStep} / 6</span>
                     </div>
@@ -3196,32 +3423,32 @@ export const KnowledgeManagementTab: React.FC = () => {
                           <div
                             key={idx}
                             className={`h-1.5 rounded-full transition-colors ${
-                              isCompleted ? 'bg-indigo-600' : 'bg-gray-200 dark:bg-gray-700'
+ isCompleted ? 'bg-accent' : 'bg-surface-emphasis '
                             }`}
                             title={stepLabel}
                           />
                         );
                       })}
                     </div>
-                    <div className="text-[11px] text-gray-500 font-mono text-center pt-1">
+                    <div className="text-[11px] text-fg-muted font-mono text-center pt-1">
                       {tx('ai.knowledge.upload.currentStage', { stage: pipelineSteps[Math.max(0, indexingStep - 1)] })}
                     </div>
                   </div>
                 )}
 
-                <div className="flex justify-end gap-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+                <div className="flex justify-end gap-3 pt-3 border-t border-line ">
                   <button
                     type="button"
                     onClick={closeModal}
                     disabled={submitting}
-                    className="px-4 py-2 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl cursor-pointer"
+                    className="px-4 py-2 text-xs text-fg-muted hover:bg-surface-muted rounded-xl cursor-pointer"
                   >
                     {tx('ai.knowledge.common.cancel')}
                   </button>
                   <button
                     type="submit"
                     disabled={submitting || !docName.trim() || !content.trim() || !vendor || !platform || assetOptionsLoading}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold disabled:opacity-50 transition shadow-xs cursor-pointer"
+                    className="px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-xl text-xs font-semibold disabled:opacity-50 transition shadow-xs cursor-pointer"
                   >
                     {submitting ? tx('ai.knowledge.ingestion.submitting') : tx('ai.knowledge.upload.parseIndex')}
                   </button>

@@ -21,6 +21,8 @@ const apiMocks = vi.hoisted(() => ({
   handoffCopilotCase: vi.fn(),
   createDiagnosticPlan: vi.fn(),
   runDiagnosticPlan: vi.fn(),
+  getCopilotTools: vi.fn().mockResolvedValue({ tools: [], mcp_endpoint: '/api/ai/assistant/mcp' }),
+  parseCopilotAttachment: vi.fn(),
 }));
 
 vi.mock('../../../api/ai', () => apiMocks);
@@ -73,6 +75,8 @@ describe('AssistantTab streaming render', () => {
 
     const user = userEvent.setup();
     render(<AssistantTab />);
+    // No configured model: the read-only header label falls back to the server default.
+    expect(screen.getByLabelText('当前模型').textContent).toContain('默认模型');
 
     const input = screen.getByPlaceholderText('询问 Nexora AI，或输入 / 使用快捷指令...');
     await user.type(input, 'OSPF 邻居为空怎么排查');
@@ -126,7 +130,8 @@ describe('AssistantTab streaming render', () => {
     expect(screen.queryByRole('button', { name: '重试本次问题' })).toBeNull();
     expect(screen.queryByRole('button', { name: '编辑并发送上一条问题' })).toBeNull();
     expect(screen.queryByRole('button', { name: '继续排查' })).toBeNull();
-    expect(screen.getByRole('button', { name: '复制全文' })).toBeTruthy();
+    // The action bar appears once the answer has finished streaming.
+    expect(await screen.findByRole('button', { name: '复制全文' })).toBeTruthy();
   });
 
   it('labels a grounded answer as local with zero model tokens', async () => {
@@ -152,8 +157,7 @@ describe('AssistantTab streaming render', () => {
     await user.click(screen.getByRole('button', { name: '发送' }));
 
     await waitFor(() => expect(screen.getByText('本地知识直出')).toBeTruthy());
-    expect(screen.getByText('未发生外部调用')).toBeTruthy();
-    expect(screen.getByText('模型 Token：输入 0 / 输出 0')).toBeTruthy();
+    expect(screen.queryByText('调试 Trace')).toBeNull();
   });
 
   it('labels a real provider answer with its actual DeepSeek route and usage', async () => {
@@ -201,13 +205,14 @@ describe('AssistantTab streaming render', () => {
 
     const user = userEvent.setup();
     render(<AssistantTab />);
+    // The header shows the current model read-only (the composer picks it).
+    await waitFor(() => expect(screen.getByLabelText('当前模型').textContent).toContain('DeepSeek Chat'));
+    expect(screen.queryByLabelText('选择模型')).toBeNull();
     await user.type(screen.getByPlaceholderText('询问 Nexora AI，或输入 / 使用快捷指令...'), '你是谁');
     await user.click(screen.getByRole('button', { name: '发送' }));
 
     await waitFor(() => expect(screen.getByText('DeepSeek 生成')).toBeTruthy());
-    expect(screen.getByText('已通过安全网关调用外部模型')).toBeTruthy();
-    expect(screen.getByText('实际模型：DeepSeek · deepseek-chat')).toBeTruthy();
-    expect(screen.getByText('实际 Token：输入 18 / 输出 7')).toBeTruthy();
+    expect(screen.queryByText('调试 Trace')).toBeNull();
   });
 
   it('shows an actionable message when the selected provider is unavailable', async () => {

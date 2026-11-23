@@ -211,6 +211,42 @@ describe('ModelManagementTab browser key paths', () => {
     expect(deleteModel).not.toHaveBeenCalled();
   });
 
+  it('shows the page header, summary bar and health badges in the redesigned layout', async () => {
+    render(<ModelManagementTab />);
+    await screen.findAllByText('DeepSeek V4 Flash');
+
+    expect(screen.getByRole('heading', { level: 2, name: /AI Model 模型管理/ })).toBeTruthy();
+    const summary = screen.getByLabelText('模型概况');
+    expect(summary.textContent).toContain('个模型');
+    expect(summary.textContent).toContain('已启用');
+    expect(summary.textContent).toContain('0/12');
+    // Capability flags are shown as compact badges in one column.
+    expect(screen.getAllByText('流式').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('JSON').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('shows an empty state instead of an empty table when there are no models', async () => {
+    getModels.mockResolvedValueOnce([]);
+    render(<ModelManagementTab />);
+
+    expect(await screen.findByText('还没有模型')).toBeTruthy();
+    expect(screen.queryByRole('table')).toBeNull();
+    // Only the header action creates a model, so the button name stays unique.
+    expect(screen.getAllByRole('button', { name: '添加 Model' })).toHaveLength(1);
+  });
+
+  it('offers a clear-filters action once a filter is applied', async () => {
+    const user = userEvent.setup();
+    render(<ModelManagementTab />);
+    await screen.findAllByText('DeepSeek V4 Flash');
+
+    expect(screen.queryByRole('button', { name: '清除筛选' })).toBeNull();
+    await user.type(screen.getByRole('searchbox', { name: '搜索模型' }), 'no-such-model');
+    expect(await screen.findByText('没有符合筛选条件的模型。')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '清除筛选' }));
+    expect((await screen.findAllByText('DeepSeek V4 Flash')).length).toBeGreaterThanOrEqual(1);
+  });
+
   it('cancels deletion safely when the usage preview is unavailable', async () => {
     getDeletePreview.mockRejectedValueOnce(new Error('preview unavailable'));
     const user = userEvent.setup();

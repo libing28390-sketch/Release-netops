@@ -10,12 +10,30 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+# Shared with the gateway classifier so that offline metrics and runtime
+# detection use one rule set (batch 6).  classification does not import any
+# ai.services module, so this cannot create an import cycle.
+from ai.security.classification import PROMPT_INJECTION_ZH_RE, iter_cn_secret_assignments
+
+
+class _ChineseSecretAssignment:
+    """``.search`` adapter over the classifier's Chinese credential rule.
+
+    The raw CN_SECRET_ASSIGNMENT_RE also matches password-policy prose such as
+    "密码长度为8-16位"; the classifier filters those values, so use it.
+    """
+
+    @staticmethod
+    def search(text: str):
+        return next(iter(iter_cn_secret_assignments(text)), None)
+
 
 _SECRET_PATTERNS = (
     re.compile(r"sk-[A-Za-z0-9][A-Za-z0-9_-]{7,}"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE),
     re.compile(r"\b(?:api[_ -]?key|password|secret)\s*[:=]\s*\S+", re.IGNORECASE),
+    _ChineseSecretAssignment,
 )
 _PROMPT_INJECTION_PATTERNS = (
     re.compile(r"ignore\s+(?:all\s+)?previous\s+instructions", re.IGNORECASE),
@@ -23,6 +41,7 @@ _PROMPT_INJECTION_PATTERNS = (
     re.compile(r"(?:override|bypass)\s+(?:the\s+)?(?:policy|guard|safety)", re.IGNORECASE),
     re.compile(r"(?:exfiltrate|leak)\s+(?:credentials|secrets|tokens)", re.IGNORECASE),
     re.compile(r"call\s+(?:the\s+)?(?:shell|terminal|tool)", re.IGNORECASE),
+    PROMPT_INJECTION_ZH_RE,
 )
 
 

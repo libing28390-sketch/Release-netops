@@ -116,7 +116,8 @@ def test_alert_aggregation_crosses_historical_tenants_and_keeps_records_out_of_r
 
     assert result["matched_count"] == 4
     assert result["data"] == []
-    assert result["analysis"]["alerts"] == {
+    alerts = result["analysis"]["alerts"]
+    assert {key: alerts[key] for key in ("total_count", "active_count", "recent_24h_count", "active_by_severity", "recent_24h_by_severity")} == {
         "total_count": 4,
         "active_count": 3,
         "recent_24h_count": 3,
@@ -222,3 +223,102 @@ def test_rendered_report_does_not_turn_missing_eol_into_a_fact():
     assert "EOL" in report
     assert "\u4e0d\u80fd\u4ec5\u51ed\u7248\u672c\u53f7\u5224\u5b9a" in report
     assert "Juniper" not in report
+
+
+# ── scoped alert questions (2026-11-22: "今天有哪些告警没有处理") ─────────────
+
+
+def test_scoped_alert_questions_are_answered_locally(monkeypatch):
+    from ai.services.intent_parser import extract_alert_filters
+
+    async def forbidden_chat(*args, **kwargs):
+        raise AssertionError("scoped alert questions must not call the cloud parser")
+
+    monkeypatch.setattr("ai.services.intent_parser.llm_gateway.chat", forbidden_chat)
+    cases = {
+        "查询下今天有哪些告警没有处理": {"time_range": "today", "status": "unhandled"},
+        "昨天的告警": {"time_range": "yesterday"},
+        "最近 3 小时的严重告警有哪些": {"time_range": "3h"},
+        "过去7天未恢复的告警": {"time_range": "7d", "status": "active"},
+        "本周华为设备的告警": {"time_range": "this_week", "vendor": "huawei"},
+        "有哪些告警已确认但没恢复": {"status": "acknowledged"},
+    }
+    for query, expected in cases.items():
+        assert is_alert_aggregation_query(query) is True, query
+        assert extract_alert_filters(query) == expected, query
+        intent = asyncio.run(intent_parser.parse_intent(query))
+        assert intent["intent"] == "alarm_search", query
+        assert intent["needs_clarification"] is False, query
+        assert intent["filters"] == expected, query
+
+
+def test_model_classified_alert_question_gets_the_stated_filters(monkeypatch):
+    from ai.services import intent_parser as intent_module
+
+    async def fake_chat(*args, **kwargs):
+        return {"content": '{"intent":"alarm_search","filters":{},"confidence":0.9}'}
+
+    monkeypatch.setattr(intent_module.llm_gateway, "chat", fake_chat)
+    monkeypatch.setattr(intent_module, "is_alert_aggregation_query", lambda _q: False)
+    intent = asyncio.run(intent_parser.parse_intent("帮我看看今天没处理的报警"))
+    assert intent["intent"] == "alarm_search"
+    assert intent["needs_clarification"] is False
+    assert intent["filters"]["time_range"] == "today"
+    assert intent["filters"]["status"] == "unhandled"
+
+
+def test_alert_time_windows_use_local_calendar_days():
+    from ai.services.natural_query import _alert_time_window
+
+    now = datetime(2026, 11, 22, 7, 30, tzinfo=timezone.utc)
+    start, end, label = _alert_time_window("today", now=now)
+    local_midnight = now.astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+    assert start == local_midnight.astimezone(timezone.utc) and end is None and label.startswith("今天")
+    y_start, y_end, _ = _alert_time_window("yesterday", now=now)
+    assert y_end == start and start - y_start == timedelta(days=1)
+    assert _alert_time_window("3h", now=now)[0] == now - timedelta(hours=3)
+    assert _alert_time_window("最近 24 小时", now=now)[0] == now - timedelta(hours=24)
+    assert _alert_time_window("tomorrow", now=now) is None
+
+
+def test_unhandled_alerts_today_lists_only_open_unacknowledged_records(isolated_db):
+    from database import get_db_connection
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    today = max(now - timedelta(minutes=5), now.astimezone().replace(hour=0, minute=1, second=0).astimezone(timezone.utc))
+    old = now - timedelta(days=3)
+    connection = get_db_connection()
+    try:
+        connection.execute("INSERT INTO devices (id, hostname, tenant_id, site) VALUES (?, ?, ?, ?)", ("dev-1", "core-sw-01", "tenant-default", "HQ"))
+        connection.executemany(
+            """
+            INSERT INTO alert_events
+                (id, dedupe_key, source, severity, title, message, device_id, interface_name,
+                 created_at, resolved_at, workflow_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("a-open", "k1", "test", "critical", "接口 Down", "x", "dev-1", "GE0/0/1", today.isoformat(), None, "open"),
+                ("a-ack", "k2", "test", "major", "CPU 高", "x", "dev-1", None, today.isoformat(), None, "acknowledged"),
+                ("a-res", "k3", "test", "warning", "已恢复", "x", "dev-1", None, today.isoformat(), today.isoformat(), "resolved"),
+                ("a-old", "k4", "test", "critical", "旧告警", "x", "dev-1", None, old.isoformat(), None, "open"),
+            ],
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    result = asyncio.run(
+        natural_query_service.execute_alert_analysis(
+            "查询下今天有哪些告警没有处理", {"time_range": "today", "status": "unhandled"}
+        )
+    )
+    assert result["matched_count"] == 1
+    assert result["data"] == []
+    records = result["analysis"]["records"]
+    assert [item["title"] for item in records] == ["接口 Down"]
+    assert records[0]["hostname"] == "core-sw-01" and records[0]["status"] == "未处理"
+    summary = result["summary"]
+    assert "今天" in summary and "未处理" in summary
+    assert "接口 Down" in summary and "CPU 高" not in summary and "旧告警" not in summary
+    assert "dev-1" not in summary

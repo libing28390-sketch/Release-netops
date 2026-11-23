@@ -91,7 +91,22 @@ _PLATFORM_LABELS = {
     "cisco_iosxe": "Cisco IOS XE",
     "cisco_ios": "Cisco IOS",
     "cisco_nxos": "Cisco NX-OS",
+    "juniper_junos": "Juniper Junos",
+    "ruijie_rgos": "Ruijie RGOS",
+    "fortinet": "Fortinet FortiOS",
+    "aruba_aoscx": "Aruba AOS-CX",
 }
+
+
+def _version_command_for_vendor(vendor: str | None) -> str:
+    lowered = str(vendor or "").strip().lower()
+    if lowered in {"huawei", "h3c"}:
+        return "display version"
+    if lowered == "fortinet":
+        return "get system status"
+    if lowered in {"juniper", "cisco", "ruijie", "aruba"}:
+        return "show version"
+    return "display version / show version"
 
 
 def clarification_policy_enabled(tenant_id: str | None = None) -> bool:
@@ -204,7 +219,20 @@ def _platform_options(*, vendor: str, resolution: Mapping[str, Any]) -> list[dic
         # 仍由设备型号或 display version 决定，不能在缺少证据时猜测。
         if "h3c_comware" not in seen:
             options.append({"field": "cli_platform", "value": "h3c_comware", "label": "H3C Comware"})
-    options.append({"field": "cli_platform", "value": "display_version", "label": "我不确定，提供 display version"})
+    elif vendor.lower() == "juniper":
+        if "juniper_junos" not in seen:
+            options.append({"field": "cli_platform", "value": "juniper_junos", "label": "Juniper Junos"})
+    elif vendor.lower() == "ruijie":
+        if "ruijie_rgos" not in seen:
+            options.append({"field": "cli_platform", "value": "ruijie_rgos", "label": "Ruijie RGOS"})
+    elif vendor.lower() == "fortinet":
+        if "fortinet" not in seen:
+            options.append({"field": "cli_platform", "value": "fortinet", "label": "Fortinet FortiOS"})
+    elif vendor.lower() == "aruba":
+        if "aruba_aoscx" not in seen:
+            options.append({"field": "cli_platform", "value": "aruba_aoscx", "label": "Aruba AOS-CX"})
+    ver_cmd = _version_command_for_vendor(vendor)
+    options.append({"field": "cli_platform", "value": "display_version", "label": f"我不确定，提供 {ver_cmd}"})
     return options[:8]
 
 
@@ -294,7 +322,7 @@ def assess_configuration_request(
     product_series = _text(scope.get("product_series"))
     software_version = _text(scope.get("software_release") or scope.get("software_train"))
     ambiguous = bool(resolved.get("ambiguous"))
-    platform_known = bool(platform) or bool((product_model or product_series) and not ambiguous)
+    platform_known = bool(platform) or bool((product_model or product_series) and not ambiguous) or bool(vendor and software_version)
     generic_requested = any(marker in str(message or "") for marker in _GENERIC_MARKERS)
 
     recognized: dict[str, str] = {}
@@ -406,12 +434,13 @@ def assess_configuration_request(
             allow_generic_reference=generic_requested,
         )
 
+    ver_cmd = _version_command_for_vendor(vendor)
     if "feature" in missing and "platform_or_model" in missing:
-        question = "你想配置哪项功能？同时请提供设备型号/OS 或 display version 回显。"
+        question = f"你想配置哪项功能？同时请提供设备型号/OS 或 {ver_cmd} 回显。"
     elif "feature" in missing:
         question = "已识别设备范围，请说明需要配置的功能，例如 VLAN、OSPF、静态路由或 SSH。"
     else:
-        question = "已识别配置功能，请提供设备型号、CLI 平台或软件版本；也可以粘贴 display version 回显。"
+        question = f"已识别配置功能，请提供设备型号、CLI 平台或软件版本；也可以粘贴 {ver_cmd} 回显。"
 
     options: list[dict[str, str]] = []
     if "feature" in missing:
@@ -469,7 +498,8 @@ def render_clarification_answer(decision: ClarificationDecision) -> str:
     if decision.options:
         lines.append("你可以直接选择一个常用选项，或在输入框中补充具体信息。")
     if "platform_or_model" in decision.missing_fields:
-        lines.append("如果不清楚型号，可以粘贴 display version 回显；在信息补齐前不会直接输出整套知识库配置。")
+        ver_cmd = _version_command_for_vendor(decision.recognized_fields.get("vendor"))
+        lines.append(f"如果不清楚型号，可以粘贴 {ver_cmd} 回显；在信息补齐前不会直接输出整套知识库配置。")
     return "\n\n".join(lines)
 
 

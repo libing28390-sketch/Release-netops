@@ -90,9 +90,15 @@ def list_models(user=Depends(require_ai_permission("ai.view"))):
         tenant_id = str(user.get("tenant_id") or "tenant-default")
         user_id = str(user.get("id") or user.get("username") or "")
         roles = {str(user.get("role") or "")}
+        acl_by_model: dict[str, list[tuple[str, str, bool]]] = {}
+        for acl_row in cursor.execute(
+            "SELECT model_id, subject_type, subject_id, allow_access FROM ai_model_acl WHERE tenant_id = ?",
+            (tenant_id,),
+        ).fetchall():
+            acl_by_model.setdefault(str(acl_row[0]), []).append((str(acl_row[1]), str(acl_row[2]), bool(acl_row[3])))
         for row in rows:
-            acl_rows = cursor.execute("SELECT subject_type, subject_id, allow_access FROM ai_model_acl WHERE model_id = ? AND tenant_id = ?", (row[0], tenant_id)).fetchall()
-            if not acl_rows or any(bool(a[2]) and ((a[0] == "role" and a[1] in roles) or (a[0] == "user" and a[1] == user_id) or (a[0] == "tenant" and a[1] == tenant_id)) for a in acl_rows):
+            acl_rows = acl_by_model.get(str(row[0]), [])
+            if not acl_rows or any(a[2] and ((a[0] == "role" and a[1] in roles) or (a[0] == "user" and a[1] == user_id) or (a[0] == "tenant" and a[1] == tenant_id)) for a in acl_rows):
                 visible.append(_model_from_row(row))
         return visible
 
@@ -150,6 +156,60 @@ def create_model(payload: AIModelCreate, user=Depends(require_ai_permission("ai.
     )
 
 
+@router.get("/semantic-embedding/status")
+def semantic_embedding_health(user=Depends(require_ai_permission("ai.view"))):
+    """Status of semantic embedding engine, configured embedding models, and chunk coverage."""
+    from ai.providers.embedding import semantic_embedding_status
+
+    base = dict(semantic_embedding_status() or {})
+    configured_models = []
+    chunk_stats = {"total_chunks": 0, "semantic_v2_chunks": 0, "local_v1_chunks": 0}
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            rows = cursor.execute(
+                """
+                SELECT m.id, m.name, m.model_code, p.name AS provider_name, m.enabled, p.enabled AS provider_enabled
+                FROM ai_model m
+                JOIN ai_provider p ON p.id = m.provider_id
+                WHERE LOWER(COALESCE(m.model_type, '')) = 'embedding'
+                ORDER BY m.enabled DESC, m.name ASC
+                """
+            ).fetchall()
+            for r in rows:
+                configured_models.append(
+                    {
+                        "id": r[0],
+                        "name": r[1],
+                        "model_code": r[2],
+                        "provider_name": r[3],
+                        "enabled": bool(r[4]) and bool(r[5]),
+                    }
+                )
+            stat_row = cursor.execute(
+                """
+                SELECT
+                    COUNT(*) AS total_chunks,
+                    COUNT(*) FILTER (WHERE c.embedding_v2 IS NOT NULL) AS semantic_v2_chunks,
+                    COUNT(*) FILTER (WHERE c.embedding_vector IS NOT NULL) AS local_v1_chunks
+                FROM ai_document_chunk c
+                JOIN ai_document d ON d.id = c.document_id
+                WHERE d.status = 'active'
+                """
+            ).fetchone()
+            if stat_row:
+                chunk_stats = {
+                    "total_chunks": int(stat_row[0] or 0),
+                    "semantic_v2_chunks": int(stat_row[1] or 0),
+                    "local_v1_chunks": int(stat_row[2] or 0),
+                }
+    except Exception:
+        pass
+    base["configured_embedding_models"] = configured_models
+    base["chunk_stats"] = chunk_stats
+    return base
+
+
 @router.get("/health-summary", response_model=AIModelHealthSummaryResponse)
 def model_health_summary(
     window_days: int = Query(90, ge=7, le=90),
@@ -200,14 +260,17 @@ def model_health_summary(
         tenant_id = str(user.get("tenant_id") or "tenant-default")
         user_id = str(user.get("id") or user.get("username") or "")
         roles = {str(user.get("role") or "")}
+        acl_by_model: dict[str, list[tuple[str, str, bool]]] = {}
+        for acl_row in cursor.execute(
+            "SELECT model_id, subject_type, subject_id, allow_access FROM ai_model_acl WHERE tenant_id = ?",
+            (tenant_id,),
+        ).fetchall():
+            acl_by_model.setdefault(str(acl_row[0]), []).append((str(acl_row[1]), str(acl_row[2]), bool(acl_row[3])))
         visible_rows = []
         for row in model_rows:
-            acl_rows = cursor.execute(
-                "SELECT subject_type, subject_id, allow_access FROM ai_model_acl WHERE model_id = ? AND tenant_id = ?",
-                (row[0], tenant_id),
-            ).fetchall()
+            acl_rows = acl_by_model.get(str(row[0]), [])
             if not acl_rows or any(
-                bool(a[2]) and (
+                a[2] and (
                     (a[0] == "role" and a[1] in roles)
                     or (a[0] == "user" and a[1] == user_id)
                     or (a[0] == "tenant" and a[1] == tenant_id)
@@ -343,9 +406,11 @@ def update_model(model_id: str, payload: AIModelUpdate, user=Depends(require_ai_
         if updates.get("is_default"):
             conn.execute("UPDATE ai_model SET is_default = 0 WHERE id <> ?", (model_id,))
         allowed = {"provider_id", "name", "model_code", "model_type", "thinking_supported", "tool_call_supported", "json_supported", "context_length", "max_output_tokens", "default_temperature", "default_max_tokens", "enabled", "is_default", "priority", "stream_supported", "display_name", "cost_input_per_1k", "cost_output_per_1k"}
+        int_bool_fields = {"thinking_supported", "tool_call_supported", "json_supported", "enabled", "is_default", "stream_supported"}
         fields = [key for key in updates if key in allowed]
         if fields:
-            conn.execute(f"UPDATE ai_model SET {', '.join(f'{key} = ?' for key in fields)}, updated_at = ? WHERE id = ?", tuple(updates[key] for key in fields) + (now_iso, model_id))
+            values = tuple(int(updates[key]) if key in int_bool_fields else updates[key] for key in fields)
+            conn.execute(f"UPDATE ai_model SET {', '.join(f'{key} = ?' for key in fields)}, updated_at = ? WHERE id = ?", values + (now_iso, model_id))
         else:
             conn.execute("UPDATE ai_model SET updated_at = ? WHERE id = ?", (now_iso, model_id))
         conn.commit()
@@ -531,3 +596,13 @@ def upsert_route(payload: AIModelRouteCreate, user=Depends(require_ai_permission
         priority=payload.priority, data_classification=payload.data_classification,
         created_at=now_iso, updated_at=now_iso
     )
+
+
+@router.delete("/routes/{scene}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_route(scene: str, user=Depends(require_ai_permission("ai.model.manage"))):
+    """Delete a scene route so the scene falls back to the global default model."""
+    del user
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM ai_model_route WHERE scene = ?", (scene,))
+        conn.commit()
+    return None

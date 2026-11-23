@@ -20,140 +20,46 @@ MODEL_CATALOG: dict[str, tuple[dict[str, str], ...]] = {
     "Huawei": (
         {"model": "CloudEngine S5731-H24P4XC", "series": "S5731-H", "scope": "campus", "platform": "huawei_vrp_v200"},
         {"model": "CloudEngine S5731-H48T4XC-B", "series": "S5731-H", "scope": "campus", "platform": "huawei_vrp_v200"},
-        {"model": "CloudEngine S5731-S24P4X", "series": "S5731-S", "scope": "campus", "platform": "huawei_vrp_v200"},
         {"model": "CloudEngine S5731-S48T4X", "series": "S5731-S", "scope": "campus", "platform": "huawei_vrp_v200"},
-        {"model": "CloudEngine S5732-H24S6Q", "series": "S5732-H", "scope": "campus", "platform": "huawei_vrp_v200"},
         {"model": "CloudEngine S5732-H48S6Q", "series": "S5732-H", "scope": "campus", "platform": "huawei_vrp_v200"},
-        {"model": "CloudEngine S5732-H48UM2CC", "series": "S5732-H", "scope": "campus", "platform": "huawei_vrp_v200"},
-        {"model": "CloudEngine S5735-L24P4S-A", "series": "S5735-L", "scope": "campus", "platform": "huawei_vrp_v600"},
+        {"model": "CloudEngine S5735-L24T4X-A", "series": "S5735-L", "scope": "campus", "platform": "huawei_vrp_v600"},
         {"model": "CloudEngine S5735-L48P4X-A", "series": "S5735-L", "scope": "campus", "platform": "huawei_vrp_v600"},
-        {"model": "CloudEngine S5735-L48T4XE-A-V2", "series": "S5735-L-V2", "scope": "campus", "platform": "huawei_vrp_v600"},
-        {"model": "CloudEngine S5735-S24P4X", "series": "S5735-S", "scope": "campus", "platform": "huawei_vrp_v600"},
         {"model": "CloudEngine S5735-S24P4XE-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600"},
-        {"model": "CloudEngine S5735-S48T4XE-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600"},
-        {"model": "CloudEngine S5736-S24U4XC", "series": "S5736-S", "scope": "campus", "platform": "huawei_vrp_v200"},
         {"model": "CloudEngine S5736-S48S4XC", "series": "S5736-S", "scope": "campus", "platform": "huawei_vrp_v200"},
-        {"model": "CloudEngine S5755-H24U4Y2CZ", "series": "S5755-H", "scope": "campus", "platform": "huawei_vrp_v600"},
-        {"model": "CloudEngine S5755-H48U4Y2CZ", "series": "S5755-H", "scope": "campus", "platform": "huawei_vrp_v600"},
-        {"model": "CloudEngine S6720-30C-EI-24S-AC", "series": "S6720-EI", "scope": "campus", "platform": "huawei_vrp_v200"},
-        {"model": "CloudEngine S6720-54C-EI-48S-AC", "series": "S6720-EI", "scope": "campus", "platform": "huawei_vrp_v200"},
-        {"model": "CloudEngine S6730-S24X6Q", "series": "S6730-S", "scope": "campus", "platform": "huawei_vrp_v600"},
         {"model": "CloudEngine S6730-S48X6Q", "series": "S6730-S", "scope": "campus", "platform": "huawei_vrp_v600"},
         {"model": "CloudEngine S6730-H24X6C", "series": "S6730-H", "scope": "campus", "platform": "huawei_vrp_v200"},
         {"model": "CloudEngine S6730-H48X6C", "series": "S6730-H", "scope": "campus", "platform": "huawei_vrp_v200"},
-        {"model": "CloudEngine S6730-H48X6C-V2", "series": "S6730-H-V2", "scope": "campus", "platform": "huawei_vrp_v600"},
         {"model": "CloudEngine S6750-H36C", "series": "S6750-H", "scope": "campus", "platform": "huawei_vrp_v600"},
-        {"model": "CloudEngine S6750-S48X8C", "series": "S6750-S", "scope": "campus", "platform": "huawei_vrp_v600"},
-        {"model": "CloudEngine S7706", "series": "S7700", "scope": "campus", "platform": "huawei_vrp_v200"},
-        {"model": "CloudEngine S7712", "series": "S7700", "scope": "campus", "platform": "huawei_vrp_v200"},
-        {"model": "CloudEngine S8700-4", "series": "S8700", "scope": "campus", "platform": "huawei_vrp_v600"},
-        {"model": "CloudEngine S8700-6", "series": "S8700", "scope": "campus", "platform": "huawei_vrp_v600"},
-        {"model": "CloudEngine S8700-10", "series": "S8700", "scope": "campus", "platform": "huawei_vrp_v600"},
-        {"model": "CloudEngine S12700E-4", "series": "S12700E", "scope": "campus", "platform": "huawei_vrp_v200"},
-        {"model": "CloudEngine S12700E-8", "series": "S12700E", "scope": "campus", "platform": "huawei_vrp_v200"},
-        {"model": "CloudEngine S12700E-12", "series": "S12700E", "scope": "campus", "platform": "huawei_vrp_v200"},
-        {"model": "CloudEngine S16700-4", "series": "S16700", "scope": "campus", "platform": "huawei_vrp_v600"},
-        {"model": "CloudEngine S16700-8", "series": "S16700", "scope": "campus", "platform": "huawei_vrp_v600"},
-        {"model": "CE5855-48T4S2Q-EI", "series": "CloudEngine 5800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE5881-48T6CQ", "series": "CloudEngine 5800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE6820-48S6CQ", "series": "CloudEngine 6800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE6850-48S6Q-HI", "series": "CloudEngine 6800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE6855-48S6Q-HI", "series": "CloudEngine 6800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE6857-48S6CQ-EI", "series": "CloudEngine 6800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE6860-SAN", "series": "CloudEngine 6800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE6863-48S6CQ", "series": "CloudEngine 6800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
         {"model": "CE6863E-48S6CQ", "series": "CloudEngine 6800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE6865-48S8CQ-EI", "series": "CloudEngine 6800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE6866-48S8CQ-P", "series": "CloudEngine 6800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE6870-48S6CQ-EI", "series": "CloudEngine 6800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE6881-48S6CQ", "series": "CloudEngine 6800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE6881E-48S6CQ", "series": "CloudEngine 6800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
         {"model": "CE6885-48YS8CQ", "series": "CloudEngine 6800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE8850-64CQ-EI", "series": "CloudEngine 8800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE8850-HAM", "series": "CloudEngine 8800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
         {"model": "CE8851-32CQ8DQ-K", "series": "CloudEngine 8800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE8855-32CQ4BQ", "series": "CloudEngine 8800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE8861-4C-EI", "series": "CloudEngine 8800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE8868-4C-EI", "series": "CloudEngine 8800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE9860-4C-EI", "series": "CloudEngine 9800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE9865-4C-EI", "series": "CloudEngine 9800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
         {"model": "CE9866-128DQ", "series": "CloudEngine 9800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE12804", "series": "CloudEngine 12800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE12808", "series": "CloudEngine 12800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE12812", "series": "CloudEngine 12800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE12816", "series": "CloudEngine 12800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE16804", "series": "CloudEngine 16800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE16808", "series": "CloudEngine 16800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "CE16816", "series": "CloudEngine 16800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
-        {"model": "XH16800-8", "series": "CloudEngine 16800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
         {"model": "XH16800-16", "series": "CloudEngine 16800", "scope": "datacenter", "platform": "huawei_vrp_v300"},
+        {"model": "NetEngine AR6280", "series": "NetEngine AR6000", "scope": "wan", "platform": "huawei_vrp_v200"},
+        {"model": "HiSecEngine USG6565E", "series": "USG6000E", "scope": "security", "platform": "huawei_vrp_v600"},
     ),
     "H3C": (
         {"model": "S5130S-28P-EI", "series": "S5130S", "scope": "campus", "platform": "h3c_comware"},
         {"model": "S5130S-52P-EI", "series": "S5130S", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S5130S-28S-HI", "series": "S5130S", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S5130S-52S-HI", "series": "S5130S", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S5135S-24P4S-EI", "series": "S5135S", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S5135S-48T4S-EI-Q", "series": "S5135S", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S5135S-28P-EI", "series": "S5135S", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S5135S-52P-EI", "series": "S5135S", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S5170-28S-EI", "series": "S5170", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S5170-54S-EI", "series": "S5170", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S5024PV5-EI", "series": "S5000-EI", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S5048PV5-EI", "series": "S5000-EI", "scope": "campus", "platform": "h3c_comware"},
         {"model": "S5560X-30C-EI", "series": "S5560X", "scope": "campus", "platform": "h3c_comware"},
+        {"model": "S5560X-30F-EI", "series": "S5560X", "scope": "campus", "platform": "h3c_comware"},
         {"model": "S5560X-54C-EI", "series": "S5560X", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S5560X-34S-HI", "series": "S5560X", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S5560X-54S-HI", "series": "S5560X", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S5570S-28S-EI", "series": "S5570S", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S5570S-36F-EI", "series": "S5570S", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S5570S-54S-EI", "series": "S5570S", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S5590-28T4XC-EI", "series": "S5590", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S5590-48T4XC-EI", "series": "S5590", "scope": "campus", "platform": "h3c_comware"},
         {"model": "S6520X-26C-SI", "series": "S6520X", "scope": "campus", "platform": "h3c_comware"},
         {"model": "S6520X-54XC-UPWR-SI", "series": "S6520X", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S6520X-30QC-EI", "series": "S6520X", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S6520X-54QC-EI", "series": "S6520X", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S6520X-30HF-HI", "series": "S6520X", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S6520X-54HF-HI", "series": "S6520X", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S7503E", "series": "S7500E", "scope": "campus", "platform": "h3c_comware"},
         {"model": "S7506E", "series": "S7500E", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S7510E", "series": "S7500E", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S7506X-G", "series": "S7500X-G", "scope": "campus", "platform": "h3c_comware"},
-        {"model": "S7510X-G", "series": "S7500X-G", "scope": "campus", "platform": "h3c_comware"},
         {"model": "S6800-54QF", "series": "S6800", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S6800-54HT", "series": "S6800", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S6805-54HF", "series": "S6805", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S6812", "series": "S6812", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S6813", "series": "S6813", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S6820-56HF", "series": "S6820", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S6825-54HT", "series": "S6825", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S6825-54HF", "series": "S6825", "scope": "datacenter", "platform": "h3c_comware"},
         {"model": "S6860-54HF", "series": "S6860", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S6861-54QF", "series": "S6861", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S6890-54HF", "series": "S6890", "scope": "datacenter", "platform": "h3c_comware"},
         # H3C's official S6850 support catalog is a distinct data-center
         # series; it must not be silently treated as S6800 or as a generic
         # Comware model when a query names S6850 explicitly.
         {"model": "S6850", "series": "S6850", "scope": "datacenter", "platform": "h3c_comware", "source_checked_at": "2026-09-04"},
         {"model": "S6850-56HF", "series": "S6850", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S6850-2C", "series": "S6850", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S9820-8C", "series": "S9820", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S9820-64H", "series": "S9820", "scope": "datacenter", "platform": "h3c_comware"},
         {"model": "S9825-64D", "series": "S9825", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S9850-32H", "series": "S9850", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S9850-4C", "series": "S9850", "scope": "datacenter", "platform": "h3c_comware"},
         {"model": "S9855", "series": "S9855", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S9855-48CD8D", "series": "S9855", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S9855-32D", "series": "S9855", "scope": "datacenter", "platform": "h3c_comware"},
         {"model": "S10508X", "series": "S10500", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S10506X-G", "series": "S10500", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S10512X-G", "series": "S10500", "scope": "datacenter", "platform": "h3c_comware"},
         {"model": "S12508G-AF", "series": "S12500", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S12516G-AF", "series": "S12500", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S12508X-AF", "series": "S12500", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S12516X-AF", "series": "S12500", "scope": "datacenter", "platform": "h3c_comware"},
-        {"model": "S12508R", "series": "S12500R", "scope": "datacenter", "platform": "h3c_comware"},
+        {"model": "MSR3620-DP", "series": "MSR3600", "scope": "wan", "platform": "h3c_comware"},
+        {"model": "SecPath F1000-AK115", "series": "SecPath F1000-AK", "scope": "security", "platform": "h3c_comware"},
     ),
     "Cisco": (
         {"model": "C9200L-24P-4G", "series": "Catalyst 9200", "scope": "campus", "platform": "cisco_iosxe"},
@@ -164,9 +70,11 @@ MODEL_CATALOG: dict[str, tuple[dict[str, str], ...]] = {
         # preserves the human-readable product family.
         {"model": "C3850", "series": "Catalyst 3850", "scope": "campus", "platform": "cisco_iosxe", "source_checked_at": "2026-09-04"},
         {"model": "C9300-24T", "series": "Catalyst 9300", "scope": "campus", "platform": "cisco_iosxe"},
+        {"model": "C9300-48P", "series": "Catalyst 9300", "scope": "campus", "platform": "cisco_iosxe"},
         {"model": "C9300-48U", "series": "Catalyst 9300", "scope": "campus", "platform": "cisco_iosxe"},
         {"model": "C9350", "series": "C9350", "scope": "campus", "platform": "cisco_iosxe"},
         {"model": "Catalyst 9400", "series": "Catalyst 9400", "scope": "campus", "platform": "cisco_iosxe"},
+        {"model": "C9500-48Y4C", "series": "Catalyst 9500", "scope": "campus", "platform": "cisco_iosxe"},
         {"model": "C9550", "series": "C9550", "scope": "campus", "platform": "cisco_iosxe"},
         {"model": "Catalyst 9500", "series": "Catalyst 9500", "scope": "campus", "platform": "cisco_iosxe"},
         {"model": "C9610", "series": "C9610", "scope": "campus", "platform": "cisco_iosxe"},
@@ -174,8 +82,37 @@ MODEL_CATALOG: dict[str, tuple[dict[str, str], ...]] = {
         {"model": "N3K-C3172PQ-10GE", "series": "Nexus 3000", "scope": "datacenter", "platform": "cisco_nxos"},
         {"model": "N3K-C3232C", "series": "Nexus 3000", "scope": "datacenter", "platform": "cisco_nxos"},
         {"model": "N9K-C93180YC-FX", "series": "Nexus 9000", "scope": "datacenter", "platform": "cisco_nxos"},
+        {"model": "N9K-C93180YC-FX3", "series": "Nexus 9000", "scope": "datacenter", "platform": "cisco_nxos"},
         {"model": "N9K-C9364C", "series": "Nexus 9000", "scope": "datacenter", "platform": "cisco_nxos"},
         {"model": "Nexus 9000", "series": "Nexus 9000", "scope": "datacenter", "platform": "cisco_nxos"},
+        {"model": "ISR4331/K9", "series": "ISR 4000", "scope": "wan", "platform": "cisco_iosxe"},
+        {"model": "FPR1120-NGFW-K9", "series": "Firepower 1000", "scope": "security", "platform": "cisco_ftd"},
+    ),
+    "Ruijie": (
+        {"model": "RG-S2910-24GT4XS-E", "series": "RG-S2910", "scope": "campus", "platform": "ruijie_rgos"},
+        {"model": "RG-S5750C-28GT4XS-H", "series": "RG-S5750C", "scope": "campus", "platform": "ruijie_rgos"},
+        {"model": "RG-S6220-48XS6QXS-H", "series": "RG-S6220", "scope": "datacenter", "platform": "ruijie_rgos"},
+        {"model": "RG-S6510-48VS8CQ", "series": "RG-S6510", "scope": "datacenter", "platform": "ruijie_rgos"},
+        {"model": "RG-N18010-XH", "series": "RG-N18000", "scope": "campus", "platform": "ruijie_rgos"},
+        {"model": "RG-WALL 1600-Z3200-S", "series": "RG-WALL 1600", "scope": "security", "platform": "ruijie_rgos"},
+    ),
+    "Juniper": (
+        {"model": "EX4300-48P", "series": "EX4300", "scope": "campus", "platform": "juniper_junos"},
+        {"model": "EX4400-48T", "series": "EX4400", "scope": "campus", "platform": "juniper_junos"},
+        {"model": "QFX5120-48Y", "series": "QFX5120", "scope": "datacenter", "platform": "juniper_junos"},
+        {"model": "MX204", "series": "MX Series", "scope": "wan", "platform": "juniper_junos"},
+        {"model": "SRX345", "series": "SRX300", "scope": "security", "platform": "juniper_junos"},
+    ),
+    "Fortinet": (
+        {"model": "FortiGate-100F", "series": "FortiGate 100F", "scope": "security", "platform": "fortinet"},
+        {"model": "FortiGate-200F", "series": "FortiGate 200F", "scope": "security", "platform": "fortinet"},
+        {"model": "FortiGate-600F", "series": "FortiGate 600F", "scope": "security", "platform": "fortinet"},
+        {"model": "FortiSwitch-248E-FPOE", "series": "FortiSwitch 200E", "scope": "campus", "platform": "fortinet"},
+    ),
+    "Aruba": (
+        {"model": "Aruba 6200F 48G", "series": "CX 6200", "scope": "campus", "platform": "aruba_aoscx"},
+        {"model": "Aruba 6300M 48G", "series": "CX 6300", "scope": "campus", "platform": "aruba_aoscx"},
+        {"model": "Aruba 8325-48Y8C", "series": "CX 8325", "scope": "datacenter", "platform": "aruba_aoscx"},
     ),
 }
 
@@ -187,6 +124,10 @@ OFFICIAL_MODEL_REFERENCE = {
     "Huawei": "https://info.support.huawei.com/info-finder/encyclopedia/en/Switch.html",
     "H3C": "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/",
     "Cisco": "https://www.cisco.com/c/en/us/products/switches/index.html",
+    "Ruijie": "https://www.ruijienetworks.com/products/switches",
+    "Juniper": "https://www.juniper.net/us/en/products/switches.html",
+    "Fortinet": "https://www.fortinet.com/products/next-generation-firewall",
+    "Aruba": "https://www.arubanetworks.com/products/switches/",
 }
 
 OFFICIAL_MODEL_CHECKED_AT = "2026-08-23"
@@ -263,8 +204,9 @@ def model_aliases(item: dict[str, str]) -> list[str]:
 
     model = str(item.get("model") or "").strip()
     values = [model]
-    if model.lower().startswith("cloudengine "):
-        values.append(model[len("CloudEngine "):])
+    for prefix in ("CloudEngine ", "NetEngine ", "HiSecEngine ", "SecPath ", "Aruba "):
+        if model.lower().startswith(prefix.lower()):
+            values.append(model[len(prefix):])
     return list(dict.fromkeys(value for value in values if value))
 
 
@@ -278,7 +220,19 @@ def _reviewed_os_family(vendor: str, platform: str) -> str:
         return "VRP"
     if vendor == "H3C":
         return "Comware 7"
-    return "NX-OS" if platform == "cisco_nxos" else "IOS-XE"
+    if vendor == "Ruijie":
+        return "RGOS"
+    if vendor == "Juniper":
+        return "Junos"
+    if vendor == "Fortinet":
+        return "FortiOS"
+    if vendor == "Aruba":
+        return "AOS-CX"
+    if platform == "cisco_nxos":
+        return "NX-OS"
+    if platform == "cisco_ftd":
+        return "FTD"
+    return "IOS-XE"
 
 
 def _existing_registry_ids(tenant_id: str) -> set[str]:

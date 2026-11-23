@@ -255,4 +255,30 @@ describe('ProductCatalogManagementTab browser key paths', () => {
     expect(JSON.stringify(xlsxMocks.aoaToSheet.mock.calls[0][0])).not.toContain('internal-model');
     expect(JSON.stringify(xlsxMocks.aoaToSheet.mock.calls[0][0])).not.toContain('internal-vendor');
   });
+
+  it('renders the redesigned header, summary bar and an empty model state', async () => {
+    render(<ProductCatalogManagementTab />);
+
+    expect(await screen.findByRole('heading', { level: 2 })).toBeTruthy();
+    const summary = await screen.findByLabelText('产品目录概况');
+    await waitFor(() => expect(summary.textContent).toContain('个型号（当前筛选）'));
+    expect(summary.textContent).toContain('无别名冲突');
+    expect(summary.textContent).toContain('官方种子（只读）');
+    expect(await screen.findByText('没有匹配的型号')).toBeTruthy();
+    // The primary action exists once (header), not duplicated in the empty state.
+    expect(screen.getAllByRole('button', { name: '新增自定义型号' })).toHaveLength(1);
+  });
+
+  it('shows an empty alias state and the pending-conflict count in the summary', async () => {
+    getAliases.mockResolvedValue({ items: [], total: 0, conflicts: [{}, {}], persistence_status: 'seed', tenant_id: 't', read_only: true, source_artifact: 'catalog' } as any);
+    const user = userEvent.setup();
+    render(<ProductCatalogManagementTab />);
+
+    await screen.findByRole('button', { name: /Cisco/ });
+    await user.click(screen.getByRole('button', { name: 'Alias 队列' }));
+    expect(await screen.findByText('没有匹配的别名')).toBeTruthy();
+    const summary = screen.getByLabelText('产品目录概况');
+    await waitFor(() => expect(summary.textContent).toContain('个别名冲突待复核'));
+    expect(summary.textContent).toContain('2');
+  });
 });

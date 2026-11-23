@@ -4,11 +4,14 @@ AI Service for Intelligent MAC Location and Uplink Path Analysis
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Dict, Optional
 
 from database.core import get_db_connection
 from ai.security.sanitizer import sanitize_data
+
+logger = logging.getLogger(__name__)
 
 
 class MACTroubleshootingService:
@@ -67,27 +70,27 @@ class MACTroubleshootingService:
                             "last_updated": row[5],
                         }
                         facts["associated_ip"] = row[0]
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("ARP lookup failed during MAC trace; trying mac_table code=AI_MAC_TRACE_ARP_FAILED error=%s", type(exc).__name__)
 
                 if not facts["mac_entry"]:
                     # A MAC-table record is useful even when ARP projection is
                     # stale or absent.  Compare normalized values in Python so
                     # all common Cisco/Huawei/H3C formats are supported.
                     try:
-                        rows = cursor.execute(
+                        item = cursor.execute(
                             """
                             SELECT m.mac_address, m.vlan_id, m.interface_name,
                                    m.device_id, d.hostname, m.last_updated
                             FROM mac_table m
                             JOIN devices d ON d.id = m.device_id
+                            WHERE LOWER(REPLACE(REPLACE(REPLACE(COALESCE(m.mac_address, ''), ':', ''), '-', ''), '.', '')) = ?
                             ORDER BY m.last_updated DESC
-                            LIMIT 500
-                            """
-                        ).fetchall()
-                        for item in rows:
-                            if re.sub(r"[^a-fA-F0-9]", "", str(item[0] or "")).lower() != compact_mac:
-                                continue
+                            LIMIT 1
+                            """,
+                            (compact_mac,),
+                        ).fetchone()
+                        if item:
                             facts["mac_entry"] = {
                                 "mac_address": item[0],
                                 "vlan": item[1],
@@ -96,11 +99,10 @@ class MACTroubleshootingService:
                                 "device_hostname": item[4],
                                 "last_updated": item[5],
                             }
-                            break
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                    except Exception as exc:
+                        logger.warning("mac_table lookup failed during MAC trace code=AI_MAC_TRACE_MAC_TABLE_FAILED error=%s", type(exc).__name__)
+        except Exception as exc:
+            logger.warning("MAC trace query failed; returning partial facts code=AI_MAC_TRACE_FAILED error=%s", type(exc).__name__)
         return facts
 
     @staticmethod
