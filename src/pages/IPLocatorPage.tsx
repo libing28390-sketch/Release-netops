@@ -367,6 +367,7 @@ interface ArpEntry {
   vlan_source?: string;
   age_seconds?: number | null;
   freshness?: 'fresh' | 'stale' | 'unknown';
+  collection_scope?: 'in_scope' | 'out_of_scope' | 'unknown';
 }
 
 interface MacChangeEntry {
@@ -389,6 +390,7 @@ interface MacChangesData {
 
 interface ArpTableData {
   total: number;
+  out_of_scope_total?: number;
   ttl_seconds: number;
   sweep_interval_seconds: number;
   entries: ArpEntry[];
@@ -799,11 +801,15 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
   const [arpSweepStatus, setArpSweepStatus] = useState<ArpSweepStatus | null>(null);
   const [arpPage, setArpPage] = useState(1);
   const [arpPageSize, setArpPageSize] = useState(10);
+  const [showOutOfScopeArp, setShowOutOfScopeArp] = useState(false);
   const filteredArpEntries = useMemo(() => {
     if (!arpTable) return [];
+    const baseEntries = showOutOfScopeArp
+      ? arpTable.entries
+      : arpTable.entries.filter(entry => entry.collection_scope !== 'out_of_scope');
     const q = arpFilter.trim().toLowerCase();
     return q
-      ? arpTable.entries.filter(entry =>
+      ? baseEntries.filter(entry =>
           entry.ip.toLowerCase().includes(q) ||
           entry.mac.toLowerCase().includes(q) ||
           entry.mac_raw.toLowerCase().includes(q) ||
@@ -812,8 +818,8 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
           String(entry.vlan ?? '').toLowerCase().includes(q) ||
           (entry.vendor || '').toLowerCase().includes(q)
         )
-      : arpTable.entries;
-  }, [arpTable, arpFilter]);
+      : baseEntries;
+  }, [arpTable, arpFilter, showOutOfScopeArp]);
   const pageArpEntries = useMemo(
     () => filteredArpEntries.slice((arpPage - 1) * arpPageSize, arpPage * arpPageSize),
     [filteredArpEntries, arpPage, arpPageSize],
@@ -2501,6 +2507,20 @@ ${rep.repair_commands}
             <span>{zh ? `TTL ${Math.round(arpTable.ttl_seconds / 60)} 分钟` : `TTL ${Math.round(arpTable.ttl_seconds / 60)}m`}</span>
             <span>·</span>
             <span>{zh ? '更新时间' : 'Updated'}: {arpTable.timestamp?.replace('T', ' ').slice(0, 19)}</span>
+            {(arpTable.out_of_scope_total ?? 0) > 0 && (
+              <>
+                <span>·</span>
+                <button
+                  type="button"
+                  onClick={() => { setShowOutOfScopeArp(v => !v); setArpPage(1); }}
+                  className="text-[#0891b2] hover:underline"
+                >
+                  {showOutOfScopeArp
+                    ? (zh ? `隐藏 ${arpTable.out_of_scope_total} 条未纳入采集设备的历史记录` : `Hide ${arpTable.out_of_scope_total} out-of-scope legacy entries`)
+                    : (zh ? `已隐藏 ${arpTable.out_of_scope_total} 条未纳入采集设备的历史记录（点击显示）` : `${arpTable.out_of_scope_total} out-of-scope legacy entries hidden (show)`)}
+                </button>
+              </>
+            )}
           </div>
         )}
 
@@ -2563,7 +2583,11 @@ ${rep.repair_commands}
                     entry.vendor || '-',
                     entry.interface || '-',
                     entry.device || '-',
-                    `${formatRelativeTime(entry.cached_at, zh)}${entry.freshness === 'stale' ? (zh ? ' · 已过期' : ' · stale') : ''}`,
+                    `${formatRelativeTime(entry.cached_at, zh)}${
+                      entry.collection_scope === 'out_of_scope'
+                        ? (zh ? ' · 未纳入采集范围' : ' · out of scope')
+                        : entry.freshness === 'stale' ? (zh ? ' · 已过期' : ' · stale') : ''
+                    }`,
                   ]),
                 }),
               }}
@@ -2610,8 +2634,18 @@ ${rep.repair_commands}
                       <td className="max-w-0 truncate text-[var(--ops-muted)]" title={entry.vendor}>{entry.vendor || '-'}</td>
                       <td className="max-w-0 truncate text-[var(--ops-muted)]" title={entry.interface}>{entry.interface || '-'}</td>
                       <td className="max-w-0 truncate font-medium text-[#0891b2]" title={entry.device}>{entry.device || '-'}</td>
-                      <td className={`whitespace-nowrap ${entry.freshness === 'stale' ? 'text-amber-600' : 'text-[var(--ops-muted)]'}`} title={`${entry.cached_at} · ${entry.vlan_source || 'unknown VLAN source'}`}>
-                        {formatRelativeTime(entry.cached_at, zh)}{entry.freshness === 'stale' ? (zh ? ' · 已过期' : ' · stale') : ''}
+                      <td
+                        className={`whitespace-nowrap ${
+                          entry.collection_scope === 'out_of_scope'
+                            ? 'text-slate-400 dark:text-slate-500'
+                            : entry.freshness === 'stale' ? 'text-amber-600' : 'text-[var(--ops-muted)]'
+                        }`}
+                        title={`${entry.cached_at} · ${entry.vlan_source || 'unknown VLAN source'}${entry.collection_scope === 'out_of_scope' ? (zh ? ' · 非接入/终端网关设备，未纳入周期 ARP 采集' : ' · Non-edge/non-gateway device, excluded from periodic ARP sweep') : ''}`}
+                      >
+                        {formatRelativeTime(entry.cached_at, zh)}
+                        {entry.collection_scope === 'out_of_scope'
+                          ? (zh ? ' · 未纳入采集范围' : ' · out of scope')
+                          : entry.freshness === 'stale' ? (zh ? ' · 已过期' : ' · stale') : ''}
                       </td>
                     </tr>
                   ))

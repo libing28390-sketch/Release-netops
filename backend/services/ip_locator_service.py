@@ -5211,11 +5211,9 @@ def _load_terminal_gateway_device_ids() -> dict[str, str]:
     return selected
 
 
-def _load_arp_sweep_devices(
-    run_id: str = '',
-    device_ids: set[str] | None = None,
-) -> tuple[list[dict], int, int]:
-    """Select edge switches/APs, configured L3 Prefix gateways, and explicit ARP opt-ins."""
+def _select_arp_scope_devices() -> list[dict]:
+    """Side-effect-free ARP scope: edge switches/APs, L3 Prefix gateways,
+    endpoint-segment gateway owners and explicit opt-ins (no backoff/cursor)."""
     all_eligible = _load_eligible_devices(
         allow_snmp_only=True,
         include_snmp_unconfigured=True,
@@ -5243,11 +5241,28 @@ def _load_arp_sweep_devices(
                 f"{device.get('hostname') or dev_id}({terminal_gateway_ids[dev_id]})"
             )
     if auto_selected:
-        logger.info(
+        logger.debug(
             "[ARP Sweep] Endpoint-prefix gateway devices added by interface ownership: %s",
             ", ".join(sorted(auto_selected)),
         )
-    all_eligible = terminal_devices
+    return terminal_devices
+
+
+def _arp_collection_scope_device_ids() -> set[str] | None:
+    """Device IDs currently inside the ARP collection scope; None if unknown."""
+    try:
+        return {str(d.get('id') or '').strip() for d in _select_arp_scope_devices() if d.get('id')}
+    except Exception as exc:  # pragma: no cover - defensive, display-only
+        logger.debug("[ARP Table] scope resolution failed: %s", exc)
+        return None
+
+
+def _load_arp_sweep_devices(
+    run_id: str = '',
+    device_ids: set[str] | None = None,
+) -> tuple[list[dict], int, int]:
+    """Select edge switches/APs, configured L3 Prefix gateways, and explicit ARP opt-ins."""
+    all_eligible = _select_arp_scope_devices()
     if device_ids is not None:
         all_eligible = [device for device in all_eligible if str(device.get('id') or '') in device_ids]
     state_by_device = _load_arp_collection_state()
@@ -6709,8 +6724,24 @@ def get_arp_table() -> dict[str, Any]:
 
     entries = sorted(entries_by_ip.values(), key=lambda item: item['ip'])
 
+    # Distinguish "stale because the device is not in the ARP collection
+    # scope" (core/transit/firewall without endpoint segments) from genuinely
+    # expired data on in-scope devices, so operators don't read it as offline.
+    scope_ids = _arp_collection_scope_device_ids()
+    out_of_scope_count = 0
+    for item in entries:
+        dev_id = str(item.get('device_id') or '').strip()
+        if scope_ids is None or not dev_id:
+            item['collection_scope'] = 'unknown'
+        elif dev_id in scope_ids:
+            item['collection_scope'] = 'in_scope'
+        else:
+            item['collection_scope'] = 'out_of_scope'
+            out_of_scope_count += 1
+
     return {
         'total': len(entries),
+        'out_of_scope_total': out_of_scope_count,
         'ttl_seconds': ARP_CACHE_TTL_SECONDS,
         'sweep_interval_seconds': ARP_SWEEP_INTERVAL_SECONDS,
         'entries': entries,
