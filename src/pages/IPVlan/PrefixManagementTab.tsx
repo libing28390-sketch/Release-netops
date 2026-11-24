@@ -398,6 +398,16 @@ function PrefixRowActions({
   );
 }
 
+function extractVlanIdFromInterfaceName(interfaceName?: string | null): number | null {
+  const raw = String(interfaceName || '').trim();
+  if (!raw) return null;
+  const svi = raw.match(/^(?:vlan-?interface|vlanif|vlan|vl)[\s\-_]*(\d+)$/i);
+  if (svi) return Number(svi[1]);
+  const sub = raw.match(/\.(\d+)$/);
+  if (sub) return Number(sub[1]);
+  return null;
+}
+
 function addressSpaceOptionLabel(space: AddressSpace, zh: boolean): string {
   if (space.kind === 'vrf') {
     const vrfName = space.vrf_name || space.vrf_id || space.name;
@@ -3765,10 +3775,17 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                         const matchingEndpoints = e.target.value
                           ? gatewayCandidates?.endpoints.filter((endpoint) => endpoint.device_id === e.target.value) || []
                           : [];
+                        const matchedEp = matchingEndpoints.length === 1 ? matchingEndpoints[0] : null;
+                        const inferredVlanNum = extractVlanIdFromInterfaceName(matchedEp?.interface_name);
+                        const matchedVlan = inferredVlanNum !== null
+                          ? vlans.find((v) => Number(v.vlan_id) === inferredVlanNum && (!form.site_id || v.site_id === form.site_id))
+                            || vlans.find((v) => Number(v.vlan_id) === inferredVlanNum)
+                          : null;
                         setForm((current) => ({
                           ...current,
                           gateway_device_id: e.target.value,
-                          gateway_interface_id: matchingEndpoints.length === 1 ? matchingEndpoints[0].interface_id || '' : '',
+                          gateway_interface_id: matchedEp?.interface_id || '',
+                          ...(matchedVlan ? { vlan_id: matchedVlan.id } : {}),
                         }));
                       }}
                       className="w-full px-3 py-2 text-xs rounded-lg border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/70"
@@ -3829,10 +3846,16 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                                 onClick={() => {
                                   if (!endpoint.device_id) return;
                                   gatewayBindingSourceRef.current = 'manual';
+                                  const inferredVlanNum = extractVlanIdFromInterfaceName(endpoint.interface_name);
+                                  const matchedVlan = inferredVlanNum !== null
+                                    ? vlans.find((v) => Number(v.vlan_id) === inferredVlanNum && (!form.site_id || v.site_id === form.site_id))
+                                      || vlans.find((v) => Number(v.vlan_id) === inferredVlanNum)
+                                    : null;
                                   setForm((current) => ({
                                     ...current,
                                     gateway_device_id: endpoint.device_id || '',
                                     gateway_interface_id: endpoint.interface_id || '',
+                                    ...(matchedVlan ? { vlan_id: matchedVlan.id } : {}),
                                   }));
                                 }}
                                 className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
@@ -3875,9 +3898,32 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                       className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     >
                       <option value="">{zh ? '请选择VLAN' : 'None'}</option>
-                      {vlans.map((item) => (
-                        <option key={item.id} value={item.id}>VLAN {item.vlan_id} ({item.name})</option>
-                      ))}
+                      {(() => {
+                        const boundDev = devices.find((d: any) => String(d.id) === form.gateway_device_id);
+                        const activeSiteId = form.site_id || boundDev?.site_id || '';
+                        const scoped = activeSiteId
+                          ? vlans.filter((v) => !v.site_id || v.site_id === activeSiteId || v.id === form.vlan_id)
+                          : vlans;
+                        const seen = new Set<string>();
+                        return [...scoped]
+                          .sort((a, b) => Number(a.vlan_id || 0) - Number(b.vlan_id || 0))
+                          .filter((item) => {
+                            if (item.id === form.vlan_id) return true;
+                            const key = `${item.vlan_id}|${item.name || ''}|${item.site_id || ''}`;
+                            if (seen.has(key)) return false;
+                            seen.add(key);
+                            return true;
+                          })
+                          .map((item) => {
+                            const siteObj = sites.find((s) => s.id === item.site_id);
+                            const siteSuffix = !activeSiteId && siteObj ? ` · ${siteObj.site_name || siteObj.site_code}` : '';
+                            return (
+                              <option key={item.id} value={item.id}>
+                                VLAN {item.vlan_id} ({item.name}){siteSuffix}
+                              </option>
+                            );
+                          });
+                      })()}
                     </select>
                   </div>
 
