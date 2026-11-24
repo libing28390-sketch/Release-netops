@@ -8,6 +8,7 @@ from ai.gateway.exceptions import (
 )
 from ai.providers.deepseek import DeepSeekProvider
 from ai.providers.openai_compatible import OpenAICompatibleProvider
+from ai.providers.registry import AzureOpenAIProvider
 
 
 def test_deepseek_uses_only_v4_models_and_official_endpoint():
@@ -38,6 +39,67 @@ def test_provider_rejects_http_except_loopback():
     provider = OpenAICompatibleProvider({"base_url": "http://example.invalid"})
     with pytest.raises(AINetworkException):
         provider._validate_endpoint(provider._get_endpoint())
+
+
+@pytest.mark.parametrize(
+    ("base_url", "expected_endpoint"),
+    [
+        ("https://generativelanguage.googleapis.com/v1beta/openai", "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"),
+        ("https://api.fireworks.ai/inference/v1", "https://api.fireworks.ai/inference/v1/chat/completions"),
+        ("https://openrouter.ai/api/v1", "https://openrouter.ai/api/v1/chat/completions"),
+        ("https://qianfan.baidubce.com/v2", "https://qianfan.baidubce.com/v2/chat/completions"),
+        ("https://ark.cn-beijing.volces.com/api/v3", "https://ark.cn-beijing.volces.com/api/v3/chat/completions"),
+        ("https://open.bigmodel.cn/api/paas/v4", "https://open.bigmodel.cn/api/paas/v4/chat/completions"),
+        ("https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1", "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions"),
+        (
+            "https://aiplatform.googleapis.com/v1/projects/ProjectABC/locations/us-central1/endpoints/openapi",
+            "https://aiplatform.googleapis.com/v1/projects/ProjectABC/locations/us-central1/endpoints/openapi/chat/completions",
+        ),
+        (
+            "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/ProjectABC/locations/us-central1/endpoints/812345",
+            "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/ProjectABC/locations/us-central1/endpoints/812345/chat/completions",
+        ),
+        ("https://provider.example/v1/chat/completions/?tenant=West", "https://provider.example/v1/chat/completions?tenant=West"),
+        ("https://provider.example/v1", "https://provider.example/v1/chat/completions"),
+        ("https://provider.example", "https://provider.example/v1/chat/completions"),
+        ("https://API.Example.com/ProxyCase", "https://API.Example.com/ProxyCase/v1/chat/completions"),
+        ("https://provider.example/proxy?tenant=West", "https://provider.example/proxy/v1/chat/completions?tenant=West"),
+    ],
+)
+def test_openai_compatible_endpoint_respects_prefixed_api_roots(base_url, expected_endpoint):
+    provider = OpenAICompatibleProvider({"base_url": base_url})
+
+    assert provider._get_endpoint() == expected_endpoint
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://provider.example/v1/chat/completions",
+        "https://provider.example/proxy/chat/completions?tenant=West",
+    ],
+)
+def test_openai_compatible_complete_endpoint_is_passed_through(base_url):
+    provider = OpenAICompatibleProvider({"base_url": base_url})
+
+    assert provider._get_endpoint() == base_url
+
+
+def test_azure_openai_v1_endpoint_uses_native_api_key_header():
+    azure = AzureOpenAIProvider(
+        {
+            "id": "p1",
+            "name": "Azure",
+            "provider_type": "azure_openai",
+            "base_url": "https://my-res.openai.azure.com/openai/v1/",
+        },
+        api_key="test-key",
+    )
+
+    assert azure._get_endpoint("gpt-4o") == "https://my-res.openai.azure.com/openai/v1/chat/completions"
+    headers = azure._get_headers()
+    assert headers["api-key"] == "test-key"
+    assert "Authorization" not in headers
 
 
 class _Response:

@@ -18,17 +18,17 @@ describe('CopilotComposer selection controls', () => {
 
     fireEvent.click(screen.getByTitle('点击展开模型与推理控制面板'));
     fireEvent.click(screen.getByText('模型'));
-    const alphaOption = screen.getByText('Model Alpha').closest('button');
-    const betaOption = screen.getByText('Model Beta').closest('button');
+    const alphaOption = screen.getByRole('button', { name: /Model Alpha · alpha/ });
+    const betaOption = screen.getByRole('button', { name: /Model Beta · beta/ });
     expect(alphaOption?.getAttribute('aria-pressed')).toBe('true');
     expect(betaOption?.getAttribute('aria-pressed')).toBe('false');
 
-    fireEvent.click(screen.getByText('Model Beta'));
+    fireEvent.click(betaOption);
     expect(onSelectModel).toHaveBeenCalledWith('model-b');
     await waitFor(() => expect(document.activeElement?.textContent).toContain('模型'));
     rerender(<CopilotComposer onSend={vi.fn()} models={models} selectedModel="model-b" onSelectModel={onSelectModel} />);
     fireEvent.click(screen.getByText('模型'));
-    expect(screen.getByText('Model Beta').closest('button')?.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: /Model Beta · beta/ }).getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(screen.getByText('推理强度'));
     expect(screen.getByRole('button', { name: '最高 (深度思考 R1)' }).getAttribute('aria-pressed')).toBe('true');
     const normalReasoning = screen.getByRole('button', { name: '常规' });
@@ -37,6 +37,24 @@ describe('CopilotComposer selection controls', () => {
     fireEvent.click(normalReasoning);
     fireEvent.click(screen.getByText('推理强度'));
     expect(screen.getByRole('button', { name: '常规' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('distinguishes same-named models from the same provider by API code', () => {
+    const onSelectModel = vi.fn();
+    render(<CopilotComposer
+      onSend={vi.fn()}
+      models={models.map((model) => ({ ...model, name: 'Shared name' }))}
+      selectedModel="model-a"
+      onSelectModel={onSelectModel}
+    />);
+
+    const trigger = screen.getByTitle('点击展开模型与推理控制面板');
+    expect(trigger.textContent).toContain('alpha');
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByText('模型'));
+    expect(screen.getByRole('button', { name: /Shared name · alpha/ }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: /Shared name · beta/ }));
+    expect(onSelectModel).toHaveBeenCalledWith('model-b');
   });
 
   it('closes non-modal popovers with Escape and restores focus to each trigger', async () => {

@@ -646,6 +646,30 @@ export async function getAIModels(): Promise<AIModel[]> {
   return apiRequest<AIModel[]>('/api/ai/models');
 }
 
+export interface AIProviderCatalogModel {
+  model_code: string;
+  name: string;
+  model_type: 'chat' | 'embedding' | 'rerank' | 'unknown';
+  already_registered: boolean;
+}
+
+export interface AIProviderModelImportItem {
+  model_code: string;
+  name: string;
+  model_type: 'chat' | 'embedding' | 'reasoning' | 'rerank';
+}
+
+export async function getAIProviderModelCatalog(providerId: string): Promise<{ items: AIProviderCatalogModel[]; source?: 'account' | 'public' }> {
+  return apiRequest(`/api/ai/models/catalog/${encodeURIComponent(providerId)}`);
+}
+
+export async function importAIProviderModels(providerId: string, items: AIProviderModelImportItem[]): Promise<{ created: number; skipped: number }> {
+  return apiRequest(`/api/ai/models/catalog/${encodeURIComponent(providerId)}/import`, {
+    method: 'POST',
+    body: JSON.stringify({ items }),
+  });
+}
+
 export async function createAIModel(data: Partial<AIModel>): Promise<AIModel> {
   return apiRequest<AIModel>('/api/ai/models', {
     method: 'POST',

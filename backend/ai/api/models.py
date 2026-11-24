@@ -13,6 +13,9 @@ from database.core import get_db_connection
 from ai.security.permissions import require_ai_permission
 from ai.services.model_health import build_health_timeline, check_model_health
 from ai.schemas.model import (
+    AIModelCatalogImportRequest,
+    AIModelCatalogImportResponse,
+    AIModelCatalogResponse,
     AIModelCreate,
     AIModelHealthCheckResponse,
     AIModelHealthServiceResponse,
@@ -25,6 +28,7 @@ from ai.schemas.model import (
 )
 from api.knowledge_contracts import DefaultModelRequest, ModelAccessRequest
 from ai.security.tokenization import opaque_user_id
+from ai.services.model_catalog import discover_provider_model_catalog
 
 router = APIRouter(prefix="/models", tags=["AI Models & Routes"])
 
@@ -101,6 +105,79 @@ def list_models(user=Depends(require_ai_permission("ai.view"))):
             if not acl_rows or any(a[2] and ((a[0] == "role" and a[1] in roles) or (a[0] == "user" and a[1] == user_id) or (a[0] == "tenant" and a[1] == tenant_id)) for a in acl_rows):
                 visible.append(_model_from_row(row))
         return visible
+
+
+@router.get("/catalog/{provider_id}", response_model=AIModelCatalogResponse)
+def list_provider_model_catalog(
+    provider_id: str,
+    user=Depends(require_ai_permission("ai.model.manage")),
+):
+    """Discover model codes from a provider's saved account configuration."""
+    items = discover_provider_model_catalog(provider_id, user=user)
+    return {"items": items, "source": "public" if any(item.get("source") == "public" for item in items) else "account"}
+
+
+@router.post("/catalog/{provider_id}/import", response_model=AIModelCatalogImportResponse)
+def import_provider_model_catalog(
+    provider_id: str,
+    payload: AIModelCatalogImportRequest,
+    user=Depends(require_ai_permission("ai.model.manage")),
+):
+    """Register selected catalog models atomically without changing routes."""
+    del user
+    now_iso = datetime.now(timezone.utc).isoformat()
+    created = 0
+    skipped = 0
+    seen_codes: set[str] = set()
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        provider = cursor.execute(
+            "SELECT enabled FROM ai_provider WHERE id = ? FOR UPDATE",
+            (provider_id,),
+        ).fetchone()
+        if not provider:
+            raise HTTPException(status_code=404, detail="Provider not found")
+        if not provider[0]:
+            raise HTTPException(status_code=409, detail="Cannot add a model to a disabled provider")
+
+        for item in payload.items:
+            model_code = item.model_code
+            if model_code in seen_codes:
+                skipped += 1
+                continue
+            seen_codes.add(model_code)
+            model_id = f"model_{uuid.uuid4().hex[:12]}"
+            inserted = cursor.execute(
+                """
+                INSERT INTO ai_model (
+                    id, provider_id, name, model_code, model_type,
+                    thinking_supported, tool_call_supported, json_supported,
+                    context_length, max_output_tokens, default_temperature,
+                    default_max_tokens, enabled, is_default, priority,
+                    created_at, updated_at, stream_supported, display_name
+                ) VALUES (?, ?, ?, ?, ?, 0, 0, 0, 32768, 4096, 0.7, 2048, 1, 0, 10, ?, ?, 0, ?)
+                ON CONFLICT (provider_id, model_code) DO NOTHING
+                RETURNING id
+                """,
+                (
+                    model_id,
+                    provider_id,
+                    item.name,
+                    model_code,
+                    item.model_type,
+                    now_iso,
+                    now_iso,
+                    item.name,
+                ),
+            ).fetchone()
+            if inserted:
+                created += 1
+            else:
+                skipped += 1
+
+        conn.commit()
+    return {"created": created, "skipped": skipped}
 
 
 @router.post("", response_model=AIModelResponse, status_code=status.HTTP_201_CREATED)

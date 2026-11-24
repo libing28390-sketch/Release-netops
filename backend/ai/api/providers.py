@@ -926,7 +926,10 @@ async def test_provider_connection(provider_id: str, user=Depends(require_ai_per
             (provider_id,),
         ).fetchone()
     if not model_row:
-        raise HTTPException(status_code=400, detail="Provider has no enabled V4 model")
+        raise HTTPException(status_code=400, detail={
+            "code": "AI_PROVIDER_NO_ENABLED_MODEL",
+            "message": "Add or enable a model for this provider before testing connectivity.",
+        })
     started = datetime.now(timezone.utc)
     if str(model_row[2] or "").lower() == "embedding":
         from ai.services.model_health import check_model_health
