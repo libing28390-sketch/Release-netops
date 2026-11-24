@@ -884,12 +884,16 @@ def _infer_target_ip_sites(
         return sites
 
     # 2. Longest-prefix L3 interface subnet match in CMDB (interfaces + CMDB observations)
+    # Exclude explicitly down / shutdown interfaces so decommissioned cutover
+    # interfaces cannot hijack site selection or create false multi-site ties.
     try:
         intf_rows = list(conn.execute(
             """SELECT device_id, ip_address, ip_prefix_length
                FROM interfaces
                WHERE ip_address IS NOT NULL AND ip_address != ''
-                 AND ip_prefix_length IS NOT NULL"""
+                 AND ip_prefix_length IS NOT NULL
+                 AND LOWER(COALESCE(certified_admin_status, admin_status, 'unknown')) NOT IN ('down', 'admin_down', 'administratively down', 'shutdown')
+                 AND LOWER(COALESCE(certified_oper_status, oper_status, 'unknown')) NOT IN ('down', 'notpresent', 'lowerlayerdown')"""
         ).fetchall())
         try:
             intf_rows.extend(conn.execute(
@@ -900,7 +904,9 @@ def _infer_target_ip_sites(
                     AND s.domain = 'interface_inventory'
                     AND s.successful_generation = i.generation
                    WHERE i.ip_address IS NOT NULL AND i.ip_address != ''
-                     AND i.ip_prefix_length IS NOT NULL"""
+                     AND i.ip_prefix_length IS NOT NULL
+                     AND LOWER(COALESCE(i.admin_status, 'unknown')) NOT IN ('down', 'admin_down', 'administratively down', 'shutdown')
+                     AND LOWER(COALESCE(i.oper_status, 'unknown')) NOT IN ('down', 'notpresent', 'lowerlayerdown')"""
             ).fetchall())
         except Exception:
             pass
@@ -1988,15 +1994,123 @@ def _trace_ip_uncached(
         authorized_device_ids=authorized_device_ids,
     )
     by_id = _device_map(devices)
+
+    try:
+        conn = get_db_connection()
+    except Exception as exc:
+        result["status"] = "failed"
+        result["conclusion"] = "database_unavailable"
+        result["errors"].append("无法读取拓扑与设备事实库")
+        result["completed_at"] = _now_iso()
+        logger.warning("[IPLocatorV2] database unavailable: %s", exc)
+        return result
+
+    # ── Batch 1 Fast-Path: In-memory Exact_IP_Map + Per_VRF_Radix_Tree ──
+    radix_direct_gateways: list[dict[str, Any]] = []
+    exact_scope_ids = (
+        {str(item) for item in authorized_device_ids if str(item)}
+        if authorized_device_ids is not None
+        else (set(by_id.keys()) if by_id else None)
+    )
+    try:
+        from services.ipam_radix_index_service import get_ipam_radix_index
+
+        radix_index = get_ipam_radix_index(conn)
+        # Step 1: O(1) self-IP interception (Loopback, P2P, SVI, Mgmt, including DOWN interfaces
+        # and SNMP-only/non-SSH devices as long as authorized in scope)
+        if not force_refresh and not start_device_id:
+            exact_matches = radix_index.lookup_exact(
+                target_ip,
+                tenant_id=tenant_id or None,
+                site_id=site_id or None,
+                vrf=vrf if vrf and vrf.lower() not in {"default", "global"} else None,
+                authorized_device_ids=exact_scope_ids,
+            )
+            if exact_matches:
+                primary = exact_matches[0]
+                peer = radix_index.find_p2p_peer(primary, authorized_device_ids=exact_scope_ids)
+                local_location = {
+                    "device_id": primary.device_id,
+                    "device": primary.hostname,
+                    "canonical_mgmt_ip": primary.canonical_mgmt_ip,
+                    "port": primary.interface_name,
+                    "ip": target_ip,
+                    "subnet_cidr": primary.subnet_cidr,
+                    "vrf": primary.vrf_name,
+                    "ip_classification": primary.ip_role,
+                    "admin_status": primary.admin_status,
+                    "oper_status": primary.oper_status,
+                    "is_down": primary.is_down,
+                    "confidence": "device_interface",
+                    "source": "exact_ip_map",
+                }
+                if peer is not None:
+                    local_location["peer_relationship"] = {
+                        "peer_device_id": peer.device_id,
+                        "peer_hostname": peer.hostname,
+                        "peer_mgmt_ip": peer.canonical_mgmt_ip,
+                        "peer_interface": peer.interface_name,
+                        "peer_ip": peer.ip,
+                        "peer_oper_status": peer.oper_status,
+                    }
+                result["status"] = "completed"
+                result["conclusion"] = "device_interface"
+                result["found"] = True
+                result["location"] = local_location
+                result["terminal_candidates"] = [
+                    {
+                        "device_id": m.device_id,
+                        "device": m.hostname,
+                        "canonical_mgmt_ip": m.canonical_mgmt_ip,
+                        "port": m.interface_name,
+                        "ip": target_ip,
+                        "vrf": m.vrf_name,
+                        "ip_classification": m.ip_role,
+                        "oper_status": m.oper_status,
+                        "is_down": m.is_down,
+                        "confidence": "device_interface",
+                    }
+                    for m in exact_matches
+                ]
+                result["completed_at"] = _now_iso()
+                conn.close()
+                return add_legacy_compatibility(result)
+
+        # Step 2: Per-VRF Connected-Subnet Radix Tree gateway anchor (UP interfaces only, Master > Backup)
+        if devices and not start_device_id:
+            _matched_cidr, gw_records = radix_index.lookup_connected_gateways(
+                target_ip,
+                tenant_id=tenant_id or None,
+                site_id=site_id or None,
+                vrf=vrf if vrf and vrf.lower() not in {"default", "global"} else None,
+                authorized_device_ids=by_id.keys(),
+            )
+            seen_gw_ids: set[str] = set()
+            for gw in gw_records:
+                if gw.device_id in by_id and gw.device_id not in seen_gw_ids:
+                    seen_gw_ids.add(gw.device_id)
+                    radix_direct_gateways.append(by_id[gw.device_id])
+    except Exception as exc:
+        logger.debug("[IPLocatorV2] Radix index lookup skipped: %s", type(exc).__name__)
+
     if start_device_id:
         start_devices = [item for item in devices if str(item.get("id") or "") == str(start_device_id)]
     else:
-        start_devices = [
+        core_starts = [
             item for item in devices
             if str(item.get("role") or "").strip().lower() in CORE_ROLES
         ]
+        # Prefer Radix-matched active UP connected gateways (sorted Master > Backup)
+        # and rescue sites without an explicit role='core' seed device.
+        if radix_direct_gateways:
+            start_devices = list(radix_direct_gateways)
+            radix_ids = {str(d.get("id") or "") for d in radix_direct_gateways}
+            deferred_core_fallback = [d for d in core_starts if str(d.get("id") or "") not in radix_ids]
+        else:
+            start_devices = core_starts
+            deferred_core_fallback = []
     if not devices or not start_devices:
-        result["status"] = "failed"
+        conn.close()
         result["status"] = "needs_context"
         result["conclusion"] = "core_start_not_configured"
         result["coverage_gaps"].append("当前租户/站点没有可访问的纳管核心设备，请指定起始设备")
@@ -2020,18 +2134,8 @@ def _trace_ip_uncached(
     direct_devices: list[tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]] ] = []
     route_fresh_seconds = max(1, int(route_fresh_seconds or 300))
 
-    try:
-        conn = get_db_connection()
-    except Exception as exc:
-        result["status"] = "failed"
-        result["conclusion"] = "database_unavailable"
-        result["errors"].append("无法读取拓扑与设备事实库")
-        result["completed_at"] = _now_iso()
-        logger.warning("[IPLocatorV2] database unavailable: %s", exc)
-        return result
-
-    deferred_start_devices: list[dict[str, Any]] = []
-    if not start_device_id and not site_id:
+    deferred_start_devices: list[dict[str, Any]] = list(deferred_core_fallback) if not start_device_id else []
+    if not start_device_id and not site_id and not radix_direct_gateways:
         distinct_core_sites = {
             _device_site_key(d) for d in start_devices if _device_site_key(d)
         }
