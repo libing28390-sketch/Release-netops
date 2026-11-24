@@ -415,15 +415,32 @@ def build_ipam_radix_index(conn: Any = None) -> IPAMRadixIndexSnapshot:
     db = conn if conn is not None else get_db_connection()
     snapshot = IPAMRadixIndexSnapshot(built_at=time.monotonic())
     try:
-        device_rows = db.execute(
-            """SELECT d.id, d.hostname, d.ip_address, d.status,
-                      COALESCE(NULLIF(BTRIM(d.ha_role), ''), 'STANDALONE') AS ha_role,
-                      COALESCE(NULLIF(BTRIM(d.vsys_id), ''), 'default') AS vsys_id,
-                      COALESCE(NULLIF(BTRIM(d.tenant_id), ''), 'tenant-default') AS tenant_id,
-                      COALESCE(NULLIF(BTRIM(pa.site_id), ''), NULLIF(BTRIM(d.site_id), ''), NULLIF(BTRIM(d.site), ''), '') AS site_id
-                 FROM devices d
-                 LEFT JOIN physical_assets pa ON pa.id = d.asset_id"""
-        ).fetchall()
+        try:
+            db.execute("SAVEPOINT sp_radix_devices")
+            device_rows = db.execute(
+                """SELECT d.id, d.hostname, d.ip_address, d.status,
+                          COALESCE(NULLIF(BTRIM(d.ha_role), ''), 'STANDALONE') AS ha_role,
+                          COALESCE(NULLIF(BTRIM(d.vsys_id), ''), 'default') AS vsys_id,
+                          COALESCE(NULLIF(BTRIM(d.tenant_id), ''), 'tenant-default') AS tenant_id,
+                          COALESCE(NULLIF(BTRIM(pa.site_id), ''), NULLIF(BTRIM(d.site_id), ''), NULLIF(BTRIM(d.site), ''), '') AS site_id
+                     FROM devices d
+                     LEFT JOIN physical_assets pa ON pa.id = d.asset_id"""
+            ).fetchall()
+            db.execute("RELEASE SAVEPOINT sp_radix_devices")
+        except Exception:
+            try:
+                db.execute("ROLLBACK TO SAVEPOINT sp_radix_devices")
+            except Exception:
+                pass
+            device_rows = db.execute(
+                """SELECT d.id, d.hostname, d.ip_address, d.status,
+                          'STANDALONE' AS ha_role,
+                          'default' AS vsys_id,
+                          COALESCE(NULLIF(BTRIM(d.tenant_id), ''), 'tenant-default') AS tenant_id,
+                          COALESCE(NULLIF(BTRIM(pa.site_id), ''), NULLIF(BTRIM(d.site_id), ''), NULLIF(BTRIM(d.site), ''), '') AS site_id
+                     FROM devices d
+                     LEFT JOIN physical_assets pa ON pa.id = d.asset_id"""
+            ).fetchall()
         devices_by_id: dict[str, dict[str, Any]] = {}
         for raw in device_rows:
             d = _row_dict(raw)
@@ -662,29 +679,40 @@ def build_ipam_radix_index(conn: Any = None) -> IPAMRadixIndexSnapshot:
         except Exception:
             pass
 
-        # Source 4: Multi-domain ip_inventory
+        # Source 4: Multi-domain ip_inventory (with pre-m0336 fallback)
         try:
+            db.execute("SAVEPOINT sp_radix_inv")
             inv_rows = db.execute(
                 """SELECT device_id, interface, ip, mask,
                           COALESCE(vrf_name, 'default') AS vrf_name, type
                      FROM ip_inventory
                     WHERE ip IS NOT NULL AND ip <> ''"""
             ).fetchall()
-            for raw in inv_rows:
-                r = _row_dict(raw)
-                _index_interface_ip(
-                    device_id=str(r.get("device_id") or ""),
-                    interface_name=str(r.get("interface") or ""),
-                    raw_ip=str(r.get("ip") or ""),
-                    raw_prefix=r.get("mask"),
-                    vrf_name=str(r.get("vrf_name") or "default"),
-                    interface_type=str(r.get("type") or ""),
-                    admin_status="unknown",
-                    oper_status="unknown",
-                    source="ip_inventory",
-                )
+            db.execute("RELEASE SAVEPOINT sp_radix_inv")
         except Exception:
-            pass
+            try:
+                db.execute("ROLLBACK TO SAVEPOINT sp_radix_inv")
+                inv_rows = db.execute(
+                    """SELECT device_id, interface, ip, mask,
+                              'default' AS vrf_name, type
+                         FROM ip_inventory
+                        WHERE ip IS NOT NULL AND ip <> ''"""
+                ).fetchall()
+            except Exception:
+                inv_rows = []
+        for raw in inv_rows:
+            r = _row_dict(raw)
+            _index_interface_ip(
+                device_id=str(r.get("device_id") or ""),
+                interface_name=str(r.get("interface") or ""),
+                raw_ip=str(r.get("ip") or ""),
+                raw_prefix=r.get("mask"),
+                vrf_name=str(r.get("vrf_name") or "default"),
+                interface_type=str(r.get("type") or ""),
+                admin_status="unknown",
+                oper_status="unknown",
+                source="ip_inventory",
+            )
 
         for tree in snapshot.per_vrf_trees.values():
             tree.finalize()
