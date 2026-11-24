@@ -497,7 +497,19 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
         } catch (err: any) {
           const status = Number(err?.status || err?.statusCode || 0);
           const msg = String(err?.message || err?.detail || '').toLowerCase();
-          if (status === 409 || msg.includes('409') || msg.includes('exist') || msg.includes('conflict') || msg.includes('已存在') || msg.includes('重复') || msg.includes('duplicate')) {
+          if (
+            status === 409
+            || msg.includes('409')
+            || msg.includes('exist')
+            || msg.includes('conflict')
+            || msg.includes('already')
+            || msg.includes('已存在')
+            || msg.includes('已有')
+            || msg.includes('冲突')
+            || msg.includes('重复')
+            || msg.includes('duplicate')
+            || msg.includes('unique')
+          ) {
             skipped += 1;
           } else {
             failed += 1;
@@ -687,7 +699,16 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
                   </tr>
                 </thead>
                 <tbody>
-                  {candidates.map((candidate) => {
+                  {candidates
+                    .filter((candidate) => !(
+                      candidate.context_type === 'global'
+                      && mappings.some(
+                        (m) => m.status === 'active'
+                          && m.context_type === 'global'
+                          && m.context_source === candidate.context_source,
+                      )
+                    ))
+                    .map((candidate) => {
                     const key = candidateRowKey(candidate);
                     const matchingSpaces = candidate.context_type === 'unknown'
                       ? []
