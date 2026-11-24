@@ -1500,6 +1500,158 @@ def _ip_mib_prefix_length(
     return prefix_length
 
 
+IP_ADDR_ENT_ADDR = '1.3.6.1.2.1.4.20.1.1'
+IP_ADDR_ENT_IF_INDEX = '1.3.6.1.2.1.4.20.1.2'
+IP_ADDR_ENT_NETMASK = '1.3.6.1.2.1.4.20.1.3'
+VRRP_OPER_STATE = '1.3.6.1.2.1.68.1.3.1.3'
+VRRP_ASSO_IP_ROW_STATUS = '1.3.6.1.2.1.68.1.4.1.2'
+CISCO_HSRP_GRP_VIRTUAL_IP = '1.3.6.1.4.1.9.9.106.1.2.1.1.11'
+CISCO_HSRP_GRP_STANDBY_STATE = '1.3.6.1.4.1.9.9.106.1.2.1.1.15'
+DOT3_STATS_DUPLEX_STATUS = '1.3.6.1.2.1.10.7.2.1.19'
+
+
+async def collect_legacy_ip_addr_table(
+    ip: str,
+    community_or_profile: str | Mapping[str, Any],
+    interface_names_by_index: Mapping[int, str] | None = None,
+    port: int = 161,
+    *,
+    version: str = '2c',
+    timeout: float = 30,
+) -> list[dict[str, Any]]:
+    """Collect RFC 1213 ipAddrTable (.1.3.6.1.2.1.4.20) for legacy devices & mask backfill."""
+    import ipaddress
+
+    columns = await _snmp_walk_columns_complete(
+        ip,
+        community_or_profile,
+        {
+            'if_index': IP_ADDR_ENT_IF_INDEX,
+            'netmask': IP_ADDR_ENT_NETMASK,
+        },
+        port,
+        version=version,
+        timeout=timeout,
+    )
+    names_by_index = {int(idx): str(name) for idx, name in (interface_names_by_index or {}).items()}
+    required = {
+        idx
+        for suffix in columns['if_index']
+        for idx in [_snmp_integer_value(columns['if_index'][suffix])]
+        if idx is not None and idx > 0
+    }
+    missing = required - set(names_by_index)
+    if missing:
+        names_by_index.update(await _snmp_map_if_indexes(
+            ip, community_or_profile, missing, port, version=version, timeout=timeout,
+        ))
+    records: list[dict[str, Any]] = []
+    for suffix in sorted(columns['if_index']):
+        try:
+            addr = str(ipaddress.IPv4Address(suffix))
+        except ValueError:
+            continue
+        if_index = _snmp_integer_value(columns['if_index'][suffix])
+        if if_index is None or if_index <= 0 or if_index not in names_by_index:
+            continue
+        raw_mask = str(columns['netmask'].get(suffix) or '').strip()
+        prefix_length: int | None = None
+        if raw_mask:
+            try:
+                prefix_length = ipaddress.IPv4Network(f'0.0.0.0/{raw_mask}').prefixlen
+            except ValueError:
+                prefix_length = None
+        records.append({
+            'if_index': if_index,
+            'interface': names_by_index[if_index],
+            'ip_address': addr,
+            'ip_version': 1,
+            'prefix_length': prefix_length,
+            'address_status': 'preferred',
+            'address_type': 1,
+            'source_mib': 'ipAddrTable',
+        })
+    return records
+
+
+async def collect_snmp_fhrp_vips(
+    ip: str,
+    community_or_profile: str | Mapping[str, Any],
+    interface_names_by_index: Mapping[int, str] | None = None,
+    port: int = 161,
+    *,
+    version: str = '2c',
+    timeout: float = 20,
+) -> list[dict[str, Any]]:
+    """Collect VRRP-MIB (.68.1.4) and CISCO-HSRP-MIB (.9.9.106) virtual gateway IPs."""
+    import ipaddress
+
+    names_by_index = {int(idx): str(name) for idx, name in (interface_names_by_index or {}).items()}
+    vips: list[dict[str, Any]] = []
+    vrrp_state_map = {1: 'initialize', 2: 'backup', 3: 'master'}
+    hsrp_state_map = {1: 'initial', 2: 'learn', 3: 'listen', 4: 'speak', 5: 'standby', 6: 'active'}
+
+    try:
+        state_rows = await _snmp_bulk_walk_complete(ip, community_or_profile, VRRP_OPER_STATE, port, timeout=timeout, version=version)
+        vip_rows = await _snmp_bulk_walk_complete(ip, community_or_profile, VRRP_ASSO_IP_ROW_STATUS, port, timeout=timeout, version=version)
+        states_by_if_vrid: dict[tuple[int, int], str] = {}
+        for oid, val in state_rows:
+            suffix = oid[len(VRRP_OPER_STATE) + 1:].split('.')
+            if len(suffix) >= 2 and suffix[0].isdigit() and suffix[1].isdigit():
+                st_code = _snmp_integer_value(val)
+                states_by_if_vrid[(int(suffix[0]), int(suffix[1]))] = vrrp_state_map.get(st_code or 0, 'unknown')
+        for oid, _val in vip_rows:
+            suffix = oid[len(VRRP_ASSO_IP_ROW_STATUS) + 1:].split('.')
+            if len(suffix) == 6 and all(p.isdigit() for p in suffix):
+                if_index, vrid = int(suffix[0]), int(suffix[1])
+                vip_ip = '.'.join(suffix[2:6])
+                try:
+                    norm_ip = str(ipaddress.IPv4Address(vip_ip))
+                except ValueError:
+                    continue
+                vips.append({
+                    'protocol': 'vrrp',
+                    'group_id': vrid,
+                    'if_index': if_index,
+                    'interface_name': names_by_index.get(if_index, f'ifIndex-{if_index}'),
+                    'virtual_ip': norm_ip,
+                    'state': states_by_if_vrid.get((if_index, vrid), 'unknown'),
+                    'source_mib': 'VRRP-MIB',
+                })
+    except Exception:
+        pass
+
+    try:
+        hsrp_vip_rows = await _snmp_bulk_walk_complete(ip, community_or_profile, CISCO_HSRP_GRP_VIRTUAL_IP, port, timeout=timeout, version=version)
+        hsrp_st_rows = await _snmp_bulk_walk_complete(ip, community_or_profile, CISCO_HSRP_GRP_STANDBY_STATE, port, timeout=timeout, version=version)
+        hsrp_states: dict[tuple[int, int], str] = {}
+        for oid, val in hsrp_st_rows:
+            suffix = oid[len(CISCO_HSRP_GRP_STANDBY_STATE) + 1:].split('.')
+            if len(suffix) >= 2 and suffix[0].isdigit() and suffix[1].isdigit():
+                st_code = _snmp_integer_value(val)
+                hsrp_states[(int(suffix[0]), int(suffix[1]))] = hsrp_state_map.get(st_code or 0, 'unknown')
+        for oid, val in hsrp_vip_rows:
+            suffix = oid[len(CISCO_HSRP_GRP_VIRTUAL_IP) + 1:].split('.')
+            if len(suffix) >= 2 and suffix[0].isdigit() and suffix[1].isdigit():
+                if_index, grp = int(suffix[0]), int(suffix[1])
+                try:
+                    norm_ip = str(ipaddress.IPv4Address(str(val).strip()))
+                except ValueError:
+                    continue
+                vips.append({
+                    'protocol': 'hsrp',
+                    'group_id': grp,
+                    'if_index': if_index,
+                    'interface_name': names_by_index.get(if_index, f'ifIndex-{if_index}'),
+                    'virtual_ip': norm_ip,
+                    'state': hsrp_states.get((if_index, grp), 'unknown'),
+                    'source_mib': 'CISCO-HSRP-MIB',
+                })
+    except Exception:
+        pass
+    return vips
+
+
 async def collect_interface_ip_addresses(
     ip: str,
     community_or_profile: str | Mapping[str, Any],
@@ -1509,67 +1661,91 @@ async def collect_interface_ip_addresses(
     version: str = '2c',
     timeout: float = 30,
 ) -> list[dict[str, Any]]:
-    """Collect IP-MIB IPv4/IPv6 assignments and join them through ifIndex.
-
-    This collector intentionally treats an empty/unsupported table as an
-    incomplete domain.  The caller can then run the existing interface IP
-    CLI fallback without clearing the previous address snapshot.
-    """
-    columns = await _snmp_walk_columns_complete(
-        ip,
-        community_or_profile,
-        {
-            'if_index': IP_ADDRESS_IF_INDEX,
-            'address_type': IP_ADDRESS_TYPE,
-            'prefix': IP_ADDRESS_PREFIX,
-            'status': IP_ADDRESS_STATUS,
-        },
-        port,
-        version=version,
-        timeout=timeout,
-    )
-    status_names = {1: 'preferred', 2: 'deprecated', 3: 'invalid', 4: 'inaccessible', 5: 'unknown', 6: 'tentative', 7: 'duplicate'}
-    names_by_index = {int(index): str(name) for index, name in (interface_names_by_index or {}).items()}
-    required_if_indexes = {
-        parsed_if_index
-        for suffix in columns['if_index']
-        for parsed_if_index in [_snmp_integer_value(columns['if_index'][suffix])]
-        if parsed_if_index is not None and parsed_if_index > 0
-    }
-    missing_if_indexes = required_if_indexes - set(names_by_index)
-    if missing_if_indexes:
-        names_by_index.update(await _snmp_map_if_indexes(
-            ip, community_or_profile, missing_if_indexes, port,
-            version=version, timeout=timeout,
-        ))
-
+    """Collect IP-MIB (.4.34) with RFC 1213 ipAddrTable (.4.20) fallback & mask backfill."""
     records: list[dict[str, Any]] = []
-    for suffix in sorted(columns['if_index']):
-        address_type, address = _parse_ip_mib_address_index(suffix)
-        if_index = _snmp_integer_value(columns['if_index'][suffix])
-        mib_address_type = _snmp_integer_value(columns['address_type'][suffix])
-        status = _snmp_integer_value(columns['status'][suffix])
-        if if_index is None or if_index <= 0 or mib_address_type not in {1, 2, 3}:
-            raise RuntimeError('IP-MIB address row has an invalid interface or address type')
-        if if_index not in names_by_index:
-            raise RuntimeError('IP-MIB address row references an ifIndex absent from IF-MIB')
-        if status not in status_names:
-            raise RuntimeError('IP-MIB address row has an unknown address status')
-        if status not in {1, 2, 5}:
-            # Invalid, inaccessible, tentative, and duplicate addresses are
-            # not current usable interface assignments.
-            continue
-        records.append({
-            'if_index': if_index,
-            'interface': names_by_index[if_index],
-            'ip_address': address,
-            'ip_version': address_type,
-            'prefix_length': _ip_mib_prefix_length(
-                columns['prefix'][suffix], if_index, address_type, address,
-            ),
-            'address_status': status_names[status],
-            'address_type': mib_address_type,
-        })
+    names_by_index = {int(index): str(name) for index, name in (interface_names_by_index or {}).items()}
+    try:
+        columns = await _snmp_walk_columns_complete(
+            ip,
+            community_or_profile,
+            {
+                'if_index': IP_ADDRESS_IF_INDEX,
+                'address_type': IP_ADDRESS_TYPE,
+                'prefix': IP_ADDRESS_PREFIX,
+                'status': IP_ADDRESS_STATUS,
+            },
+            port,
+            version=version,
+            timeout=timeout,
+        )
+        status_names = {1: 'preferred', 2: 'deprecated', 3: 'invalid', 4: 'inaccessible', 5: 'unknown', 6: 'tentative', 7: 'duplicate'}
+        required_if_indexes = {
+            parsed_if_index
+            for suffix in columns['if_index']
+            for parsed_if_index in [_snmp_integer_value(columns['if_index'][suffix])]
+            if parsed_if_index is not None and parsed_if_index > 0
+        }
+        missing_if_indexes = required_if_indexes - set(names_by_index)
+        if missing_if_indexes:
+            names_by_index.update(await _snmp_map_if_indexes(
+                ip, community_or_profile, missing_if_indexes, port,
+                version=version, timeout=timeout,
+            ))
+
+        for suffix in sorted(columns['if_index']):
+            address_type, address = _parse_ip_mib_address_index(suffix)
+            if_index = _snmp_integer_value(columns['if_index'][suffix])
+            mib_address_type = _snmp_integer_value(columns['address_type'][suffix])
+            status = _snmp_integer_value(columns['status'][suffix])
+            if if_index is None or if_index <= 0 or mib_address_type not in {1, 2, 3}:
+                raise RuntimeError('IP-MIB address row has an invalid interface or address type')
+            if if_index not in names_by_index:
+                raise RuntimeError('IP-MIB address row references an ifIndex absent from IF-MIB')
+            if status not in status_names:
+                raise RuntimeError('IP-MIB address row has an unknown address status')
+            if status not in {1, 2, 5}:
+                continue
+            records.append({
+                'if_index': if_index,
+                'interface': names_by_index[if_index],
+                'ip_address': address,
+                'ip_version': address_type,
+                'prefix_length': _ip_mib_prefix_length(
+                    columns['prefix'][suffix], if_index, address_type, address,
+                ),
+                'address_status': status_names[status],
+                'address_type': mib_address_type,
+            })
+    except Exception:
+        records = []
+
+    # Fallback / mask backfill via RFC 1213 ipAddrTable (.4.20) when .4.34 is
+    # unsupported or returns zeroDotZero (0.0) prefix pointers on IPv4 rows.
+    # Note: RFC 4001 InetAddressType encodes IPv4 as 1 (some callers also use 4).
+    needs_legacy_fallback = (
+        not records
+        or any(item.get('ip_version') in (1, 4) and item.get('prefix_length') is None for item in records)
+    )
+    if needs_legacy_fallback:
+        try:
+            legacy_records = await collect_legacy_ip_addr_table(
+                ip, community_or_profile, names_by_index, port, version=version, timeout=timeout,
+            )
+            if not records:
+                records = legacy_records
+            else:
+                legacy_mask_by_ip = {
+                    item['ip_address']: item['prefix_length']
+                    for item in legacy_records
+                    if item.get('prefix_length') is not None
+                }
+                for item in records:
+                    if item.get('ip_version') in (1, 4) and item.get('prefix_length') is None:
+                        if item['ip_address'] in legacy_mask_by_ip:
+                            item['prefix_length'] = legacy_mask_by_ip[item['ip_address']]
+        except Exception:
+            pass
+
     if not records:
         raise RuntimeError('IP-MIB address table returned no usable IPv4/IPv6 assignments')
     records.sort(key=lambda item: (

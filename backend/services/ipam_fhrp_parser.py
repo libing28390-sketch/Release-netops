@@ -12,13 +12,17 @@ _IOS_PLATFORMS = frozenset(
         "cisco_ios",
         "cisco_iosxe",
         "cisco_xe",
+        "cisco_nxos",
+        "nxos",
         "ios",
         "iosxe",
     }
 )
+_HUAWEI_PLATFORMS = frozenset({"huawei", "huawei_vrp", "vrp"})
 
 _COMMANDS = {
     "show standby brief": "hsrp",
+    "show hsrp brief": "hsrp",
     "show vrrp brief": "vrrp",
 }
 _H3C_VRRP_COMMANDS = {
@@ -279,12 +283,69 @@ def parse_h3c_vrrp_output(command: str, output: str, *, platform: str) -> dict[s
     return {"status": "partial" if partial else "complete", "observations": observations}
 
 
+def parse_huawei_vrrp_brief_output(command: str, output: str, *, platform: str) -> dict[str, Any]:
+    """Parse Huawei VRP / CloudEngine ``display vrrp brief`` output."""
+    normalized_platform = str(platform or "").strip().casefold()
+    normalized_command = str(command or "").strip().casefold()
+    if normalized_platform not in _HUAWEI_PLATFORMS or normalized_command != "display vrrp brief":
+        return {"status": "unsupported", "observations": []}
+    text = str(output or "")
+    if _CLI_ERROR.search(text):
+        return {"status": "unsupported", "observations": []}
+    if re.search(r"total\s*:\s*0\b|no\s+vrrp", text, re.IGNORECASE):
+        return {"status": "complete", "observations": []}
+
+    observations: list[dict[str, Any]] = []
+    # Typical Huawei display vrrp brief row:
+    # Vlanif100      100   Master   10.10.10.254     Vlanif100  ...
+    row_re = re.compile(
+        r"^\s*(\S+)\s+(\d+)\s+(Master|Backup|Initialize|Init|Inactive)\s+([0-9a-fA-F:.]+)",
+        re.IGNORECASE,
+    )
+    saw_header = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if re.search(r"\bVRID\b.*\bState\b", stripped, re.IGNORECASE):
+            saw_header = True
+            continue
+        m = row_re.match(stripped)
+        if m:
+            if_name = m.group(1)
+            vrid = int(m.group(2))
+            state = m.group(3).lower()
+            if state == "init":
+                state = "initialize"
+            vip_raw = m.group(4)
+            try:
+                parsed_ip = ipaddress.ip_address(vip_raw)
+            except ValueError:
+                continue
+            observations.append({
+                "protocol": "vrrp",
+                "group_id": vrid,
+                "address_family": parsed_ip.version,
+                "interface_name": if_name,
+                "priority": None,
+                "state": state,
+                "master_address": None,
+                "virtual_ip": parsed_ip.compressed,
+                "virtual_mac": None,
+            })
+    if not saw_header and not observations:
+        return {"status": "partial", "observations": []}
+    return {"status": "complete", "observations": observations}
+
+
 def parse_fhrp_output(command: str, output: str, *, platform: str) -> dict[str, Any]:
     """Dispatch only explicitly supported read-only FHRP query commands."""
 
     normalized_platform = str(platform or "").strip().casefold()
     if normalized_platform in _IOS_PLATFORMS:
         return parse_cisco_fhrp_output(command, output, platform=normalized_platform)
+    if normalized_platform in _HUAWEI_PLATFORMS:
+        return parse_huawei_vrrp_brief_output(command, output, platform=normalized_platform)
     return parse_h3c_vrrp_output(command, output, platform=normalized_platform)
 
 

@@ -2735,3 +2735,29 @@ def api_delete_asn(
     if not delete_asn(asn_id, tenant_id=tenant_id_for_write(user=user)):
         raise HTTPException(status_code=404, detail='ASN not found')
     return {'ok': True}
+
+
+class IPAMEventIngestRequest(BaseModel):
+    event_type: str = ''
+    raw_message: str = ''
+    device_id: str = ''
+    device_ip: str = ''
+    hostname: str = ''
+
+
+@router.post('/ipam/events/ingest')
+def api_ingest_ipam_network_event(
+    body: IPAMEventIngestRequest,
+    user=require_role('Operator'),
+):
+    """Ingest a debounced Syslog/SNMP Trap change event for incremental IPAM/Topology refresh."""
+    del user
+    from services.ipam_event_refresh_service import ingest_network_change_event
+
+    return ingest_network_change_event(
+        event_type=body.event_type,
+        raw_message=body.raw_message,
+        device_id=body.device_id,
+        device_ip=body.device_ip,
+        hostname=body.hostname,
+    )
