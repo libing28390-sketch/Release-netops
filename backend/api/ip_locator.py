@@ -132,6 +132,10 @@ async def api_device_holographic_panorama(
     highlight_port: str = Query(default='', max_length=128),
     q: str = Query(default='', max_length=128),
     limit: int = Query(default=50, ge=1, le=200),
+    arp_page: int = Query(default=1, ge=1),
+    arp_page_size: int = Query(default=10, ge=1, le=100),
+    mac_page: int = Query(default=1, ge=1),
+    mac_page_size: int = Query(default=10, ge=1, le=100),
     user=require_role("Viewer"),
 ):
     """Return the 5-dimension holographic device panorama for a located switch/router."""
@@ -150,6 +154,10 @@ async def api_device_holographic_panorama(
         highlight_port=highlight_port,
         arp_mac_filter=q,
         limit=limit,
+        arp_page=arp_page,
+        arp_page_size=arp_page_size,
+        mac_page=mac_page,
+        mac_page_size=mac_page_size,
     )
     if panorama is None:
         raise HTTPException(status_code=404, detail='未找到设备全息信息')

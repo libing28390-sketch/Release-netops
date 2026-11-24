@@ -7,10 +7,27 @@ device walks) and enforces bounded result sizes for ARP/MAC previews.
 from __future__ import annotations
 
 import json
+import math
+import re
 from typing import Any, Mapping
 
 from core.interface_utils import normalize_interface_name
 from database import get_db_connection
+
+
+def _format_mac_dash(value: Any) -> str:
+    """Format a MAC address as network-friendly ``xxxx-xxxx-xxxx``."""
+    compact = re.sub(r"[^0-9a-fA-F]", "", str(value or "")).lower()
+    if len(compact) != 12:
+        return str(value or "").strip()
+    return f"{compact[0:4]}-{compact[4:8]}-{compact[8:12]}"
+
+
+def _clean_uptime(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return re.sub(r"\.\d+$", "", text)
 
 
 def _row_dict(row: Any) -> dict[str, Any]:
@@ -95,12 +112,19 @@ def get_device_holographic_panorama(
     highlight_port: str = "",
     arp_mac_filter: str = "",
     limit: int = 50,
+    arp_page: int = 1,
+    arp_page_size: int = 10,
+    mac_page: int = 1,
+    mac_page_size: int = 10,
     conn: Any = None,
 ) -> dict[str, Any] | None:
     """Build the 5-dimension holographic panorama for one managed network device."""
     owns_conn = conn is None
     db = conn if conn is not None else get_db_connection()
-    bounded_limit = min(max(1, int(limit or 50)), 200)
+    arp_ps = min(max(1, int(arp_page_size or limit or 10)), 100)
+    mac_ps = min(max(1, int(mac_page_size or limit or 10)), 100)
+    arp_p = max(1, int(arp_page or 1))
+    mac_p = max(1, int(mac_page or 1))
     try:
         dev_row = db.execute(
             """SELECT d.id, d.hostname, d.ip_address, d.status, d.role, d.vendor, d.platform,
@@ -110,9 +134,10 @@ def get_device_holographic_panorama(
                       COALESCE(NULLIF(BTRIM(d.ha_role), ''), 'STANDALONE') AS ha_role,
                       COALESCE(d.base_mac, '') AS base_mac,
                       COALESCE(pa.serial_number, '') AS serial_number,
-                      COALESCE(d.site, '') AS physical_location
+                      COALESCE(NULLIF(BTRIM(s.site_name), ''), NULLIF(BTRIM(s.site_code), ''), NULLIF(BTRIM(d.site), ''), '') AS site_display_name
                  FROM devices d
                  LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                 LEFT JOIN sites s ON s.id = COALESCE(NULLIF(BTRIM(pa.site_id), ''), NULLIF(BTRIM(d.site_id), ''))
                 WHERE d.id = ?""",
             (device_id,),
         ).fetchone()
@@ -121,6 +146,7 @@ def get_device_holographic_panorama(
         dev = _row_dict(dev_row)
 
         # Dimension 1: Asset & Identity
+        site_display = str(dev.get("site_display_name") or dev.get("site_id") or "")
         asset_identity = {
             "device_id": str(dev["id"]),
             "entity_uid": f"{dev.get('serial_number') or dev['id']}:{dev.get('vsys_id') or 'default'}",
@@ -136,10 +162,11 @@ def get_device_holographic_panorama(
             "vsys_id": str(dev.get("vsys_id") or "default"),
             "ha_cluster_id": str(dev.get("ha_cluster_id") or ""),
             "ha_role": str(dev.get("ha_role") or "STANDALONE"),
-            "base_mac": str(dev.get("base_mac") or ""),
-            "uptime": str(dev.get("uptime") or ""),
-            "site_id": str(dev.get("site_id") or dev.get("site") or ""),
-            "physical_location": str(dev.get("physical_location") or ""),
+            "base_mac": _format_mac_dash(dev.get("base_mac") or ""),
+            "uptime": _clean_uptime(dev.get("uptime") or ""),
+            "site_id": str(dev.get("site_id") or ""),
+            "site_name": site_display,
+            "physical_location": site_display,
         }
 
         # Dimension 2: L3 Interfaces & VRF Matrix
@@ -245,62 +272,137 @@ def get_device_holographic_panorama(
                         "source": "interfaces",
                     })
 
-        # Dimension 4: Bounded ARP & MAC Preview (never dumps unbounded tables)
+        # Dimension 4: Deduplicated, searchable, paginated ARP & MAC Preview
         q = str(arp_mac_filter or "").strip().lower()
-        mac_entries: list[dict[str, Any]] = []
+        q_compact = re.sub(r"[^0-9a-f]", "", q)
+
+        def _matches_query(ip_str: str, mac_dash: str, iface: str, vlan_str: str) -> bool:
+            if not q:
+                return True
+            haystack = f"{ip_str} {mac_dash} {iface} {vlan_str}".lower()
+            if q in haystack:
+                return True
+            if q_compact and len(q_compact) >= 4:
+                mac_compact = re.sub(r"[^0-9a-f]", "", mac_dash.lower())
+                if q_compact in mac_compact:
+                    return True
+            return False
+
+        # Deduplicated MAC entries from both ipam_current_fdb_observations (latest gen) and mac_table
+        all_mac_entries: list[dict[str, Any]] = []
+        seen_macs: set[tuple[str, str, str]] = set()
+        try:
+            fdb_rows = db.execute(
+                """SELECT o.mac_address, o.interface_name, o.vlan_key, o.entry_type, o.observed_at
+                     FROM ipam_current_fdb_observations o
+                     JOIN ipam_endpoint_collection_states s
+                       ON s.device_id = o.source_device_id
+                      AND s.observation_source = 'fdb'
+                      AND s.context_source = o.context_source
+                      AND s.context_type = o.context_type
+                      AND s.local_context_key = o.local_context_key
+                      AND s.last_success_generation = o.generation
+                    WHERE o.source_device_id = ?
+                    ORDER BY o.observed_at DESC""",
+                (device_id,),
+            ).fetchall()
+            for raw in fdb_rows:
+                r = _row_dict(raw)
+                mac_dash = _format_mac_dash(r.get("mac_address") or "")
+                iface = str(r.get("interface_name") or "")
+                vlan_val = str(r.get("vlan_key") or "")
+                dedup_key = (mac_dash, normalize_interface_name(iface).lower(), vlan_val)
+                if dedup_key in seen_macs:
+                    continue
+                seen_macs.add(dedup_key)
+                if _matches_query("", mac_dash, iface, vlan_val):
+                    all_mac_entries.append({
+                        "mac": mac_dash,
+                        "interface": iface,
+                        "vlan": vlan_val if vlan_val != "0" else "",
+                        "type": str(r.get("entry_type") or "dynamic"),
+                        "last_updated": str(r.get("observed_at") or ""),
+                    })
+        except Exception:
+            pass
         try:
             mac_rows = db.execute(
                 """SELECT mac_address, interface_name, vlan_id, entry_type, last_updated
                      FROM mac_table
                     WHERE device_id = ?
-                    ORDER BY last_updated DESC
-                    LIMIT ?""",
-                (device_id, bounded_limit * 2),
+                    ORDER BY last_updated DESC""",
+                (device_id,),
             ).fetchall()
             for raw in mac_rows:
                 r = _row_dict(raw)
-                if norm_highlight and normalize_interface_name(str(r.get("interface_name") or "")).lower() != norm_highlight:
-                    if not q:
-                        continue
-                if q and q not in f"{r.get('mac_address')} {r.get('interface_name')} {r.get('vlan_id')}".lower():
+                mac_dash = _format_mac_dash(r.get("mac_address") or "")
+                iface = str(r.get("interface_name") or "")
+                vlan_val = str(r.get("vlan_id") or "")
+                dedup_key = (mac_dash, normalize_interface_name(iface).lower(), vlan_val)
+                if dedup_key in seen_macs:
                     continue
-                mac_entries.append({
-                    "mac": str(r.get("mac_address") or ""),
-                    "interface": str(r.get("interface_name") or ""),
-                    "vlan": str(r.get("vlan_id") or ""),
-                    "type": str(r.get("entry_type") or "dynamic"),
-                    "last_updated": str(r.get("last_updated") or ""),
-                })
-                if len(mac_entries) >= bounded_limit:
-                    break
+                seen_macs.add(dedup_key)
+                if _matches_query("", mac_dash, iface, vlan_val):
+                    all_mac_entries.append({
+                        "mac": mac_dash,
+                        "interface": iface,
+                        "vlan": vlan_val if vlan_val != "0" else "",
+                        "type": str(r.get("entry_type") or "dynamic"),
+                        "last_updated": str(r.get("last_updated") or ""),
+                    })
         except Exception:
             pass
 
-        arp_entries: list[dict[str, Any]] = []
+        # Deduplicated ARP entries joined against latest last_success_generation
+        all_arp_entries: list[dict[str, Any]] = []
+        seen_arps: set[tuple[str, str, str]] = set()
         try:
             arp_rows = db.execute(
-                """SELECT host(ip_address) AS ip_address, mac_address, interface_name, vlan_key, observed_at
-                     FROM ipam_current_endpoint_observations
-                    WHERE source_device_id = ? AND observation_source = 'arp'
-                    ORDER BY observed_at DESC
-                    LIMIT ?""",
-                (device_id, bounded_limit * 2),
+                """SELECT host(o.ip_address) AS ip_address, o.mac_address,
+                          o.interface_name, o.vlan_key, o.observed_at
+                     FROM ipam_current_endpoint_observations o
+                     JOIN ipam_endpoint_collection_states s
+                       ON s.device_id = o.source_device_id
+                      AND s.observation_source = o.observation_source
+                      AND s.context_source = o.context_source
+                      AND s.context_type = o.context_type
+                      AND s.local_context_key = o.local_context_key
+                      AND s.last_success_generation = o.generation
+                    WHERE o.source_device_id = ?
+                      AND o.observation_source = 'arp'
+                    ORDER BY o.observed_at DESC, o.ip_address ASC""",
+                (device_id,),
             ).fetchall()
             for raw in arp_rows:
                 r = _row_dict(raw)
-                if q and q not in f"{r.get('ip_address')} {r.get('mac_address')} {r.get('interface_name')}".lower():
+                ip_str = str(r.get("ip_address") or "")
+                mac_dash = _format_mac_dash(r.get("mac_address") or "")
+                iface = str(r.get("interface_name") or "")
+                vlan_val = str(r.get("vlan_key") or "")
+                dedup_key = (ip_str, mac_dash, normalize_interface_name(iface).lower())
+                if dedup_key in seen_arps:
                     continue
-                arp_entries.append({
-                    "ip": str(r.get("ip_address") or ""),
-                    "mac": str(r.get("mac_address") or ""),
-                    "interface": str(r.get("interface_name") or ""),
-                    "vlan": str(r.get("vlan_key") or ""),
-                    "observed_at": str(r.get("observed_at") or ""),
-                })
-                if len(arp_entries) >= bounded_limit:
-                    break
+                seen_arps.add(dedup_key)
+                if _matches_query(ip_str, mac_dash, iface, vlan_val):
+                    all_arp_entries.append({
+                        "ip": ip_str,
+                        "mac": mac_dash,
+                        "interface": iface,
+                        "vlan": vlan_val if vlan_val != "0" else "",
+                        "observed_at": str(r.get("observed_at") or ""),
+                    })
         except Exception:
             pass
+
+        arp_total = len(all_arp_entries)
+        arp_total_pages = max(1, math.ceil(arp_total / arp_ps))
+        arp_p = min(arp_p, arp_total_pages)
+        arp_slice = all_arp_entries[(arp_p - 1) * arp_ps : arp_p * arp_ps]
+
+        mac_total = len(all_mac_entries)
+        mac_total_pages = max(1, math.ceil(mac_total / mac_ps))
+        mac_p = min(mac_p, mac_total_pages)
+        mac_slice = all_mac_entries[(mac_p - 1) * mac_ps : mac_p * mac_ps]
 
         # Dimension 5: Topology Neighbors
         topology_neighbors: list[dict[str, Any]] = []
@@ -344,9 +446,17 @@ def get_device_holographic_panorama(
             "l3_interfaces": l3_interfaces,
             "target_port_diagnostics": target_port_diagnostics,
             "arp_mac_preview": {
-                "arp": arp_entries,
-                "mac": mac_entries,
-                "limit": bounded_limit,
+                "arp": arp_slice,
+                "arp_total": arp_total,
+                "arp_page": arp_p,
+                "arp_page_size": arp_ps,
+                "arp_total_pages": arp_total_pages,
+                "mac": mac_slice,
+                "mac_total": mac_total,
+                "mac_page": mac_p,
+                "mac_page_size": mac_ps,
+                "mac_total_pages": mac_total_pages,
+                "limit": arp_ps,
             },
             "topology_neighbors": topology_neighbors,
         }
