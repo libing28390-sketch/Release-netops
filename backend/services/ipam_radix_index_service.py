@@ -108,9 +108,12 @@ class IPIndexRecord:
     oper_status: str = "unknown"
     is_down: bool = False
     device_status: str = "online"
+    ha_role: str = "STANDALONE"
+    vsys_id: str = "default"
     source: str = "cmdb"
 
-    def gateway_priority_key(self) -> tuple[int, int, str, str]:
+    def gateway_priority_key(self) -> tuple[int, int, int, str, str]:
+        ha_weight = 9 if str(self.ha_role or "").upper() == "STANDBY" else 0
         vip_weight = {
             "MASTER": 0,
             "ANYCAST_ACTIVE": 1,
@@ -118,7 +121,7 @@ class IPIndexRecord:
             "BACKUP": 9,
         }.get(self.vip_role, 5)
         online_weight = 0 if str(self.device_status or "").lower() == "online" else 1
-        return (vip_weight, online_weight, self.hostname.lower(), self.interface_name.lower())
+        return (ha_weight, vip_weight, online_weight, self.hostname.lower(), self.interface_name.lower())
 
 
 class _TrieNode:
@@ -414,6 +417,8 @@ def build_ipam_radix_index(conn: Any = None) -> IPAMRadixIndexSnapshot:
     try:
         device_rows = db.execute(
             """SELECT d.id, d.hostname, d.ip_address, d.status,
+                      COALESCE(NULLIF(BTRIM(d.ha_role), ''), 'STANDALONE') AS ha_role,
+                      COALESCE(NULLIF(BTRIM(d.vsys_id), ''), 'default') AS vsys_id,
                       COALESCE(NULLIF(BTRIM(d.tenant_id), ''), 'tenant-default') AS tenant_id,
                       COALESCE(NULLIF(BTRIM(pa.site_id), ''), NULLIF(BTRIM(d.site_id), ''), NULLIF(BTRIM(d.site), ''), '') AS site_id
                  FROM devices d
@@ -536,6 +541,8 @@ def build_ipam_radix_index(conn: Any = None) -> IPAMRadixIndexSnapshot:
                 oper_status=str(oper_status or "unknown"),
                 is_down=is_down,
                 device_status=str(dev.get("status") or "unknown"),
+                ha_role=str(dev.get("ha_role") or "STANDALONE"),
+                vsys_id=str(dev.get("vsys_id") or "default"),
                 source=source,
             )
             snapshot.exact_ip_map.setdefault(norm_ip, []).append(rec)

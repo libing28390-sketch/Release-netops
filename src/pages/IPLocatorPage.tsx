@@ -18,6 +18,7 @@ import { summarizeLocatorCache } from '../utils/ipLocatorCacheSummary';
 import { buildMacChangeExportData, filterMacChangeEntries, loadAllMacChangeEntries } from './ipLocatorExport';
 import { isValidIP } from './IPVlan/helpers';
 import { useSearchParams } from 'react-router-dom';
+import { DevicePanoramaPanel } from '../components/ipam/DevicePanoramaPanel';
 
 interface IPLocatorPageProps {
   language: string;
@@ -183,6 +184,33 @@ interface LocateResult {
   mac_lookup_attempts?: MacLookupInfo[];
   context?: LocatorContext;
   vip_info?: VipInfo;
+  location?: {
+    device_id?: string;
+    device?: string;
+    port?: string;
+    ip_classification?: string;
+    is_down?: boolean;
+    canonical_mgmt_ip?: string;
+    endpoint_classification?: string;
+    edge_port_warning?: { code: string; active_mac_count: number; message: string };
+    peer_relationship?: {
+      peer_hostname: string;
+      peer_interface: string;
+      peer_ip: string;
+      peer_mgmt_ip?: string;
+    };
+  };
+  historical_last_seen?: {
+    status: string;
+    ip: string;
+    mac: string;
+    device_id: string;
+    device: string;
+    port: string;
+    vlan: string;
+    last_seen: string;
+    source: string;
+  };
 }
 
 interface VipControllerInfo {
@@ -1868,10 +1896,50 @@ ${rep.repair_commands}
                       {macLookupMessage}
                     </p>
                   )}
+                  {result.historical_last_seen && (
+                    <div className="mt-3 rounded-xl border border-amber-300/60 dark:border-amber-500/30 bg-white/80 dark:bg-black/20 px-3.5 py-2.5 text-xs">
+                      <p className="font-semibold text-amber-800 dark:text-amber-300">
+                        {zh ? '离线历史归档快照（最后在线位置）' : 'Offline Historical Snapshot (Last Seen)'}
+                      </p>
+                      <p className="mt-1 font-mono text-black/75 dark:text-white/80">
+                        {result.historical_last_seen.device} : {result.historical_last_seen.port || '-'}
+                        {result.historical_last_seen.vlan ? ` (VLAN ${result.historical_last_seen.vlan})` : ''}
+                        {result.historical_last_seen.mac ? ` · MAC ${result.historical_last_seen.mac}` : ''}
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-black/50 dark:text-white/50">
+                        {zh ? '最后在线时间' : 'Last seen'}: {formatExactTime(result.historical_last_seen.last_seen, zh)}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           ) : null}
+
+          {result.location?.edge_port_warning && (
+            <div className="rounded-xl border border-amber-300/70 bg-amber-50/90 dark:bg-amber-500/10 px-4 py-3 text-xs text-amber-900 dark:text-amber-200 flex items-center gap-2">
+              <AlertCircle size={15} className="text-amber-600 flex-shrink-0" />
+              <span>{result.location.edge_port_warning.message}</span>
+            </div>
+          )}
+
+          {result.location?.peer_relationship && (
+            <div className="rounded-xl border border-cyan-200/70 bg-cyan-50/70 dark:bg-cyan-500/10 px-4 py-3 text-xs text-cyan-900 dark:text-cyan-200 flex items-center gap-2 flex-wrap">
+              <Network size={15} className="text-[#0891b2] flex-shrink-0" />
+              <span className="font-semibold">{zh ? '对端三层互联设备' : 'P2P Interconnect Peer'}:</span>
+              <span className="font-mono">
+                {result.location.peer_relationship.peer_hostname} ({result.location.peer_relationship.peer_interface} · {result.location.peer_relationship.peer_ip})
+              </span>
+            </div>
+          )}
+
+          {(result.location?.device_id || accessLocations[0]?.switch_id) && (
+            <DevicePanoramaPanel
+              deviceId={String(result.location?.device_id || accessLocations[0]?.switch_id || '')}
+              highlightPort={String(result.location?.port || accessLocations[0]?.port || '')}
+              zh={zh}
+            />
+          )}
 
           {locatorContext && (
             <div className="rounded-2xl border border-black/5 dark:border-white/10 bg-slate-50/70 dark:bg-white/[0.025] p-4 space-y-4">
