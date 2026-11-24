@@ -1426,6 +1426,13 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
         actions={
           <div className="flex items-center gap-2">
             <button
+              type="button"
+              onClick={() => navigate('/ipam/endpoints')}
+              className="rounded-xl border border-cyan-200/80 dark:border-cyan-900/60 bg-cyan-50/70 dark:bg-cyan-950/40 px-3 py-2 text-xs font-semibold text-cyan-700 dark:text-cyan-300 hover:bg-cyan-100/80 transition-colors cursor-pointer"
+            >
+              {zh ? '发现终端' : 'Discovered Endpoints'}
+            </button>
+            <button
               onClick={() => openForm(null)}
               disabled={!selectedPrefixId}
               title={!selectedPrefixId ? (zh ? '请先在右侧“网段”下拉框中选择一个网段，再分配 IP' : 'Select a prefix first, then allocate an IP') : undefined}
@@ -1591,21 +1598,6 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
         prefixCount={inventorySummary.prefixes}
         addressCount={inventorySummary.manual || totalItems}
       />
-
-      <section role="note" aria-label={zh ? 'IPAM 地址台账说明' : 'IPAM address ledger scope'} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/80 dark:border-zinc-800 bg-white/90 dark:bg-zinc-900/80 px-4 py-2.5 text-[11px] leading-4 text-slate-600 dark:text-zinc-300 shadow-2xs">
-        <p className="min-w-0 flex-1">
-          {!includeObservations && !isMatrixView
-            ? ((search.trim() || statusFilter !== 'all' || typeFilter !== 'all' || purposeFilter !== 'all' || selectedSiteId !== 'all' || selectedPrefixId)
-              ? (zh ? `当前筛选条件下共 ${loading ? '—' : totalItems} 条正式台账记录${!loading && totalItems === 0 ? '，可清除筛选条件查看全部' : ''}。` : `${loading ? '—' : totalItems} registered records match the current filters.`)
-              : (zh ? `当前正式台账共 ${loading ? '—' : totalItems} 条。选择网段后可登记 IP；采集到的终端可从“发现终端”登记。` : `${loading ? '—' : totalItems} registered records. Select a prefix to register an IP, or register a collected endpoint from Discovered Endpoints.`))
-            : zh
-            ? `当前筛选共 ${loading ? '—' : totalItems} 条记录；已登记 ${loading ? '—' : inventorySummary.manual}，含接口观察 ${loading ? '—' : inventorySummary.interface_observed}，终端发现 ${loading ? '—' : inventorySummary.discovered}。当前站点共 ${siteScopedPrefixes.length} 个网段。观察数量可与登记重叠，采集记录不代表当前在线。`
-            : `${loading ? '—' : totalItems} records: ${loading ? '—' : inventorySummary.manual} registered, ${loading ? '—' : inventorySummary.interface_observed} with interface observations, ${loading ? '—' : inventorySummary.discovered} discovered endpoints, across ${siteScopedPrefixes.length} prefixes. Observation counts may overlap registrations and do not prove current availability.`}
-        </p>
-        <button type="button" onClick={() => navigate('/ipam/endpoints')} className="shrink-0 rounded-xl border border-cyan-200/80 dark:border-cyan-900/60 bg-cyan-50/70 dark:bg-cyan-950/40 px-3 py-1.5 text-[11px] font-semibold text-cyan-700 dark:text-cyan-300 hover:bg-cyan-100/80 dark:hover:bg-cyan-900/50 transition-colors cursor-pointer">
-          {zh ? '查看发现终端' : 'View discovered endpoints'}
-        </button>
-      </section>
 
       {/* Main Table Card */}
       <div className="flex-1 min-h-0 min-w-0 bg-white dark:bg-zinc-900/95 rounded-2xl border border-slate-200/80 dark:border-zinc-800 shadow-xs overflow-hidden flex flex-col">

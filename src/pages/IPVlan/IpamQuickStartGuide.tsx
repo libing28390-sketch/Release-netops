@@ -29,9 +29,11 @@ interface GuideStep {
 
 function readCollapsed(): boolean {
   try {
-    return window.localStorage.getItem(STORAGE_KEY) === '1';
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    // Default collapsed so the IP table is immediately visible; expand only if user opened it.
+    return raw !== '0';
   } catch {
-    return false;
+    return true;
   }
 }
 
