@@ -548,8 +548,16 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
                     : (zh ? `一键映射全部设备 Global (${devices.length})` : `Map all devices Global (${devices.length})`)}
               </ActionButton>
             )}
-            <ActionButton icon={RefreshCw} onClick={() => void loadMappings(selectedDeviceId)} disabled={!selectedDeviceId || mappingsLoading}>
-              {zh ? '刷新' : 'Refresh'}
+            <ActionButton
+              icon={RefreshCw}
+              onClick={() => {
+                setBulkMappingNotice('');
+                void loadLookups();
+                if (selectedDeviceId) void loadMappings(selectedDeviceId);
+              }}
+              disabled={lookupsLoading || mappingsLoading}
+            >
+              {lookupsLoading || mappingsLoading ? (zh ? '刷新中…' : 'Refreshing…') : (zh ? '刷新' : 'Refresh')}
             </ActionButton>
             <ActionButton icon={Plus} variant="primary" onClick={openCreateForm} disabled={!selectedDeviceId || lookupsLoading || lookupsError !== '' || mappingsLoading || mappingsError !== '' || writeDenied}>
               {zh ? '新增映射' : 'Add mapping'}
