@@ -128,7 +128,7 @@ class Settings(BaseSettings):
     AI_SECURITY_VAULT_TTL_SECONDS: int = 3600
     AI_KNOWN_HOSTNAME_TTL_SECONDS: int = 300
     AI_MAX_PAYLOAD_BYTES: int = 256000
-    AI_PROVIDER_ALLOWLIST: str = "deepseek,openai,openai_compatible,azure_openai,ollama,local,qwen"
+    AI_PROVIDER_ALLOWLIST: str = "anthropic,deepseek,openai,openai_compatible,azure_openai,ollama,local,qwen"
     # Seconds between checks for policy / kill-switch changes made by other
     # worker processes.  Every worker follows a change within this interval.
     AI_POLICY_REFRESH_SECONDS: float = 3.0

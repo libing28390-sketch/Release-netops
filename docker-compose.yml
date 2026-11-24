@@ -122,7 +122,7 @@ services:
       - AI_KILL_SWITCH=${AI_KILL_SWITCH:-0}
       - AI_SECURITY_VAULT_TTL_SECONDS=${AI_SECURITY_VAULT_TTL_SECONDS:-3600}
       - AI_MAX_PAYLOAD_BYTES=${AI_MAX_PAYLOAD_BYTES:-256000}
-      - AI_PROVIDER_ALLOWLIST=${AI_PROVIDER_ALLOWLIST:-deepseek,openai,openai_compatible,azure_openai,ollama,local,qwen}
+      - AI_PROVIDER_ALLOWLIST=${AI_PROVIDER_ALLOWLIST:-deepseek,openai,openai_compatible,azure_openai,ollama,local,qwen,anthropic}
       - AI_DEBUG_PAYLOAD=${AI_DEBUG_PAYLOAD:-0}
       - AI_OUTBOUND_PROXY_URL=${AI_OUTBOUND_PROXY_URL:-}
       - AI_PROVIDER_MAX_CONCURRENCY=${AI_PROVIDER_MAX_CONCURRENCY:-8}

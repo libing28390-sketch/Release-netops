@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 
 from ai.api import providers as providers_api
 from ai.gateway.exceptions import AISecurityBlockedException
@@ -22,13 +23,11 @@ class _Cursor:
 
 
 class _Connection:
-    def __init__(self) -> None:
-        self._cursor = _Cursor(
-            [
-                ("prov-test", "DeepSeek", "deepseek", 1, None, "unknown"),
-                ("model-test", "deepseek-v4-flash"),
-            ]
-        )
+    def __init__(self, with_model: bool = True) -> None:
+        rows: list[tuple[object, ...]] = [("prov-test", "DeepSeek", "deepseek", 1, None, "unknown")]
+        if with_model:
+            rows.append(("model-test", "deepseek-v4-flash", "chat"))
+        self._cursor = _Cursor(rows)
 
     def __enter__(self):
         return self
@@ -62,6 +61,20 @@ async def test_provider_probe_declares_public_classification(monkeypatch):
     assert probe.call_args.kwargs["data_classification"] == "PUBLIC"
     assert probe.call_args.kwargs["max_tokens"] == 64
     assert probe.call_args.kwargs["messages"] == [{"role": "user", "content": "Reply with one short word: ok"}]
+
+
+@pytest.mark.anyio
+async def test_provider_probe_without_enabled_model_returns_configuration_error(monkeypatch):
+    probe = AsyncMock()
+    monkeypatch.setattr(providers_api, "get_db_connection", lambda: _Connection(with_model=False))
+    monkeypatch.setattr(providers_api.llm_gateway, "chat", probe)
+
+    with pytest.raises(HTTPException) as error:
+        await providers_api.test_provider_connection("prov-test", {"username": "admin"})
+
+    assert error.value.status_code == 400
+    assert error.value.detail["code"] == "AI_PROVIDER_NO_ENABLED_MODEL"
+    probe.assert_not_awaited()
 
 
 def test_public_provider_boundary_accepts_only_explicit_public_probe_label():

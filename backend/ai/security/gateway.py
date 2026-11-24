@@ -69,7 +69,7 @@ class SecurityPolicy:
     identifiers_must_be_tokenized: bool = True
     allow_sensitive_minimization: bool = True
     allowed_provider_types: tuple[str, ...] = (
-        "deepseek", "openai", "openai_compatible", "azure_openai", "ollama", "local", "qwen",
+        "anthropic", "deepseek", "openai", "openai_compatible", "azure_openai", "ollama", "local", "qwen",
     )
     policy_version: str = "sec-v2.0"
     allowed_classifications: tuple[str, ...] = ("PUBLIC", "INTERNAL", "CONFIDENTIAL")
@@ -327,7 +327,7 @@ class AISecurityGateway:
             max_payload_bytes=int(getattr(settings, "AI_MAX_PAYLOAD_BYTES", 256_000)),
             allowed_provider_types=tuple(
                 item.strip().lower().replace("-", "_")
-                for item in str(getattr(settings, "AI_PROVIDER_ALLOWLIST", "deepseek,openai,openai_compatible,azure_openai,ollama,local,qwen")).split(",")
+                for item in str(getattr(settings, "AI_PROVIDER_ALLOWLIST", "anthropic,deepseek,openai,openai_compatible,azure_openai,ollama,local,qwen")).split(",")
                 if item.strip()
             ) or SecurityPolicy.allowed_provider_types,
         )

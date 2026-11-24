@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { PasswordInputField } from '../../../components/ui/PasswordInputField';
 import { getAIProvidersPage, createAIProvider, updateAIProvider, deleteAIProvider, getAIProviderDeletePreview, testAIProvider, AIProvider, AIProviderDeletePreview } from '../../../api/ai';
+import { ApiError } from '../../../api/http';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 import { useFocusTrap } from '../../../hooks/useFocusTrap';
@@ -34,6 +35,7 @@ import { cn } from '../../../lib/cn';
 import { aiAdminText } from '../../../i18n/aiAdmin';
 import { getProviderPageCopy, type ProviderPageCopy } from './ProviderManagementTab.copy';
 import { ProviderKeyHistoryDrawer, ProviderKeyInvalidateDialog } from './ProviderKeyDialogs';
+import { defaultProviderPreset, getProviderPreset, identifyProviderPreset, providerPresetGroups } from './providerPresets';
 
 type TextVariables = Record<string, string | number>;
 type AIAdminText = (key: string, variables?: TextVariables) => string;
@@ -140,6 +142,7 @@ const TEST_ERROR_KEYS: Record<string, string> = {
   AI_PROVIDER_CIRCUIT_OPEN: 'ai.provider.test.circuit',
   AI_HEALTH_BACKOFF: 'ai.provider.test.backoff',
   AI_MODEL_NOT_FOUND: 'ai.provider.test.modelNotFound',
+  AI_PROVIDER_NO_ENABLED_MODEL: 'ai.provider.test.noEnabledModel',
   AI_PROVIDER_UNSUPPORTED: 'ai.provider.test.unsupported',
   AI_NETWORK_ERROR: 'ai.provider.test.network',
 };
@@ -496,11 +499,12 @@ export const ProviderManagementTab: React.FC = () => {
   // or type clears the stored key on the server, so a new key is required.
   const [originalEndpoint, setOriginalEndpoint] = useState<{ type: string; host: string } | null>(null);
   const [name, setName] = useState('');
-  const [providerType, setProviderType] = useState('deepseek');
-  const [baseUrl, setBaseUrl] = useState('https://api.deepseek.com');
+  const [providerType, setProviderType] = useState(defaultProviderPreset.providerType);
+  const [presetId, setPresetId] = useState(defaultProviderPreset.id);
+  const [baseUrl, setBaseUrl] = useState(defaultProviderPreset.baseUrl ?? '');
   const [apiKey, setApiKey] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
-  const [defaultModelCode, setDefaultModelCode] = useState('deepseek-v4-flash');
+  const [defaultModelCode, setDefaultModelCode] = useState(defaultProviderPreset.modelCode ?? '');
   const [timeout, setTimeout] = useState(30);
   const [maxRetries, setMaxRetries] = useState(2);
   const [proxyUrl, setProxyUrl] = useState('');
@@ -593,10 +597,13 @@ export const ProviderManagementTab: React.FC = () => {
         : item));
       showToast(tx(result.success ? 'ai.provider.toast.testPassed' : 'ai.provider.toast.testFailed', { name: provider?.name || 'Provider' }), result.success ? 'success' : 'error');
     } catch (err: unknown) {
+      const errorCode = err instanceof ApiError ? err.code : undefined;
+      const messageKey = errorCode ? TEST_ERROR_KEYS[errorCode] : undefined;
       const result: ProviderTestResult = {
         id,
         success: false,
-        message: getErrorMessage(err, tx('ai.provider.error.test')),
+        message: messageKey ? tx(messageKey) : getErrorMessage(err, tx('ai.provider.error.test')),
+        error_code: errorCode,
       };
       setTestResult(result);
       showToast(result.message, 'error');
@@ -650,6 +657,7 @@ export const ProviderManagementTab: React.FC = () => {
     setOriginalEndpoint({ type: provider.provider_type, host: endpointHostname(provider.base_url) });
     setName(provider.name);
     setProviderType(provider.provider_type);
+    setPresetId(identifyProviderPreset(provider.provider_type, provider.base_url)?.id ?? provider.provider_type);
     setBaseUrl(provider.base_url || '');
     setApiKey('');
     setShowApiKey(false);
@@ -749,22 +757,8 @@ export const ProviderManagementTab: React.FC = () => {
       }
       setShowModal(false);
       setEditingId(null);
-      setName('');
       setApiKey('');
-      setBaseUrl('https://api.deepseek.com');
       setShowApiKey(false);
-      setDefaultModelCode('deepseek-v4-flash');
-      setTimeout(30);
-      setMaxRetries(2);
-      setProxyUrl('');
-      setTagsInput('');
-      setDataRegion('unknown');
-      setAllowedDataClassification('PUBLIC');
-      setNoTrainingConfirmed(false);
-      setRetentionDays('');
-      setDpaRef('');
-      setEndpointPatternsInput('');
-      setOriginalEndpointPatterns([]);
       await fetchProviders();
       showToast(tx(editingId ? 'ai.provider.toast.updated' : 'ai.provider.toast.added'), 'success');
     } catch (err: unknown) {
@@ -802,9 +796,39 @@ export const ProviderManagementTab: React.FC = () => {
 
   const healthyCount = providers.filter((provider) => String(provider.health_status || '').toLowerCase() === 'healthy').length;
   const hasActiveFilters = Boolean(appliedSearch || search || dataRegionFilter || healthFilter || enabledFilter !== 'all' || providerTypeFilter || tagFilter);
-  const openCreate = () => { setEditingId(null); setOriginalEndpoint(null); setApiKey(''); setShowApiKey(false); setDataRegion('unknown'); setAllowedDataClassification('PUBLIC'); setEndpointPatternsInput(''); setOriginalEndpointPatterns([]); setShowModal(true); };
+  const applyPreset = (id: string) => {
+    const preset = getProviderPreset(id);
+    if (!preset) return;
+    setPresetId(id);
+    setProviderType(preset.providerType);
+    setBaseUrl(preset.baseUrl ?? '');
+    setApiKey('');
+    setShowApiKey(false);
+    setDefaultModelCode(preset.modelCode ?? '');
+    setDataRegion(preset.dataRegion ?? 'unknown');
+  };
+
+  const openCreate = () => {
+    setEditingId(null);
+    setOriginalEndpoint(null);
+    applyPreset(defaultProviderPreset.id);
+    setName('');
+    setTimeout(30);
+    setMaxRetries(2);
+    setProxyUrl('');
+    setTagsInput('');
+    setAllowedDataClassification('PUBLIC');
+    setNoTrainingConfirmed(false);
+    setRetentionDays('');
+    setDpaRef('');
+    setEndpointPatternsInput('');
+    setOriginalEndpointPatterns([]);
+    setEndpointPatternServerError(null);
+    setShowModal(true);
+  };
   const closeEditor = () => { setEditingId(null); setOriginalEndpoint(null); setShowApiKey(false); setShowModal(false); };
   const isLocalProviderType = isLocalType(providerType);
+  const selectedPreset = getProviderPreset(presetId);
   const endpointPatternErrors = editingId && !isLocalProviderType ? invalidEndpointPatternLines(endpointPatternsInput) : [];
 
   const handleKeyInvalidated = (updated: AIProvider) => {
@@ -997,37 +1021,34 @@ export const ProviderManagementTab: React.FC = () => {
 
             <form onSubmit={handleCreate} className="flex min-h-0 flex-1 flex-col">
               <div className="space-y-4 overflow-y-auto px-6 py-5">
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
                   <div>
                     <label htmlFor="provider-name" className={fieldLabelClass}>{tx('ai.provider.editor.name')}</label>
                     <input id="provider-name" type="text" required placeholder={tx('ai.provider.editor.namePlaceholder')} value={name} onChange={(e) => setName(e.target.value)} className={fieldInputClass} />
                   </div>
                   <div>
                     <label htmlFor="provider-type" className={fieldLabelClass}>{tx('ai.provider.editor.type')}</label>
-                    <select id="provider-type" value={providerType} onChange={(e) => {
-                      const next = e.target.value;
-                      setProviderType(next);
-                      if (next === 'deepseek') { setBaseUrl('https://api.deepseek.com'); setDefaultModelCode('deepseek-v4-flash'); }
-                      else if (next === 'openai') { setBaseUrl('https://api.openai.com/v1'); setDefaultModelCode('gpt-4o'); }
-                      else if (next === 'azure_openai') { setBaseUrl('https://<your-resource>.openai.azure.com'); setDefaultModelCode('gpt-4o'); }
-                      else if (next === 'qwen') { setBaseUrl('https://dashscope.aliyuncs.com/compatible-mode/v1'); setDefaultModelCode('qwen-plus'); }
-                      else if (next === 'ollama' || next === 'local') { setBaseUrl('http://127.0.0.1:11434/v1'); setDefaultModelCode('llama3.1'); }
-                      else { setBaseUrl(''); setDefaultModelCode(''); }
-                    }} className={fieldInputClass}>
-                      <option value="deepseek">{tx('ai.provider.editor.deepseek')}</option>
-                      <option value="openai">OpenAI</option>
-                      <option value="openai_compatible">{tx('ai.provider.editor.compatible')}</option>
-                      <option value="azure_openai">Azure OpenAI</option>
-                      <option value="qwen">{tx('ai.provider.editor.qwen')}</option>
-                      <option value="ollama">{tx('ai.provider.editor.ollama')}</option>
-                      <option value="local">Local OpenAI-compatible</option>
+                    <select id="provider-type" value={presetId} onChange={(event) => applyPreset(event.target.value)} className={fieldInputClass}>
+                      {!selectedPreset && <option value={presetId}>{presetId}</option>}
+                      {providerPresetGroups.map((group) => (
+                        <optgroup key={group.labelKey} label={tx(group.labelKey)}>
+                          {group.presets.map((preset) => <option key={preset.id} value={preset.id}>{tx(preset.label)}</option>)}
+                        </optgroup>
+                      ))}
                     </select>
                   </div>
                 </div>
 
                 <div>
                   <label htmlFor="provider-base-url" className={fieldLabelClass}>Base URL</label>
-                  <input id="provider-base-url" type="url" placeholder="https://api.deepseek.com" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} className={cn(fieldInputClass, 'font-mono')} />
+                  <input id="provider-base-url" type="url" required={!editingId && !isLocalProviderType} placeholder={selectedPreset?.exampleUrl || selectedPreset?.baseUrl} aria-describedby={selectedPreset?.helpKey ? 'provider-preset-help' : undefined} value={baseUrl} onChange={(event) => {
+                    const nextUrl = event.target.value;
+                    if (baseUrl === selectedPreset?.baseUrl && nextUrl !== baseUrl && dataRegion === selectedPreset?.dataRegion) {
+                      setDataRegion('unknown');
+                    }
+                    setBaseUrl(nextUrl);
+                  }} className={cn(fieldInputClass, 'font-mono')} />
+                  {selectedPreset?.helpKey && <p id="provider-preset-help" className={fieldHelpClass}>{tx(selectedPreset.helpKey)}</p>}
                 </div>
 
                 {editingId && !isLocalProviderType && (
@@ -1082,7 +1103,7 @@ export const ProviderManagementTab: React.FC = () => {
                   {!editingId && (
                     <div>
                       <label htmlFor="provider-model-code" className={fieldLabelClass}>{tx('ai.provider.editor.model')}</label>
-                      <input id="provider-model-code" type="text" placeholder="deepseek-v4-flash" value={defaultModelCode} onChange={(e) => setDefaultModelCode(e.target.value)} className={cn(fieldInputClass, 'font-mono')} />
+                      <input id="provider-model-code" type="text" placeholder={tx('ai.provider.preset.modelPlaceholder')} value={defaultModelCode} onChange={(e) => setDefaultModelCode(e.target.value)} className={cn(fieldInputClass, 'font-mono')} />
                       <p className={fieldHelpClass}>{tx('ai.provider.editor.modelHelp')}</p>
                     </div>
                   )}
