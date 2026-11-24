@@ -1398,8 +1398,8 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       setInterfaceImportReviewRequest(null);
       setInterfaceGenerationResult(
         zh
-          ? `已创建 ${data.created_prefixes || 0} 个网段，并登记 ${data.created_addresses || 0} 个接口 IP`
-          : `Created ${data.created_prefixes || 0} prefixes and ${data.created_addresses || 0} interface IPs`,
+          ? `已创建 ${data.created_prefixes || 0} 个网段${data.updated_prefixes ? `、补齐同步 ${data.updated_prefixes} 个已有网段（网关/接口/VLAN）` : ''}，并登记 ${data.created_addresses || 0} 个接口 IP`
+          : `Created ${data.created_prefixes || 0} prefixes${data.updated_prefixes ? `, synced ${data.updated_prefixes} existing prefixes` : ''}, and registered ${data.created_addresses || 0} interface IPs`,
       );
       setShowGenerateAllPendingConfirm(false);
       setSelectedInterfaceCandidates(new Set());
@@ -3363,7 +3363,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   </button>
                   <button type="button" onClick={() => setShowInterfaceGeneration(false)} className="rounded-xl px-3 py-2 text-xs font-semibold text-gray-500 hover:bg-gray-100">{zh ? '关闭' : 'Close'}</button>
                   <button type="button" onClick={() => generateFromInterfaces(false)} disabled={interfaceGenerationLoading || interfaceCandidatesLoading || Boolean(interfaceGenerationError) || selectedInterfaceCandidates.size === 0 || selectedInterfaceHasMissingSpace} className="rounded-xl bg-cyan-500 px-4 py-2 text-xs font-bold text-white hover:bg-cyan-600 disabled:opacity-50">
-                    {interfaceGenerationLoading ? (zh ? '处理中…' : 'Processing…') : (zh ? `生成所选 (${selectedInterfaceCandidates.size})` : `Generate selected (${selectedInterfaceCandidates.size})`)}
+                    {interfaceGenerationLoading ? (zh ? '处理中…' : 'Processing…') : (zh ? `导入 / 同步所选 (${selectedInterfaceCandidates.size})` : `Import / Sync selected (${selectedInterfaceCandidates.size})`)}
                   </button>
                 </div>
               </div>

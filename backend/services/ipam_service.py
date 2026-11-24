@@ -3520,6 +3520,49 @@ def preview_interface_prefix_import(
         conn.close()
 
 
+def _infer_candidate_gateway_and_vlan(conn, candidate: dict, prefix_len: int) -> dict[str, Optional[str]]:
+    """Infer unambiguous gateway device/interface/IP and SVI/sub-interface VLAN from a candidate's interfaces."""
+    interfaces = [item for item in (candidate.get('interfaces') or []) if isinstance(item, dict)]
+    if not interfaces:
+        return {'gateway': None, 'gateway_device_id': None, 'gateway_interface_id': None, 'vlan_id': None}
+    unique_devices = {str(item.get('device_id') or '').strip() for item in interfaces if item.get('device_id')}
+    if len(unique_devices) != 1 or len(interfaces) != 1:
+        return {'gateway': None, 'gateway_device_id': None, 'gateway_interface_id': None, 'vlan_id': None}
+    intf = interfaces[0]
+    gw_device_id = str(intf.get('device_id') or '').strip() or None
+    gw_interface_id = str(intf.get('interface_id') or '').strip() or None
+    gw_ip = str(intf.get('address') or '').strip() or None
+    # Do not set default gateway IP for /32 host/loopback or /31 P2P prefixes
+    if prefix_len >= 31:
+        gw_ip = None
+    vlan_pk: Optional[str] = None
+    intf_name = str(intf.get('interface_name') or '').strip()
+    m_svi = re.match(r'^(?:vlan-?interface|vlanif|vlan|vl)[\s\-_]*(\d+)$', intf_name, re.IGNORECASE)
+    m_sub = re.search(r'\.(\d+)$', intf_name) if not m_svi else None
+    vlan_num = int(m_svi.group(1)) if m_svi else (int(m_sub.group(1)) if m_sub else None)
+    if vlan_num is not None:
+        site_id = str(candidate.get('site_id') or '').strip()
+        row = None
+        if site_id:
+            row = conn.execute(
+                f'SELECT id FROM vlans WHERE vlan_id = {_PH} AND site_id = {_PH} ORDER BY id LIMIT 1',
+                (vlan_num, site_id),
+            ).fetchone()
+        if not row:
+            row = conn.execute(
+                f'SELECT id FROM vlans WHERE vlan_id = {_PH} ORDER BY id LIMIT 1',
+                (vlan_num,),
+            ).fetchone()
+        if row:
+            vlan_pk = str(row['id'])
+    return {
+        'gateway': gw_ip,
+        'gateway_device_id': gw_device_id,
+        'gateway_interface_id': gw_interface_id,
+        'vlan_id': vlan_pk,
+    }
+
+
 def generate_interface_prefixes(
     candidate_ids: Optional[list[str]] = None,
     *,
@@ -3539,6 +3582,7 @@ def generate_interface_prefixes(
     """
     conn = get_db_connection()
     created_prefixes = 0
+    updated_prefixes = 0
     created_addresses = 0
     existing_prefixes = 0
     existing_addresses = 0
@@ -3707,7 +3751,8 @@ def generate_interface_prefixes(
         for candidate in selected:
             candidate_id = candidate['candidate_id']
             existing = conn.execute(
-                f'''SELECT id, address_space_id FROM prefixes
+                f'''SELECT id, address_space_id, gateway, gateway_device_id, gateway_interface_id, vlan_id, prefix_len
+                    FROM prefixes
                     WHERE address_space_id = {_PH} AND prefix_cidr = {_PH}
                     ORDER BY id LIMIT 1''',
                 (
@@ -3717,6 +3762,32 @@ def generate_interface_prefixes(
             if existing:
                 prefix_ids[candidate_id] = existing['id']
                 existing_prefixes += 1
+                inferred = _infer_candidate_gateway_and_vlan(
+                    conn, candidate, int(existing['prefix_len'] or 24)
+                )
+                updates: list[str] = []
+                params: list = []
+                if not (existing['gateway_device_id'] or '').strip() and inferred['gateway_device_id']:
+                    updates.append(f'gateway_device_id = {_PH}')
+                    params.append(inferred['gateway_device_id'])
+                if not (existing['gateway_interface_id'] or '').strip() and inferred['gateway_interface_id']:
+                    updates.append(f'gateway_interface_id = {_PH}')
+                    params.append(inferred['gateway_interface_id'])
+                if not (existing['gateway'] or '').strip() and inferred['gateway']:
+                    updates.append(f'gateway = {_PH}')
+                    params.append(inferred['gateway'])
+                if not (existing['vlan_id'] or '').strip() and inferred['vlan_id']:
+                    updates.append(f'vlan_id = {_PH}')
+                    params.append(inferred['vlan_id'])
+                if updates:
+                    updates.append(f'updated_at = {_PH}')
+                    params.append(now)
+                    params.append(existing['id'])
+                    conn.execute(
+                        f"UPDATE prefixes SET {', '.join(updates)} WHERE id = {_PH}",
+                        tuple(params),
+                    )
+                    updated_prefixes += 1
                 continue
             legacy_matches = conn.execute(
                 f'''SELECT id FROM prefixes
@@ -3751,17 +3822,20 @@ def generate_interface_prefixes(
             network_type = 'loopback' if interface_names and all(
                 _is_loopback_interface_name(name) for name in interface_names
             ) else 'unclassified'
+            inferred = _infer_candidate_gateway_and_vlan(conn, candidate, network.prefixlen)
             conn.execute(
                 f'''INSERT INTO prefixes
                    (id, prefix, address_space_id, vrf_id, site_id, tenant_id, status, name,
-                    description, network_type, created_at, updated_at,
+                    description, network_type, gateway, gateway_device_id, gateway_interface_id, vlan_id,
+                    created_at, updated_at,
                     prefix_cidr, ip_version, prefix_len, traceable,
                     source_type, source_ref)
-                   VALUES ({_ph(18)})''',
+                   VALUES ({_ph(22)})''',
                 (
                     prefix_id, normalized, candidate['address_space_id'], candidate['vrf_id'], candidate['site_id'],
                     candidate['tenant_id'], 'active', f'接口采集 · {normalized}',
                     '由当前接口采集结果生成；不会读取旧 IPAM 前缀', network_type,
+                    inferred['gateway'], inferred['gateway_device_id'], inferred['gateway_interface_id'], inferred['vlan_id'],
                     now, now, normalized, network.version, network.prefixlen, 1,
                     'interface_collection', 'interface-collection',
                 ),
@@ -3813,6 +3887,7 @@ def generate_interface_prefixes(
             'source': 'interfaces',
             'selected_count': len(selected),
             'created_prefixes': created_prefixes,
+            'updated_prefixes': updated_prefixes,
             'existing_prefixes': existing_prefixes,
             'created_addresses': created_addresses,
             'existing_addresses': existing_addresses,
