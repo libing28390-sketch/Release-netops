@@ -165,6 +165,7 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
   const [candidateSpaceSelection, setCandidateSpaceSelection] = useState<Record<string, string>>({});
   const [confirmingCandidateKey, setConfirmingCandidateKey] = useState('');
   const [bulkMapping, setBulkMapping] = useState(false);
+  const [bulkMappedDone, setBulkMappedDone] = useState(false);
   const [bulkMappingNotice, setBulkMappingNotice] = useState('');
   const [mappingsLoading, setMappingsLoading] = useState(false);
   const [mappingsError, setMappingsError] = useState('');
@@ -482,22 +483,25 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
     let skipped = 0;
     let failed = 0;
     for (const dev of devices) {
-      try {
-        await createRoutingContextMapping({
-          device_id: dev.id,
-          context_source: 'cli',
-          context_type: 'global',
-          local_context_key: 'global',
-          local_context_name: 'Global',
-          address_space_id: activeGlobalSpace.id,
-        });
-        created += 1;
-      } catch (err: any) {
-        const msg = String(err?.message || err?.detail || '');
-        if (msg.includes('409') || msg.toLowerCase().includes('exist') || msg.includes('已存在') || msg.includes('duplicate')) {
-          skipped += 1;
-        } else {
-          failed += 1;
+      for (const source of ['cli', 'snmp'] as const) {
+        try {
+          await createRoutingContextMapping({
+            device_id: dev.id,
+            context_source: source,
+            context_type: 'global',
+            local_context_key: 'global',
+            local_context_name: 'Global',
+            address_space_id: activeGlobalSpace.id,
+          });
+          created += 1;
+        } catch (err: any) {
+          const status = Number(err?.status || err?.statusCode || 0);
+          const msg = String(err?.message || err?.detail || '').toLowerCase();
+          if (status === 409 || msg.includes('409') || msg.includes('exist') || msg.includes('conflict') || msg.includes('已存在') || msg.includes('重复') || msg.includes('duplicate')) {
+            skipped += 1;
+          } else {
+            failed += 1;
+          }
         }
       }
     }
@@ -508,34 +512,40 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
     if (targetDeviceId) {
       await loadMappings(targetDeviceId);
     }
+    if (failed === 0) {
+      setBulkMappedDone(true);
+    }
     setBulkMappingNotice(
       zh
-        ? `一键映射完成：新增 ${created} 台、已有跳过 ${skipped} 台${failed ? `、失败 ${failed} 台` : ''}。`
-        : `Bulk map complete: ${created} created, ${skipped} skipped${failed ? `, ${failed} failed` : ''}.`,
+        ? `一键映射完成：新增 ${created} 条、已有跳过 ${skipped} 条${failed ? `、失败 ${failed} 条` : ''}（覆盖 CLI 与 SNMP 全局路由表）。`
+        : `Bulk map complete: ${created} created, ${skipped} skipped${failed ? `, ${failed} failed` : ''} (CLI & SNMP Global).`,
     );
     setBulkMapping(false);
   };
 
   return (
-    <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden px-4 py-4 sm:px-6 sm:py-5 space-y-4">
       <PageHero
         icon={GitBranch}
         title={zh ? '设备上下文映射' : 'Device Context Mappings'}
         subtitle={zh
           ? '将设备的 Global / VRF 路由表关联到 IPAM 地址空间，便于网段与网关自动匹配。'
           : 'Map device Global / VRF routing contexts to IPAM address spaces for automatic gateway matching.'}
+        className="overflow-visible"
         actions={(
           <div className="flex flex-wrap items-center gap-2">
             {activeGlobalSpace && devices.length > 0 && (
               <ActionButton
                 icon={GitBranch}
-                variant="accent"
+                variant={bulkMappedDone ? 'default' : 'accent'}
                 onClick={() => void handleBulkMapAllGlobal()}
-                disabled={bulkMapping || lookupsLoading || writeDenied}
+                disabled={bulkMapping || bulkMappedDone || lookupsLoading || writeDenied}
               >
                 {bulkMapping
                   ? (zh ? '批量映射中…' : 'Mapping…')
-                  : (zh ? `一键映射全部设备 Global (${devices.length})` : `Map all devices Global (${devices.length})`)}
+                  : bulkMappedDone
+                    ? (zh ? '已全部映射 Global' : 'All Global Mapped')
+                    : (zh ? `一键映射全部设备 Global (${devices.length})` : `Map all devices Global (${devices.length})`)}
               </ActionButton>
             )}
             <ActionButton icon={RefreshCw} onClick={() => void loadMappings(selectedDeviceId)} disabled={!selectedDeviceId || mappingsLoading}>
@@ -782,7 +792,7 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
         )}
 
         {bulkMappingNotice && (
-        <div role="status" className="mx-4 mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-800 sm:mx-6">
+        <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-800">
           {bulkMappingNotice}
         </div>
       )}
