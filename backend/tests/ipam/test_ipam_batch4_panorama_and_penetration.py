@@ -76,7 +76,7 @@ def test_ha_active_standby_priority_vxlan_vtep_dnat_and_5d_panorama(isolated_db)
         assert pano is not None
         assert pano["asset_identity"]["vsys_id"] == "vsys_prod"
         assert pano["asset_identity"]["ha_role"] == "ACTIVE"
-        assert pano["asset_identity"]["base_mac"] == "AABBCC112233"
+        assert pano["asset_identity"]["base_mac"] == "aabb-cc11-2233"
         assert pano["target_port_diagnostics"]["encap_vlan_id"] == 100
         assert pano["target_port_diagnostics"]["duplex"] == "full"
         assert len(pano["l3_interfaces"]) == 1
