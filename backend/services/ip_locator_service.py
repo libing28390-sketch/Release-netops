@@ -89,7 +89,7 @@ ARP_CACHE_TTL_SECONDS = max(ARP_SWEEP_INTERVAL_SECONDS * 2, 600)
 ARP_CACHE_MAX_ENTRIES = 5000
 ARP_SWEEP_MAX_WORKERS = max(1, min(8, int(os.environ.get('ARP_SWEEP_MAX_WORKERS', '2'))))
 ENDPOINT_CACHE_TTL_SECONDS = 600
-ENDPOINT_FACT_INTERVAL_SECONDS = max(300, int(os.environ.get('ENDPOINT_FACT_INTERVAL_SECONDS', '3600')))
+ENDPOINT_FACT_INTERVAL_SECONDS = max(300, int(os.environ.get('ENDPOINT_FACT_INTERVAL_SECONDS', '10800')))
 ROUTE_SWEEP_INTERVAL_SECONDS = max(300, int(os.environ.get('ROUTE_SWEEP_INTERVAL_SECONDS', '300')))
 ARP_MAX_DEVICES_PER_SWEEP = max(0, int(os.environ.get('ARP_MAX_DEVICES_PER_SWEEP', '500')))
 
@@ -5211,11 +5211,9 @@ def _load_terminal_gateway_device_ids() -> dict[str, str]:
     return selected
 
 
-def _load_arp_sweep_devices(
-    run_id: str = '',
-    device_ids: set[str] | None = None,
-) -> tuple[list[dict], int, int]:
-    """Select edge switches/APs, configured L3 Prefix gateways, and explicit ARP opt-ins."""
+def _select_arp_scope_devices() -> list[dict]:
+    """Side-effect-free ARP scope: edge switches/APs, L3 Prefix gateways,
+    endpoint-segment gateway owners and explicit opt-ins (no backoff/cursor)."""
     all_eligible = _load_eligible_devices(
         allow_snmp_only=True,
         include_snmp_unconfigured=True,
@@ -5243,11 +5241,28 @@ def _load_arp_sweep_devices(
                 f"{device.get('hostname') or dev_id}({terminal_gateway_ids[dev_id]})"
             )
     if auto_selected:
-        logger.info(
+        logger.debug(
             "[ARP Sweep] Endpoint-prefix gateway devices added by interface ownership: %s",
             ", ".join(sorted(auto_selected)),
         )
-    all_eligible = terminal_devices
+    return terminal_devices
+
+
+def _arp_collection_scope_device_ids() -> set[str] | None:
+    """Device IDs currently inside the ARP collection scope; None if unknown."""
+    try:
+        return {str(d.get('id') or '').strip() for d in _select_arp_scope_devices() if d.get('id')}
+    except Exception as exc:  # pragma: no cover - defensive, display-only
+        logger.debug("[ARP Table] scope resolution failed: %s", exc)
+        return None
+
+
+def _load_arp_sweep_devices(
+    run_id: str = '',
+    device_ids: set[str] | None = None,
+) -> tuple[list[dict], int, int]:
+    """Select edge switches/APs, configured L3 Prefix gateways, and explicit ARP opt-ins."""
+    all_eligible = _select_arp_scope_devices()
     if device_ids is not None:
         all_eligible = [device for device in all_eligible if str(device.get('id') or '') in device_ids]
     state_by_device = _load_arp_collection_state()
@@ -6709,8 +6724,24 @@ def get_arp_table() -> dict[str, Any]:
 
     entries = sorted(entries_by_ip.values(), key=lambda item: item['ip'])
 
+    # Distinguish "stale because the device is not in the ARP collection
+    # scope" (core/transit/firewall without endpoint segments) from genuinely
+    # expired data on in-scope devices, so operators don't read it as offline.
+    scope_ids = _arp_collection_scope_device_ids()
+    out_of_scope_count = 0
+    for item in entries:
+        dev_id = str(item.get('device_id') or '').strip()
+        if scope_ids is None or not dev_id:
+            item['collection_scope'] = 'unknown'
+        elif dev_id in scope_ids:
+            item['collection_scope'] = 'in_scope'
+        else:
+            item['collection_scope'] = 'out_of_scope'
+            out_of_scope_count += 1
+
     return {
         'total': len(entries),
+        'out_of_scope_total': out_of_scope_count,
         'ttl_seconds': ARP_CACHE_TTL_SECONDS,
         'sweep_interval_seconds': ARP_SWEEP_INTERVAL_SECONDS,
         'entries': entries,
@@ -8352,15 +8383,13 @@ def _sync_ip_inventory_impl(*, collect_device_interfaces: bool = True):
                     ip_type = 'tunnel'
 
                 conn.execute(
-                    '''INSERT INTO ip_inventory (ip, mask, device_id, interface, type, last_seen)
-                       VALUES (?, ?, ?, ?, ?, ?)
-                       ON CONFLICT(ip) DO UPDATE SET
+                    '''INSERT INTO ip_inventory (ip, mask, device_id, interface, vrf_name, type, last_seen)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT (device_id, interface, vrf_name, ip) DO UPDATE SET
                            mask = excluded.mask,
-                           device_id = excluded.device_id,
-                           interface = excluded.interface,
                            type = excluded.type,
                            last_seen = excluded.last_seen''',
-                    (ip, mask, dev_id, intf, ip_type, last_seen),
+                    (ip, mask, str(dev_id or ''), str(intf or ''), 'default', ip_type, last_seen),
                 )
                 total_ipam += 1
             conn.commit()
@@ -8419,16 +8448,15 @@ def _sync_ip_inventory_impl(*, collect_device_interfaces: bool = True):
                         elif 'tunnel' in intf_lower:
                             ip_type = 'tunnel'
 
+                        vrf_name = str(rec.get('vrf_name') or 'default').strip() or 'default'
                         conn.execute(
-                            '''INSERT INTO ip_inventory (ip, mask, device_id, interface, type, last_seen)
-                               VALUES (?, ?, ?, ?, ?, ?)
-                               ON CONFLICT(ip) DO UPDATE SET
+                            '''INSERT INTO ip_inventory (ip, mask, device_id, interface, vrf_name, type, last_seen)
+                               VALUES (?, ?, ?, ?, ?, ?, ?)
+                               ON CONFLICT (device_id, interface, vrf_name, ip) DO UPDATE SET
                                    mask = excluded.mask,
-                                   device_id = excluded.device_id,
-                                   interface = excluded.interface,
                                    type = excluded.type,
                                    last_seen = excluded.last_seen''',
-                            (ip, mask, dev_id, intf, ip_type, last_seen),
+                            (ip, mask, str(dev_id or ''), str(intf or ''), vrf_name, ip_type, last_seen),
                         )
                         total_device += 1
                     conn.commit()
@@ -9568,13 +9596,27 @@ def run_route_collector(
     *,
     respect_collection_policy: bool = True,
     device_ids: set[str] | None = None,
+    allow_full_rib: bool = False,
 ):
     """
-    后台路由事实库同步任务：
-    1. 获取所有支持路由的在线设备。
-    2. 并发连接，拉取 `show ip route` 路由表。
-    3. 解析后批量写入 `route_cache` 表。
+    后台路由事实库同步任务（默认停用 — 铁律 #2）：
+    严禁在生产网全量拉取核心/边界设备路由表（防止 SNMP/CLI 打爆控制平面 CPU）。
+    请使用本地直连子网前缀树（ipam_radix_index_service）+ 盲区单 IP 精确查询替代。
     """
+    env_allowed = os.getenv('IP_LOCATOR_ALLOW_FULL_RIB_COLLECTION', '').strip().lower() in {
+        '1', 'true', 'yes', 'on',
+    }
+    if not allow_full_rib and not env_allowed:
+        logger.warning(
+            "[Route Collector] Full RIB collection is disabled by default (Iron Rule #2). "
+            "Use connected-subnet Radix Tree + targeted single-IP lookup instead."
+        )
+        return {
+            'status': 'disabled_by_policy',
+            'reason': 'full_rib_collection_retired',
+            'routes_collected': 0,
+        }
+
     logger.info("[Route Collector] Starting route cache sync...")
     t0 = time.time()
 

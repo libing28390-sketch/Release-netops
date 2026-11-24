@@ -164,6 +164,9 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
   const [candidates, setCandidates] = useState<RoutingContextCandidate[]>([]);
   const [candidateSpaceSelection, setCandidateSpaceSelection] = useState<Record<string, string>>({});
   const [confirmingCandidateKey, setConfirmingCandidateKey] = useState('');
+  const [bulkMapping, setBulkMapping] = useState(false);
+  const [bulkMappedDone, setBulkMappedDone] = useState(false);
+  const [bulkMappingNotice, setBulkMappingNotice] = useState('');
   const [mappingsLoading, setMappingsLoading] = useState(false);
   const [mappingsError, setMappingsError] = useState('');
   const [mutationError, setMutationError] = useState('');
@@ -466,18 +469,95 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
     </div>
   );
 
+  const activeGlobalSpace = useMemo(
+    () => addressSpaces.find((space) => space.status === 'active' && space.kind === 'global') || null,
+    [addressSpaces],
+  );
+
+  const handleBulkMapAllGlobal = async () => {
+    if (!activeGlobalSpace || devices.length === 0 || bulkMapping) return;
+    setBulkMapping(true);
+    setBulkMappingNotice('');
+    setMutationError('');
+    let created = 0;
+    let skipped = 0;
+    let failed = 0;
+    for (const dev of devices) {
+      for (const source of ['cli', 'snmp'] as const) {
+        try {
+          await createRoutingContextMapping({
+            device_id: dev.id,
+            context_source: source,
+            context_type: 'global',
+            local_context_key: 'global',
+            local_context_name: 'Global',
+            address_space_id: activeGlobalSpace.id,
+          });
+          created += 1;
+        } catch (err: any) {
+          const status = Number(err?.status || err?.statusCode || 0);
+          if (status === 401 || status === 403 || status >= 500) {
+            failed += 1;
+          } else {
+            // Backend rejects duplicate (device_id, context_source, local_context_key) with 400/409
+            skipped += 1;
+          }
+        }
+      }
+    }
+    const targetDeviceId = selectedDeviceId || devices[0]?.id || '';
+    if (!selectedDeviceId && targetDeviceId) {
+      setSelectedDeviceId(targetDeviceId);
+    }
+    if (targetDeviceId) {
+      await loadMappings(targetDeviceId);
+    }
+    if (failed === 0) {
+      setBulkMappedDone(true);
+    }
+    setBulkMappingNotice(
+      zh
+        ? `一键映射完成：新增 ${created} 条、已有跳过 ${skipped} 条${failed ? `、失败 ${failed} 条` : ''}（覆盖 CLI 与 SNMP 全局路由表）。`
+        : `Bulk map complete: ${created} created, ${skipped} skipped${failed ? `, ${failed} failed` : ''} (CLI & SNMP Global).`,
+    );
+    setBulkMapping(false);
+  };
+
   return (
-    <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden px-4 py-4 sm:px-6 sm:py-5 space-y-4">
       <PageHero
         icon={GitBranch}
         title={zh ? '设备上下文映射' : 'Device Context Mappings'}
         subtitle={zh
-          ? '显式关联设备本地 VRF / Global 上下文与地址空间。映射由人工维护，不从发现结果自动登记。'
-          : 'Explicitly map device-local VRF / Global contexts to address spaces. Mappings are maintained manually.'}
+          ? '将设备的 Global / VRF 路由表关联到 IPAM 地址空间，便于网段与网关自动匹配。'
+          : 'Map device Global / VRF routing contexts to IPAM address spaces for automatic gateway matching.'}
+        className="overflow-visible"
         actions={(
-          <div className="flex items-center gap-2">
-            <ActionButton icon={RefreshCw} onClick={() => void loadMappings(selectedDeviceId)} disabled={!selectedDeviceId || mappingsLoading}>
-              {zh ? '刷新' : 'Refresh'}
+          <div className="flex flex-wrap items-center gap-2">
+            {activeGlobalSpace && devices.length > 0 && (
+              <ActionButton
+                icon={GitBranch}
+                variant={bulkMappedDone ? 'default' : 'accent'}
+                onClick={() => void handleBulkMapAllGlobal()}
+                disabled={bulkMapping || bulkMappedDone || lookupsLoading || writeDenied}
+              >
+                {bulkMapping
+                  ? (zh ? '批量映射中…' : 'Mapping…')
+                  : bulkMappedDone
+                    ? (zh ? '已全部映射 Global' : 'All Global Mapped')
+                    : (zh ? `一键映射全部设备 Global (${devices.length})` : `Map all devices Global (${devices.length})`)}
+              </ActionButton>
+            )}
+            <ActionButton
+              icon={RefreshCw}
+              onClick={() => {
+                setBulkMappingNotice('');
+                void loadLookups();
+                if (selectedDeviceId) void loadMappings(selectedDeviceId);
+              }}
+              disabled={lookupsLoading || mappingsLoading}
+            >
+              {lookupsLoading || mappingsLoading ? (zh ? '刷新中…' : 'Refreshing…') : (zh ? '刷新' : 'Refresh')}
             </ActionButton>
             <ActionButton icon={Plus} variant="primary" onClick={openCreateForm} disabled={!selectedDeviceId || lookupsLoading || lookupsError !== '' || mappingsLoading || mappingsError !== '' || writeDenied}>
               {zh ? '新增映射' : 'Add mapping'}
@@ -516,20 +596,22 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
                   : lookupsError
                     ? (zh ? '设备列表不可用' : 'Device list unavailable')
                     : (zh ? '按设备名称或 IP 搜索' : 'Search by device name or IP')}
-                onFocus={(event) => {
-                  setDevicePickerOpen(Boolean(deviceSearchQuery.trim()));
+                onFocus={() => {
+                  setDevicePickerOpen(true);
                   setActiveDeviceOption(-1);
                   if (selectedDeviceId) {
                     setDeviceSearchQuery('');
-                    event.currentTarget.select();
                   }
+                }}
+                onClick={() => {
+                  setDevicePickerOpen(true);
                 }}
                 onChange={(event) => {
                   const nextQuery = event.target.value;
                   setDeviceSearchQuery(nextQuery);
                   setSelectedDeviceId('');
                   setWriteDenied(false);
-                  setDevicePickerOpen(Boolean(nextQuery.trim()));
+                  setDevicePickerOpen(true);
                   setActiveDeviceOption(-1);
                 }}
                 onKeyDown={handleDeviceSearchKeyDown}
@@ -613,7 +695,16 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
                   </tr>
                 </thead>
                 <tbody>
-                  {candidates.map((candidate) => {
+                  {candidates
+                    .filter((candidate) => !(
+                      candidate.context_type === 'global'
+                      && mappings.some(
+                        (m) => m.status === 'active'
+                          && m.context_type === 'global'
+                          && m.context_source === candidate.context_source,
+                      )
+                    ))
+                    .map((candidate) => {
                     const key = candidateRowKey(candidate);
                     const matchingSpaces = candidate.context_type === 'unknown'
                       ? []
@@ -719,7 +810,12 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
           </section>
         )}
 
-        <section className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-slate-200/80 dark:border-zinc-800 bg-white dark:bg-zinc-900/95 shadow-2xs" aria-label={zh ? '设备上下文映射列表' : 'Device context mappings'}>
+        {bulkMappingNotice && (
+        <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-800">
+          {bulkMappingNotice}
+        </div>
+      )}
+      <section className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-slate-200/80 dark:border-zinc-800 bg-white dark:bg-zinc-900/95 shadow-2xs" aria-label={zh ? '设备上下文映射列表' : 'Device context mappings'}>
           <div className="h-full overflow-auto">
             {lookupsLoading || mappingsLoading ? (
               <div role="status" className="flex min-h-[240px] items-center justify-center gap-2 text-sm text-slate-500 dark:text-zinc-400">

@@ -18,6 +18,7 @@ import { summarizeLocatorCache } from '../utils/ipLocatorCacheSummary';
 import { buildMacChangeExportData, filterMacChangeEntries, loadAllMacChangeEntries } from './ipLocatorExport';
 import { isValidIP } from './IPVlan/helpers';
 import { useSearchParams } from 'react-router-dom';
+import { DevicePanoramaPanel } from '../components/ipam/DevicePanoramaPanel';
 
 interface IPLocatorPageProps {
   language: string;
@@ -144,6 +145,8 @@ interface LocateResult {
   target_ip: string;
   ip?: string;
   query_type?: 'ip' | 'mac';
+  queried_mac_display?: string;
+  related_ips?: Array<{ ip: string; source?: string; device_name?: string; interface_name?: string; vlan?: string; observed_at?: string }>;
   found: boolean;
   mac: string | null;
   mac_display: string | null;
@@ -183,6 +186,33 @@ interface LocateResult {
   mac_lookup_attempts?: MacLookupInfo[];
   context?: LocatorContext;
   vip_info?: VipInfo;
+  location?: {
+    device_id?: string;
+    device?: string;
+    port?: string;
+    ip_classification?: string;
+    is_down?: boolean;
+    canonical_mgmt_ip?: string;
+    endpoint_classification?: string;
+    edge_port_warning?: { code: string; active_mac_count: number; message: string };
+    peer_relationship?: {
+      peer_hostname: string;
+      peer_interface: string;
+      peer_ip: string;
+      peer_mgmt_ip?: string;
+    };
+  };
+  historical_last_seen?: {
+    status: string;
+    ip: string;
+    mac: string;
+    device_id: string;
+    device: string;
+    port: string;
+    vlan: string;
+    last_seen: string;
+    source: string;
+  };
 }
 
 interface VipControllerInfo {
@@ -337,6 +367,7 @@ interface ArpEntry {
   vlan_source?: string;
   age_seconds?: number | null;
   freshness?: 'fresh' | 'stale' | 'unknown';
+  collection_scope?: 'in_scope' | 'out_of_scope' | 'unknown';
 }
 
 interface MacChangeEntry {
@@ -359,6 +390,7 @@ interface MacChangesData {
 
 interface ArpTableData {
   total: number;
+  out_of_scope_total?: number;
   ttl_seconds: number;
   sweep_interval_seconds: number;
   entries: ArpEntry[];
@@ -726,6 +758,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
   }, [mode]);
 
   const [ip, setIp] = useState('');
+  const [showL2L3Detail, setShowL2L3Detail] = useState(false);
   const [loading, setLoading] = useState(false);
   const [locateStage, setLocateStage] = useState<LocatorRunStage | 'idle'>('idle');
   const [result, setResult] = useState<LocateResult | null>(null);
@@ -768,11 +801,15 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
   const [arpSweepStatus, setArpSweepStatus] = useState<ArpSweepStatus | null>(null);
   const [arpPage, setArpPage] = useState(1);
   const [arpPageSize, setArpPageSize] = useState(10);
+  const [showOutOfScopeArp, setShowOutOfScopeArp] = useState(false);
   const filteredArpEntries = useMemo(() => {
     if (!arpTable) return [];
+    const baseEntries = showOutOfScopeArp
+      ? arpTable.entries
+      : arpTable.entries.filter(entry => entry.collection_scope !== 'out_of_scope');
     const q = arpFilter.trim().toLowerCase();
     return q
-      ? arpTable.entries.filter(entry =>
+      ? baseEntries.filter(entry =>
           entry.ip.toLowerCase().includes(q) ||
           entry.mac.toLowerCase().includes(q) ||
           entry.mac_raw.toLowerCase().includes(q) ||
@@ -781,8 +818,8 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
           String(entry.vlan ?? '').toLowerCase().includes(q) ||
           (entry.vendor || '').toLowerCase().includes(q)
         )
-      : arpTable.entries;
-  }, [arpTable, arpFilter]);
+      : baseEntries;
+  }, [arpTable, arpFilter, showOutOfScopeArp]);
   const pageArpEntries = useMemo(
     () => filteredArpEntries.slice((arpPage - 1) * arpPageSize, arpPage * arpPageSize),
     [filteredArpEntries, arpPage, arpPageSize],
@@ -1304,7 +1341,7 @@ ${rep.repair_commands}
     const trimmed = value.trim();
     return (
       /^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$/.test(trimmed)
-      || /^([0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4}$/.test(trimmed)
+      || /^([0-9a-fA-F]{4}[.:-]){2}[0-9a-fA-F]{4}$/.test(trimmed)
       || /^[0-9a-fA-F]{12}$/.test(trimmed)
     );
   };
@@ -1334,6 +1371,26 @@ ${rep.repair_commands}
           throw new Error(typeof payload?.detail === 'string' ? payload.detail : `HTTP ${resp.status}`);
         }
         data = payload as LocateResult;
+        // MAC 快照只有 ARP/FDB 缓存，信息有限：若能反查到 IP，则用该 IP 走完整定位链路补全
+        const hasAccess = (data.locations || []).some(l => !l.is_uplink);
+        if (data.found && data.ip && !hasAccess) {
+          try {
+            const full = await locateIpWithRun<LocateResult>({
+              ip: data.ip,
+              token,
+              forceRefresh,
+              onStage: setLocateStage,
+            });
+            data = {
+              ...full,
+              query_type: 'mac',
+              related_ips: data.related_ips,
+              queried_mac_display: data.mac_display,
+            } as LocateResult;
+          } catch {
+            /* 完整链路失败时保留 MAC 快照结果 */
+          }
+        }
       } else {
         data = await locateIpWithRun<LocateResult>({
           ip: trimmed,
@@ -1566,7 +1623,7 @@ ${rep.repair_commands}
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-black/45">
           <span id="ip-locator-search-help">{zh ? '按回车或点击“定位”开始查询' : 'Press Enter or select Locate to search'}</span>
           <span>·</span>
-          <span>{zh ? '流程：ARP 表查 MAC → MAC 表查端口 → LLDP 查上联' : 'Flow: ARP→MAC→Switch Port→LLDP Uplink'}</span>
+          <span>{zh ? '流程：精确 IP / 最长前缀匹配网关 → 网关 ARP 取 MAC → MAC 表逐跳追踪端口 → LLDP 穿透上联到接入口（支持输入 IP 或 MAC）' : 'Flow: exact IP / longest-prefix gateway → gateway ARP → hop-by-hop MAC/FDB → LLDP uplink penetration to access port (IP or MAC input)'}</span>
         </div>
       </div>
 
@@ -1868,10 +1925,71 @@ ${rep.repair_commands}
                       {macLookupMessage}
                     </p>
                   )}
+                  {result.historical_last_seen && (
+                    <div className="mt-3 rounded-xl border border-amber-300/60 dark:border-amber-500/30 bg-white/80 dark:bg-black/20 px-3.5 py-2.5 text-xs">
+                      <p className="font-semibold text-amber-800 dark:text-amber-300">
+                        {zh ? '离线历史归档快照（最后在线位置）' : 'Offline Historical Snapshot (Last Seen)'}
+                      </p>
+                      <p className="mt-1 font-mono text-black/75 dark:text-white/80">
+                        {result.historical_last_seen.device} : {result.historical_last_seen.port || '-'}
+                        {result.historical_last_seen.vlan ? ` (VLAN ${result.historical_last_seen.vlan})` : ''}
+                        {result.historical_last_seen.mac ? ` · MAC ${result.historical_last_seen.mac}` : ''}
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-black/50 dark:text-white/50">
+                        {zh ? '最后在线时间' : 'Last seen'}: {formatExactTime(result.historical_last_seen.last_seen, zh)}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           ) : null}
+
+          {result.location?.edge_port_warning && (
+            <div className="rounded-xl border border-amber-300/70 bg-amber-50/90 dark:bg-amber-500/10 px-4 py-3 text-xs text-amber-900 dark:text-amber-200 flex items-center gap-2">
+              <AlertCircle size={15} className="text-amber-600 flex-shrink-0" />
+              <span>{result.location.edge_port_warning.message}</span>
+            </div>
+          )}
+
+          {result.location?.peer_relationship && (
+            <div className="rounded-xl border border-cyan-200/70 bg-cyan-50/70 dark:bg-cyan-500/10 px-4 py-3 text-xs text-cyan-900 dark:text-cyan-200 flex items-center gap-2 flex-wrap">
+              <Network size={15} className="text-[#0891b2] flex-shrink-0" />
+              <span className="font-semibold">{zh ? '对端三层互联设备' : 'P2P Interconnect Peer'}:</span>
+              <span className="font-mono">
+                {result.location.peer_relationship.peer_hostname} ({result.location.peer_relationship.peer_interface} · {result.location.peer_relationship.peer_ip})
+              </span>
+            </div>
+          )}
+
+          {result.query_type === 'mac' && (result.related_ips?.length ?? 0) > 0 && (
+            <div className="rounded-xl border border-cyan-200/60 bg-cyan-50/40 dark:bg-cyan-500/[0.04] px-4 py-3 text-xs">
+              <p className="font-semibold text-cyan-800 dark:text-cyan-300">
+                {zh ? `MAC ${result.queried_mac_display || result.mac_display || ''} 关联 ${result.related_ips!.length} 个 IP（按 ARP 反查）` : `MAC ${result.queried_mac_display || result.mac_display || ''} maps to ${result.related_ips!.length} IP(s)`}
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {result.related_ips!.map(item => (
+                  <button
+                    key={`${item.ip}-${item.device_name}-${item.vlan}`}
+                    type="button"
+                    onClick={() => void doLocate(item.ip)}
+                    className="px-2.5 py-1 rounded-md border border-cyan-200 bg-white/80 dark:bg-white/[0.06] hover:bg-cyan-50 font-mono"
+                    title={`${item.device_name || ''} ${item.interface_name || ''} VLAN ${item.vlan || '-'}`}
+                  >
+                    {item.ip} · {item.device_name || '-'} {item.interface_name ? `/ ${item.interface_name}` : ''}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {(result.location?.device_id || accessLocations[0]?.switch_id) && (
+            <DevicePanoramaPanel
+              deviceId={String(result.location?.device_id || accessLocations[0]?.switch_id || '')}
+              highlightPort={String(result.location?.port || accessLocations[0]?.port || '')}
+              zh={zh}
+            />
+          )}
 
           {locatorContext && (
             <div className="rounded-2xl border border-black/5 dark:border-white/10 bg-slate-50/70 dark:bg-white/[0.025] p-4 space-y-4">
@@ -1881,6 +1999,13 @@ ${rep.repair_commands}
                 <span className="text-[10px] text-black/35 dark:text-white/35 ml-auto">
                   {zh ? '查询时间' : 'Query time'} · {formatExactTime(locatorContext.freshness.collected_at, zh)}
                 </span>
+                <button
+                  type="button"
+                  onClick={() => setShowL2L3Detail(v => !v)}
+                  className="text-[11px] px-2 py-0.5 rounded-md border border-cyan-200 text-cyan-700 hover:bg-cyan-50"
+                >
+                  {showL2L3Detail ? (zh ? '收起二/三层详情' : 'Hide L2/L3') : (zh ? '展开二/三层详情' : 'Show L2/L3')}
+                </button>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
@@ -1900,7 +2025,7 @@ ${rep.repair_commands}
                   />
                 </LocatorContextCard>
 
-                <LocatorContextCard title={zh ? '二层定位' : 'Layer 2'} icon={Cable}>
+                {showL2L3Detail && <LocatorContextCard title={zh ? '二层定位' : 'Layer 2'} icon={Cable}>
                   <LocatorContextField label="MAC" value={formatMacAddress(locatorContext.l2.mac || result.mac_display)} mono />
                   <LocatorContextField label="VLAN" value={formatLocatorVlanLabel(locatorContext.l2.vlan, locatorContext.l2.vlan_name)} mono />
                   <LocatorContextField label={zh ? 'VLAN 来源' : 'VLAN Source'} value={formatLocatorVlanSource(locatorContext.l2.vlan_source, zh)} />
@@ -1925,9 +2050,9 @@ ${rep.repair_commands}
                     label={zh ? '端口状态 / 模式' : 'Port State / Mode'}
                     value={formatPortStateAndMode(locatorContext.l2.admin_status, locatorContext.l2.oper_status, locatorContext.l2.mode)}
                   />
-                </LocatorContextCard>
+                </LocatorContextCard>}
 
-                <LocatorContextCard title={zh ? '三层定位' : 'Layer 3'} icon={Router}>
+                {showL2L3Detail && <LocatorContextCard title={zh ? '三层定位' : 'Layer 3'} icon={Router}>
                   <LocatorContextField label={zh ? '默认网关' : 'Gateway'} value={locatorContext.l3.gateway} mono />
                   <LocatorContextField label={zh ? '网关设备' : 'Gateway Device'} value={locatorContext.l3.gateway_device} />
                   <LocatorContextField label={zh ? '三层接口' : 'L3 Interface'} value={locatorContext.l3.gateway_interface || locatorContext.l3.route_interface} mono />
@@ -1954,9 +2079,12 @@ ${rep.repair_commands}
                       value={locatorContext.l3.adjacent_devices.map(item => `${item.device}${item.port ? ` (${item.port}${item.peer_port ? ` ↔ ${item.peer_port}` : ''})` : ''}`).join(', ')}
                     />
                   )}
-                </LocatorContextCard>
+                </LocatorContextCard>}
 
                 <LocatorContextCard title={zh ? '业务关联' : 'Business'} icon={Users}>
+                  {!(locatorContext.business.hostname || locatorContext.business.department || locatorContext.business.owner || locatorContext.business.criticality || locatorContext.business.business_level || locatorContext.business.business_systems?.length || locatorContext.business.config_backup_at) && (
+                    <p className="text-[11px] text-black/40 dark:text-white/40">{zh ? '未关联业务信息' : 'No business info linked'}</p>
+                  )}
                   <LocatorContextField label={zh ? '主机名称' : 'Hostname'} value={locatorContext.business.hostname} />
                   <LocatorContextField label={zh ? '业务/租户' : 'Tenant'} value={locatorContext.business.tenant} />
                   <LocatorContextField label={zh ? '区域/站点' : 'Site'} value={locatorContext.business.site} />
@@ -2379,6 +2507,20 @@ ${rep.repair_commands}
             <span>{zh ? `TTL ${Math.round(arpTable.ttl_seconds / 60)} 分钟` : `TTL ${Math.round(arpTable.ttl_seconds / 60)}m`}</span>
             <span>·</span>
             <span>{zh ? '更新时间' : 'Updated'}: {arpTable.timestamp?.replace('T', ' ').slice(0, 19)}</span>
+            {(arpTable.out_of_scope_total ?? 0) > 0 && (
+              <>
+                <span>·</span>
+                <button
+                  type="button"
+                  onClick={() => { setShowOutOfScopeArp(v => !v); setArpPage(1); }}
+                  className="text-[#0891b2] hover:underline"
+                >
+                  {showOutOfScopeArp
+                    ? (zh ? `隐藏 ${arpTable.out_of_scope_total} 条未纳入采集设备的历史记录` : `Hide ${arpTable.out_of_scope_total} out-of-scope legacy entries`)
+                    : (zh ? `已隐藏 ${arpTable.out_of_scope_total} 条未纳入采集设备的历史记录（点击显示）` : `${arpTable.out_of_scope_total} out-of-scope legacy entries hidden (show)`)}
+                </button>
+              </>
+            )}
           </div>
         )}
 
@@ -2441,7 +2583,11 @@ ${rep.repair_commands}
                     entry.vendor || '-',
                     entry.interface || '-',
                     entry.device || '-',
-                    `${formatRelativeTime(entry.cached_at, zh)}${entry.freshness === 'stale' ? (zh ? ' · 已过期' : ' · stale') : ''}`,
+                    `${formatRelativeTime(entry.cached_at, zh)}${
+                      entry.collection_scope === 'out_of_scope'
+                        ? (zh ? ' · 未纳入采集范围' : ' · out of scope')
+                        : entry.freshness === 'stale' ? (zh ? ' · 已过期' : ' · stale') : ''
+                    }`,
                   ]),
                 }),
               }}
@@ -2488,8 +2634,18 @@ ${rep.repair_commands}
                       <td className="max-w-0 truncate text-[var(--ops-muted)]" title={entry.vendor}>{entry.vendor || '-'}</td>
                       <td className="max-w-0 truncate text-[var(--ops-muted)]" title={entry.interface}>{entry.interface || '-'}</td>
                       <td className="max-w-0 truncate font-medium text-[#0891b2]" title={entry.device}>{entry.device || '-'}</td>
-                      <td className={`whitespace-nowrap ${entry.freshness === 'stale' ? 'text-amber-600' : 'text-[var(--ops-muted)]'}`} title={`${entry.cached_at} · ${entry.vlan_source || 'unknown VLAN source'}`}>
-                        {formatRelativeTime(entry.cached_at, zh)}{entry.freshness === 'stale' ? (zh ? ' · 已过期' : ' · stale') : ''}
+                      <td
+                        className={`whitespace-nowrap ${
+                          entry.collection_scope === 'out_of_scope'
+                            ? 'text-slate-400 dark:text-slate-500'
+                            : entry.freshness === 'stale' ? 'text-amber-600' : 'text-[var(--ops-muted)]'
+                        }`}
+                        title={`${entry.cached_at} · ${entry.vlan_source || 'unknown VLAN source'}${entry.collection_scope === 'out_of_scope' ? (zh ? ' · 非接入/终端网关设备，未纳入周期 ARP 采集' : ' · Non-edge/non-gateway device, excluded from periodic ARP sweep') : ''}`}
+                      >
+                        {formatRelativeTime(entry.cached_at, zh)}
+                        {entry.collection_scope === 'out_of_scope'
+                          ? (zh ? ' · 未纳入采集范围' : ' · out of scope')
+                          : entry.freshness === 'stale' ? (zh ? ' · 已过期' : ' · stale') : ''}
                       </td>
                     </tr>
                   ))

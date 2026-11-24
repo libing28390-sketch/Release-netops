@@ -168,7 +168,7 @@ const SearchablePicker: React.FC<SearchablePickerProps> = ({
           setActiveIndex(-1);
         }}
         onKeyDown={handleKeyDown}
-        className="w-full rounded-xl border border-gray-150 bg-gray-50/50 py-2.5 pl-9 pr-9 text-xs font-medium outline-none transition-all focus:border-cyan-400 focus:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+        className="w-full rounded-xl border border-gray-200 bg-gray-50/50 py-2.5 pl-9 pr-9 text-xs font-medium outline-none transition-all focus:border-cyan-400 focus:bg-white disabled:cursor-not-allowed disabled:opacity-60"
       />
       {open && !disabled && (
         <div
@@ -812,7 +812,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
                       value={form.address}
                       onChange={(e) => setForm({ ...form, address: e.target.value })}
                       placeholder="e.g. 10.1.1.100"
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     />
                     {prefixScope && (
                       <p className="ml-1 text-[10px] text-cyan-700">
@@ -830,7 +830,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
                         return (
                           <label
                             key={option.value}
-                            className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${selected ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-gray-150 bg-gray-50/50 text-gray-600 hover:border-cyan-200 hover:bg-cyan-50/40'}`}
+                            className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${selected ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-gray-200 bg-gray-50/50 text-gray-600 hover:border-cyan-200 hover:bg-cyan-50/40'}`}
                           >
                             <input
                               type="radio"
@@ -888,7 +888,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
                       value={form.interface_name}
                       onChange={(e) => setForm({ ...form, interface_name: e.target.value })}
                       placeholder="e.g. VIP100"
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     />
                   </div>
 
@@ -900,7 +900,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
                       onChange={(e) => setForm({ ...form, real_servers: e.target.value })}
                       placeholder={zh ? '例如：10.1.1.11, 10.1.1.12（多IP使用逗号/空格分隔）' : 'e.g. 10.1.1.11, 10.1.1.12'}
                       rows={2}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50 resize-none"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50 resize-none"
                     />
                   </div>
 
@@ -912,7 +912,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t, prefix
                       onChange={(e) => setForm({ ...form, description: e.target.value })}
                       placeholder={zh ? '在此输入负载分发的用途说明...' : 'VIP description...'}
                       rows={2}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50 resize-none"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50 resize-none"
                     />
                   </div>
                 </div>

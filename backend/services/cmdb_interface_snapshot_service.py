@@ -366,6 +366,11 @@ def replace_cmdb_interface_observations(
                     generation, child_observed_at, run_id, metadata_json,
                 ),
             )
+    try:
+        from services.ipam_radix_index_service import invalidate_ipam_radix_index
+        invalidate_ipam_radix_index()
+    except Exception:
+        pass
     return len(normalized_rows)
 
 

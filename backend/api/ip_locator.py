@@ -126,6 +126,44 @@ async def api_locate_mac(body: MACLocateRequest, user=require_role("Viewer")):
     return result
 
 
+@router.get('/ip-locator/device-panorama/{device_id}')
+async def api_device_holographic_panorama(
+    device_id: str,
+    highlight_port: str = Query(default='', max_length=128),
+    q: str = Query(default='', max_length=128),
+    limit: int = Query(default=50, ge=1, le=200),
+    arp_page: int = Query(default=1, ge=1),
+    arp_page_size: int = Query(default=10, ge=1, le=100),
+    mac_page: int = Query(default=1, ge=1),
+    mac_page_size: int = Query(default=10, ge=1, le=100),
+    user=require_role("Viewer"),
+):
+    """Return the 5-dimension holographic device panorama for a located switch/router."""
+    authorized_device_ids = await asyncio.to_thread(
+        _authorized_locator_device_ids,
+        user,
+        online_only=False,
+    )
+    if device_id not in set(authorized_device_ids):
+        raise HTTPException(status_code=404, detail='设备不存在或超出当前授权范围')
+    from services.ipam_panorama_service import get_device_holographic_panorama
+
+    panorama = await asyncio.to_thread(
+        get_device_holographic_panorama,
+        device_id,
+        highlight_port=highlight_port,
+        arp_mac_filter=q,
+        limit=limit,
+        arp_page=arp_page,
+        arp_page_size=arp_page_size,
+        mac_page=mac_page,
+        mac_page_size=mac_page_size,
+    )
+    if panorama is None:
+        raise HTTPException(status_code=404, detail='未找到设备全息信息')
+    return panorama
+
+
 @router.get('/ip-locator/health')
 async def api_ip_locator_health(user=require_role("Viewer")):
     """Return safe cache/feature health without exposing Redis credentials."""
@@ -381,6 +419,7 @@ async def api_locate_ip(body: IPLocateRequest, user=require_role("Viewer")):
             body.ip,
             tenant_id=tenant_id_for_write(user=user),
             force_refresh=body.force_refresh,
+            enable_ping=bool(getattr(body, 'enable_ping', False)),
             route_fresh_seconds=int(getattr(settings, 'IP_LOCATOR_ROUTE_FRESH_SECONDS', 300)),
             authorized_device_ids=authorized_device_ids,
             deadline_seconds=int(getattr(settings, 'IP_LOCATOR_TASK_DEADLINE_SECONDS', 180)),

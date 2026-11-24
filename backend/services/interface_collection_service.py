@@ -931,25 +931,29 @@ def _upsert_snmp_interfaces(device: dict[str, Any], snmp_interfaces: list[dict[s
 
 
 def _upsert_snmp_ip_inventory(device_id: str, addresses: list[dict[str, Any]]) -> int:
-    """Replace one complete IP-MIB snapshot without flattening multi-address ports."""
+    """Replace one complete IP-MIB snapshot without flattening multi-address or multi-VRF ports."""
     if not addresses:
         raise ValueError("An empty IP-MIB snapshot is not authoritative")
-    normalized_by_ip: dict[str, dict[str, Any]] = {}
+    normalized_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
     for item in addresses:
         ip_value = _normalize_ip(item.get("ip_address"))
         interface_name = str(item.get("interface") or "").strip()
+        vrf_name = str(item.get("vrf_name") or item.get("local_context_key") or "default").strip() or "default"
         if not ip_value or not interface_name:
             raise ValueError("IP-MIB snapshot contains an invalid address or interface")
-        current = normalized_by_ip.get(ip_value)
-        if current and normalize_interface_name(current["interface"]) != normalize_interface_name(interface_name):
-            raise ValueError("ip_inventory cannot represent one IP assigned to multiple interfaces")
-        normalized_by_ip[ip_value] = {**item, "ip_address": ip_value, "interface": interface_name}
+        key = (normalize_interface_name(interface_name), vrf_name, ip_value)
+        normalized_by_key[key] = {
+            **item,
+            "ip_address": ip_value,
+            "interface": interface_name,
+            "vrf_name": vrf_name,
+        }
 
     conn = get_db_connection()
     try:
         observed_at = _now()
         conn.execute("DELETE FROM ip_inventory WHERE device_id = ?", (device_id,))
-        for ip_value, item in sorted(normalized_by_ip.items()):
+        for (_norm_if, vrf_name, ip_value), item in sorted(normalized_by_key.items()):
             address = ipaddress.ip_address(ip_value)
             prefix_length = _normalize_prefix_length(item.get("prefix_length"))
             if prefix_length is not None and prefix_length > address.max_prefixlen:
@@ -963,21 +967,22 @@ def _upsert_snmp_ip_inventory(device_id: str, addresses: list[dict[str, Any]]) -
                 # either a prefix length or a netmask for IPv6.
                 mask = str(prefix_length)
             interface_type = infer_interface_type(item["interface"]) or "physical"
-            cursor = conn.execute(
-                """INSERT INTO ip_inventory (ip, mask, device_id, interface, type, last_seen)
-                   VALUES (?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(ip) DO UPDATE SET
+            conn.execute(
+                """INSERT INTO ip_inventory (ip, mask, device_id, interface, vrf_name, type, last_seen)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (device_id, interface, vrf_name, ip) DO UPDATE SET
                        mask = excluded.mask,
-                       interface = excluded.interface,
                        type = excluded.type,
-                       last_seen = excluded.last_seen
-                   WHERE ip_inventory.device_id = excluded.device_id""",
-                (ip_value, mask, device_id, item["interface"], interface_type, observed_at),
+                       last_seen = excluded.last_seen""",
+                (ip_value, mask, device_id, item["interface"], vrf_name, interface_type, observed_at),
             )
-            if getattr(cursor, "rowcount", 1) == 0:
-                raise ValueError("ip_inventory already assigns this IP to another device")
         conn.commit()
-        return len(normalized_by_ip)
+        try:
+            from services.ipam_radix_index_service import invalidate_ipam_radix_index
+            invalidate_ipam_radix_index()
+        except Exception:
+            pass
+        return len(normalized_by_key)
     finally:
         conn.close()
 
@@ -1148,7 +1153,7 @@ def _upsert_interfaces(
             if normalize_interface_name(item.get("interface_name"))
         }
         existing_rows = conn.execute(
-            "SELECT id, interface_name FROM interfaces WHERE device_id = ?",
+            "SELECT id, interface_name, admin_status, oper_status FROM interfaces WHERE device_id = ?",
             (device["id"],),
         ).fetchall()
         # A previous collector version could persist both a short and a long
@@ -1160,13 +1165,17 @@ def _upsert_interfaces(
             key = normalize_interface_name(row["interface_name"])
             if key:
                 existing_by_key.setdefault(key, []).append(row["id"])
-        # ``interfaces`` is a current-state projection, not a history table.
-        # Preserve the row identity for topology references, but remove the
-        # address snapshot from interfaces that disappeared from the IP-bearing
-        # inventory. Keep admin_status and oper_status intact because physical
-        # and L2 bridge ports are discovered and maintained via SNMP IF-MIB.
+        # Preserve configured IPs on interfaces that are currently down/shutdown
+        # (SNMP IP-MIB frequently removes down interfaces from operational tables),
+        # while still clearing stale IPs from active UP interfaces that genuinely
+        # dropped their IP configuration.
+        down_states = {"down", "admin_down", "administratively down", "shutdown", "notpresent", "lowerlayerdown"}
         for row in existing_rows:
             if normalize_interface_name(row["interface_name"]) not in current_keys:
+                row_admin = str(row["admin_status"] or "").strip().lower()
+                row_oper = str(row["oper_status"] or "").strip().lower()
+                if row_admin in down_states or row_oper in down_states:
+                    continue
                 conn.execute(
                     """UPDATE interfaces SET
                            primary_ip = '', ip_address = '', ip_prefix_length = NULL, ip_version = NULL,

@@ -332,7 +332,22 @@ function PrefixRowActions({
   };
 
   return (
-    <div ref={rootRef} className="relative inline-flex whitespace-nowrap text-[11px]">
+    <div ref={rootRef} className="relative inline-flex items-center gap-1 whitespace-nowrap text-[11px]">
+      <Link
+        to={`/ipam/ips?prefix_id=${encodeURIComponent(prefix.id)}`}
+        className="inline-flex items-center rounded-lg border border-cyan-200 bg-cyan-50/70 px-2 py-1.5 font-semibold text-cyan-800 hover:bg-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+        title={zh ? `查看 ${prefix.prefix} 下的 IP` : `View IPs in ${prefix.prefix}`}
+      >
+        {zh ? '查看 IP' : 'IPs'}
+      </Link>
+      <button
+        type="button"
+        onClick={onEdit}
+        className="inline-flex items-center rounded-lg border border-gray-200 bg-white px-2 py-1.5 font-semibold text-gray-700 hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+        title={zh ? `编辑 ${prefix.prefix}` : `Edit ${prefix.prefix}`}
+      >
+        {zh ? '编辑' : 'Edit'}
+      </button>
       <button
         ref={triggerRef}
         type="button"
@@ -347,9 +362,9 @@ function PrefixRowActions({
             setMenuOpen(true);
           }
         }}
-        className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 font-bold text-gray-700 hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+        className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1.5 font-bold text-gray-600 hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
       >
-        <span>{zh ? '管理' : 'Manage'}</span>
+        <span>{zh ? '更多' : 'More'}</span>
         <MoreHorizontal size={14} aria-hidden="true" />
       </button>
       {menuOpen && (
@@ -381,6 +396,16 @@ function PrefixRowActions({
       )}
     </div>
   );
+}
+
+function extractVlanIdFromInterfaceName(interfaceName?: string | null): number | null {
+  const raw = String(interfaceName || '').trim();
+  if (!raw) return null;
+  const svi = raw.match(/^(?:vlan-?interface|vlanif|vlan|vl)[\s\-_]*(\d+)$/i);
+  if (svi) return Number(svi[1]);
+  const sub = raw.match(/\.(\d+)$/);
+  if (sub) return Number(sub[1]);
+  return null;
 }
 
 function addressSpaceOptionLabel(space: AddressSpace, zh: boolean): string {
@@ -781,6 +806,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   useEscapeClose(Boolean(scopeResolutionPrefix) && !scopeResolutionSaving, () => setScopeResolutionPrefix(null));
   useEscapeClose(Boolean(showBatchAddressSpaceModal) && !batchAddressSpaceSaving, () => setShowBatchAddressSpaceModal(false));
   const [errorMsg, setErrorMsg] = useState('');
+  const [gatewayDeviceSearch, setGatewayDeviceSearch] = useState('');
   const [parentSubnetId, setParentSubnetId] = useState('');
   const [desiredPrefixLen, setDesiredPrefixLen] = useState(24);
   const [showSubnetRecommendation, setShowSubnetRecommendation] = useState(false);
@@ -1372,8 +1398,8 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       setInterfaceImportReviewRequest(null);
       setInterfaceGenerationResult(
         zh
-          ? `已创建 ${data.created_prefixes || 0} 个网段，并登记 ${data.created_addresses || 0} 个接口 IP`
-          : `Created ${data.created_prefixes || 0} prefixes and ${data.created_addresses || 0} interface IPs`,
+          ? `已创建 ${data.created_prefixes || 0} 个网段${data.updated_prefixes ? `、补齐同步 ${data.updated_prefixes} 个已有网段（网关/接口/VLAN）` : ''}，并登记 ${data.created_addresses || 0} 个接口 IP`
+          : `Created ${data.created_prefixes || 0} prefixes${data.updated_prefixes ? `, synced ${data.updated_prefixes} existing prefixes` : ''}, and registered ${data.created_addresses || 0} interface IPs`,
       );
       setShowGenerateAllPendingConfirm(false);
       setSelectedInterfaceCandidates(new Set());
@@ -1929,11 +1955,16 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         await loadData({ silent: true });
       } else {
         const err = await res.json().catch(() => ({}));
+        const detailText = Array.isArray(err.detail)
+          ? err.detail.map((item: any) => item?.msg || JSON.stringify(item)).join('；')
+          : typeof err.detail === 'string'
+            ? err.detail
+            : (err.detail ? JSON.stringify(err.detail) : '');
         setErrorMsg(res.status === 401
           ? (zh ? '登录已过期，请重新登录后重试。' : 'Your session has expired. Sign in and retry.')
           : res.status === 403
             ? (zh ? '当前账号没有保存网段的权限。' : 'You do not have permission to save this prefix.')
-            : err.detail || (zh ? '操作失败' : 'Operation failed'));
+            : detailText || (zh ? `保存失败 (HTTP ${res.status})` : `Operation failed (HTTP ${res.status})`));
       }
     } catch (e) {
       setErrorMsg(zh ? '网络请求出错' : 'Network request error');
@@ -2339,8 +2370,8 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         icon={Network}
         title={zh ? '网段管理' : 'Prefix Management'}
         subtitle={zh
-          ? '接口导入会同时登记网段和设备接口 IP；用途未确定时打开“管理”选择“编辑网段”，日常登记与分配也从“管理”进入。'
-          : 'Interface imports register prefixes and device interface IPs. Open “Manage” to edit a prefix or manage IP registration and allocation.'}
+          ? '管理各站点与路由域的网段台账、用途及网关绑定；支持从设备接口自动导入。'
+          : 'Manage prefixes, purposes, and gateway bindings across sites and routing domains.'}
         className="[&>div:first-child]:flex-wrap [&>div:first-child>div:last-child]:max-w-full"
         actions={
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -2350,7 +2381,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               variant="accent"
               onClick={() => openInterfaceGeneration()}
             >
-              {zh ? '从接口 IP 生成' : 'Generate from Interfaces'}
+              {zh ? '从设备接口导入' : 'Import from Interfaces'}
             </ActionButton>
             <ActionButton
               icon={Plus}
@@ -2477,15 +2508,10 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               aria-label={zh ? '待确认地址归属与重复网段' : 'Pending address scope and duplicate prefixes'}
               className="mb-2 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-2.5 text-xs text-amber-900"
             >
-              <p className="font-bold">
+              <p className="font-semibold">
                 {zh
-                  ? `地址空间待确认 ${classificationSummary.address_space_pending_count ?? 0} 条；跨站点重复 CIDR 待裁决 ${classificationSummary.pending_duplicate_group_count ?? 0} 组（${classificationSummary.pending_duplicate_record_count ?? 0} 条 Prefix）`
-                  : `${classificationSummary.address_space_pending_count ?? 0} prefixes need an address space; ${classificationSummary.pending_duplicate_group_count ?? 0} cross-site duplicate CIDR groups need a decision (${classificationSummary.pending_duplicate_record_count ?? 0} prefixes)`}
-              </p>
-              <p className="mt-1 text-[11px] text-amber-800/85">
-                {zh
-                  ? '地址空间未明确前，这些 CIDR 不计为已确认冲突或合法复用；请按映射与重复 CIDR 复核表裁决。'
-                  : 'Until address spaces are explicit, these CIDRs are not treated as confirmed conflicts or valid reuse. Review the mapping and duplicate-CIDR decisions.'}
+                  ? `待分配地址空间 ${classificationSummary.address_space_pending_count ?? 0} 条 · 跨站点重复网段 ${classificationSummary.pending_duplicate_group_count ?? 0} 组（共 ${classificationSummary.pending_duplicate_record_count ?? 0} 条）— 勾选后可批量分配地址空间`
+                  : `${classificationSummary.address_space_pending_count ?? 0} prefixes need an address space · ${classificationSummary.pending_duplicate_group_count ?? 0} cross-site duplicate groups (${classificationSummary.pending_duplicate_record_count ?? 0} prefixes)`}
               </p>
             </div>
           )}
@@ -2521,14 +2547,9 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
             <summary className="cursor-pointer list-none text-[11px] font-bold text-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500">
               <span className="inline-flex items-center gap-1.5">
                 <ChevronRight size={13} className="transition-transform open:rotate-90" aria-hidden="true" />
-                {zh ? '用途维护方式' : 'Purpose maintenance method'}
+                {zh ? '按识别方式筛选（自动识别 / 人工指定）' : 'Filter by source (auto / manual)'}
               </span>
             </summary>
-            <p className="mt-2 text-[11px] leading-relaxed text-gray-500">
-              {zh
-                ? '系统维护表示尚未人工锁定，不代表用途已识别；它可以与“用途未确定”同时成立。人工锁定表示用途由人工设置并受系统维护保护。'
-                : 'System maintained means the purpose is not manually locked; it does not mean the purpose is known. It can overlap with “Purpose unconfirmed”. Manually locked means a person set the purpose and system maintenance will preserve it.'}
-            </p>
             <div className="mt-2 grid grid-cols-2 gap-2 sm:max-w-xl">
               {classificationMethodCards.map((item) => (
                 <button
@@ -2564,12 +2585,11 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       {suggestedPrefixes.length > 0 && (
         <div role="note" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
           <div className="min-w-0 flex-1">
-            <p className="font-bold">
-              {zh ? `本页有 ${suggestedPrefixes.length} 个网段“用途未确定”，系统给出了推荐用途` : `${suggestedPrefixes.length} unclassified prefixes on this page have a suggested purpose`}
-            </p>
-            <p className="mt-0.5 text-[11px] leading-4">
-              {Object.entries(suggestionGroups).map(([type, items]) => `${NETWORK_TYPES[type] ? (zh ? NETWORK_TYPES[type].labelZh : NETWORK_TYPES[type].label) : type} ${items.length} 个`).join('、')}
-              {zh ? '。用途决定“利用率”是否统计该网段（业务网段才计入容量），也决定 IP 的默认用途。推荐依据见每行“推荐”标签的提示。' : '. Purpose controls utilization scope and default IP purpose.'}
+            <p className="font-semibold">
+              {zh ? `本页有 ${suggestedPrefixes.length} 个网段待确认用途：` : `${suggestedPrefixes.length} prefixes have suggested purposes: `}
+              <span className="font-normal">
+                {Object.entries(suggestionGroups).map(([type, items]) => `${NETWORK_TYPES[type] ? (zh ? NETWORK_TYPES[type].labelZh : NETWORK_TYPES[type].label) : type} ${items.length} 个`).join('、')}
+              </span>
             </p>
           </div>
           {confirmApplySuggestions ? (
@@ -2951,8 +2971,8 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
             >
               <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-100 px-4 py-4 sm:px-6">
                 <div className="min-w-0">
-                  <h3 className="font-bold text-gray-900">{zh ? '从接口采集生成 IPAM 网段' : 'Generate IPAM Prefixes from Interfaces'}</h3>
-                <p className="mt-1 text-xs text-gray-500">{zh ? '使用最后一次成功的 CMDB 接口快照。可先勾选再批量选择地址空间；确认无 VRF 就是确认归入 Global，必须选定具体全局空间。未知范围不会自动归到全局，已有 VRF 的候选只可使用对应 VRF 地址空间。' : 'Uses the last successful CMDB interface snapshot. Select candidates first, then apply one address space in bulk. Confirming there is no VRF means assigning the selected Global space. Unknown scope is never defaulted to Global, and a known VRF can use only its matching VRF space.'}</p>
+                  <h3 className="font-bold text-gray-900">{zh ? '从设备接口导入网段' : 'Import Prefixes from Device Interfaces'}</h3>
+                <p className="mt-1 text-xs text-gray-500">{zh ? '基于最新设备接口快照提取候选网段：勾选需要导入的网段，为待确认项指定路由域（全局或对应 VRF），点击导入即可。' : 'Extract candidate prefixes from the latest device interface snapshot: select prefixes, assign a routing domain (Global or matching VRF) for pending items, and import.'}</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
                   {interfaceCandidates.length > 0 && <>
@@ -3051,7 +3071,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                         {zh ? `已选 ${selectedInterfaceCandidates.size} 个候选；其中 ${selectedInterfacePendingScopeCandidates.length} 个待确认地址空间` : `${selectedInterfaceCandidates.size} candidates selected; ${selectedInterfacePendingScopeCandidates.length} need address-space confirmation`}
                       </div>
                       <p className="mt-1 text-[10px] leading-relaxed text-gray-600">
-                        {zh ? '批量选择只修改本次生成选项，不写入设备上下文。已知 VRF 的候选只接受相同 VRF 的空间。' : 'Bulk selection changes only this generation request and does not write device context mappings. Candidates with a known VRF accept only a space for that VRF.'}
+                        {zh ? '仅对本次勾选的候选项生效（含 VRF 的候选需选对应 VRF 空间）。' : 'Applies to selected candidates in this import only.'}
                       </p>
                     </div>
                     {selectedInterfacePendingScopeCandidates.length > 0 && (
@@ -3343,7 +3363,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   </button>
                   <button type="button" onClick={() => setShowInterfaceGeneration(false)} className="rounded-xl px-3 py-2 text-xs font-semibold text-gray-500 hover:bg-gray-100">{zh ? '关闭' : 'Close'}</button>
                   <button type="button" onClick={() => generateFromInterfaces(false)} disabled={interfaceGenerationLoading || interfaceCandidatesLoading || Boolean(interfaceGenerationError) || selectedInterfaceCandidates.size === 0 || selectedInterfaceHasMissingSpace} className="rounded-xl bg-cyan-500 px-4 py-2 text-xs font-bold text-white hover:bg-cyan-600 disabled:opacity-50">
-                    {interfaceGenerationLoading ? (zh ? '处理中…' : 'Processing…') : (zh ? `生成所选 (${selectedInterfaceCandidates.size})` : `Generate selected (${selectedInterfaceCandidates.size})`)}
+                    {interfaceGenerationLoading ? (zh ? '处理中…' : 'Processing…') : (zh ? `导入 / 同步所选 (${selectedInterfaceCandidates.size})` : `Import / Sync selected (${selectedInterfaceCandidates.size})`)}
                   </button>
                 </div>
               </div>
@@ -3528,7 +3548,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                         });
                       }}
                       placeholder="e.g. 10.1.1.0/24"
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                       disabled={editingPrefix !== null}
                     />
                     <button
@@ -3649,7 +3669,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                     <select
                       value={form.network_type}
                       onChange={(e) => setForm({ ...form, network_type: e.target.value })}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     >
                       {Object.entries(NETWORK_TYPES).filter(([key]) => key !== 'user').map(([key, val]) => (
                         <option key={key} value={key}>{zh ? val.labelZh : val.label}</option>
@@ -3663,13 +3683,13 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                         type="button"
                         aria-expanded={showSubnetRecommendation}
                         onClick={() => setShowSubnetRecommendation((visible) => !visible)}
-                        className="flex w-full items-center justify-between rounded-xl border border-gray-150 bg-gray-50 px-4 py-3 text-left text-xs font-semibold text-gray-600 transition-colors hover:bg-gray-100"
+                        className="flex w-full items-center justify-between rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-left text-xs font-semibold text-gray-600 transition-colors hover:bg-gray-100"
                       >
                         <span>{zh ? '父网段切分推荐（可选）' : 'Parent subnet recommendation (optional)'}</span>
                         <ChevronDown size={15} className={`text-gray-400 transition-transform ${showSubnetRecommendation ? 'rotate-180' : ''}`} />
                       </button>
                       {showSubnetRecommendation && (
-                        <div className="mt-2 space-y-3 rounded-2xl border border-gray-150 bg-gray-50 p-4">
+                        <div className="mt-2 space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-4">
                           <p className="text-[10px] leading-relaxed text-gray-500">
                             {zh ? '按父网段和目标前缀长度查找一个可用子网；推荐结果会填入上方 CIDR。' : 'Find an available child subnet under a parent prefix; the suggestion fills the CIDR field above.'}
                           </p>
@@ -3679,7 +3699,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                               <select
                                 value={parentSubnetId}
                                 onChange={(e) => setParentSubnetId(e.target.value)}
-                                className="w-full rounded-xl border border-gray-250 bg-white px-3 py-2 text-xs outline-none focus:border-cyan-400"
+                                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs outline-none focus:border-cyan-400"
                               >
                                 <option value="">{zh ? '— 请选择 —' : '— Select —'}</option>
                                 {prefixes.map((p) => (
@@ -3696,7 +3716,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                                   onChange={(e) => setDesiredPrefixLen(parseInt(e.target.value, 10) || 24)}
                                   min={1}
                                   max={128}
-                                  className="w-24 rounded-xl border border-gray-250 bg-white px-3 py-2 text-xs outline-none focus:border-cyan-400"
+                                  className="w-24 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs outline-none focus:border-cyan-400"
                                 />
                                 <button type="button" onClick={handleGetSuggestedPrefix} className="flex-1 rounded-xl bg-cyan-500 px-3 py-2 text-[10px] font-bold text-white transition-colors hover:bg-cyan-600">
                                   {zh ? '推荐可用网段' : 'Find available subnet'}
@@ -3717,7 +3737,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                       value={form.name}
                       onChange={(e) => setForm({ ...form, name: e.target.value })}
                       placeholder={zh ? '可选识别名称；留空使用 CIDR' : 'Optional label; leave blank to use the CIDR'}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     />
                     <p className="text-[10px] leading-relaxed text-gray-400">{zh ? '这是便于识别的展示别名；留空时界面以 CIDR 显示。' : 'Optional display alias; the CIDR is shown when this is left blank.'}</p>
                   </div>
@@ -3730,14 +3750,24 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                       value={form.gateway}
                       onChange={(e) => setForm({ ...form, gateway: e.target.value })}
                       placeholder="e.g. 10.1.1.1"
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     />
                     <p className="text-[10px] leading-relaxed text-gray-400">{zh ? '若位于此子网，它会从可分配地址中排除；这不是设备关联。' : 'When inside this subnet, the IP is excluded from assignable addresses; it is separate from the device association.'}</p>
                   </div>
 
                   {/* Gateway Device */}
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '网关设备' : 'Gateway Device'}</label>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-500 ml-1">{zh ? '网关设备' : 'Gateway Device'}</label>
+                    <div className="relative">
+                      <Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                      <input
+                        type="search"
+                        value={gatewayDeviceSearch}
+                        onChange={(e) => setGatewayDeviceSearch(e.target.value)}
+                        placeholder={zh ? '搜索设备名或管理 IP 过滤下拉列表…' : 'Filter devices by hostname or IP…'}
+                        className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-gray-200 bg-white outline-none focus:border-cyan-400 transition-all"
+                      />
+                    </div>
                     <select
                       value={form.gateway_device_id}
                       onChange={(e) => {
@@ -3745,13 +3775,20 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                         const matchingEndpoints = e.target.value
                           ? gatewayCandidates?.endpoints.filter((endpoint) => endpoint.device_id === e.target.value) || []
                           : [];
+                        const matchedEp = matchingEndpoints.length === 1 ? matchingEndpoints[0] : null;
+                        const inferredVlanNum = extractVlanIdFromInterfaceName(matchedEp?.interface_name);
+                        const matchedVlan = inferredVlanNum !== null
+                          ? vlans.find((v) => Number(v.vlan_id) === inferredVlanNum && (!form.site_id || v.site_id === form.site_id))
+                            || vlans.find((v) => Number(v.vlan_id) === inferredVlanNum)
+                          : null;
                         setForm((current) => ({
                           ...current,
                           gateway_device_id: e.target.value,
-                          gateway_interface_id: matchingEndpoints.length === 1 ? matchingEndpoints[0].interface_id || '' : '',
+                          gateway_interface_id: matchedEp?.interface_id || '',
+                          ...(matchedVlan ? { vlan_id: matchedVlan.id } : {}),
                         }));
                       }}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-3 py-2 text-xs rounded-lg border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/70"
                     >
                       <option value="">{zh ? '未绑定' : 'None'}</option>
                       {form.gateway_device_id
@@ -3763,9 +3800,17 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                             : form.gateway_device_id}
                         </option>
                       )}
-                      {devices.map((d: any) => (
-                        <option key={d.id} value={d.id}>{d.hostname} ({d.ip_address})</option>
-                      ))}
+                      {devices
+                        .filter((d: any) => {
+                          const q = gatewayDeviceSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return String(d.id) === form.gateway_device_id
+                            || String(d.hostname || '').toLowerCase().includes(q)
+                            || String(d.ip_address || '').toLowerCase().includes(q);
+                        })
+                        .map((d: any) => (
+                          <option key={d.id} value={d.id}>{d.hostname} ({d.ip_address})</option>
+                        ))}
                       {gatewayCandidateDevices
                         .filter((endpoint) => !devices.some((device: any) => String(device.id) === endpoint.device_id))
                         .map((endpoint) => (
@@ -3788,25 +3833,46 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                       >
                         <p>
                           {gatewayCandidatesError || (gatewayCandidatesLoading
-                            ? (zh ? '正在读取最新成功接口快照中的网关候选…' : 'Checking gateway candidates from the latest successful interface snapshot…')
+                            ? (zh ? '正在匹配网关候选设备…' : 'Checking gateway candidates…')
                             : gatewayCandidateStatusMessage(gatewayCandidates as GatewayCandidateResponse, gatewayBindingSourceRef.current, zh))}
                         </p>
                         {gatewayCandidates && gatewayCandidates.endpoints.length > 0 && (
-                          <ul className="mt-1 list-disc space-y-0.5 pl-4 font-medium">
+                          <div className="mt-1.5 flex flex-wrap gap-1.5">
                             {gatewayCandidates.endpoints.map((endpoint) => (
-                              <li key={`${endpoint.device_id || endpoint.device_name}-${endpoint.interface_name}-${endpoint.address || endpoint.ip_address || ''}`}>
-                                {gatewayCandidateEndpointLabel(endpoint, zh)}
-                              </li>
+                              <button
+                                key={`${endpoint.device_id || endpoint.device_name}-${endpoint.interface_name}-${endpoint.address || endpoint.ip_address || ''}`}
+                                type="button"
+                                disabled={!endpoint.device_id}
+                                onClick={() => {
+                                  if (!endpoint.device_id) return;
+                                  gatewayBindingSourceRef.current = 'manual';
+                                  const inferredVlanNum = extractVlanIdFromInterfaceName(endpoint.interface_name);
+                                  const matchedVlan = inferredVlanNum !== null
+                                    ? vlans.find((v) => Number(v.vlan_id) === inferredVlanNum && (!form.site_id || v.site_id === form.site_id))
+                                      || vlans.find((v) => Number(v.vlan_id) === inferredVlanNum)
+                                    : null;
+                                  setForm((current) => ({
+                                    ...current,
+                                    gateway_device_id: endpoint.device_id || '',
+                                    gateway_interface_id: endpoint.interface_id || '',
+                                    ...(matchedVlan ? { vlan_id: matchedVlan.id } : {}),
+                                  }));
+                                }}
+                                className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                                title={zh ? '点击一键绑定此候选设备' : 'Click to bind this candidate device'}
+                              >
+                                <span>{gatewayCandidateEndpointLabel(endpoint, zh)}</span>
+                                <span className="text-cyan-700">{zh ? '· 绑定' : '· Bind'}</span>
+                              </button>
                             ))}
-                          </ul>
+                          </div>
                         )}
                       </div>
                     )}
-                    <p className="text-[10px] leading-relaxed text-gray-400">{zh ? '可选 CMDB 设备关联，用于 IP 定位和 ARP 上下文；不会代填网关 IP。' : 'Optional CMDB device association for IP location and ARP context; it does not set the gateway IP.'}</p>
                   </div>
 
                   <div className="sm:col-span-2">
-                    <details className="overflow-hidden rounded-2xl border border-gray-150 bg-gray-50/60">
+                    <details className="overflow-hidden rounded-2xl border border-gray-200 bg-gray-50/60">
                       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-xs font-bold text-gray-700 marker:hidden">
                         <span>{zh ? '高级设置' : 'Advanced settings'}</span>
                         <span className="text-[10px] font-medium text-gray-400">{zh ? '作用域、状态、描述与追踪' : 'Scope, status, description and traceability'}</span>
@@ -3815,7 +3881,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   {/* Gateway Interface */}
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 ml-1">{zh ? '已保存的接口关联 ID' : 'Saved interface association ID'}</label>
-                    <div className="w-full rounded-xl border border-gray-150 bg-gray-100/70 px-4 py-2.5 font-mono text-xs text-gray-500" aria-readonly="true">
+                    <div className="w-full rounded-xl border border-gray-200 bg-gray-100/70 px-4 py-2.5 font-mono text-xs text-gray-500" aria-readonly="true">
                       {form.gateway_interface_id || (zh ? '无' : 'None')}
                     </div>
                     <p className="text-[10px] leading-relaxed text-gray-400">
@@ -3829,12 +3895,35 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                     <select
                       value={form.vlan_id}
                       onChange={(e) => setForm({ ...form, vlan_id: e.target.value })}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     >
                       <option value="">{zh ? '请选择VLAN' : 'None'}</option>
-                      {vlans.map((item) => (
-                        <option key={item.id} value={item.id}>VLAN {item.vlan_id} ({item.name})</option>
-                      ))}
+                      {(() => {
+                        const boundDev = devices.find((d: any) => String(d.id) === form.gateway_device_id);
+                        const activeSiteId = form.site_id || boundDev?.site_id || '';
+                        const scoped = activeSiteId
+                          ? vlans.filter((v) => !v.site_id || v.site_id === activeSiteId || v.id === form.vlan_id)
+                          : vlans;
+                        const seen = new Set<string>();
+                        return [...scoped]
+                          .sort((a, b) => Number(a.vlan_id || 0) - Number(b.vlan_id || 0))
+                          .filter((item) => {
+                            if (item.id === form.vlan_id) return true;
+                            const key = `${item.vlan_id}|${item.name || ''}|${item.site_id || ''}`;
+                            if (seen.has(key)) return false;
+                            seen.add(key);
+                            return true;
+                          })
+                          .map((item) => {
+                            const siteObj = sites.find((s) => s.id === item.site_id);
+                            const siteSuffix = !activeSiteId && siteObj ? ` · ${siteObj.site_name || siteObj.site_code}` : '';
+                            return (
+                              <option key={item.id} value={item.id}>
+                                VLAN {item.vlan_id} ({item.name}){siteSuffix}
+                              </option>
+                            );
+                          });
+                      })()}
                     </select>
                   </div>
 
@@ -3844,7 +3933,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                     <select
                       value={form.site_id}
                       onChange={(e) => setForm({ ...form, site_id: e.target.value })}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     >
                       <option value="">{zh ? '请选择站点' : 'None'}</option>
                       {sites.map((item) => (
@@ -3859,7 +3948,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                     <select
                       value={form.status}
                       onChange={(e) => setForm({ ...form, status: e.target.value })}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     >
                       <option value="active">{zh ? '使用中' : 'Active'}</option>
                       <option value="reserved">{zh ? '已保留' : 'Reserved'}</option>
@@ -3875,12 +3964,12 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                       onChange={(e) => setForm({ ...form, description: e.target.value })}
                       placeholder={zh ? '在此输入前缀网段的用途或其他详细说明信息...' : 'Describe prefix routing purposes...'}
                       rows={3}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50 resize-none"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50 resize-none"
                     />
                   </div>
 
                   {/* Traceable Toggle */}
-                  <div className="flex items-center justify-between rounded-xl border border-gray-150 bg-gray-50/50 px-4 py-3 sm:col-span-2">
+                  <div className="flex items-center justify-between rounded-xl border border-gray-200 bg-gray-50/50 px-4 py-3 sm:col-span-2">
                     <div>
                       <p className="text-xs font-bold text-gray-700">{zh ? '可追踪 (Traceable)' : 'Traceable'}</p>
                       <p className="text-[10px] text-gray-400 mt-0.5">
@@ -3909,22 +3998,31 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               </div>
 
               {/* Actions */}
-              <div className="flex shrink-0 items-center justify-end gap-3 border-t border-gray-100 bg-gray-50 px-4 py-3 sm:px-6 sm:py-4">
-                <button
-                  type="button"
-                  onClick={() => setShowAddEdit(false)}
-                  className="px-4 py-2 text-xs font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-all"
-                >
-                  {zh ? '取消' : 'Cancel'}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  disabled={isSaving}
-                  className="rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-2 text-xs font-extrabold text-white shadow-md transition-all hover:from-cyan-600 hover:to-blue-700 disabled:cursor-wait disabled:opacity-60"
-                >
-                  {isSaving ? (zh ? '保存中…' : 'Saving…') : (zh ? '确定保存' : 'Save')}
-                </button>
+              <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-6 sm:py-3.5">
+                <div className="min-w-0 flex-1">
+                  {errorMsg && (
+                    <p role="alert" className="text-xs font-semibold text-rose-600 truncate" title={errorMsg}>
+                      {errorMsg}
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddEdit(false)}
+                    className="px-4 py-2 text-xs font-bold text-gray-600 hover:bg-gray-200/70 rounded-lg transition-all"
+                  >
+                    {zh ? '取消' : 'Cancel'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    disabled={isSaving}
+                    className="rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 px-5 py-2 text-xs font-bold text-white shadow-sm transition-all hover:from-cyan-600 hover:to-blue-700 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {isSaving ? (zh ? '保存中…' : 'Saving…') : (zh ? '确定保存' : 'Save')}
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>

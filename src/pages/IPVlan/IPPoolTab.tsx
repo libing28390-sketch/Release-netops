@@ -576,7 +576,7 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t, prefixId = '', embed
                       value={form.name}
                       onChange={(e) => setForm({ ...form, name: e.target.value })}
                       placeholder={zh ? '例如：办公区静态分配范围' : 'e.g. Office static allocation range'}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     />
                   </div>
 
@@ -588,7 +588,7 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t, prefixId = '', embed
                         id="pool-prefix"
                         value={form.prefix_id}
                         onChange={(e) => setForm({ ...form, prefix_id: e.target.value })}
-                        className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                        className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                       >
                         <option value="">{zh ? '请选择网段' : 'Select a prefix'}</option>
                         {prefixes.map((item) => (
@@ -620,7 +620,7 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t, prefixId = '', embed
                       value={form.start_ip}
                       onChange={(e) => setForm({ ...form, start_ip: e.target.value })}
                       placeholder="e.g. 10.1.1.100"
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     />
                   </div>
 
@@ -633,7 +633,7 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t, prefixId = '', embed
                       value={form.end_ip}
                       onChange={(e) => setForm({ ...form, end_ip: e.target.value })}
                       placeholder="e.g. 10.1.1.200"
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     />
                   </div>
 
@@ -668,7 +668,7 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t, prefixId = '', embed
                           allocation_allowed: mode === 'local_static' ? current.allocation_allowed : false,
                         }));
                       }}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     >
                       <option value="">{zh ? '请选择管理方式' : 'Select a management mode'}</option>
                       <option value="local_static">{zh ? '本地静态分配' : 'Local static allocation'}</option>
@@ -743,7 +743,7 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t, prefixId = '', embed
                           id="pool-status"
                           value={form.status}
                           onChange={(e) => setForm({ ...form, status: e.target.value })}
-                          className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                          className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                         >
                           {!form.status && <option value="">{zh ? '请选择生命周期状态' : 'Select a lifecycle status'}</option>}
                           <option value="active">{zh ? '启用' : 'Active'}</option>
@@ -760,7 +760,7 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t, prefixId = '', embed
                           onChange={(e) => setForm({ ...form, description: e.target.value })}
                           placeholder={zh ? '可补充说明该地址范围的用途' : 'Optional notes about this range'}
                           rows={2}
-                          className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50 resize-none"
+                          className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50 resize-none"
                         />
                       </div>
                     </>
