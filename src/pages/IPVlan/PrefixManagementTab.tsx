@@ -332,7 +332,22 @@ function PrefixRowActions({
   };
 
   return (
-    <div ref={rootRef} className="relative inline-flex whitespace-nowrap text-[11px]">
+    <div ref={rootRef} className="relative inline-flex items-center gap-1 whitespace-nowrap text-[11px]">
+      <Link
+        to={`/ipam/ips?prefix_id=${encodeURIComponent(prefix.id)}`}
+        className="inline-flex items-center rounded-lg border border-cyan-200 bg-cyan-50/70 px-2 py-1.5 font-semibold text-cyan-800 hover:bg-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+        title={zh ? `查看 ${prefix.prefix} 下的 IP` : `View IPs in ${prefix.prefix}`}
+      >
+        {zh ? '查看 IP' : 'IPs'}
+      </Link>
+      <button
+        type="button"
+        onClick={onEdit}
+        className="inline-flex items-center rounded-lg border border-gray-200 bg-white px-2 py-1.5 font-semibold text-gray-700 hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+        title={zh ? `编辑 ${prefix.prefix}` : `Edit ${prefix.prefix}`}
+      >
+        {zh ? '编辑' : 'Edit'}
+      </button>
       <button
         ref={triggerRef}
         type="button"
@@ -347,9 +362,9 @@ function PrefixRowActions({
             setMenuOpen(true);
           }
         }}
-        className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 font-bold text-gray-700 hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+        className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1.5 font-bold text-gray-600 hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
       >
-        <span>{zh ? '管理' : 'Manage'}</span>
+        <span>{zh ? '更多' : 'More'}</span>
         <MoreHorizontal size={14} aria-hidden="true" />
       </button>
       {menuOpen && (
@@ -2339,8 +2354,8 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         icon={Network}
         title={zh ? '网段管理' : 'Prefix Management'}
         subtitle={zh
-          ? '接口导入会同时登记网段和设备接口 IP；用途未确定时打开“管理”选择“编辑网段”，日常登记与分配也从“管理”进入。'
-          : 'Interface imports register prefixes and device interface IPs. Open “Manage” to edit a prefix or manage IP registration and allocation.'}
+          ? '管理各站点与路由域的网段台账、用途及网关绑定；支持从设备接口自动导入。'
+          : 'Manage prefixes, purposes, and gateway bindings across sites and routing domains.'}
         className="[&>div:first-child]:flex-wrap [&>div:first-child>div:last-child]:max-w-full"
         actions={
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -2350,7 +2365,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               variant="accent"
               onClick={() => openInterfaceGeneration()}
             >
-              {zh ? '从接口 IP 生成' : 'Generate from Interfaces'}
+              {zh ? '从设备接口导入' : 'Import from Interfaces'}
             </ActionButton>
             <ActionButton
               icon={Plus}
@@ -2477,15 +2492,10 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               aria-label={zh ? '待确认地址归属与重复网段' : 'Pending address scope and duplicate prefixes'}
               className="mb-2 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-2.5 text-xs text-amber-900"
             >
-              <p className="font-bold">
+              <p className="font-semibold">
                 {zh
-                  ? `地址空间待确认 ${classificationSummary.address_space_pending_count ?? 0} 条；跨站点重复 CIDR 待裁决 ${classificationSummary.pending_duplicate_group_count ?? 0} 组（${classificationSummary.pending_duplicate_record_count ?? 0} 条 Prefix）`
-                  : `${classificationSummary.address_space_pending_count ?? 0} prefixes need an address space; ${classificationSummary.pending_duplicate_group_count ?? 0} cross-site duplicate CIDR groups need a decision (${classificationSummary.pending_duplicate_record_count ?? 0} prefixes)`}
-              </p>
-              <p className="mt-1 text-[11px] text-amber-800/85">
-                {zh
-                  ? '地址空间未明确前，这些 CIDR 不计为已确认冲突或合法复用；请按映射与重复 CIDR 复核表裁决。'
-                  : 'Until address spaces are explicit, these CIDRs are not treated as confirmed conflicts or valid reuse. Review the mapping and duplicate-CIDR decisions.'}
+                  ? `待分配地址空间 ${classificationSummary.address_space_pending_count ?? 0} 条 · 跨站点重复网段 ${classificationSummary.pending_duplicate_group_count ?? 0} 组（共 ${classificationSummary.pending_duplicate_record_count ?? 0} 条）— 勾选后可批量分配地址空间`
+                  : `${classificationSummary.address_space_pending_count ?? 0} prefixes need an address space · ${classificationSummary.pending_duplicate_group_count ?? 0} cross-site duplicate groups (${classificationSummary.pending_duplicate_record_count ?? 0} prefixes)`}
               </p>
             </div>
           )}
@@ -2521,14 +2531,9 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
             <summary className="cursor-pointer list-none text-[11px] font-bold text-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500">
               <span className="inline-flex items-center gap-1.5">
                 <ChevronRight size={13} className="transition-transform open:rotate-90" aria-hidden="true" />
-                {zh ? '用途维护方式' : 'Purpose maintenance method'}
+                {zh ? '按识别方式筛选（自动识别 / 人工指定）' : 'Filter by source (auto / manual)'}
               </span>
             </summary>
-            <p className="mt-2 text-[11px] leading-relaxed text-gray-500">
-              {zh
-                ? '系统维护表示尚未人工锁定，不代表用途已识别；它可以与“用途未确定”同时成立。人工锁定表示用途由人工设置并受系统维护保护。'
-                : 'System maintained means the purpose is not manually locked; it does not mean the purpose is known. It can overlap with “Purpose unconfirmed”. Manually locked means a person set the purpose and system maintenance will preserve it.'}
-            </p>
             <div className="mt-2 grid grid-cols-2 gap-2 sm:max-w-xl">
               {classificationMethodCards.map((item) => (
                 <button
@@ -2564,12 +2569,11 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
       {suggestedPrefixes.length > 0 && (
         <div role="note" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
           <div className="min-w-0 flex-1">
-            <p className="font-bold">
-              {zh ? `本页有 ${suggestedPrefixes.length} 个网段“用途未确定”，系统给出了推荐用途` : `${suggestedPrefixes.length} unclassified prefixes on this page have a suggested purpose`}
-            </p>
-            <p className="mt-0.5 text-[11px] leading-4">
-              {Object.entries(suggestionGroups).map(([type, items]) => `${NETWORK_TYPES[type] ? (zh ? NETWORK_TYPES[type].labelZh : NETWORK_TYPES[type].label) : type} ${items.length} 个`).join('、')}
-              {zh ? '。用途决定“利用率”是否统计该网段（业务网段才计入容量），也决定 IP 的默认用途。推荐依据见每行“推荐”标签的提示。' : '. Purpose controls utilization scope and default IP purpose.'}
+            <p className="font-semibold">
+              {zh ? `本页有 ${suggestedPrefixes.length} 个网段待确认用途：` : `${suggestedPrefixes.length} prefixes have suggested purposes: `}
+              <span className="font-normal">
+                {Object.entries(suggestionGroups).map(([type, items]) => `${NETWORK_TYPES[type] ? (zh ? NETWORK_TYPES[type].labelZh : NETWORK_TYPES[type].label) : type} ${items.length} 个`).join('、')}
+              </span>
             </p>
           </div>
           {confirmApplySuggestions ? (
@@ -2951,8 +2955,8 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
             >
               <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-100 px-4 py-4 sm:px-6">
                 <div className="min-w-0">
-                  <h3 className="font-bold text-gray-900">{zh ? '从接口采集生成 IPAM 网段' : 'Generate IPAM Prefixes from Interfaces'}</h3>
-                <p className="mt-1 text-xs text-gray-500">{zh ? '使用最后一次成功的 CMDB 接口快照。可先勾选再批量选择地址空间；确认无 VRF 就是确认归入 Global，必须选定具体全局空间。未知范围不会自动归到全局，已有 VRF 的候选只可使用对应 VRF 地址空间。' : 'Uses the last successful CMDB interface snapshot. Select candidates first, then apply one address space in bulk. Confirming there is no VRF means assigning the selected Global space. Unknown scope is never defaulted to Global, and a known VRF can use only its matching VRF space.'}</p>
+                  <h3 className="font-bold text-gray-900">{zh ? '从设备接口导入网段' : 'Import Prefixes from Device Interfaces'}</h3>
+                <p className="mt-1 text-xs text-gray-500">{zh ? '基于最新设备接口快照提取候选网段：勾选需要导入的网段，为待确认项指定路由域（全局或对应 VRF），点击导入即可。' : 'Extract candidate prefixes from the latest device interface snapshot: select prefixes, assign a routing domain (Global or matching VRF) for pending items, and import.'}</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
                   {interfaceCandidates.length > 0 && <>
@@ -3051,7 +3055,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                         {zh ? `已选 ${selectedInterfaceCandidates.size} 个候选；其中 ${selectedInterfacePendingScopeCandidates.length} 个待确认地址空间` : `${selectedInterfaceCandidates.size} candidates selected; ${selectedInterfacePendingScopeCandidates.length} need address-space confirmation`}
                       </div>
                       <p className="mt-1 text-[10px] leading-relaxed text-gray-600">
-                        {zh ? '批量选择只修改本次生成选项，不写入设备上下文。已知 VRF 的候选只接受相同 VRF 的空间。' : 'Bulk selection changes only this generation request and does not write device context mappings. Candidates with a known VRF accept only a space for that VRF.'}
+                        {zh ? '仅对本次勾选的候选项生效（含 VRF 的候选需选对应 VRF 空间）。' : 'Applies to selected candidates in this import only.'}
                       </p>
                     </div>
                     {selectedInterfacePendingScopeCandidates.length > 0 && (
