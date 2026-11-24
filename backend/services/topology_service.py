@@ -94,7 +94,7 @@ TOPOLOGY_LINK_STALE_RETENTION_SECONDS = max(
 )
 TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS = max(
     60,
-    int(os.environ.get('TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS', '86400')),
+    int(os.environ.get('TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS', '43200')),
 )
 
 def _bounded_env_int(name: str, default: int, low: int, high: int) -> int:

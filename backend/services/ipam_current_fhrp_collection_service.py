@@ -27,12 +27,23 @@ _CISCO_PROTOCOL_COMMANDS = {
 _H3C_PROTOCOL_COMMANDS = {
     "vrrp": ("display vrrp verbose", "display vrrp ipv6 verbose"),
 }
+_CISCO_NXOS_COMMANDS = {
+    "hsrp": ("show hsrp brief",),
+    "vrrp": ("show vrrp brief",),
+}
+_HUAWEI_PROTOCOL_COMMANDS = {
+    "vrrp": ("display vrrp brief",),
+}
 _CISCO_IOS_PLATFORMS = frozenset({
     "cisco_ios", "cisco_iosxe", "cisco_xe", "ios", "iosxe",
 })
 _PLATFORM_PROTOCOL_COMMANDS = {
     **{platform: {protocol: (command,) for protocol, command in _CISCO_PROTOCOL_COMMANDS.items()}
        for platform in _CISCO_IOS_PLATFORMS},
+    "cisco_nxos": _CISCO_NXOS_COMMANDS,
+    "nxos": _CISCO_NXOS_COMMANDS,
+    "huawei_vrp": _HUAWEI_PROTOCOL_COMMANDS,
+    "huawei": _HUAWEI_PROTOCOL_COMMANDS,
     "h3c_comware": _H3C_PROTOCOL_COMMANDS,
 }
 _DEVICE_SELECT = """

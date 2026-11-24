@@ -1153,7 +1153,7 @@ def _upsert_interfaces(
             if normalize_interface_name(item.get("interface_name"))
         }
         existing_rows = conn.execute(
-            "SELECT id, interface_name FROM interfaces WHERE device_id = ?",
+            "SELECT id, interface_name, admin_status, oper_status FROM interfaces WHERE device_id = ?",
             (device["id"],),
         ).fetchall()
         # A previous collector version could persist both a short and a long
@@ -1165,13 +1165,17 @@ def _upsert_interfaces(
             key = normalize_interface_name(row["interface_name"])
             if key:
                 existing_by_key.setdefault(key, []).append(row["id"])
-        # ``interfaces`` is a current-state projection, not a history table.
-        # Preserve the row identity for topology references, but remove the
-        # address snapshot from interfaces that disappeared from the IP-bearing
-        # inventory. Keep admin_status and oper_status intact because physical
-        # and L2 bridge ports are discovered and maintained via SNMP IF-MIB.
+        # Preserve configured IPs on interfaces that are currently down/shutdown
+        # (SNMP IP-MIB frequently removes down interfaces from operational tables),
+        # while still clearing stale IPs from active UP interfaces that genuinely
+        # dropped their IP configuration.
+        down_states = {"down", "admin_down", "administratively down", "shutdown", "notpresent", "lowerlayerdown"}
         for row in existing_rows:
             if normalize_interface_name(row["interface_name"]) not in current_keys:
+                row_admin = str(row["admin_status"] or "").strip().lower()
+                row_oper = str(row["oper_status"] or "").strip().lower()
+                if row_admin in down_states or row_oper in down_states:
+                    continue
                 conn.execute(
                     """UPDATE interfaces SET
                            primary_ip = '', ip_address = '', ip_prefix_length = NULL, ip_version = NULL,

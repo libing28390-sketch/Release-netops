@@ -525,14 +525,18 @@ def _register_periodic_scheduler_jobs(schedule_cfg: dict) -> None:
     )
 
     # Supported HSRP/VRRP runtime facts are saved in a current-only FHRP store.
-    # This collector is separate from the legacy endpoint/history projector.
+    # Low-frequency default (6h) avoids hourly SSH churn on core/agg routers.
     from services.ipam_current_fhrp_collection_service import run_current_fhrp_collection
+    fhrp_interval_seconds = max(
+        300,
+        int(os.environ.get('IPAM_CURRENT_FHRP_INTERVAL_SECONDS', '21600')),
+    )
     scheduler.add_job(
         synchronized_scheduler_job(
             'ipam_current_fhrp_collector',
-            expire_seconds=max(60, ENDPOINT_FACT_INTERVAL_SECONDS * 2),
+            expire_seconds=max(60, fhrp_interval_seconds * 2),
         )(run_current_fhrp_collection),
-        'interval', seconds=ENDPOINT_FACT_INTERVAL_SECONDS,
+        'interval', seconds=fhrp_interval_seconds,
         id='ipam_current_fhrp_collector', replace_existing=True,
         next_run_time=datetime.now(timezone.utc) + timedelta(seconds=150),
         max_instances=1, coalesce=True,
