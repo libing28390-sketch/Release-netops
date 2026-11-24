@@ -511,7 +511,7 @@ const PrefixSearchSelect: React.FC<{
         />
       </div>
       {open && (
-        <div className="absolute right-0 z-50 mt-1 max-h-80 w-full min-w-[360px] overflow-auto rounded-xl border border-gray-150 bg-white py-1 shadow-xl">
+        <div className="absolute right-0 z-50 mt-1 max-h-80 w-full min-w-[360px] overflow-auto rounded-xl border border-gray-200 bg-white py-1 shadow-xl">
           {capacityPrefixes.length > 0 && renderGroup(zh ? '容量与业务网段' : 'Capacity & business prefixes', capacityPrefixes)}
           {hostRoutes.length > 0 && renderGroup(zh ? '主机路由（不计容量）' : 'Host routes (excluded from capacity)', hostRoutes)}
           {visiblePrefixes.length === 0 && (
@@ -673,10 +673,10 @@ const DeviceSearchSelect: React.FC<{
           setQuery('');
         }}
         placeholder={zh ? '搜索资产编号 / 序列号 / 主机名 / IP...' : 'Search asset tag / serial / hostname / IP...'}
-        className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+        className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
       />
       {open && (
-        <div className="absolute z-50 mt-1 w-full max-h-56 overflow-auto bg-white border border-gray-150 rounded-xl shadow-xl py-1">
+        <div className="absolute z-50 mt-1 w-full max-h-56 overflow-auto bg-white border border-gray-200 rounded-xl shadow-xl py-1">
           <div
             onClick={() => {
               setSelectedDevice(null);
@@ -1421,7 +1421,8 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     <div className="flex-1 flex min-w-0 flex-col h-full overflow-hidden px-4 py-4 lg:px-6 lg:py-5 space-y-4">
       <PageHero
         icon={MapPin}
-        title={zh ? 'IP地址分配管理' : 'IP Address Management'}
+        title={zh ? 'IP 地址管理' : 'IP Address Management'}
+        subtitle={zh ? '按站点与网段查看、分配及维护 IP 台账，支持自动推荐可用地址。' : 'View, allocate, and manage IP inventory by site and prefix.'}
         actions={
           <div className="flex items-center gap-2">
             <button
@@ -2061,7 +2062,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                           setSuggestionWarning('');
                           setErrorMsg('');
                         }}
-                        className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <option value="">{zh ? '整个 Prefix（按当前策略计算）' : 'Entire Prefix (apply current range policies)'}</option>
                         {poolOptions.map((pool) => (
@@ -2108,7 +2109,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                         const purpose = e.target.value;
                         setForm({ ...form, purpose });
                       }}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     >
                       {IP_PURPOSE_OPTIONS.map((option) => (
                         <option key={option.value} value={option.value}>{zh ? option.zh : option.en}</option>
@@ -2138,7 +2139,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                         setSuggestionWarning('');
                       }}
                       placeholder="e.g. 10.1.1.10"
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                       disabled={editingIP !== null || isQuickAllocation}
                     />
                   </div>
@@ -2151,7 +2152,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       value={form.hostname}
                       onChange={(e) => setForm({ ...form, hostname: e.target.value })}
                       placeholder="e.g. app-prod-01.local"
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     />
                   </div>
 
@@ -2180,7 +2181,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       value={form.interface_name}
                       onChange={(e) => setForm({ ...form, interface_name: e.target.value })}
                       placeholder="e.g. Vlan100, GigabitEthernet0/1"
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     />
                   </div>
 
@@ -2192,7 +2193,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       value={form.mac_address}
                       onChange={(e) => setForm({ ...form, mac_address: e.target.value })}
                       placeholder="e.g. aa:bb:cc:dd:ee:ff"
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     />
                   </div>
 
@@ -2202,7 +2203,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                     <select
                       value={form.device_type}
                       onChange={(e) => setForm({ ...form, device_type: e.target.value })}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     >
                       {ROLE_OPTIONS.map((opt) => (
                         <option key={opt.value} value={opt.value}>{zh ? opt.zh : opt.en}</option>
@@ -2216,7 +2217,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                     <select
                       value={form.status}
                       onChange={(e) => setForm({ ...form, status: e.target.value })}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     >
                       {STATUS_OPTIONS.filter((opt) => opt.value !== 'available').map((opt) => (
                         <option key={opt.value} value={opt.value}>{zh ? opt.zh : opt.en}</option>
@@ -2231,7 +2232,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                         type="datetime-local"
                         value={form.expires_at}
                         onChange={(e) => setForm({ ...form, expires_at: e.target.value })}
-                        className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
+                        className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                       />
                     </div>
                   )}
@@ -2244,7 +2245,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       onChange={(e) => setForm({ ...form, description: e.target.value })}
                       placeholder={zh ? '在此输入IP的分配用途或绑定详情...' : 'Allocate comments...'}
                       rows={2}
-                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50 resize-none"
+                      className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-200 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50 resize-none"
                     />
                   </div>
                     </>
@@ -2265,19 +2266,28 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
               </div>
 
               {/* Actions */}
-              <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-end gap-3 flex-shrink-0">
-                <button
-                  onClick={() => setShowAddEdit(false)}
-                  className="px-4 py-2 text-xs font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-all"
-                >
-                  {zh ? '取消' : 'Cancel'}
-                </button>
-                <button
-                  onClick={handleSave}
-                  className="px-6 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white text-xs font-extrabold rounded-xl shadow-md transition-all active:scale-95"
-                >
-                  {isQuickAllocation ? (zh ? '确认分配' : 'Allocate') : zh ? '确定保存' : 'Save'}
-                </button>
+              <div className="px-6 py-3.5 bg-gray-50 border-t border-gray-200 flex items-center justify-between gap-3 flex-shrink-0">
+                <div className="min-w-0 flex-1">
+                  {errorMsg && (
+                    <p role="alert" className="text-xs font-semibold text-rose-600 truncate" title={errorMsg}>
+                      {errorMsg}
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <button
+                    onClick={() => setShowAddEdit(false)}
+                    className="px-4 py-2 text-xs font-bold text-gray-600 hover:bg-gray-200/70 rounded-lg transition-all"
+                  >
+                    {zh ? '取消' : 'Cancel'}
+                  </button>
+                  <button
+                    onClick={handleSave}
+                    className="px-5 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all active:scale-95"
+                  >
+                    {isQuickAllocation ? (zh ? '确认分配' : 'Allocate') : zh ? '确定保存' : 'Save'}
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>
