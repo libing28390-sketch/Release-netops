@@ -496,23 +496,11 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
           created += 1;
         } catch (err: any) {
           const status = Number(err?.status || err?.statusCode || 0);
-          const msg = String(err?.message || err?.detail || '').toLowerCase();
-          if (
-            status === 409
-            || msg.includes('409')
-            || msg.includes('exist')
-            || msg.includes('conflict')
-            || msg.includes('already')
-            || msg.includes('已存在')
-            || msg.includes('已有')
-            || msg.includes('冲突')
-            || msg.includes('重复')
-            || msg.includes('duplicate')
-            || msg.includes('unique')
-          ) {
-            skipped += 1;
-          } else {
+          if (status === 401 || status === 403 || status >= 500) {
             failed += 1;
+          } else {
+            // Backend rejects duplicate (device_id, context_source, local_context_key) with 400/409
+            skipped += 1;
           }
         }
       }
