@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Server, Globe, Cable, Network, Activity, Loader2, Search, AlertTriangle } from 'lucide-react';
+import { Server, Globe, Cable, Network, Activity, Loader2, Search, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface AssetIdentity {
   device_id: string;
@@ -19,6 +19,7 @@ interface AssetIdentity {
   base_mac: string;
   uptime: string;
   site_id: string;
+  site_name?: string;
   physical_location: string;
 }
 
@@ -56,7 +57,15 @@ interface PanoramaData {
   target_port_diagnostics: TargetPortDiagnostics | null;
   arp_mac_preview: {
     arp: Array<{ ip: string; mac: string; interface: string; vlan: string; observed_at: string }>;
+    arp_total?: number;
+    arp_page?: number;
+    arp_page_size?: number;
+    arp_total_pages?: number;
     mac: Array<{ mac: string; interface: string; vlan: string; type: string; last_updated: string }>;
+    mac_total?: number;
+    mac_page?: number;
+    mac_page_size?: number;
+    mac_total_pages?: number;
     limit: number;
   };
   topology_neighbors: Array<{
@@ -77,6 +86,13 @@ interface DevicePanoramaPanelProps {
   zh?: boolean;
 }
 
+function formatMacDash(raw?: string): string {
+  if (!raw) return '-';
+  const compact = raw.replace(/[^0-9a-fA-F]/g, '').toLowerCase();
+  if (compact.length !== 12) return raw;
+  return `${compact.slice(0, 4)}-${compact.slice(4, 8)}-${compact.slice(8, 12)}`;
+}
+
 export const DevicePanoramaPanel: React.FC<DevicePanoramaPanelProps> = ({
   deviceId,
   highlightPort = '',
@@ -87,6 +103,15 @@ export const DevicePanoramaPanel: React.FC<DevicePanoramaPanelProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [filterText, setFilterText] = useState('');
+  const [arpPage, setArpPage] = useState(1);
+  const [arpPageSize, setArpPageSize] = useState(10);
+  const [macPage, setMacPage] = useState(1);
+  const [macPageSize, setMacPageSize] = useState(10);
+
+  useEffect(() => {
+    setArpPage(1);
+    setMacPage(1);
+  }, [deviceId, filterText, arpPageSize, macPageSize]);
 
   useEffect(() => {
     if (!deviceId) return;
@@ -97,6 +122,10 @@ export const DevicePanoramaPanel: React.FC<DevicePanoramaPanelProps> = ({
     const params = new URLSearchParams();
     if (highlightPort) params.set('highlight_port', highlightPort);
     if (filterText.trim()) params.set('q', filterText.trim());
+    params.set('arp_page', String(arpPage));
+    params.set('arp_page_size', String(arpPageSize));
+    params.set('mac_page', String(macPage));
+    params.set('mac_page_size', String(macPageSize));
     fetch(`/api/ip-locator/device-panorama/${encodeURIComponent(deviceId)}?${params.toString()}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
@@ -116,15 +145,20 @@ export const DevicePanoramaPanel: React.FC<DevicePanoramaPanelProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [deviceId, highlightPort, filterText]);
+  }, [deviceId, highlightPort, filterText, arpPage, arpPageSize, macPage, macPageSize]);
 
   if (!deviceId) return null;
+
+  const arpTotal = data?.arp_mac_preview.arp_total ?? data?.arp_mac_preview.arp.length ?? 0;
+  const arpTotalPages = data?.arp_mac_preview.arp_total_pages ?? 1;
+  const macTotal = data?.arp_mac_preview.mac_total ?? data?.arp_mac_preview.mac.length ?? 0;
+  const macTotalPages = data?.arp_mac_preview.mac_total_pages ?? 1;
 
   const tabs: Array<{ id: PanoramaTab; label: string; icon: React.ComponentType<{ size?: number }> }> = [
     { id: 'overview', label: zh ? '1. 设备概览' : '1. Overview', icon: Server },
     { id: 'l3', label: zh ? `2. 三层 IP 与 VRF (${data?.l3_interfaces.length ?? 0})` : `2. L3 & VRF (${data?.l3_interfaces.length ?? 0})`, icon: Globe },
     { id: 'port', label: zh ? '3. 命中端口诊断' : '3. Port Diagnostics', icon: Activity },
-    { id: 'arp_mac', label: zh ? '4. 关联 ARP & MAC' : '4. ARP & MAC', icon: Cable },
+    { id: 'arp_mac', label: zh ? `4. 关联 ARP & MAC (${arpTotal}/${macTotal})` : `4. ARP & MAC (${arpTotal}/${macTotal})`, icon: Cable },
     { id: 'neighbors', label: zh ? `5. 拓扑邻居 (${data?.topology_neighbors.length ?? 0})` : `5. Neighbors (${data?.topology_neighbors.length ?? 0})`, icon: Network },
   ];
 
@@ -184,13 +218,13 @@ export const DevicePanoramaPanel: React.FC<DevicePanoramaPanelProps> = ({
               [zh ? '厂商 / 平台' : 'Vendor / Platform', `${data.asset_identity.vendor || '-'} / ${data.asset_identity.platform || '-'}`],
               [zh ? '硬件型号' : 'Model', data.asset_identity.model || '-'],
               [zh ? '序列号 (SN)' : 'Serial Number', data.asset_identity.serial_number || '-'],
-              [zh ? '复合实体 ID' : 'Entity UID', data.asset_identity.entity_uid],
-              [zh ? '虚拟系统 (VSYS)' : 'VSYS', data.asset_identity.vsys_id],
-              [zh ? 'HA 角色' : 'HA Role', data.asset_identity.ha_role],
+              [zh ? '设备角色 / 状态' : 'Role / Status', `${data.asset_identity.role || '-'} / ${data.asset_identity.status || '-'}`],
+              [zh ? '虚拟系统 (VSYS)' : 'VSYS', data.asset_identity.vsys_id || 'default'],
+              [zh ? 'HA 角色' : 'HA Role', data.asset_identity.ha_role || 'STANDALONE'],
               [zh ? '软件版本' : 'OS Version', data.asset_identity.os_version || '-'],
               [zh ? '运行时长' : 'Uptime', data.asset_identity.uptime || '-'],
-              [zh ? '站点 / 位置' : 'Site / Location', data.asset_identity.site_id || data.asset_identity.physical_location || '-'],
-              [zh ? '背板 MAC' : 'Base MAC', data.asset_identity.base_mac || '-'],
+              [zh ? '所属站点' : 'Site', data.asset_identity.site_name || data.asset_identity.physical_location || '-'],
+              [zh ? '背板 MAC' : 'Base MAC', formatMacDash(data.asset_identity.base_mac)],
             ].map(([label, val]) => (
               <div key={label} className="rounded-lg border border-black/5 dark:border-white/10 p-2.5 bg-slate-50/50 dark:bg-white/[0.02]">
                 <div className="text-[10px] text-black/45 dark:text-white/45">{label}</div>
@@ -262,52 +296,159 @@ export const DevicePanoramaPanel: React.FC<DevicePanoramaPanelProps> = ({
           )
         ) : activeTab === 'arp_mac' ? (
           <div className="space-y-3">
-            <div className="flex items-center gap-2 max-w-xs">
-              <Search size={13} className="text-black/40" />
-              <input
-                type="text"
-                value={filterText}
-                onChange={(e) => setFilterText(e.target.value)}
-                placeholder={zh ? '按 IP / MAC / 端口实时过滤...' : 'Filter by IP / MAC / port...'}
-                className="w-full rounded-lg border border-black/10 dark:border-white/15 bg-transparent px-2.5 py-1 text-xs"
-              />
-            </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
-              <div>
-                <p className="font-semibold mb-1.5 text-black/70 dark:text-white/70">
-                  ARP ({data.arp_mac_preview.arp.length})
-                </p>
-                <div className="max-h-56 overflow-y-auto border border-black/5 dark:border-white/10 rounded-lg divide-y divide-black/5 dark:divide-white/5 font-mono">
-                  {data.arp_mac_preview.arp.length === 0 ? (
-                    <div className="p-3 text-black/40 font-sans">{zh ? '暂无局部 ARP 缓存' : 'No local ARP entries'}</div>
-                  ) : (
-                    data.arp_mac_preview.arp.map((a, idx) => (
-                      <div key={idx} className="px-3 py-1.5 flex items-center justify-between gap-2">
-                        <span>{a.ip}</span>
-                        <span className="text-amber-600 dark:text-amber-400">{a.mac}</span>
-                        <span className="text-black/50 dark:text-white/50">{a.interface}</span>
-                      </div>
-                    ))
-                  )}
-                </div>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-2 w-full max-w-sm rounded-lg border border-black/10 dark:border-white/15 px-2.5 py-1.5 bg-white dark:bg-white/[0.03]">
+                <Search size={13} className="text-black/40 flex-shrink-0" />
+                <input
+                  type="text"
+                  value={filterText}
+                  onChange={(e) => setFilterText(e.target.value)}
+                  placeholder={zh ? '按 IP / MAC (XXXX-XXXX-XXXX) / 接口 / VLAN 查询...' : 'Search IP / MAC / Interface / VLAN...'}
+                  className="w-full bg-transparent text-xs outline-none"
+                />
+                {filterText && (
+                  <button
+                    type="button"
+                    onClick={() => setFilterText('')}
+                    className="text-[11px] text-black/40 hover:text-black/70 dark:text-white/40"
+                  >
+                    {zh ? '清空' : 'Clear'}
+                  </button>
+                )}
               </div>
-              <div>
-                <p className="font-semibold mb-1.5 text-black/70 dark:text-white/70">
-                  MAC ({data.arp_mac_preview.mac.length})
-                </p>
-                <div className="max-h-56 overflow-y-auto border border-black/5 dark:border-white/10 rounded-lg divide-y divide-black/5 dark:divide-white/5 font-mono">
-                  {data.arp_mac_preview.mac.length === 0 ? (
-                    <div className="p-3 text-black/40 font-sans">{zh ? '暂无局部 MAC 表项' : 'No local MAC entries'}</div>
+              <div className="flex items-center gap-2 text-[11px] text-black/55 dark:text-white/55">
+                <span>{zh ? '每页条数' : 'Page size'}:</span>
+                <select
+                  value={arpPageSize}
+                  onChange={(e) => {
+                    const size = Number(e.target.value);
+                    setArpPageSize(size);
+                    setMacPageSize(size);
+                  }}
+                  className="rounded border border-black/10 dark:border-white/15 bg-transparent px-2 py-1 text-xs"
+                >
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+              {/* ARP Table + Pagination */}
+              <div className="border border-black/5 dark:border-white/10 rounded-xl overflow-hidden flex flex-col">
+                <div className="px-3 py-2 bg-slate-50/70 dark:bg-white/[0.03] border-b border-black/5 dark:border-white/10 flex items-center justify-between">
+                  <span className="font-semibold text-black/75 dark:text-white/80">
+                    ARP ({zh ? `共 ${arpTotal} 条` : `${arpTotal} total`})
+                  </span>
+                  <span className="text-[11px] text-black/45 dark:text-white/45">
+                    {zh ? `第 ${arpPage} / ${arpTotalPages} 页` : `Page ${arpPage} / ${arpTotalPages}`}
+                  </span>
+                </div>
+                <div className="overflow-x-auto max-h-64 flex-1">
+                  {data.arp_mac_preview.arp.length === 0 ? (
+                    <div className="p-4 text-black/40 text-center">{zh ? '暂无匹配的 ARP 表项' : 'No matching ARP entries'}</div>
                   ) : (
-                    data.arp_mac_preview.mac.map((m, idx) => (
-                      <div key={idx} className="px-3 py-1.5 flex items-center justify-between gap-2">
-                        <span className="text-amber-600 dark:text-amber-400">{m.mac}</span>
-                        <span>{m.interface}</span>
-                        <span className="text-cyan-600 dark:text-cyan-400">VLAN {m.vlan || '-'}</span>
-                      </div>
-                    ))
+                    <table className="w-full text-left font-mono text-xs">
+                      <thead className="text-[10px] font-sans text-black/45 dark:text-white/45 border-b border-black/5 dark:border-white/10 bg-white/60 dark:bg-transparent">
+                        <tr>
+                          <th className="py-1.5 px-3">IP</th>
+                          <th className="py-1.5 px-2">MAC</th>
+                          <th className="py-1.5 px-2">{zh ? '接口' : 'Interface'}</th>
+                          <th className="py-1.5 px-2">VLAN</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-black/5 dark:divide-white/5">
+                        {data.arp_mac_preview.arp.map((a, idx) => (
+                          <tr key={`${a.ip}-${a.mac}-${idx}`} className="hover:bg-black/[0.02] dark:hover:bg-white/[0.02]">
+                            <td className="py-1.5 px-3 font-medium">{a.ip}</td>
+                            <td className="py-1.5 px-2 text-amber-600 dark:text-amber-400">{formatMacDash(a.mac)}</td>
+                            <td className="py-1.5 px-2 text-black/65 dark:text-white/65">{a.interface || '-'}</td>
+                            <td className="py-1.5 px-2 text-cyan-600 dark:text-cyan-400">{a.vlan || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   )}
                 </div>
+                {arpTotalPages > 1 && (
+                  <div className="px-3 py-2 border-t border-black/5 dark:border-white/10 flex items-center justify-end gap-2 bg-slate-50/40 dark:bg-white/[0.02]">
+                    <button
+                      type="button"
+                      disabled={arpPage <= 1}
+                      onClick={() => setArpPage((p) => Math.max(1, p - 1))}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded border border-black/10 dark:border-white/15 disabled:opacity-40 hover:bg-black/5"
+                    >
+                      <ChevronLeft size={12} /> {zh ? '上一页' : 'Prev'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={arpPage >= arpTotalPages}
+                      onClick={() => setArpPage((p) => Math.min(arpTotalPages, p + 1))}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded border border-black/10 dark:border-white/15 disabled:opacity-40 hover:bg-black/5"
+                    >
+                      {zh ? '下一页' : 'Next'} <ChevronRight size={12} />
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* MAC Table + Pagination */}
+              <div className="border border-black/5 dark:border-white/10 rounded-xl overflow-hidden flex flex-col">
+                <div className="px-3 py-2 bg-slate-50/70 dark:bg-white/[0.03] border-b border-black/5 dark:border-white/10 flex items-center justify-between">
+                  <span className="font-semibold text-black/75 dark:text-white/80">
+                    MAC ({zh ? `共 ${macTotal} 条` : `${macTotal} total`})
+                  </span>
+                  <span className="text-[11px] text-black/45 dark:text-white/45">
+                    {zh ? `第 ${macPage} / ${macTotalPages} 页` : `Page ${macPage} / ${macTotalPages}`}
+                  </span>
+                </div>
+                <div className="overflow-x-auto max-h-64 flex-1">
+                  {data.arp_mac_preview.mac.length === 0 ? (
+                    <div className="p-4 text-black/40 text-center">{zh ? '暂无匹配的 MAC 表项' : 'No matching MAC entries'}</div>
+                  ) : (
+                    <table className="w-full text-left font-mono text-xs">
+                      <thead className="text-[10px] font-sans text-black/45 dark:text-white/45 border-b border-black/5 dark:border-white/10 bg-white/60 dark:bg-transparent">
+                        <tr>
+                          <th className="py-1.5 px-3">MAC</th>
+                          <th className="py-1.5 px-2">{zh ? '端口' : 'Port'}</th>
+                          <th className="py-1.5 px-2">VLAN</th>
+                          <th className="py-1.5 px-2">{zh ? '类型' : 'Type'}</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-black/5 dark:divide-white/5">
+                        {data.arp_mac_preview.mac.map((m, idx) => (
+                          <tr key={`${m.mac}-${m.interface}-${idx}`} className="hover:bg-black/[0.02] dark:hover:bg-white/[0.02]">
+                            <td className="py-1.5 px-3 text-amber-600 dark:text-amber-400 font-medium">{formatMacDash(m.mac)}</td>
+                            <td className="py-1.5 px-2 text-black/70 dark:text-white/75">{m.interface || '-'}</td>
+                            <td className="py-1.5 px-2 text-cyan-600 dark:text-cyan-400">{m.vlan || '-'}</td>
+                            <td className="py-1.5 px-2 font-sans text-black/50 dark:text-white/50">{m.type || 'dynamic'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+                {macTotalPages > 1 && (
+                  <div className="px-3 py-2 border-t border-black/5 dark:border-white/10 flex items-center justify-end gap-2 bg-slate-50/40 dark:bg-white/[0.02]">
+                    <button
+                      type="button"
+                      disabled={macPage <= 1}
+                      onClick={() => setMacPage((p) => Math.max(1, p - 1))}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded border border-black/10 dark:border-white/15 disabled:opacity-40 hover:bg-black/5"
+                    >
+                      <ChevronLeft size={12} /> {zh ? '上一页' : 'Prev'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={macPage >= macTotalPages}
+                      onClick={() => setMacPage((p) => Math.min(macTotalPages, p + 1))}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded border border-black/10 dark:border-white/15 disabled:opacity-40 hover:bg-black/5"
+                    >
+                      {zh ? '下一页' : 'Next'} <ChevronRight size={12} />
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
