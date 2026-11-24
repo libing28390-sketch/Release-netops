@@ -754,6 +754,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
   }, [mode]);
 
   const [ip, setIp] = useState('');
+  const [showL2L3Detail, setShowL2L3Detail] = useState(false);
   const [loading, setLoading] = useState(false);
   const [locateStage, setLocateStage] = useState<LocatorRunStage | 'idle'>('idle');
   const [result, setResult] = useState<LocateResult | null>(null);
@@ -1332,7 +1333,7 @@ ${rep.repair_commands}
     const trimmed = value.trim();
     return (
       /^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$/.test(trimmed)
-      || /^([0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4}$/.test(trimmed)
+      || /^([0-9a-fA-F]{4}[.:-]){2}[0-9a-fA-F]{4}$/.test(trimmed)
       || /^[0-9a-fA-F]{12}$/.test(trimmed)
     );
   };
@@ -1949,6 +1950,13 @@ ${rep.repair_commands}
                 <span className="text-[10px] text-black/35 dark:text-white/35 ml-auto">
                   {zh ? '查询时间' : 'Query time'} · {formatExactTime(locatorContext.freshness.collected_at, zh)}
                 </span>
+                <button
+                  type="button"
+                  onClick={() => setShowL2L3Detail(v => !v)}
+                  className="text-[11px] px-2 py-0.5 rounded-md border border-cyan-200 text-cyan-700 hover:bg-cyan-50"
+                >
+                  {showL2L3Detail ? (zh ? '收起二/三层详情' : 'Hide L2/L3') : (zh ? '展开二/三层详情' : 'Show L2/L3')}
+                </button>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
@@ -1968,7 +1976,7 @@ ${rep.repair_commands}
                   />
                 </LocatorContextCard>
 
-                <LocatorContextCard title={zh ? '二层定位' : 'Layer 2'} icon={Cable}>
+                {showL2L3Detail && <LocatorContextCard title={zh ? '二层定位' : 'Layer 2'} icon={Cable}>
                   <LocatorContextField label="MAC" value={formatMacAddress(locatorContext.l2.mac || result.mac_display)} mono />
                   <LocatorContextField label="VLAN" value={formatLocatorVlanLabel(locatorContext.l2.vlan, locatorContext.l2.vlan_name)} mono />
                   <LocatorContextField label={zh ? 'VLAN 来源' : 'VLAN Source'} value={formatLocatorVlanSource(locatorContext.l2.vlan_source, zh)} />
@@ -1993,9 +2001,9 @@ ${rep.repair_commands}
                     label={zh ? '端口状态 / 模式' : 'Port State / Mode'}
                     value={formatPortStateAndMode(locatorContext.l2.admin_status, locatorContext.l2.oper_status, locatorContext.l2.mode)}
                   />
-                </LocatorContextCard>
+                </LocatorContextCard>}
 
-                <LocatorContextCard title={zh ? '三层定位' : 'Layer 3'} icon={Router}>
+                {showL2L3Detail && <LocatorContextCard title={zh ? '三层定位' : 'Layer 3'} icon={Router}>
                   <LocatorContextField label={zh ? '默认网关' : 'Gateway'} value={locatorContext.l3.gateway} mono />
                   <LocatorContextField label={zh ? '网关设备' : 'Gateway Device'} value={locatorContext.l3.gateway_device} />
                   <LocatorContextField label={zh ? '三层接口' : 'L3 Interface'} value={locatorContext.l3.gateway_interface || locatorContext.l3.route_interface} mono />
@@ -2022,9 +2030,12 @@ ${rep.repair_commands}
                       value={locatorContext.l3.adjacent_devices.map(item => `${item.device}${item.port ? ` (${item.port}${item.peer_port ? ` ↔ ${item.peer_port}` : ''})` : ''}`).join(', ')}
                     />
                   )}
-                </LocatorContextCard>
+                </LocatorContextCard>}
 
                 <LocatorContextCard title={zh ? '业务关联' : 'Business'} icon={Users}>
+                  {!(locatorContext.business.hostname || locatorContext.business.department || locatorContext.business.owner || locatorContext.business.criticality || locatorContext.business.business_level || locatorContext.business.business_systems?.length || locatorContext.business.config_backup_at) && (
+                    <p className="text-[11px] text-black/40 dark:text-white/40">{zh ? '未关联业务信息' : 'No business info linked'}</p>
+                  )}
                   <LocatorContextField label={zh ? '主机名称' : 'Hostname'} value={locatorContext.business.hostname} />
                   <LocatorContextField label={zh ? '业务/租户' : 'Tenant'} value={locatorContext.business.tenant} />
                   <LocatorContextField label={zh ? '区域/站点' : 'Site'} value={locatorContext.business.site} />
