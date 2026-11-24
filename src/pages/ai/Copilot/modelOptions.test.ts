@@ -29,13 +29,14 @@ const model = (overrides: Partial<AIModel>): AIModel => ({
 describe('Copilot model options', () => {
   const providers = [provider('p1', 'DeepSeek'), provider('p2', 'Local'), provider('p3', 'Off', false)];
 
-  it('keeps one entry for duplicate models and prefers the healthy one', () => {
+  it('keeps distinct codes with the same name and prefers the healthy row for duplicate codes', () => {
     const options = buildCopilotModelOptions(providers, [
       model({ id: 'a', name: 'P1Model', model_code: 'p1', health_status: 'unhealthy' }),
       model({ id: 'b', name: 'P1Model', model_code: 'p1-copy', health_status: 'unhealthy' }),
+      model({ id: 'a-healthy', name: 'P1Model', model_code: 'p1', health_status: 'healthy' }),
       model({ id: 'c', name: 'deepseek', model_code: 'deepseek-v4-flash', health_status: 'healthy' }),
     ]);
-    expect(options.map((item) => item.id)).toEqual(['c', 'a']);
+    expect(options.map((item) => item.id)).toEqual(['a-healthy', 'c', 'b']);
   });
 
   it('drops embedding models, disabled models and disabled providers', () => {

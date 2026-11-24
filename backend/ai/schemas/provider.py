@@ -8,7 +8,7 @@ from typing import Optional
 from pydantic import BaseModel, Field, field_validator
 
 SUPPORTED_PROVIDER_TYPES = {
-    "deepseek", "openai", "openai_compatible", "azure_openai", "ollama", "local", "qwen",
+    "anthropic", "deepseek", "openai", "openai_compatible", "azure_openai", "ollama", "local", "qwen",
 }
 
 
@@ -21,7 +21,7 @@ def _normalize_provider_type(value: str) -> str:
 
 class AIProviderBase(BaseModel):
     name: str = Field(..., description="Provider Display Name")
-    provider_type: str = Field(..., description="Provider Type: deepseek, openai, qwen, ollama, openai_compatible")
+    provider_type: str = Field(..., description="Provider Type: anthropic, deepseek, openai, qwen, ollama, openai_compatible")
     base_url: Optional[str] = Field(None, description="API Base URL")
     timeout: int = Field(30, ge=1, le=600)
     max_retries: int = Field(3, ge=0, le=10)

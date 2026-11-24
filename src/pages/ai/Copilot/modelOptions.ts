@@ -32,9 +32,8 @@ const better = (left: AIModel, right: AIModel): boolean => {
  * Copilot model picker options.
  *
  * - only enabled chat/reasoning models of enabled providers;
- * - one entry per provider + model code, and per provider + display name
- *   (two rows named "P1Model" used to show up as two identical, unhealthy
- *   options); the healthiest / default / highest-priority row wins;
+ * - one entry per provider + model code; distinct codes may share a display
+ *   name. For duplicate codes, prefer health, default status and priority;
  * - healthy and unchecked models first, unhealthy and disabled ones last.
  */
 export function buildCopilotModelOptions(providers: AIProvider[], models: AIModel[]): CopilotModelOption[] {
@@ -42,25 +41,12 @@ export function buildCopilotModelOptions(providers: AIProvider[], models: AIMode
     (providers || []).filter((provider) => provider.enabled).map((provider) => [provider.id, provider.name]),
   );
   const chosen = new Map<string, AIModel>();
-  const nameOwner = new Map<string, string>();
   for (const model of models || []) {
     if (!model || !model.enabled || !providerNames.has(model.provider_id)) continue;
     if (!CHAT_MODEL_TYPES.has(normalise(model.model_type))) continue;
     const codeKey = `${model.provider_id}::code::${normalise(model.model_code)}`;
-    const nameKey = `${model.provider_id}::name::${normalise(model.display_name || model.name)}`;
-    const ownerKey = nameOwner.get(nameKey);
-    const existingKey = chosen.has(codeKey) ? codeKey : (ownerKey && chosen.has(ownerKey) ? ownerKey : undefined);
-    if (existingKey) {
-      const existing = chosen.get(existingKey);
-      if (existing && better(model, existing)) {
-        chosen.delete(existingKey);
-        chosen.set(codeKey, model);
-        nameOwner.set(nameKey, codeKey);
-      }
-      continue;
-    }
-    chosen.set(codeKey, model);
-    nameOwner.set(nameKey, codeKey);
+    const existing = chosen.get(codeKey);
+    if (!existing || better(model, existing)) chosen.set(codeKey, model);
   }
   return [...chosen.values()]
     .sort((left, right) => {
@@ -73,6 +59,7 @@ export function buildCopilotModelOptions(providers: AIProvider[], models: AIMode
       id: model.id,
       name: model.display_name || model.name,
       model_code: model.model_code,
+      provider_id: model.provider_id,
       provider_name: providerNames.get(model.provider_id) || 'AI 供应商',
       model_type: model.model_type,
       context_length: model.context_length,

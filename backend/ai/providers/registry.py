@@ -8,7 +8,9 @@ provider cannot silently add a direct egress path.
 from __future__ import annotations
 
 from typing import Any, Optional, Type
+from urllib.parse import urlsplit, urlunsplit
 
+from ai.providers.anthropic import AnthropicProvider
 from ai.providers.base import BaseLLMProvider
 from ai.providers.deepseek import DeepSeekProvider
 from ai.providers.openai_compatible import OpenAICompatibleProvider
@@ -19,11 +21,17 @@ class AzureOpenAIProvider(OpenAICompatibleProvider):
 
     def _get_endpoint(self, model: Optional[str] = None) -> str:
         base = (self.base_url or "").rstrip("/")
-        if "/chat/completions" in base:
-            return base
+        parsed = urlsplit(base)
+        path = parsed.path.rstrip("/")
+        if path.endswith("/chat/completions"):
+            return urlunsplit(parsed._replace(path=path))
+        if path.endswith("/openai/v1"):
+            # Azure OpenAI v1 uses a resource-level OpenAI-compatible root;
+            # deployment selection is carried in the model field.
+            return urlunsplit(parsed._replace(path=f"{path}/chat/completions"))
         # Azure deployments are represented by the model code; callers may
         # also provide a fully-qualified deployment endpoint.
-        if "/openai/deployments/" in base:
+        if "/openai/deployments/" in path:
             return f"{base}/chat/completions"
         deployment = str(model or "").strip() or "{model}"
         return f"{base}/openai/deployments/{deployment}/chat/completions"
@@ -47,6 +55,7 @@ class OllamaProvider(OpenAICompatibleProvider):
 
 ADAPTER_REGISTRY: dict[str, Type[BaseLLMProvider]] = {
     "deepseek": DeepSeekProvider,
+    "anthropic": AnthropicProvider,
     "openai": OpenAICompatibleProvider,
     "openai_compatible": OpenAICompatibleProvider,
     "qwen": OpenAICompatibleProvider,

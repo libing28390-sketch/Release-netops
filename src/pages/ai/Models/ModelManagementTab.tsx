@@ -1,6 +1,6 @@
 import { DataTable } from '../../../components/DataTable';
 import React, { useEffect, useMemo, useState } from 'react';
-import { Activity, Boxes, Pencil, Plus, RefreshCw, Trash2, Star, Power, Search, XCircle, ShieldCheck } from 'lucide-react';
+import { Activity, Boxes, Download, Pencil, Plus, RefreshCw, Trash2, Star, Power, Search, XCircle, ShieldCheck } from 'lucide-react';
 import { getAIModels, createAIModel, updateAIModel, setAIUserDefaultModel, deleteAIModel, getAIModelDeletePreview, checkAIModelHealth, getAIModelRoutes, upsertAIModelRoute, deleteAIModelRoute, getAIProviders, AIModel, AIModelDeletePreview, AIModelRoute, AIProvider } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
 import { ActionButton, ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
@@ -20,6 +20,7 @@ import { useFocusTrap } from '../../../hooks/useFocusTrap';
 import { TableActionCell, TableActionHeader } from '../../../components/ui/TableActionColumn';
 import type { TableExportData } from '../../../components/ui/TableExportMenu';
 import { buildAIModelExportData } from './modelExportData';
+import { ModelCatalogImportDialog } from './ModelCatalogImportDialog';
 const SCENES = [
   { code: 'command_explain', labelKey: 'ai.prompt.scene.command_explain.label', shortKey: 'ai.prompt.scene.command_explain.short', descriptionKey: 'ai.prompt.scene.command_explain.description' },
   { code: 'config_explain', labelKey: 'ai.prompt.scene.config_explain.label', shortKey: 'ai.prompt.scene.config_explain.short', descriptionKey: 'ai.prompt.scene.config_explain.description' },
@@ -79,6 +80,7 @@ export const ModelManagementTab: React.FC = () => {
   const [bulkDataClassification, setBulkDataClassification] = useState('');
   const [bulkApplying, setBulkApplying] = useState(false);
   const [checkingModelId, setCheckingModelId] = useState<string | null>(null);
+  const [showCatalogImport, setShowCatalogImport] = useState(false);
 
   // Modal (Create / Edit)
   const [showModal, setShowModal] = useState(false);
@@ -479,8 +481,11 @@ export const ModelManagementTab: React.FC = () => {
             >
               {tx('ai.model.action.refresh')}
             </ActionButton>
-            <ActionButton type="button" icon={Plus} variant="primary" size="md" onClick={openCreateModal}>
+            <ActionButton type="button" icon={Plus} size="md" onClick={openCreateModal}>
               {tx('ai.model.action.add')}
+            </ActionButton>
+            <ActionButton type="button" icon={Download} variant="primary" size="md" onClick={() => setShowCatalogImport(true)}>
+              {tx('ai.model.action.importFromProvider')}
             </ActionButton>
           </>
         )}
@@ -827,6 +832,19 @@ export const ModelManagementTab: React.FC = () => {
           </div>
         </div>
       </Panel>
+
+      {showCatalogImport && (
+        <ModelCatalogImportDialog
+          providers={providers}
+          language={language}
+          onClose={() => setShowCatalogImport(false)}
+          onImported={({ created, skipped }) => {
+            setShowCatalogImport(false);
+            showToast(tx('ai.model.toast.catalogImported', { created, skipped }), 'success');
+            void fetchData({ silent: true });
+          }}
+        />
+      )}
 
       {/* Create / Edit Modal */}
       {showModal && (

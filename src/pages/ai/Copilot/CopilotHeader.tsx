@@ -94,7 +94,7 @@ export const CopilotHeader: React.FC<CopilotHeaderProps> = ({
 
         <div
           aria-label="当前模型"
-          title={currentModel ? `${currentModel.provider_name || 'AI 供应商'} · ${modelName}（在输入框中切换模型）` : '未配置可选模型，使用服务端默认模型'}
+          title={currentModel ? `${currentModel.provider_name || 'AI 供应商'} · ${currentModel.model_code || modelName}（在输入框中切换模型）` : '未配置可选模型，使用服务端默认模型'}
           className="flex min-w-0 items-center gap-1.5 bg-gray-100/80 dark:bg-gray-800/80 text-gray-600 dark:text-gray-300 text-[11px] font-medium px-2.5 py-0.5 rounded-full"
         >
           <span data-testid="copilot-header-model-name" className="truncate max-w-[180px]">{modelName}</span>

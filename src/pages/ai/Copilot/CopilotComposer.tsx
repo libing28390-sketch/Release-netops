@@ -6,6 +6,7 @@ export interface CopilotModelOption {
   id: string;
   name: string;
   model_code: string;
+  provider_id?: string;
   provider_name: string;
   model_type?: string;
   context_length?: number;
@@ -334,14 +335,18 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
   // used and the picker says so.
   const effectiveModels = models;
   const currentModelObj = effectiveModels.find((m) => m.id === selectedModel) || effectiveModels[0];
+  const currentModelLabel = currentModelObj && effectiveModels.some((model) => model.id !== currentModelObj.id && model.name === currentModelObj.name)
+    ? currentModelObj.model_code
+    : currentModelObj?.name;
 
   // Group models by provider
-  const groupedModels = effectiveModels.reduce((acc, m) => {
-    const pName = m.provider_name || 'AI 供应商';
-    if (!acc[pName]) acc[pName] = [];
-    acc[pName].push(m);
-    return acc;
-  }, {} as Record<string, CopilotModelOption[]>);
+  const groupedModels = new Map<string, CopilotModelOption[]>();
+  for (const model of effectiveModels) {
+    const key = model.provider_id || model.provider_name;
+    const group = groupedModels.get(key);
+    if (group) group.push(model);
+    else groupedModels.set(key, [model]);
+  }
 
   const resetDefaults = () => {
     if (effectiveModels.length > 0 && onSelectModel) {
@@ -434,14 +439,14 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
             <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-2 shadow-2xl w-64 space-y-1 text-xs select-none">
               <div className="px-3 py-1.5 text-[11px] font-bold text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700/60 flex items-center justify-between">
                 <span>选择 AI 模型</span>
-                <span className="text-[10px] text-indigo-500">已用 {effectiveModels.length} 个模型</span>
+                <span className="text-[10px] text-indigo-500">可选 {effectiveModels.length} 个模型</span>
               </div>
 
               <div className="max-h-60 overflow-y-auto space-y-2 pt-1">
-                {Object.entries(groupedModels).map(([pName, mList]) => (
-                  <div key={pName} className="space-y-1">
+                {Array.from(groupedModels, ([providerId, mList]) => (
+                  <div key={providerId} className="space-y-1">
                     <div className="px-2.5 text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase">
-                      {pName} 供应商
+                      {mList[0].provider_name || 'AI'} 供应商
                     </div>
                     {mList.map((m) => {
                       const isSelected = m.id === selectedModel;
@@ -455,13 +460,20 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
                           }}
                           type="button"
                           aria-pressed={isSelected}
+                          aria-label={`${m.name} · ${m.model_code} · ${getModelHealthLabel(m.health_status)}`}
+                          title={m.model_code}
                           className={`flex min-h-10 w-full items-center justify-between rounded-xl border px-3 py-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
                             isSelected
                               ? 'border-indigo-200 bg-indigo-50 font-semibold text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300'
                               : 'border-transparent text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700/60'
                           }`}
                         >
-                          <span className="min-w-0 truncate"><span>{m.name}</span><span className="ml-1 text-[10px] text-gray-400">{m.model_type || 'chat'} · {m.context_length ? `${Math.round(m.context_length / 1000)}k` : 'ctx'} · {getModelHealthLabel(m.health_status)}</span></span>
+                          <span className="min-w-0">
+                            <span className="block truncate">{m.name}</span>
+                            <span className="block break-all text-[10px] text-gray-500 dark:text-gray-400">
+                              {m.model_code} · {getModelHealthLabel(m.health_status)}
+                            </span>
+                          </span>
                           {isSelected && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />}
                         </button>
                       );
@@ -550,7 +562,7 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
             >
               <span className="font-medium text-gray-700 dark:text-gray-300">模型</span>
               <div className="flex items-center gap-1 text-gray-500">
-                <span className="truncate max-w-[90px] text-right font-medium">{currentModelObj?.name?.split(' ')[0] || selectedModel}</span>
+                <span className="truncate max-w-[90px] text-right font-medium" title={currentModelObj?.model_code}>{currentModelLabel || selectedModel}</span>
                 <ChevronRight className="w-3.5 h-3.5 text-gray-400" />
               </div>
             </button>
@@ -702,7 +714,7 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
               title="点击展开模型与推理控制面板"
             >
               <Zap className="w-3.5 h-3.5 shrink-0 text-amber-500 fill-amber-500" />
-              <span className="truncate">{currentModelObj?.name?.split(' ')[0] || '默认模型'}{reasoningLevel === 'high' ? ' · 深度' : ''}</span>
+              <span className="truncate">{currentModelLabel || '默认模型'}{reasoningLevel === 'high' ? ' · 深度' : ''}</span>
               <ChevronDown className="w-3.5 h-3.5 shrink-0 text-gray-400" />
             </button>
 

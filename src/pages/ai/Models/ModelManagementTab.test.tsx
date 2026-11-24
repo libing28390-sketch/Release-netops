@@ -10,7 +10,9 @@ import {
   getAIModelDeletePreview,
   getAIModelRoutes,
   getAIModels,
+  getAIProviderModelCatalog,
   getAIProviders,
+  importAIProviderModels,
   setAIUserDefaultModel,
   updateAIModel,
   upsertAIModelRoute,
@@ -27,13 +29,15 @@ vi.mock('../../../api/ai', () => ({
   getAIModelDeletePreview: vi.fn(),
   getAIModelRoutes: vi.fn(),
   getAIModels: vi.fn(),
+  getAIProviderModelCatalog: vi.fn(),
   getAIProviders: vi.fn(),
+  importAIProviderModels: vi.fn(),
   setAIUserDefaultModel: vi.fn(),
   updateAIModel: vi.fn(),
   upsertAIModelRoute: vi.fn(),
 }));
 
-const provider = { id: 'prov-1', name: 'DeepSeek 主供应商', provider_type: 'deepseek' };
+const provider = { id: 'prov-1', name: 'DeepSeek 主供应商', provider_type: 'deepseek', enabled: true };
 const model = {
   id: 'model-1',
   provider_id: provider.id,
@@ -103,6 +107,26 @@ describe('ModelManagementTab browser key paths', () => {
   });
 
   afterEach(() => cleanup());
+
+  it('imports selected catalog models and refreshes the model table without writing routes', async () => {
+    const user = userEvent.setup();
+    const remote = { name: 'DeepSeek Pro', model_code: 'deepseek-v4-pro', model_type: 'chat' as const };
+    vi.mocked(getAIProviderModelCatalog).mockResolvedValueOnce({ items: [{ ...remote, already_registered: false }], source: 'account' });
+    vi.mocked(importAIProviderModels).mockImplementationOnce(async () => {
+      getModels.mockResolvedValueOnce([model as any, { ...model, ...remote, id: 'model-2' } as any]);
+      return { created: 1, skipped: 0 };
+    });
+    const routeCalls = upsertRoute.mock.calls.length;
+    render(<ModelManagementTab />);
+
+    await user.click(await screen.findByRole('button', { name: '从供应商导入' }));
+    await user.click(await screen.findByRole('button', { name: '读取模型列表' }));
+    await user.click(await screen.findByRole('button', { name: '导入所选 (1)' }));
+
+    expect(importAIProviderModels).toHaveBeenCalledWith(provider.id, [remote]);
+    expect(await screen.findByText('DeepSeek Pro')).toBeTruthy();
+    expect(upsertRoute.mock.calls).toHaveLength(routeCalls);
+  });
 
   it('renders model/provider mapping and switches the default and scene route', async () => {
     const user = userEvent.setup();

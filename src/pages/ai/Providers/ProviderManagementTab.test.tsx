@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProviderManagementTab, getAllowlistCeilingError, invalidEndpointPatternLines, parseEndpointPatterns } from './ProviderManagementTab';
 import { getProviderPageCopy } from './ProviderManagementTab.copy';
+import { ApiError } from '../../../api/http';
 import { createAIProvider, deleteAIProvider, getAIProviderDeletePreview, getAIProviderKeyHistory, getAIProvidersPage, invalidateAIProviderKey, testAIProvider, updateAIProvider } from '../../../api/ai';
 
 vi.mock('../../../contexts/AppDomainContext', () => ({
@@ -116,6 +117,56 @@ describe('ProviderManagementTab browser key paths', () => {
     expect(createProvider.mock.calls[0][0]).not.toHaveProperty('approved_endpoint_patterns');
   }, 20_000);
 
+  it('groups presets and saves the selected supplier with its shared protocol', async () => {
+    const user = userEvent.setup();
+    render(<ProviderManagementTab />);
+
+    await user.click(await screen.findByRole('button', { name: '添加 Provider' }));
+    const picker = screen.getByLabelText('供应商类型');
+    expect(Array.from(picker.querySelectorAll('optgroup'), (group) => [group.label, group.children.length])).toEqual([
+      ['中国大陆服务商', 10],
+      ['国际模型厂商', 6],
+      ['国际企业云平台', 3],
+      ['国际推理托管与聚合', 5],
+      ['本地与自定义', 3],
+    ]);
+
+    await user.type(screen.getByLabelText('API Key'), 'deepseek-only-secret');
+    await user.selectOptions(picker, 'volcengine');
+    expect(screen.getByLabelText('API Key')).toHaveProperty('value', '');
+    expect(screen.getByLabelText('Base URL')).toHaveProperty('value', 'https://ark.cn-beijing.volces.com/api/v3');
+    expect(screen.getByLabelText('数据区域')).toHaveProperty('value', 'cn');
+    await user.type(screen.getByLabelText('Provider 名称'), '豆包北京');
+    await user.type(screen.getByLabelText('API Key'), 'ark-test-key');
+    await user.type(screen.getByLabelText('绑定模型'), 'ep-test-model');
+    await user.click(screen.getByRole('button', { name: '确认添加' }));
+
+    await waitFor(() => expect(createProvider).toHaveBeenCalledWith(expect.objectContaining({
+      provider_type: 'openai_compatible',
+      base_url: 'https://ark.cn-beijing.volces.com/api/v3',
+      data_region: 'cn',
+      api_key: 'ark-test-key',
+      default_model_code: 'ep-test-model',
+    })));
+  }, 20_000);
+
+  it('uses the configured endpoint when re-opening a saved regional cloud preset', async () => {
+    const user = userEvent.setup();
+    const bedrockUrl = 'https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1';
+    getProviders.mockResolvedValueOnce({
+      items: [{ ...provider, provider_type: 'openai_compatible', base_url: bedrockUrl }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      total_pages: 1,
+    });
+    render(<ProviderManagementTab />);
+
+    await user.click((await screen.findAllByRole('button', { name: '编辑 DeepSeek 主供应商' }))[0]);
+    expect(screen.getByLabelText('供应商类型')).toHaveProperty('value', 'bedrock');
+    expect(screen.getByLabelText('Base URL')).toHaveProperty('value', bedrockUrl);
+  });
+
   it('keeps the existing API key when editing a provider without re-entering it', async () => {
     const user = userEvent.setup();
     render(<ProviderManagementTab />);
@@ -201,6 +252,16 @@ describe('ProviderManagementTab browser key paths', () => {
     await screen.findAllByText('DeepSeek 主供应商');
     await user.click(screen.getByRole('button', { name: '测试连通性' }));
     expect(await screen.findByText(/允许的数据分类级别不足/)).toBeTruthy();
+  });
+
+  it('explains when the provider has no enabled model to test', async () => {
+    const user = userEvent.setup();
+    testProvider.mockRejectedValueOnce(new ApiError(400, 'Add an enabled model', undefined, undefined, 'AI_PROVIDER_NO_ENABLED_MODEL'));
+    render(<ProviderManagementTab />);
+
+    await user.click(await screen.findByRole('button', { name: '测试连通性' }));
+
+    expect(await screen.findByText('此供应商还没有启用的模型。请先在「模型与路由」添加或启用模型，再测试连通性。')).toBeTruthy();
   });
 
   it('explains an invalid API key instead of showing a generic gateway failure', async () => {

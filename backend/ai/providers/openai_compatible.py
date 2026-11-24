@@ -6,11 +6,12 @@ import asyncio
 import json
 import logging
 import math
+import re
 import time
 import weakref
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 import httpx
 
@@ -38,6 +39,21 @@ logger = logging.getLogger(__name__)
 # Provider's credentials.  Clients are per event loop because an httpx pool
 # cannot be shared across loops.
 _SHARED_CLIENTS: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[tuple, Any]]" = weakref.WeakKeyDictionary()
+
+
+# Official OpenAI-compatible roots which include a provider-specific route or
+# API version. These bases already identify the chat API root, so they need
+# only the operation path appended. Ordinary/custom roots keep the historical
+# ``/v1/chat/completions`` fallback.
+_OPENAI_COMPATIBLE_BASE_PATHS = {
+    "/v1beta/openai",  # Gemini API
+    "/v2",  # Baidu Qianfan
+    "/api/v3",  # ByteDance Ark
+    "/api/paas/v4",  # Zhipu GLM
+}
+_VERTEX_OPENAI_BASE_PATH = re.compile(
+    r"/v1(?:beta1)?/projects/[^/]+/locations/[^/]+/endpoints/(?:openapi|[0-9]+)"
+)
 
 
 @asynccontextmanager
@@ -88,12 +104,16 @@ class OpenAICompatibleProvider(BaseLLMProvider):
 
     def _get_endpoint(self, model: Optional[str] = None) -> str:
         del model
-        base = (self.base_url or "https://api.openai.com/v1").rstrip("/")
-        if base.endswith("/chat/completions"):
-            return base
-        if base.endswith("/v1"):
-            return f"{base}/chat/completions"
-        return f"{base}/v1/chat/completions"
+        base = self.base_url or "https://api.openai.com/v1"
+        parsed = urlsplit(base)
+        path = parsed.path.rstrip("/")
+        if path.endswith("/chat/completions"):
+            return urlunsplit(parsed._replace(path=path))
+        if path.endswith("/v1") or path in _OPENAI_COMPATIBLE_BASE_PATHS or _VERTEX_OPENAI_BASE_PATH.fullmatch(path):
+            endpoint_path = f"{path}/chat/completions"
+        else:
+            endpoint_path = f"{path}/v1/chat/completions"
+        return urlunsplit(parsed._replace(path=endpoint_path))
 
     def _validate_endpoint(self, url: str) -> None:
         parsed = urlparse(url)
