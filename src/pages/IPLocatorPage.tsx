@@ -1595,7 +1595,7 @@ ${rep.repair_commands}
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-black/45">
           <span id="ip-locator-search-help">{zh ? '按回车或点击“定位”开始查询' : 'Press Enter or select Locate to search'}</span>
           <span>·</span>
-          <span>{zh ? '流程：ARP 表查 MAC → MAC 表查端口 → LLDP 查上联' : 'Flow: ARP→MAC→Switch Port→LLDP Uplink'}</span>
+          <span>{zh ? '流程：精确 IP / 最长前缀匹配网关 → 网关 ARP 取 MAC → MAC 表逐跳追踪端口 → LLDP 穿透上联到接入口（支持输入 IP 或 MAC）' : 'Flow: exact IP / longest-prefix gateway → gateway ARP → hop-by-hop MAC/FDB → LLDP uplink penetration to access port (IP or MAC input)'}</span>
         </div>
       </div>
 
