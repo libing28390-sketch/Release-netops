@@ -2304,16 +2304,24 @@ async def collect_ip_forward_table(
     *,
     version: str = '2c',
     timeout: float = 120,
+    allow_full_rib: bool = False,
 ) -> list[dict[str, Any]]:
     """Collect a complete IPv4/IPv6 IP-FORWARD-MIB inetCidrRouteTable.
 
-    Each accessible column is walked in full and must contain exactly the same
-    route indexes.  Index decoding follows the InetAddress/OBJECT IDENTIFIER
-    length-prefixed SNMP index encoding.  Any unsupported or incomplete walk,
-    malformed index/value, or unresolved non-zero ifIndex raises so callers
-    can preserve their CLI fallback path.
+    Disabled by default under Iron Rule #2 to protect control-plane CPU on
+    core/PE routers from full inetCidrRouteTable OID lexicographic sorting.
     """
+    import os
     import ipaddress
+
+    env_allowed = os.getenv('IP_LOCATOR_ALLOW_FULL_RIB_COLLECTION', '').strip().lower() in {
+        '1', 'true', 'yes', 'on',
+    }
+    if not allow_full_rib and not env_allowed:
+        raise RuntimeError(
+            'Full inetCidrRouteTable SNMP walk is disabled by default (Iron Rule #2); '
+            'use interface connected-subnet Radix Tree and targeted single-IP lookup instead.'
+        )
 
     metric_oids = {
         'metric1': INET_CIDR_ROUTE_METRIC1,

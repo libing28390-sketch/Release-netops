@@ -1039,7 +1039,29 @@ def discover_prefixes_for_device(
     payload: dict[str, Any] | None = None,
     collection_run_id: str | None = None,
 ) -> dict[str, Any]:
-    read_only_payload = payload or collect_read_only_evidence(device_info)
+    if payload is None:
+        device_id = str(device_info.get("id") or "").strip()
+        if device_id:
+            snapshot_result = discover_prefixes_from_interface_snapshot(
+                device_id,
+                collection_run_id=collection_run_id,
+            )
+            if int(snapshot_result.get("count") or 0) > 0:
+                return {
+                    **snapshot_result,
+                    "candidates": [],
+                    "collection_status": "success",
+                    "source": "interface_snapshot",
+                }
+        # Iron Rule #2: Never pull full routing_table / arp / mac_table over CLI
+        # during background prefix discovery; restrict strictly to lightweight
+        # interface/VLAN evidence.
+        read_only_payload = collect_read_only_evidence(
+            device_info,
+            categories=["interfaces", "interface_description", "vlan"],
+        )
+    else:
+        read_only_payload = payload
     candidates = build_prefix_candidates(read_only_payload, tenant_id=tenant_id, site_id=site_id, vrf_id=vrf_id)
     result = persist_prefix_candidates(candidates, collection_run_id=collection_run_id)
     result.update({"device_id": device_info.get("id"), "candidates": candidates, "collection_status": read_only_payload.get("status")})

@@ -1816,8 +1816,16 @@ def get_prefix_gateway_candidates(
 
         observation_rows = _current_cmdb_interface_ip_observations(conn)
         candidates: list[dict] = []
+        down_states = {'down', 'admin_down', 'administratively down', 'shutdown', 'notpresent', 'lowerlayerdown'}
         for row in observation_rows:
             if str(row.get('tenant_id') or 'tenant-default') != tenant_key:
+                continue
+            admin_state = str(row.get('admin_status') or '').strip().lower()
+            oper_state = str(row.get('oper_status') or '').strip().lower()
+            # Exclude explicitly down / shutdown interfaces from gateway candidate
+            # selection so decommissioned cutover interfaces never hijack or
+            # create false ambiguity against the active gateway.
+            if admin_state in down_states or oper_state in down_states:
                 continue
             owner = {
                 'cmdb_device_id': row.get('device_id'),

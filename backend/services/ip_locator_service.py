@@ -8352,15 +8352,13 @@ def _sync_ip_inventory_impl(*, collect_device_interfaces: bool = True):
                     ip_type = 'tunnel'
 
                 conn.execute(
-                    '''INSERT INTO ip_inventory (ip, mask, device_id, interface, type, last_seen)
-                       VALUES (?, ?, ?, ?, ?, ?)
-                       ON CONFLICT(ip) DO UPDATE SET
+                    '''INSERT INTO ip_inventory (ip, mask, device_id, interface, vrf_name, type, last_seen)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT (device_id, interface, vrf_name, ip) DO UPDATE SET
                            mask = excluded.mask,
-                           device_id = excluded.device_id,
-                           interface = excluded.interface,
                            type = excluded.type,
                            last_seen = excluded.last_seen''',
-                    (ip, mask, dev_id, intf, ip_type, last_seen),
+                    (ip, mask, str(dev_id or ''), str(intf or ''), 'default', ip_type, last_seen),
                 )
                 total_ipam += 1
             conn.commit()
@@ -8419,16 +8417,15 @@ def _sync_ip_inventory_impl(*, collect_device_interfaces: bool = True):
                         elif 'tunnel' in intf_lower:
                             ip_type = 'tunnel'
 
+                        vrf_name = str(rec.get('vrf_name') or 'default').strip() or 'default'
                         conn.execute(
-                            '''INSERT INTO ip_inventory (ip, mask, device_id, interface, type, last_seen)
-                               VALUES (?, ?, ?, ?, ?, ?)
-                               ON CONFLICT(ip) DO UPDATE SET
+                            '''INSERT INTO ip_inventory (ip, mask, device_id, interface, vrf_name, type, last_seen)
+                               VALUES (?, ?, ?, ?, ?, ?, ?)
+                               ON CONFLICT (device_id, interface, vrf_name, ip) DO UPDATE SET
                                    mask = excluded.mask,
-                                   device_id = excluded.device_id,
-                                   interface = excluded.interface,
                                    type = excluded.type,
                                    last_seen = excluded.last_seen''',
-                            (ip, mask, dev_id, intf, ip_type, last_seen),
+                            (ip, mask, str(dev_id or ''), str(intf or ''), vrf_name, ip_type, last_seen),
                         )
                         total_device += 1
                     conn.commit()
@@ -9568,13 +9565,27 @@ def run_route_collector(
     *,
     respect_collection_policy: bool = True,
     device_ids: set[str] | None = None,
+    allow_full_rib: bool = False,
 ):
     """
-    后台路由事实库同步任务：
-    1. 获取所有支持路由的在线设备。
-    2. 并发连接，拉取 `show ip route` 路由表。
-    3. 解析后批量写入 `route_cache` 表。
+    后台路由事实库同步任务（默认停用 — 铁律 #2）：
+    严禁在生产网全量拉取核心/边界设备路由表（防止 SNMP/CLI 打爆控制平面 CPU）。
+    请使用本地直连子网前缀树（ipam_radix_index_service）+ 盲区单 IP 精确查询替代。
     """
+    env_allowed = os.getenv('IP_LOCATOR_ALLOW_FULL_RIB_COLLECTION', '').strip().lower() in {
+        '1', 'true', 'yes', 'on',
+    }
+    if not allow_full_rib and not env_allowed:
+        logger.warning(
+            "[Route Collector] Full RIB collection is disabled by default (Iron Rule #2). "
+            "Use connected-subnet Radix Tree + targeted single-IP lookup instead."
+        )
+        return {
+            'status': 'disabled_by_policy',
+            'reason': 'full_rib_collection_retired',
+            'routes_collected': 0,
+        }
+
     logger.info("[Route Collector] Starting route cache sync...")
     t0 = time.time()
 
