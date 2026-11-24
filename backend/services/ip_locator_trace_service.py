@@ -1284,6 +1284,22 @@ def _find_next_hop_device_candidates(
         ),
         (
             "SELECT d.id, d.hostname, d.role, d.platform, d.ip_address "
+            "FROM cmdb_device_interface_address_observations a "
+            "JOIN cmdb_collection_snapshots s "
+            "  ON s.device_id = a.device_id "
+            " AND s.domain = 'interface_inventory' "
+            " AND s.successful_generation = a.generation "
+            "JOIN devices d ON a.device_id = d.id "
+            f"WHERE host(a.ip_address) = ? AND d.id IN ({placeholders})",
+        ),
+        (
+            "SELECT d.id, d.hostname, d.role, d.platform, d.ip_address "
+            "FROM interfaces i JOIN devices d ON i.device_id = d.id "
+            "WHERE COALESCE(NULLIF(BTRIM(i.primary_ip), ''), NULLIF(BTRIM(i.ip_address), '')) = ? "
+            f"AND d.id IN ({placeholders})",
+        ),
+        (
+            "SELECT d.id, d.hostname, d.role, d.platform, d.ip_address "
             "FROM ip_addresses ip JOIN devices d ON ip.device_id = d.id "
             f"WHERE TRIM(ip.address) = ? AND d.id IN ({placeholders})",
         ),
@@ -1309,11 +1325,54 @@ def _find_next_hop_device_candidates(
     return [matches[device_id] for device_id in sorted(matches)]
 
 
+_LAG_NAME_RE = re.compile(
+    r"^(?:eth-?trunk|port-?channel|po|bridge-?aggregation|bagg|route-?aggregation|ragg|ae|agg)(\d+)$",
+    re.IGNORECASE,
+)
+
+
+def _expand_lag_member_ports(conn: Any, device_id: str, port: str) -> set[str]:
+    """Expand a logical LAG interface (Eth-Trunk/Port-Channel/BAGG) to physical member ports."""
+    normalized = legacy.normalize_interface_name(port).lower()
+    expanded: set[str] = {normalized} if normalized else set()
+    if not normalized or conn is None or not device_id:
+        return expanded
+    lag_match = _LAG_NAME_RE.match(re.sub(r"\s+", "", normalized))
+    lag_num = int(lag_match.group(1)) if lag_match else None
+    try:
+        if_rows = conn.execute(
+            """SELECT id, interface_name, parent_interface_id, channel_group
+                 FROM interfaces
+                WHERE device_id = ?""",
+            (device_id,),
+        ).fetchall()
+    except Exception:
+        if_rows = []
+    parent_ids: set[str] = set()
+    parsed_rows = [dict(r) if isinstance(r, Mapping) or hasattr(r, "keys") else {} for r in if_rows]
+    for r in parsed_rows:
+        r_norm = legacy.normalize_interface_name(str(r.get("interface_name") or "")).lower()
+        if r_norm == normalized and r.get("id"):
+            parent_ids.add(str(r["id"]))
+    for r in parsed_rows:
+        r_norm = legacy.normalize_interface_name(str(r.get("interface_name") or "")).lower()
+        if not r_norm:
+            continue
+        p_id = str(r.get("parent_interface_id") or "")
+        cg = r.get("channel_group")
+        if (p_id and p_id in parent_ids) or (
+            lag_num is not None and cg is not None and str(cg).strip().isdigit() and int(cg) == lag_num
+        ):
+            expanded.add(r_norm)
+    return expanded
+
+
 def _topology_neighbors(conn: Any, device_id: str, port: str) -> list[dict[str, Any]]:
-    """Return all active topology candidates for a canonical local port."""
+    """Return all active topology candidates for a canonical local port (with LAG member expansion)."""
     normalized = legacy.normalize_interface_name(port).lower()
     if not normalized:
         return []
+    wanted_ports = _expand_lag_member_ports(conn, device_id, port)
     try:
         from core.config import settings
 
@@ -1344,7 +1403,21 @@ def _topology_neighbors(conn: Any, device_id: str, port: str) -> list[dict[str, 
                 str(row.get(f"{side}_port_normalized") or "").strip().lower(),
                 legacy.normalize_interface_name(str(row.get(f"{side}_aggregation_name") or "")).lower(),
             }
-            if normalized not in candidates:
+            raw_members = row.get("members_json")
+            if raw_members:
+                try:
+                    members_list = json.loads(raw_members) if isinstance(raw_members, str) else list(raw_members)
+                except Exception:
+                    members_list = []
+                for member in members_list or []:
+                    if not isinstance(member, Mapping):
+                        continue
+                    for mk in (f"{side}_port", f"{side}_port_normalized", f"{side}_interface"):
+                        mv = legacy.normalize_interface_name(str(member.get(mk) or "")).lower()
+                        if mv:
+                            candidates.add(mv)
+            candidates.discard("")
+            if not (wanted_ports & candidates):
                 continue
             neighbor_id = str(row.get(f"{other}_device_id") or "")
             if not neighbor_id or neighbor_id == str(device_id):
@@ -1369,8 +1442,9 @@ def _lldp_neighbors(
     *,
     records: Any = None,
     source_status: dict[str, Any] | None = None,
+    member_ports: Iterable[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Normalize a full-device neighbor snapshot for one local port."""
+    """Normalize a full-device neighbor snapshot for one local port (supporting LAG member ports)."""
     if records is None:
         try:
             records = legacy._collect_lldp_from_device(device)
@@ -1387,11 +1461,18 @@ def _lldp_neighbors(
         "unsupported_command", "truncated", "lldp_disabled", "command_failed",
     }:
         return _LocatorNeighborRecords([], status)
-    wanted = legacy.normalize_interface_name(port).lower()
+    wanted_ports = {legacy.normalize_interface_name(port).lower()}
+    if member_ports:
+        wanted_ports.update(
+            legacy.normalize_interface_name(str(mp)).lower()
+            for mp in member_ports
+            if str(mp or "").strip()
+        )
+    wanted_ports.discard("")
     result = []
     for item in records or []:
         local = legacy.normalize_interface_name(item.get("local_interface") or "").lower()
-        if local != wanted or not item.get("neighbor"):
+        if local not in wanted_ports or not item.get("neighbor"):
             continue
         result.append({
             "neighbor_id": item.get("neighbor_id") or "",
@@ -1716,11 +1797,22 @@ def _load_lldp_snapshot(
     if shared_selected and shared_dependency_marker:
         _record_topology_snapshot_dependency(result, shared_dependency_marker)
 
+    member_ports: set[str] | None = None
+    try:
+        lag_conn = get_db_connection()
+        try:
+            member_ports = _expand_lag_member_ports(lag_conn, device_id, port)
+        finally:
+            lag_conn.close()
+    except Exception:
+        member_ports = None
+
     selected = _lldp_neighbors(
         device,
         port,
         records=snapshot,
         source_status=snapshot_status,
+        member_ports=member_ports,
     )
     if collected_at:
         _include_evidence_timestamp(result, collected_at)
@@ -1766,6 +1858,185 @@ def _neighbor_device_candidates(
     else:
         selected_ids = ip_ids or name_ids
     return [by_id[device_id] for device_id in sorted(selected_ids) if device_id in by_id]
+
+
+_HYPERVISOR_MAC_OUIS = frozenset({
+    "005056",  # VMware ESXi
+    "000c29",  # VMware Workstation/ESXi
+    "000569",  # VMware
+    "00155d",  # Microsoft Hyper-V
+    "525400",  # QEMU / KVM / Proxmox
+    "001c42",  # Parallels
+    "00163e",  # Xen
+})
+_FIT_AP_NAME_RE = re.compile(
+    r"(?:^|[-_.\s])(?:ap\d+|ap|wlan|air[-_]|aruba[-_]?ap|wa\d+|eap\d+|uap)(?:$|[-_.\s\d])",
+    re.IGNORECASE,
+)
+_HYPERVISOR_NEIGHBOR_RE = re.compile(
+    r"(?:esxi|vmware|vswitch|hyper-?v|proxmox|kvm|xenserver|qemu)",
+    re.IGNORECASE,
+)
+
+
+def _is_hypervisor_mac(mac: Any) -> bool:
+    compact = re.sub(r"[^0-9a-f]", "", str(mac or "").lower())
+    return len(compact) >= 6 and compact[:6] in _HYPERVISOR_MAC_OUIS
+
+
+def _is_fit_ap_neighbor(neighbor: Mapping[str, Any]) -> bool:
+    name = str(neighbor.get("neighbor_name") or "").strip()
+    proto = str(neighbor.get("protocol") or "").strip()
+    text = f"{name} {proto}"
+    return bool(name and _FIT_AP_NAME_RE.search(text))
+
+
+def _is_hypervisor_neighbor(neighbor: Mapping[str, Any]) -> bool:
+    name = str(neighbor.get("neighbor_name") or "").strip()
+    return bool(name and _HYPERVISOR_NEIGHBOR_RE.search(name))
+
+
+def _gateway_ping_command(device: Mapping[str, Any], target_ip: str, vrf: str = "default") -> str:
+    platform = _normalise_platform(device)
+    vrf_name = _normalise_vrf(vrf)
+    is_custom_vrf = vrf_name.lower() not in {"", "default", "global"}
+    if platform.startswith(("huawei", "h3c", "hp_comware")):
+        if is_custom_vrf:
+            return f"ping -vpn-instance {vrf_name} -c 2 -t 1000 {target_ip}"
+        return f"ping -c 2 -t 1000 {target_ip}"
+    if platform.startswith("juniper"):
+        if is_custom_vrf:
+            return f"ping routing-instance {vrf_name} count 2 wait 1 {target_ip}"
+        return f"ping count 2 wait 1 {target_ip}"
+    if is_custom_vrf:
+        return f"ping vrf {vrf_name} {target_ip} repeat 2 timeout 1"
+    return f"ping {target_ip} repeat 2 timeout 1"
+
+
+def _trigger_gateway_wakeup_ping(
+    device: dict[str, Any],
+    target_ip: str,
+    vrf: str,
+) -> bool:
+    """Issue a bounded 2-packet unicast ping from the gateway to refresh ARP/FDB."""
+    cmd = _gateway_ping_command(device, target_ip, vrf)
+    try:
+        legacy._send_command(device, cmd, timeout=8)
+        return True
+    except Exception as exc:
+        logger.debug("[IPLocatorV2] gateway wakeup ping skipped/failed (%s)", type(exc).__name__)
+        return False
+
+
+def _lookup_historical_last_seen(
+    conn: Any,
+    target_ip: str,
+    *,
+    tenant_id: str = "",
+    site_id: str = "",
+    authorized_device_ids: Iterable[str] | None = None,
+) -> dict[str, Any] | None:
+    """Return the latest historical observation when live ARP is absent (offline host)."""
+    if conn is None or not target_ip:
+        return None
+    allowed = {str(d) for d in authorized_device_ids if str(d)} if authorized_device_ids is not None else None
+    try:
+        rows = conn.execute(
+            """SELECT o.source_device_id, o.source_device_name, o.mac, o.interface_name,
+                      o.vlan, o.source_observed_at, o.site_id, o.tenant_id
+                 FROM ipam_discovery_observations o
+                WHERE o.ip = ?
+                  AND o.source_observed_at IS NOT NULL
+                ORDER BY o.source_observed_at DESC
+                LIMIT 10""",
+            (target_ip,),
+        ).fetchall()
+        for raw in rows:
+            item = dict(raw) if isinstance(raw, Mapping) or hasattr(raw, "keys") else {}
+            dev_id = str(item.get("source_device_id") or "")
+            if allowed is not None and dev_id and dev_id not in allowed:
+                continue
+            if tenant_id and item.get("tenant_id") and str(item.get("tenant_id")) != tenant_id:
+                continue
+            if site_id and item.get("site_id") and str(item.get("site_id")).lower() != site_id.lower():
+                continue
+            return {
+                "status": "offline_historical_snapshot",
+                "ip": target_ip,
+                "mac": str(item.get("mac") or ""),
+                "device_id": dev_id,
+                "device": str(item.get("source_device_name") or dev_id),
+                "port": str(item.get("interface_name") or ""),
+                "vlan": str(item.get("vlan") or ""),
+                "last_seen": str(item.get("source_observed_at") or ""),
+                "source": "ipam_discovery_observations",
+            }
+    except Exception:
+        pass
+    try:
+        row = conn.execute(
+            """SELECT e.ip, e.mac, e.switch_id, COALESCE(d.hostname, e.switch_id) AS switch_name,
+                      e.switch_port, e.vlan, e.last_seen, e.site
+                 FROM network_endpoints e
+                 LEFT JOIN devices d ON d.id = e.switch_id
+                WHERE e.ip = ?
+                ORDER BY e.last_seen DESC
+                LIMIT 1""",
+            (target_ip,),
+        ).fetchone()
+        if row:
+            item = dict(row) if isinstance(row, Mapping) or hasattr(row, "keys") else {}
+            dev_id = str(item.get("switch_id") or "")
+            if allowed is None or not dev_id or dev_id in allowed:
+                return {
+                    "status": "offline_historical_snapshot",
+                    "ip": target_ip,
+                    "mac": str(item.get("mac") or ""),
+                    "device_id": dev_id,
+                    "device": str(item.get("switch_name") or dev_id),
+                    "port": str(item.get("switch_port") or ""),
+                    "vlan": str(item.get("vlan") or ""),
+                    "last_seen": str(item.get("last_seen") or ""),
+                    "source": "network_endpoints",
+                }
+    except Exception:
+        pass
+    return None
+
+
+def _count_edge_port_active_macs(conn: Any, device_id: str, port: str) -> int:
+    """Count distinct active MACs learned on an edge access port to detect dumb switches."""
+    if conn is None or not device_id or not port:
+        return 0
+    norm_port = legacy.normalize_interface_name(port).lower()
+    distinct_macs: set[str] = set()
+    try:
+        rows = conn.execute(
+            "SELECT mac_address, interface_name FROM mac_table WHERE device_id = ?",
+            (device_id,),
+        ).fetchall()
+        for raw in rows:
+            item = dict(raw) if isinstance(raw, Mapping) or hasattr(raw, "keys") else {}
+            if legacy.normalize_interface_name(str(item.get("interface_name") or "")).lower() == norm_port:
+                m = re.sub(r"[^0-9a-f]", "", str(item.get("mac_address") or "").lower())
+                if len(m) == 12:
+                    distinct_macs.add(m)
+    except Exception:
+        pass
+    try:
+        rows = conn.execute(
+            "SELECT mac_address, interface_name FROM ipam_current_fdb_observations WHERE source_device_id = ?",
+            (device_id,),
+        ).fetchall()
+        for raw in rows:
+            item = dict(raw) if isinstance(raw, Mapping) or hasattr(raw, "keys") else {}
+            if legacy.normalize_interface_name(str(item.get("interface_name") or "")).lower() == norm_port:
+                m = re.sub(r"[^0-9a-f]", "", str(item.get("mac_address") or "").lower())
+                if len(m) == 12:
+                    distinct_macs.add(m)
+    except Exception:
+        pass
+    return len(distinct_macs)
 
 
 def _terminal_evidence(
@@ -1855,6 +2126,7 @@ def _trace_ip_uncached(
     network_domain_id: str = "",
     authorized_device_ids: Iterable[str] | None = None,
     force_refresh: bool = False,
+    enable_ping: bool = False,
     limits: TraceLimits | None = None,
     route_fresh_seconds: int = 300,
     deadline_seconds: int = 180,
@@ -2435,12 +2707,24 @@ def _trace_ip_uncached(
                 if protocol in DISCARD_PROTOCOLS or next_hop_normalized in {"null0", "discard", "reject"}:
                     result["coverage_gaps"].append(f"route_discard:{device_id}:{row.get('destination') or ''}")
                     continue
-                if protocol in LOCAL_DEVICE_PROTOCOLS:
+                route_if_lower = str(row.get("interface") or "").strip().lower()
+                route_dest = str(row.get("destination") or "").strip()
+                is_loopback_host_route = (
+                    route_dest == f"{target_ip}/32"
+                    and (
+                        route_if_lower.startswith(("loopback", "loop", "lo", "inloopback"))
+                        or next_hop_normalized in {"127.0.0.1", "0.0.0.0", "local", "directly connected", "connected"}
+                    )
+                    and protocol in (LOCAL_DEVICE_PROTOCOLS | DIRECT_PROTOCOLS)
+                )
+                if protocol in LOCAL_DEVICE_PROTOCOLS or is_loopback_host_route:
                     local_location = {
                         "device_id": device_id,
                         "device": label,
+                        "canonical_mgmt_ip": str(device.get("ip_address") or ""),
                         "port": row.get("interface") or "",
                         "ip": target_ip,
+                        "ip_classification": "LOOPBACK" if route_if_lower.startswith(("loopback", "loop", "lo", "inloopback")) else "DEVICE_INTERFACE",
                         "confidence": "device_interface",
                     }
                     result["status"] = "completed"
@@ -3066,6 +3350,39 @@ def _trace_ip_uncached(
             _set_cache_source(result, "arp", device, "query_failed", vrf=vrf)
             logger.debug("[IPLocatorV2] ARP query failed for %s: %s", label, exc)
             continue
+        if not arp and arp_status == "not_found" and enable_ping and time.monotonic() < deadline:
+            if _trigger_gateway_wakeup_ping(device, target_ip, vrf):
+                try:
+                    retry_raw = _run_cli_with_device_lease(
+                        device,
+                        "arp",
+                        lambda dev=device, ip=target_ip, vrf_name=vrf: legacy._targeted_arp_query_status(
+                            dev, ip, vrf=vrf_name,
+                        ),
+                        owner_id=owner_id,
+                        task_context=_task_context(
+                            durable_run_id=durable_run_id,
+                            run_owner_id=run_owner_id,
+                            tenant_id=tenant_id,
+                            scope_hash=scope_hash,
+                            network_domain_id=network_domain_id,
+                            site_id=site_id,
+                            vrf_name=vrf,
+                            start_device_id=start_device_id,
+                            target_ip=target_ip,
+                            force_refresh=True,
+                            target=arp_target,
+                            cancel_check=cancel_check,
+                        ),
+                        wait_seconds=max(1, min(15, int(deadline - time.monotonic()))),
+                    )
+                    retry_val, retry_at, _retry_task, retry_meta = _cli_result_parts(retry_raw)
+                    arp, arp_status = _arp_query_parts(retry_val, retry_meta)
+                    if arp:
+                        arp_collected_at = retry_at or _now_iso()
+                        result.setdefault("warnings", []).append(f"gateway_ping_wakeup_succeeded:{device.get('id')}")
+                except Exception:
+                    pass
         if not arp and arp_status == "not_found":
             result["coverage_gaps"].append(f"arp_not_found:{device.get('id')}")
             continue
@@ -3130,6 +3447,15 @@ def _trace_ip_uncached(
         result["completed_at"] = _now_iso()
         return result
     if not arp_hits:
+        historical = _lookup_historical_last_seen(
+            conn,
+            target_ip,
+            tenant_id=tenant_id,
+            site_id=site_id,
+            authorized_device_ids=authorized_device_ids,
+        )
+        if historical is not None:
+            result["historical_last_seen"] = historical
         result["status"] = "partial" if deadline_exceeded or result["coverage_gaps"] else "failed"
         has_unsupported_arp = any(str(gap).startswith("arp_unsupported:") for gap in result["coverage_gaps"])
         has_failed_arp = any(
@@ -3641,8 +3967,20 @@ def _trace_ip_uncached(
                         status = {"status": "vlan_unknown"}
                         result["coverage_gaps"].append(f"mac_vlan_evidence_missing:{current_id}")
                     else:
-                        records = []
-                        status = {"status": "not_found"}
+                        # VLAN Mapping / QinQ translation: preserve matched MAC
+                        # records with explicit vlan_translated marker instead of
+                        # discarding valid L2 forwarding evidence.
+                        translated_vlans = sorted({
+                            str(record.get("vlan") or "").strip()
+                            for record in records
+                            if str(record.get("vlan") or "").strip()
+                        })
+                        for record in records:
+                            record["vlan_translated"] = True
+                            record["expected_vlan"] = vlan_hint
+                        result.setdefault("warnings", []).append(
+                            f"mac_vlan_translated:{current_id}:{vlan_hint}->{','.join(translated_vlans)}"
+                        )
                 if not records:
                     if isinstance(status, dict) and status.get("status") == "vlan_unknown":
                         result["errors"].append(f"{label} 的 MAC 记录缺少 VLAN，不能确认二层域")
@@ -3861,6 +4199,8 @@ def _trace_ip_uncached(
                             # that an access port has no downstream switch.
                             continue
                     child_devices: list[dict[str, Any]] = []
+                    fit_ap_neighbors: list[dict[str, Any]] = []
+                    hypervisor_neighbors: list[dict[str, Any]] = []
                     if len(topology) > limits.max_candidates_per_hop:
                         result["coverage_gaps"].append(f"neighbor_candidate_budget_exceeded:{current_id}:{port}")
                     for neighbor in topology[: limits.max_candidates_per_hop]:
@@ -3877,7 +4217,12 @@ def _trace_ip_uncached(
                         if neighbor_device and neighbor_id not in visited:
                             child_devices.append(neighbor_device)
                         elif neighbor.get("neighbor_name") or neighbor_id:
-                            result["coverage_gaps"].append(f"neighbor_unmanaged:{neighbor.get('neighbor_name')}")
+                            if _is_fit_ap_neighbor(neighbor):
+                                fit_ap_neighbors.append(neighbor)
+                            elif _is_hypervisor_neighbor(neighbor):
+                                hypervisor_neighbors.append(neighbor)
+                            else:
+                                result["coverage_gaps"].append(f"neighbor_unmanaged:{neighbor.get('neighbor_name')}")
                     if child_devices:
                         hop["is_uplink"] = True
                         hop["neighbors"] = [
@@ -3890,8 +4235,15 @@ def _trace_ip_uncached(
 
                     identity = terminal_identity
                     hop["terminal_evidence"] = identity
-                    if identity.get("is_terminal"):
-                        final_candidates.append({
+                    is_hypervisor_trunk = (
+                        bool(identity.get("is_physical"))
+                        and bool(identity.get("is_trunk"))
+                        and not bool(identity.get("is_aggregation"))
+                        and (_is_hypervisor_mac(mac) or bool(hypervisor_neighbors))
+                    )
+                    is_fit_ap_port = bool(fit_ap_neighbors) and bool(identity.get("is_physical")) and not bool(identity.get("is_aggregation"))
+                    if identity.get("is_terminal") or is_hypervisor_trunk or is_fit_ap_port:
+                        candidate_payload: dict[str, Any] = {
                             "device_id": current_id,
                             "device": label,
                             "port": port,
@@ -3900,7 +4252,24 @@ def _trace_ip_uncached(
                             "l3_path": l3_path,
                             "l2_path": path + [hop],
                             "confidence": "high",
-                        })
+                        }
+                        if is_fit_ap_port:
+                            candidate_payload["endpoint_classification"] = "WIRELESS_AP_UPLINK"
+                            candidate_payload["ap_neighbor"] = fit_ap_neighbors[0].get("neighbor_name") or ""
+                        elif is_hypervisor_trunk:
+                            candidate_payload["endpoint_classification"] = "VIRTUAL_MACHINE_HOST"
+                            if hypervisor_neighbors:
+                                candidate_payload["hypervisor_host"] = hypervisor_neighbors[0].get("neighbor_name") or ""
+                        else:
+                            candidate_payload["endpoint_classification"] = "WIRED_ACCESS_ENDPOINT"
+                            active_mac_count = _count_edge_port_active_macs(conn, current_id, port)
+                            if active_mac_count >= 3 and not _is_hypervisor_mac(mac):
+                                candidate_payload["edge_port_warning"] = {
+                                    "code": "suspected_unmanaged_switch",
+                                    "active_mac_count": active_mac_count,
+                                    "message": f"该边缘端口下同时检测到 {active_mac_count} 个活跃 MAC，现场疑似私接非网管桌面小交换机/Hub",
+                                }
+                        final_candidates.append(candidate_payload)
                     else:
                         result["coverage_gaps"].append(f"topology_incomplete:{current_id}:{port}")
                 if len(queried_device_ids) >= limits.max_devices and queue:

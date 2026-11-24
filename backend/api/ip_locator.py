@@ -381,6 +381,7 @@ async def api_locate_ip(body: IPLocateRequest, user=require_role("Viewer")):
             body.ip,
             tenant_id=tenant_id_for_write(user=user),
             force_refresh=body.force_refresh,
+            enable_ping=bool(getattr(body, 'enable_ping', False)),
             route_fresh_seconds=int(getattr(settings, 'IP_LOCATOR_ROUTE_FRESH_SECONDS', 300)),
             authorized_device_ids=authorized_device_ids,
             deadline_seconds=int(getattr(settings, 'IP_LOCATOR_TASK_DEADLINE_SECONDS', 180)),
