@@ -588,20 +588,22 @@ const DeviceRoutingContextTab: React.FC<DeviceRoutingContextTabProps> = ({ langu
                   : lookupsError
                     ? (zh ? '设备列表不可用' : 'Device list unavailable')
                     : (zh ? '按设备名称或 IP 搜索' : 'Search by device name or IP')}
-                onFocus={(event) => {
-                  setDevicePickerOpen(Boolean(deviceSearchQuery.trim()));
+                onFocus={() => {
+                  setDevicePickerOpen(true);
                   setActiveDeviceOption(-1);
                   if (selectedDeviceId) {
                     setDeviceSearchQuery('');
-                    event.currentTarget.select();
                   }
+                }}
+                onClick={() => {
+                  setDevicePickerOpen(true);
                 }}
                 onChange={(event) => {
                   const nextQuery = event.target.value;
                   setDeviceSearchQuery(nextQuery);
                   setSelectedDeviceId('');
                   setWriteDenied(false);
-                  setDevicePickerOpen(Boolean(nextQuery.trim()));
+                  setDevicePickerOpen(true);
                   setActiveDeviceOption(-1);
                 }}
                 onKeyDown={handleDeviceSearchKeyDown}
