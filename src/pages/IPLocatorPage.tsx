@@ -145,6 +145,8 @@ interface LocateResult {
   target_ip: string;
   ip?: string;
   query_type?: 'ip' | 'mac';
+  queried_mac_display?: string;
+  related_ips?: Array<{ ip: string; source?: string; device_name?: string; interface_name?: string; vlan?: string; observed_at?: string }>;
   found: boolean;
   mac: string | null;
   mac_display: string | null;
@@ -1363,6 +1365,26 @@ ${rep.repair_commands}
           throw new Error(typeof payload?.detail === 'string' ? payload.detail : `HTTP ${resp.status}`);
         }
         data = payload as LocateResult;
+        // MAC 快照只有 ARP/FDB 缓存，信息有限：若能反查到 IP，则用该 IP 走完整定位链路补全
+        const hasAccess = (data.locations || []).some(l => !l.is_uplink);
+        if (data.found && data.ip && !hasAccess) {
+          try {
+            const full = await locateIpWithRun<LocateResult>({
+              ip: data.ip,
+              token,
+              forceRefresh,
+              onStage: setLocateStage,
+            });
+            data = {
+              ...full,
+              query_type: 'mac',
+              related_ips: data.related_ips,
+              queried_mac_display: data.mac_display,
+            } as LocateResult;
+          } catch {
+            /* 完整链路失败时保留 MAC 快照结果 */
+          }
+        }
       } else {
         data = await locateIpWithRun<LocateResult>({
           ip: trimmed,
@@ -1931,6 +1953,27 @@ ${rep.repair_commands}
               <span className="font-mono">
                 {result.location.peer_relationship.peer_hostname} ({result.location.peer_relationship.peer_interface} · {result.location.peer_relationship.peer_ip})
               </span>
+            </div>
+          )}
+
+          {result.query_type === 'mac' && (result.related_ips?.length ?? 0) > 0 && (
+            <div className="rounded-xl border border-cyan-200/60 bg-cyan-50/40 dark:bg-cyan-500/[0.04] px-4 py-3 text-xs">
+              <p className="font-semibold text-cyan-800 dark:text-cyan-300">
+                {zh ? `MAC ${result.queried_mac_display || result.mac_display || ''} 关联 ${result.related_ips!.length} 个 IP（按 ARP 反查）` : `MAC ${result.queried_mac_display || result.mac_display || ''} maps to ${result.related_ips!.length} IP(s)`}
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {result.related_ips!.map(item => (
+                  <button
+                    key={`${item.ip}-${item.device_name}-${item.vlan}`}
+                    type="button"
+                    onClick={() => void doLocate(item.ip)}
+                    className="px-2.5 py-1 rounded-md border border-cyan-200 bg-white/80 dark:bg-white/[0.06] hover:bg-cyan-50 font-mono"
+                    title={`${item.device_name || ''} ${item.interface_name || ''} VLAN ${item.vlan || '-'}`}
+                  >
+                    {item.ip} · {item.device_name || '-'} {item.interface_name ? `/ ${item.interface_name}` : ''}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
