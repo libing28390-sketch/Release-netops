@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { ArrowUpRight, Globe, Layers, Network, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ArrowUpRight, Globe, Layers, Network, Plus, RefreshCw, Search, ShieldCheck, Sparkles, Trash2 } from 'lucide-react';
 import PageHero from '../../components/PageHero';
 
 interface Props {
@@ -123,6 +123,8 @@ const IPAMNativeModelsTab: React.FC<Props> = ({ language }) => {
   const [aggregates, setAggregates] = useState<AggregateItem[]>([]);
   const [asns, setAsns] = useState<ASNItem[]>([]);
   const [rirForm, setRirForm] = useState({ name: '', is_private: false, description: '' });
+  const [seedingRirs, setSeedingRirs] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const [aggForm, setAggForm] = useState({ prefix: '', rir_id: '', date_added: '', description: '' });
   const [asnForm, setAsnForm] = useState({ asn: '', rir_id: '', site_id: '', description: '' });
 
@@ -307,6 +309,33 @@ const IPAMNativeModelsTab: React.FC<Props> = ({ language }) => {
     }
   };
 
+  const handleSeedDefaultRirs = async () => {
+    setError('');
+    setNotice('');
+    setSeedingRirs(true);
+    try {
+      const defaults = [
+        { name: 'RFC1918', is_private: true, description: zh ? '私有内网地址空间 (10/8, 172.16/12, 192.168/16)' : 'Private IPv4 space (RFC1918)' },
+        { name: 'APNIC', is_private: false, description: zh ? '亚太地区公网 IP 与 ASN 注册机构' : 'Asia-Pacific public IP & ASN registry' },
+      ];
+      let created = 0;
+      for (const item of defaults) {
+        const res = await fetch('/api/ipam/rirs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify(item),
+        });
+        if (res.ok) created += 1;
+      }
+      setNotice(zh ? `已预置 ${created} 个常用注册机构（RFC1918 / APNIC）` : `Seeded ${created} default RIRs (RFC1918 / APNIC)`);
+      await loadAll();
+    } catch (err: any) {
+      setError(err?.message || (zh ? '预置 RIR 失败' : 'Failed to seed RIRs'));
+    } finally {
+      setSeedingRirs(false);
+    }
+  };
+
   const handleDeleteRir = async (id: string) => {
     setError('');
     const res = await fetch(`/api/ipam/rirs/${encodeURIComponent(id)}`, {
@@ -407,6 +436,28 @@ const IPAMNativeModelsTab: React.FC<Props> = ({ language }) => {
     'rounded-xl border border-slate-200/90 dark:border-zinc-700 bg-slate-50/70 dark:bg-zinc-800/80 px-3 py-2 text-xs text-slate-800 dark:text-zinc-100 placeholder:text-slate-400 outline-none transition focus:border-cyan-500 focus:bg-white dark:focus:bg-zinc-800';
   const selectCls =
     'rounded-xl border border-slate-200/90 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-xs font-medium text-slate-700 dark:text-zinc-200 outline-none transition focus:border-cyan-500 cursor-pointer';
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const filteredVlanGroups = useMemo(() => (
+    normalizedQuery
+      ? vlanGroups.filter((g) => `${g.name} ${g.description} ${g.min_vid}-${g.max_vid} ${siteLabel(g.scope_id)}`.toLowerCase().includes(normalizedQuery))
+      : vlanGroups
+  ), [vlanGroups, normalizedQuery, sites]);
+  const filteredRouteTargets = useMemo(() => (
+    normalizedQuery
+      ? routeTargets.filter((rt) => `${rt.name} ${rt.description}`.toLowerCase().includes(normalizedQuery))
+      : routeTargets
+  ), [routeTargets, normalizedQuery]);
+  const filteredAggregates = useMemo(() => (
+    normalizedQuery
+      ? aggregates.filter((a) => `${a.prefix} ${a.rir_name} ${a.description || ''}`.toLowerCase().includes(normalizedQuery))
+      : aggregates
+  ), [aggregates, normalizedQuery]);
+  const filteredAsns = useMemo(() => (
+    normalizedQuery
+      ? asns.filter((n) => `as${n.asn} ${n.rir_name} ${n.site_name || ''}`.toLowerCase().includes(normalizedQuery))
+      : asns
+  ), [asns, normalizedQuery]);
+
   const primaryBtnCls =
     'inline-flex items-center justify-center gap-1.5 rounded-xl bg-cyan-600 px-3.5 py-2 text-xs font-semibold text-white shadow-2xs transition hover:bg-cyan-700 disabled:opacity-50 cursor-pointer';
   const cardCls =
@@ -416,8 +467,8 @@ const IPAMNativeModelsTab: React.FC<Props> = ({ language }) => {
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-auto bg-slate-50/60 dark:bg-zinc-950 p-5 md:p-6">
       <PageHero
         icon={Layers}
-        title={zh ? '扩展 IPAM 台账' : 'Extended IPAM Models'}
-        subtitle={zh ? '管理 VLAN 分组（作用域与 VID 区间）、BGP/VRF Route Target 策略以及 RIR / Aggregate / ASN 顶层地址归属。' : 'Manage VLAN Groups, VRF Route Target import/export policies, and RIR / Aggregate / ASN ownership.'}
+        title={zh ? '扩展台账（VLAN 分组 / RT / 地址归属）' : 'Extended IPAM Models'}
+        subtitle={zh ? '按站点规划 VLAN 号段分组、维护 MPLS/BGP 路由目标 (RT) 策略，以及登记公私网顶层地址块与自治系统号 (ASN)。' : 'Organize VLAN ranges by site, manage BGP/MPLS Route Target policies, and register top-level IP blocks and ASNs.'}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <a
@@ -555,9 +606,16 @@ const IPAMNativeModelsTab: React.FC<Props> = ({ language }) => {
             {zh ? `RIR / Aggregate / ASN (${rirs.length}/${aggregates.length}/${asns.length})` : `RIR / Aggregate / ASN (${rirs.length}/${aggregates.length}/${asns.length})`}
           </button>
         </div>
-        <p className="text-[11px] text-slate-400 dark:text-zinc-500">
-          {zh ? '注：具体 VLAN / VRF 实体在 CMDB 基础数据中维护，本页负责上层分组、RT 策略与顶层地址归属。' : 'Note: Concrete VLAN/VRF records live in CMDB; this page manages groups, RT policies, and top-level address ownership.'}
-        </p>
+        <div className="relative min-w-[220px] flex-1 sm:max-w-xs">
+          <Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={zh ? '搜索名称、CIDR、RT、ASN 或说明…' : 'Filter by name, CIDR, RT, ASN…'}
+            className={`w-full pl-8 ${inputCls}`}
+          />
+        </div>
       </div>
 
       {error && (
@@ -638,7 +696,7 @@ const IPAMNativeModelsTab: React.FC<Props> = ({ language }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-zinc-800/80">
-                {vlanGroups.map((g) => (
+                {filteredVlanGroups.map((g) => (
                   <tr key={g.id} className="transition-colors hover:bg-slate-50/80 dark:hover:bg-zinc-800/40">
                     <td className="px-4 py-3 font-semibold text-slate-900 dark:text-zinc-100">{g.name}</td>
                     <td className="px-4 py-3">
@@ -665,11 +723,11 @@ const IPAMNativeModelsTab: React.FC<Props> = ({ language }) => {
                     </td>
                   </tr>
                 ))}
-                {!vlanGroups.length && (
+                {!filteredVlanGroups.length && (
                   <tr>
                     <td colSpan={6} className="px-4 py-12 text-center text-slate-400 dark:text-zinc-500">
                       <Layers size={24} className="mx-auto mb-2 opacity-40" />
-                      <p className="font-medium">{zh ? '暂无 VLAN 分组' : 'No VLAN groups yet'}</p>
+                      <p className="font-medium">{normalizedQuery ? (zh ? '未找到匹配的 VLAN 分组' : 'No matching VLAN groups') : (zh ? '暂无 VLAN 分组' : 'No VLAN groups yet')}</p>
                     </td>
                   </tr>
                 )}
@@ -717,7 +775,7 @@ const IPAMNativeModelsTab: React.FC<Props> = ({ language }) => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-zinc-800/80">
-                  {routeTargets.map((rt) => (
+                  {filteredRouteTargets.map((rt) => (
                     <tr key={rt.id} className="transition-colors hover:bg-slate-50/80 dark:hover:bg-zinc-800/40">
                       <td className="px-3.5 py-2.5">
                         <span className="inline-flex rounded-lg border border-indigo-200/80 dark:border-indigo-900/60 bg-indigo-50/70 dark:bg-indigo-950/40 px-2 py-0.5 font-mono font-semibold text-indigo-700 dark:text-indigo-300">
@@ -737,10 +795,10 @@ const IPAMNativeModelsTab: React.FC<Props> = ({ language }) => {
                       </td>
                     </tr>
                   ))}
-                  {!routeTargets.length && (
+                  {!filteredRouteTargets.length && (
                     <tr>
                       <td colSpan={3} className="px-3.5 py-8 text-center text-slate-400 dark:text-zinc-500">
-                        {zh ? '暂无 Route Target' : 'No Route Targets yet'}
+                        {normalizedQuery ? (zh ? '未找到匹配的 Route Target' : 'No matching Route Targets') : (zh ? '暂无 Route Target' : 'No Route Targets yet')}
                       </td>
                     </tr>
                   )}
@@ -768,7 +826,7 @@ const IPAMNativeModelsTab: React.FC<Props> = ({ language }) => {
                   <div className="rounded-xl border border-slate-200/80 dark:border-zinc-800 bg-slate-50/60 dark:bg-zinc-800/40 p-3.5">
                     <div className="mb-2.5 text-xs font-bold text-emerald-700 dark:text-emerald-400">Import Targets</div>
                     <div className="space-y-2">
-                      {routeTargets.map((rt) => (
+                      {filteredRouteTargets.map((rt) => (
                         <label key={`imp-${rt.id}`} className="flex items-center gap-2 text-xs font-mono text-slate-700 dark:text-zinc-200 cursor-pointer">
                           <input
                             type="checkbox"
@@ -784,7 +842,7 @@ const IPAMNativeModelsTab: React.FC<Props> = ({ language }) => {
                   <div className="rounded-xl border border-slate-200/80 dark:border-zinc-800 bg-slate-50/60 dark:bg-zinc-800/40 p-3.5">
                     <div className="mb-2.5 text-xs font-bold text-cyan-700 dark:text-cyan-400">Export Targets</div>
                     <div className="space-y-2">
-                      {routeTargets.map((rt) => (
+                      {filteredRouteTargets.map((rt) => (
                         <label key={`exp-${rt.id}`} className="flex items-center gap-2 text-xs font-mono text-slate-700 dark:text-zinc-200 cursor-pointer">
                           <input
                             type="checkbox"
@@ -868,7 +926,20 @@ const IPAMNativeModelsTab: React.FC<Props> = ({ language }) => {
                 </div>
               ))}
               {!rirs.length && (
-                <p className="text-xs text-slate-400 dark:text-zinc-500">{zh ? '尚未登记 RIR，请先新增 RIR（如 RFC1918 或 APNIC）后再登记聚合地址块与 ASN。' : 'No RIRs yet. Add an RIR first before creating Aggregates or ASNs.'}</p>
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-slate-200 dark:border-zinc-700 bg-slate-50/70 dark:bg-zinc-800/40 px-3.5 py-2.5 w-full">
+                  <p className="text-xs text-slate-500 dark:text-zinc-400">
+                    {zh ? '尚未登记地址注册机构（RIR），登记后即可创建顶层地址块与 ASN。' : 'No RIRs yet. Add an RIR before creating Aggregates or ASNs.'}
+                  </p>
+                  <button
+                    type="button"
+                    disabled={seedingRirs}
+                    onClick={() => void handleSeedDefaultRirs()}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-800 hover:bg-cyan-100 disabled:opacity-50 cursor-pointer"
+                  >
+                    <Sparkles size={13} />
+                    {seedingRirs ? (zh ? '预置中…' : 'Seeding…') : (zh ? '一键预置常用 RIR（RFC1918 + APNIC）' : 'Seed Default RIRs (RFC1918 + APNIC)')}
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -917,7 +988,7 @@ const IPAMNativeModelsTab: React.FC<Props> = ({ language }) => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-zinc-800/80">
-                    {aggregates.map((a) => (
+                    {filteredAggregates.map((a) => (
                       <tr key={a.id} className="transition-colors hover:bg-slate-50/80 dark:hover:bg-zinc-800/40">
                         <td className="px-3.5 py-2.5">
                           <span className="inline-flex rounded-lg border border-emerald-200/80 dark:border-emerald-900/60 bg-emerald-50/70 dark:bg-emerald-950/40 px-2 py-0.5 font-mono font-semibold text-emerald-700 dark:text-emerald-300">
@@ -933,8 +1004,8 @@ const IPAMNativeModelsTab: React.FC<Props> = ({ language }) => {
                         </td>
                       </tr>
                     ))}
-                    {!aggregates.length && (
-                      <tr><td colSpan={4} className="px-3.5 py-8 text-center text-slate-400 dark:text-zinc-500">{zh ? '暂无顶层地址块' : 'No aggregates yet'}</td></tr>
+                    {!filteredAggregates.length && (
+                      <tr><td colSpan={4} className="px-3.5 py-8 text-center text-slate-400 dark:text-zinc-500">{normalizedQuery ? (zh ? '未找到匹配的顶层地址块' : 'No matching aggregates') : (zh ? '暂无顶层地址块' : 'No aggregates yet')}</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -989,7 +1060,7 @@ const IPAMNativeModelsTab: React.FC<Props> = ({ language }) => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-zinc-800/80">
-                    {asns.map((n) => (
+                    {filteredAsns.map((n) => (
                       <tr key={n.id} className="transition-colors hover:bg-slate-50/80 dark:hover:bg-zinc-800/40">
                         <td className="px-3.5 py-2.5">
                           <span className="inline-flex rounded-lg border border-amber-200/80 dark:border-amber-900/60 bg-amber-50/70 dark:bg-amber-950/40 px-2 py-0.5 font-mono font-semibold text-amber-700 dark:text-amber-300">
@@ -1005,8 +1076,8 @@ const IPAMNativeModelsTab: React.FC<Props> = ({ language }) => {
                         </td>
                       </tr>
                     ))}
-                    {!asns.length && (
-                      <tr><td colSpan={4} className="px-3.5 py-8 text-center text-slate-400 dark:text-zinc-500">{zh ? '暂无 ASN 记录' : 'No ASNs yet'}</td></tr>
+                    {!filteredAsns.length && (
+                      <tr><td colSpan={4} className="px-3.5 py-8 text-center text-slate-400 dark:text-zinc-500">{normalizedQuery ? (zh ? '未找到匹配的 ASN 记录' : 'No matching ASNs') : (zh ? '暂无 ASN 记录' : 'No ASNs yet')}</td></tr>
                     )}
                   </tbody>
                 </table>
