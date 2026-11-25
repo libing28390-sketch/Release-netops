@@ -1,15 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Clock3, Network, RefreshCw, ShieldCheck } from 'lucide-react';
+import type { DevicePhysicalPortProfile } from '../types';
 import {
   DeviceTelemetryLoadResult,
   PhysicalInterfaceItem,
   loadDeviceTelemetry,
+  portProfileToTelemetryResult,
 } from '../adapters/snmpTelemetry';
 
 interface DevicePortMatrixProps {
   deviceId: string;
   deviceName: string;
   deviceRole?: string;
+  fallbackPortProfile?: DevicePhysicalPortProfile | null;
   zh: boolean;
 }
 
@@ -37,6 +40,7 @@ const formatSampleTime = (value: string | undefined, zh: boolean) => {
 export const DevicePortMatrix: React.FC<DevicePortMatrixProps> = ({
   deviceId,
   deviceName,
+  fallbackPortProfile,
   zh,
 }) => {
   const [result, setResult] = useState<DeviceTelemetryLoadResult | null>(null);
@@ -45,20 +49,37 @@ export const DevicePortMatrix: React.FC<DevicePortMatrixProps> = ({
 
   useEffect(() => {
     let cancelled = false;
-    setResult(null);
-    setSelectedPortName(null);
+    const hasInstantFallback = Boolean(fallbackPortProfile && fallbackPortProfile.ports.length > 0);
+    if (hasInstantFallback && fallbackPortProfile) {
+      // Paint already-loaded CMDB+SNMP ports immediately (0ms, zero loading spinner)
+      // while live 15-minute IF-MIB telemetry refreshes silently in the background.
+      const instantSnapshot = portProfileToTelemetryResult(deviceId, deviceName, fallbackPortProfile);
+      setResult({ status: 'ready', data: instantSnapshot });
+      const firstUp = instantSnapshot.interfaces.find(item => item.status === 'up');
+      setSelectedPortName((firstUp || instantSnapshot.interfaces[0])?.name || null);
+    } else {
+      setResult(null);
+      setSelectedPortName(null);
+    }
+
     loadDeviceTelemetry(deviceName, deviceId).then(next => {
       if (cancelled) return;
-      setResult(next);
       if (next.status === 'ready') {
+        setResult(next);
         const firstUp = next.data.interfaces.find(item => item.status === 'up');
-        setSelectedPortName((firstUp || next.data.interfaces[0])?.name || null);
+        setSelectedPortName(prev => prev || (firstUp || next.data.interfaces[0])?.name || null);
+        return;
       }
+      if (hasInstantFallback) {
+        // Keep the already-painted CMDB+SNMP snapshot instead of downgrading to empty/error
+        return;
+      }
+      setResult(next);
     });
     return () => {
       cancelled = true;
     };
-  }, [deviceId, deviceName, reloadKey]);
+  }, [deviceId, deviceName, fallbackPortProfile, reloadKey]);
 
   const telemetry = result?.status === 'ready' ? result.data : null;
   const interfaces = telemetry?.interfaces || [];
@@ -80,18 +101,28 @@ export const DevicePortMatrix: React.FC<DevicePortMatrixProps> = ({
             </h4>
           </div>
           <p className="mt-1 text-[10px] text-slate-500">
-            {zh ? '数据源：监控服务 IF-MIB；不生成模拟端口或流量' : 'Source: monitoring IF-MIB; no simulated ports or traffic'}
+            {telemetry?.source === 'CMDB+SNMP'
+              ? (zh ? '数据源：CMDB + SNMP 同步快照（零新增采集压力，真实端口与 UP/DOWN 状态）' : 'Source: synced CMDB + SNMP snapshot (zero extra polling; real ports & oper status)')
+              : (zh ? '数据源：监控服务 IF-MIB；不生成模拟端口或流量' : 'Source: monitoring IF-MIB; no simulated ports or traffic')}
           </p>
         </div>
         {telemetry && (
-          <div className="text-right text-[10px] text-slate-400">
-            <div className="flex items-center justify-end gap-1">
-              <Clock3 size={10} />
-              {formatSampleTime(telemetry.sampledAt, zh)}
-            </div>
-            <span className={telemetry.isStale ? 'text-amber-400' : 'text-emerald-400'}>
-              {telemetry.isStale ? (zh ? '数据已过期' : 'Stale') : (zh ? '数据新鲜' : 'Fresh')}
-            </span>
+          <div className="shrink-0 text-right text-[10px] text-slate-400 whitespace-nowrap">
+            {telemetry.source === 'CMDB+SNMP' ? (
+              <span className="inline-flex items-center rounded border border-cyan-500/35 bg-cyan-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-cyan-300">
+                {zh ? 'CMDB+SNMP 同步' : 'CMDB+SNMP sync'}
+              </span>
+            ) : (
+              <>
+                <div className="flex items-center justify-end gap-1">
+                  <Clock3 size={10} />
+                  {formatSampleTime(telemetry.sampledAt, zh)}
+                </div>
+                <span className={telemetry.isStale ? 'text-amber-400' : 'text-emerald-400'}>
+                  {telemetry.isStale ? (zh ? '数据已过期' : 'Stale') : (zh ? '数据新鲜' : 'Fresh')}
+                </span>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -135,10 +166,10 @@ export const DevicePortMatrix: React.FC<DevicePortMatrixProps> = ({
             </div>
           </div>
 
-          <div className="mb-3 rounded-lg border border-slate-800 bg-slate-950/80 p-2">
+          <div className="mb-3 overflow-x-auto rounded-lg border border-slate-800 bg-slate-950/80 p-2">
             <div className="flex flex-col gap-1.5">
               {[topRow, bottomRow].map((row, rowIndex) => (
-                <div key={rowIndex} className="flex gap-1">
+                <div key={rowIndex} className="flex gap-0.5">
                   {row.map(port => {
                     const selected = selectedPort?.name === port.name;
                     const up = port.status === 'up';
@@ -147,7 +178,7 @@ export const DevicePortMatrix: React.FC<DevicePortMatrixProps> = ({
                         key={port.name}
                         type="button"
                         onClick={() => setSelectedPortName(port.name)}
-                        className={`flex h-6 min-w-5 flex-1 items-center justify-center rounded-[3px] border transition-all ${
+                        className={`flex h-5 min-w-[10px] flex-1 items-center justify-center rounded-[3px] border transition-all ${
                           selected
                             ? 'z-10 scale-105 border-cyan-400 bg-cyan-950/80 ring-2 ring-cyan-500/50'
                             : up

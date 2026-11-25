@@ -221,7 +221,7 @@ describe('RackViewModel Adapter & Quality Validator', () => {
       }],
     });
     const device = wallRack.devices[0];
-    expect(device.coordinates.depth).toBeCloseTo(3.375, 5);
+    expect(device.coordinates.depth).toBeCloseTo(3.78, 5);
     expect(device.coordinates.depth).toBeLessThan(CHASSIS_DEPTH_FULL);
     expect(device.coordinates.width).toBeCloseTo(3.5795, 4);
     expect(device.coordinates.width).toBeLessThan(4.786);

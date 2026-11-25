@@ -61,6 +61,7 @@ const NotificationChannelSettingsPage = lazy(() => import('../pages/Notification
 const SnmpWalkPage = lazy(() => import('../pages/SnmpWalkPage'));
 const SnmpMetricTemplatesTab = lazy(() => import('../pages/SnmpMetricTemplatesTab'));
 const RackManagementTab = lazy(() => import('../pages/RackManagementTab'));
+const OdfManagementTab = lazy(() => import('../pages/OdfManagement'));
 const CmdbManagementTab = lazy(() => import('../pages/CmdbManagementTab'));
 const CmdbAssetManagementTab = lazy(() => import('../pages/CmdbAssetManagementTab'));
 const CmdbResourceSearchTab = lazy(() => import('../pages/CmdbResourceSearchTab'));
@@ -868,6 +869,8 @@ const AppMainContent: React.FC = () => {
         <Suspense fallback={lazyPanelFallback}>
           {cmdbPage === 'racks' ? (
             <RackManagementTab language={language} t={t} />
+          ) : cmdbPage === 'odf' ? (
+            <OdfManagementTab language={language} />
           ) : cmdbPage === 'assets' ? (
             <CmdbAssetManagementTab language={language} currentUser={currentUser} />
           ) : cmdbPage === 'resources' ? (

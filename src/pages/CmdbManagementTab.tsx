@@ -3890,9 +3890,61 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         subtitle={tab === 'credentials'
           ? (zh ? '维护设备登录与采集凭据，查看账号角色和设备绑定。' : 'Manage device login and collection credentials, roles, and device bindings.')
           : (zh ? '管理设备、接口、凭据、站点、VRF 与 VLAN 等核心配置数据。' : 'Manage devices, interfaces, credentials, sites, VRFs, and VLANs.')}
+        actions={tab === 'credentials' ? (
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <input
+              ref={credentialImportInputRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={event => { void handleCredentialImportFile(event.target.files?.[0]); }}
+            />
+            <div className="inline-flex items-center gap-1.5" role="group" aria-label={zh ? '凭据导入导出' : 'Credential import and export'}>
+              <button
+                type="button"
+                disabled={credentialTemplateDownloading}
+                onClick={downloadCredentialImportTemplate}
+                title={zh ? '下载凭据导入模板' : 'Download credential import template'}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition-colors hover:border-blue-300 hover:bg-blue-50/60 hover:text-blue-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-500/50"
+              >
+                <FileSpreadsheet size={13} className={credentialTemplateDownloading ? 'animate-pulse text-blue-500' : 'text-slate-400'} />
+                {zh ? '模板' : 'Template'}
+              </button>
+              <button
+                ref={credentialImportTriggerRef}
+                type="button"
+                onClick={() => credentialImportInputRef.current?.click()}
+                title={zh ? '批量上传凭据' : 'Upload credentials'}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition-colors hover:border-blue-300 hover:bg-blue-50/60 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-500/50"
+              >
+                <Upload size={13} className="text-slate-400" />
+                {zh ? '导入' : 'Import'}
+              </button>
+              <button
+                type="button"
+                disabled={credentialExporting}
+                onClick={exportCredentialInventory}
+                title={zh ? '导出凭据清单（密码为空）' : 'Export credentials (passwords blank)'}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition-colors hover:border-blue-300 hover:bg-blue-50/60 hover:text-blue-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-500/50"
+              >
+                <Download size={13} className={credentialExporting ? 'animate-pulse text-blue-500' : 'text-slate-400'} />
+                {zh ? '导出' : 'Export'}
+              </button>
+            </div>
+            {!isReadOnlyTab && (
+              <button
+                onClick={openCreate}
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 px-4 text-xs font-bold text-white shadow-sm transition-all hover:from-cyan-600 hover:to-blue-700"
+              >
+                <Plus size={14} />
+                {zh ? '新建凭据' : 'New Credential'}
+              </button>
+            )}
+          </div>
+        ) : undefined}
         extras={
           <div className="flex flex-wrap items-center justify-between gap-3">
-            {!isReadOnlyTab ? (
+            {!isReadOnlyTab && tab !== 'credentials' ? (
               <button
                 onClick={openCreate}
                 className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md bg-blue-600 px-4 text-sm font-medium text-white transition-colors hover:bg-blue-700"
@@ -3928,69 +3980,27 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
               </>
             )}
             {tab === 'credentials' && (
-              <>
+              <div className="relative w-64 shrink-0 xl:w-72">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
                 <input
-                  ref={credentialImportInputRef}
-                  type="file"
-                  accept=".xlsx,.xls,.csv"
-                  className="hidden"
-                  onChange={event => { void handleCredentialImportFile(event.target.files?.[0]); }}
+                  type="text"
+                  value={search}
+                  onChange={event => setSearch(event.target.value)}
+                  placeholder={zh ? '搜索凭据名称、用户名或角色…' : 'Search credential name, username or role…'}
+                  aria-label={zh ? '搜索凭据名称、用户名或角色' : 'Search credential name, username or role'}
+                  className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-8 text-xs text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
                 />
-                <div className="inline-flex items-center gap-1.5" role="group" aria-label={zh ? '凭据导入导出' : 'Credential import and export'}>
+                {search && (
                   <button
                     type="button"
-                    disabled={credentialTemplateDownloading}
-                    onClick={downloadCredentialImportTemplate}
-                    title={zh ? '下载凭据导入模板' : 'Download credential import template'}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition-colors hover:border-blue-300 hover:bg-blue-50/60 hover:text-blue-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-500/50"
+                    onClick={() => setSearch('')}
+                    aria-label={zh ? '清除搜索' : 'Clear search'}
+                    className="search-clear-button absolute right-2.5 top-1/2 -translate-y-1/2"
                   >
-                    <FileSpreadsheet size={13} className={credentialTemplateDownloading ? 'animate-pulse text-blue-500' : 'text-slate-400'} />
-                    {zh ? '模板' : 'Template'}
+                    <X size={13} />
                   </button>
-                  <button
-                    ref={credentialImportTriggerRef}
-                    type="button"
-                    onClick={() => credentialImportInputRef.current?.click()}
-                    title={zh ? '批量上传凭据' : 'Upload credentials'}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition-colors hover:border-blue-300 hover:bg-blue-50/60 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-500/50"
-                  >
-                    <Upload size={13} className="text-slate-400" />
-                    {zh ? '导入' : 'Import'}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={credentialExporting}
-                    onClick={exportCredentialInventory}
-                    title={zh ? '导出凭据清单（密码为空）' : 'Export credentials (passwords blank)'}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition-colors hover:border-blue-300 hover:bg-blue-50/60 hover:text-blue-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-blue-500/50"
-                  >
-                    <Download size={13} className={credentialExporting ? 'animate-pulse text-blue-500' : 'text-slate-400'} />
-                    {zh ? '导出' : 'Export'}
-                  </button>
-                </div>
-                <span className="mx-1 h-6 w-px bg-slate-200" aria-hidden="true" />
-                <div className="relative w-52 shrink-0 xl:w-60">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="text"
-                    value={search}
-                    onChange={event => setSearch(event.target.value)}
-                    placeholder={zh ? '搜索凭据名称、用户名或角色…' : 'Search credential name, username or role…'}
-                    aria-label={zh ? '搜索凭据名称、用户名或角色' : 'Search credential name, username or role'}
-                    className="h-9 w-full rounded-md border border-slate-200 bg-white pl-9 pr-8 text-xs text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-                  />
-                  {search && (
-                    <button
-                      type="button"
-                      onClick={() => setSearch('')}
-                      aria-label={zh ? '清除搜索' : 'Clear search'}
-                      className="search-clear-button absolute right-2.5 top-1/2 -translate-y-1/2"
-                    >
-                      <X size={13} />
-                    </button>
-                  )}
-                </div>
-              </>
+                )}
+              </div>
             )}
             {tab !== 'interfaces' && tab !== 'credentials' && (
               <>
@@ -4499,7 +4509,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
             </section>
           </div>
         ) : (
-        <div className={tab === 'credentials' ? 'mx-auto w-full max-w-[1480px] space-y-4' : ''}>
+        <div className={tab === 'credentials' ? 'w-full space-y-4' : ''}>
         {tab === 'credentials' && (
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {[

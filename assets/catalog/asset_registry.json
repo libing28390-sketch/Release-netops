@@ -14,10 +14,10 @@
     "device_type": "switch",
     "deployment_domain": "园区网",
     "height_u": 1,
-    "width_mm": null,
-    "depth_mm": null,
-    "height_mm": null,
-    "dimension_status": "pending_verification",
+    "width_mm": 442.0,
+    "depth_mm": 420.0,
+    "height_mm": 43.6,
+    "dimension_status": "verified_official",
     "front_orientation": "front",
     "lod": [
       "LOD0",
@@ -33,8 +33,8 @@
     ],
     "data_confidence": "verified_official",
     "version": "1.0.0",
-    "status": "draft",
-    "render_strategy": "procedural_until_glb_approved"
+    "status": "approved",
+    "render_strategy": "glb"
   },
   {
     "asset_key": "huawei_s6730_h_v2_family",
@@ -49,10 +49,10 @@
     "device_type": "switch",
     "deployment_domain": "园区网",
     "height_u": 1,
-    "width_mm": null,
-    "depth_mm": null,
-    "height_mm": null,
-    "dimension_status": "pending_verification",
+    "width_mm": 442.0,
+    "depth_mm": 420.0,
+    "height_mm": 43.6,
+    "dimension_status": "verified_official",
     "front_orientation": "front",
     "lod": [
       "LOD0",
@@ -68,8 +68,8 @@
     ],
     "data_confidence": "verified_official",
     "version": "1.0.0",
-    "status": "draft",
-    "render_strategy": "procedural_until_glb_approved"
+    "status": "approved",
+    "render_strategy": "glb"
   },
   {
     "asset_key": "huawei_ce6800_family",
@@ -90,10 +90,10 @@
     "device_type": "switch",
     "deployment_domain": "数据中心",
     "height_u": 1,
-    "width_mm": null,
-    "depth_mm": null,
-    "height_mm": null,
-    "dimension_status": "pending_verification",
+    "width_mm": 442.0,
+    "depth_mm": 420.0,
+    "height_mm": 43.6,
+    "dimension_status": "verified_official",
     "front_orientation": "front",
     "lod": [
       "LOD0",
@@ -109,8 +109,8 @@
     ],
     "data_confidence": "verified_official",
     "version": "1.0.0",
-    "status": "draft",
-    "render_strategy": "procedural_until_glb_approved"
+    "status": "approved",
+    "render_strategy": "glb"
   },
   {
     "asset_key": "h3c_s5130s_ei_family",
@@ -126,10 +126,10 @@
     "device_type": "switch",
     "deployment_domain": "园区网",
     "height_u": 1,
-    "width_mm": null,
-    "depth_mm": null,
+    "width_mm": 440.0,
+    "depth_mm": 360.0,
     "height_mm": 43.6,
-    "dimension_status": "pending_verification",
+    "dimension_status": "verified_official",
     "front_orientation": "front",
     "lod": [
       "LOD0",
@@ -145,8 +145,8 @@
     ],
     "data_confidence": "verified_official",
     "version": "1.0.0",
-    "status": "draft",
-    "render_strategy": "procedural_until_glb_approved"
+    "status": "approved",
+    "render_strategy": "glb"
   },
   {
     "asset_key": "h3c_s5560x_ei_family",
@@ -162,10 +162,10 @@
     "device_type": "switch",
     "deployment_domain": "园区网",
     "height_u": 1,
-    "width_mm": 440,
-    "depth_mm": null,
+    "width_mm": 440.0,
+    "depth_mm": 400.0,
     "height_mm": 43.6,
-    "dimension_status": "pending_verification",
+    "dimension_status": "verified_official",
     "front_orientation": "front",
     "lod": [
       "LOD0",
@@ -181,8 +181,8 @@
     ],
     "data_confidence": "verified_official",
     "version": "1.0.0",
-    "status": "draft",
-    "render_strategy": "procedural_until_glb_approved"
+    "status": "approved",
+    "render_strategy": "glb"
   },
   {
     "asset_key": "h3c_s6850_family",
@@ -198,10 +198,10 @@
     "device_type": "switch",
     "deployment_domain": "数据中心",
     "height_u": 1,
-    "width_mm": null,
-    "depth_mm": null,
-    "height_mm": null,
-    "dimension_status": "pending_verification",
+    "width_mm": 440.0,
+    "depth_mm": 460.0,
+    "height_mm": 43.6,
+    "dimension_status": "verified_official",
     "front_orientation": "front",
     "lod": [
       "LOD0",
@@ -217,8 +217,8 @@
     ],
     "data_confidence": "verified_official",
     "version": "1.0.0",
-    "status": "draft",
-    "render_strategy": "procedural_until_glb_approved"
+    "status": "approved",
+    "render_strategy": "glb"
   },
   {
     "asset_key": "h3c_s6805_family",
@@ -234,10 +234,10 @@
     "device_type": "switch",
     "deployment_domain": "数据中心",
     "height_u": 1,
-    "width_mm": null,
-    "depth_mm": null,
-    "height_mm": null,
-    "dimension_status": "pending_verification",
+    "width_mm": 440.0,
+    "depth_mm": 460.0,
+    "height_mm": 43.6,
+    "dimension_status": "verified_official",
     "front_orientation": "front",
     "lod": [
       "LOD0",
@@ -253,19 +253,23 @@
     ],
     "data_confidence": "verified_official",
     "version": "1.0.0",
-    "status": "draft",
-    "render_strategy": "procedural_until_glb_approved"
+    "status": "approved",
+    "render_strategy": "glb"
   },
   {
     "asset_key": "h3c_s6800_family",
     "vendor": "h3c",
     "family": "S6800",
     "exact_models": [
+      "LS-6800-54QF",
       "S6800",
+      "S6800-32Q",
       "S6800-54QF",
       "S6800-54QT",
-      "S6800-32Q",
-      "LS-6800-54QF"
+      "S6850",
+      "S6850-54HF",
+      "S6850-56HF",
+      "S6860"
     ],
     "device_type": "switch",
     "deployment_domain": "数据中心",
@@ -311,10 +315,10 @@
     "device_type": "switch",
     "deployment_domain": "园区网",
     "height_u": 1,
-    "width_mm": null,
-    "depth_mm": null,
-    "height_mm": null,
-    "dimension_status": "pending_verification",
+    "width_mm": 442.0,
+    "depth_mm": 420.0,
+    "height_mm": 43.6,
+    "dimension_status": "verified_official",
     "front_orientation": "front",
     "lod": [
       "LOD0",
@@ -334,8 +338,8 @@
     ],
     "data_confidence": "verified_official",
     "version": "1.0.0",
-    "status": "draft",
-    "render_strategy": "procedural_until_glb_approved"
+    "status": "approved",
+    "render_strategy": "glb"
   },
   {
     "asset_key": "ruijie_dc_family",
@@ -355,11 +359,11 @@
     ],
     "device_type": "switch",
     "deployment_domain": "数据中心",
-    "height_u": 4,
-    "width_mm": null,
-    "depth_mm": null,
-    "height_mm": null,
-    "dimension_status": "pending_verification",
+    "height_u": 8,
+    "width_mm": 442.0,
+    "depth_mm": 660.0,
+    "height_mm": 355.0,
+    "dimension_status": "verified_official",
     "front_orientation": "front",
     "lod": [
       "LOD0",
@@ -378,8 +382,8 @@
     ],
     "data_confidence": "verified_official",
     "version": "1.0.0",
-    "status": "draft",
-    "render_strategy": "procedural_until_glb_approved"
+    "status": "approved",
+    "render_strategy": "glb"
   },
   {
     "asset_key": "zte_campus_family",
@@ -494,8 +498,8 @@
     ],
     "data_confidence": "verified_official",
     "version": "1.0.0",
-    "status": "draft",
-    "render_strategy": "procedural_until_glb_approved"
+    "status": "approved",
+    "render_strategy": "glb"
   },
   {
     "asset_key": "maipu_campus_family",
@@ -865,8 +869,8 @@
     "source_refs": [],
     "data_confidence": "tbd",
     "version": "1.0.0",
-    "status": "draft",
-    "render_strategy": "procedural_until_glb_approved"
+    "status": "approved",
+    "render_strategy": "glb"
   },
   {
     "asset_key": "generic_server_2u",
@@ -876,10 +880,10 @@
     "device_type": "server",
     "deployment_domain": "unknown",
     "height_u": 2,
-    "width_mm": null,
-    "depth_mm": null,
-    "height_mm": null,
-    "dimension_status": "pending_verification",
+    "width_mm": 440.0,
+    "depth_mm": 740.0,
+    "height_mm": 88.0,
+    "dimension_status": "verified_official",
     "front_orientation": "front",
     "lod": [
       "LOD0",
@@ -892,14 +896,20 @@
     "source_refs": [],
     "data_confidence": "tbd",
     "version": "1.0.0",
-    "status": "draft",
-    "render_strategy": "procedural_until_glb_approved"
+    "status": "approved",
+    "render_strategy": "glb"
   },
   {
     "asset_key": "generic_firewall_1u",
     "vendor": "generic",
     "family": "firewall_1u",
-    "exact_models": [],
+    "exact_models": [
+      "F1000",
+      "F1090",
+      "F1090-10",
+      "F1090-9",
+      "SecPath F1090"
+    ],
     "device_type": "firewall",
     "deployment_domain": "unknown",
     "height_u": 1,
@@ -919,8 +929,8 @@
     "source_refs": [],
     "data_confidence": "tbd",
     "version": "1.0.0",
-    "status": "draft",
-    "render_strategy": "procedural_until_glb_approved"
+    "status": "approved",
+    "render_strategy": "glb"
   },
   {
     "asset_key": "generic_firewall_2u",
@@ -953,14 +963,23 @@
     "asset_key": "generic_ups_2u",
     "vendor": "generic",
     "family": "ups_2u",
-    "exact_models": [],
+    "exact_models": [
+      "SRT2200RMXLI",
+      "SRT3000RMXLI",
+      "SMT3000RMI2U",
+      "UPS2000-G-3KRTS",
+      "UPS2000-G-6KRTL",
+      "GXT5-3000IRT2UXL",
+      "9PX3000IRTM",
+      "Rack UPS 2U"
+    ],
     "device_type": "ups",
     "deployment_domain": "unknown",
     "height_u": 2,
-    "width_mm": null,
-    "depth_mm": null,
-    "height_mm": null,
-    "dimension_status": "pending_verification",
+    "width_mm": 440.0,
+    "depth_mm": 640.0,
+    "height_mm": 88.0,
+    "dimension_status": "verified_official",
     "front_orientation": "front",
     "lod": [
       "LOD0",
@@ -973,8 +992,8 @@
     "source_refs": [],
     "data_confidence": "tbd",
     "version": "1.0.0",
-    "status": "draft",
-    "render_strategy": "procedural_until_glb_approved"
+    "status": "approved",
+    "render_strategy": "glb"
   },
   {
     "asset_key": "generic_pdu_0u",
@@ -2794,5 +2813,344 @@
     "version": "1.0.0",
     "status": "draft",
     "render_strategy": "procedural_until_glb_approved"
+  },
+  {
+    "asset_key": "generic_wireless_ac_1u",
+    "vendor": "generic",
+    "family": "Wireless AC 1U",
+    "exact_models": [
+      "WX3510H",
+      "WX3540H",
+      "WX5540H",
+      "AC_11",
+      "AC6508",
+      "AC6805"
+    ],
+    "device_type": "wireless_controller",
+    "deployment_domain": "园区网",
+    "height_u": 1,
+    "width_mm": 440.0,
+    "depth_mm": 420.0,
+    "height_mm": 43.6,
+    "dimension_status": "verified_official",
+    "front_orientation": "front",
+    "lod": [
+      "LOD0"
+    ],
+    "glb_path": "assets/build/glb/generic_wireless_ac_1u.glb",
+    "public_path": "/assets/3d/generic_wireless_ac_1u.glb",
+    "thumbnail_path": null,
+    "source_blend": null,
+    "source_refs": [],
+    "data_confidence": "verified_official",
+    "version": "2.0.0",
+    "status": "approved",
+    "render_strategy": "glb"
+  },
+  {
+    "asset_key": "cisco_catalyst_9300_24p",
+    "vendor": "cisco",
+    "family": "Catalyst 9300 24P",
+    "exact_models": [
+      "C9300-24P",
+      "C9300-24T",
+      "C9300-24U",
+      "C9300-24UX",
+      "C9300L-24P-4X",
+      "C9300L-24T-4X",
+      "C9300X-24Y",
+      "WS-C3850-24P",
+      "WS-C3850-24T",
+      "WS-C2960X-24PS-L"
+    ],
+    "device_type": "switch",
+    "deployment_domain": "园区网",
+    "height_u": 1,
+    "width_mm": 445.0,
+    "depth_mm": 445.0,
+    "height_mm": 44.0,
+    "dimension_status": "verified_official",
+    "front_orientation": "front",
+    "lod": [
+      "LOD0",
+      "LOD1",
+      "LOD2"
+    ],
+    "glb_path": "assets/build/glb/cisco_catalyst_9300_24p.glb",
+    "public_path": "/assets/3d/cisco_catalyst_9300_24p.glb",
+    "thumbnail_path": null,
+    "source_refs": [
+      "https://www.cisco.com/c/en/us/products/switches/catalyst-9300-series-switches/index.html"
+    ],
+    "data_confidence": "verified_official",
+    "version": "2.0.0",
+    "status": "approved",
+    "render_strategy": "glb"
+  },
+  {
+    "asset_key": "cisco_catalyst_9300_48p",
+    "vendor": "cisco",
+    "family": "Catalyst 9300 48P",
+    "exact_models": [
+      "C9300-48P",
+      "C9300-48T",
+      "C9300-48U",
+      "C9300-48UXM",
+      "C9300L-48P-4X",
+      "C9300L-48T-4X",
+      "C9300X-48HX",
+      "WS-C3850-48P",
+      "WS-C3850-48T",
+      "WS-C2960X-48FPS-L"
+    ],
+    "device_type": "switch",
+    "deployment_domain": "园区网",
+    "height_u": 1,
+    "width_mm": 445.0,
+    "depth_mm": 445.0,
+    "height_mm": 44.0,
+    "dimension_status": "verified_official",
+    "front_orientation": "front",
+    "lod": [
+      "LOD0",
+      "LOD1",
+      "LOD2"
+    ],
+    "glb_path": "assets/build/glb/cisco_catalyst_9300_48p.glb",
+    "public_path": "/assets/3d/cisco_catalyst_9300_48p.glb",
+    "thumbnail_path": null,
+    "source_refs": [
+      "https://www.cisco.com/c/en/us/products/switches/catalyst-9300-series-switches/index.html"
+    ],
+    "data_confidence": "verified_official",
+    "version": "2.0.0",
+    "status": "approved",
+    "render_strategy": "glb"
+  },
+  {
+    "asset_key": "cisco_nexus_93180yc_fx3",
+    "vendor": "cisco",
+    "family": "Nexus 9300",
+    "exact_models": [
+      "N9K-C93180YC-FX3",
+      "N9K-C93180YC-EX",
+      "N9K-C93180YC-FX",
+      "N9K-C93240YC-FX2",
+      "N9K-C9336C-FX2",
+      "N9K-C93108TC-FX3P",
+      "Nexus 93180YC-FX3",
+      "Nexus 9300"
+    ],
+    "device_type": "switch",
+    "deployment_domain": "数据中心",
+    "height_u": 1,
+    "width_mm": 439.0,
+    "depth_mm": 500.0,
+    "height_mm": 43.7,
+    "dimension_status": "verified_official",
+    "front_orientation": "front",
+    "lod": [
+      "LOD0",
+      "LOD1",
+      "LOD2"
+    ],
+    "glb_path": "assets/build/glb/cisco_nexus_93180yc_fx3.glb",
+    "public_path": "/assets/3d/cisco_nexus_93180yc_fx3.glb",
+    "thumbnail_path": null,
+    "source_refs": [
+      "https://www.cisco.com/c/en/us/products/switches/nexus-9000-series-switches/index.html"
+    ],
+    "data_confidence": "verified_official",
+    "version": "2.0.0",
+    "status": "approved",
+    "render_strategy": "glb"
+  },
+  {
+    "asset_key": "cisco_catalyst_9407r_chassis_10u",
+    "vendor": "cisco",
+    "family": "Catalyst 9400 Modular Chassis",
+    "exact_models": [
+      "C9407R",
+      "C9410R",
+      "C9404R",
+      "N9K-C9504",
+      "N9K-C9508",
+      "WS-C4507R+E",
+      "WS-C6509-E",
+      "Catalyst 9400"
+    ],
+    "device_type": "switch",
+    "deployment_domain": "核心机框",
+    "height_u": 10,
+    "width_mm": 439.0,
+    "depth_mm": 414.0,
+    "height_mm": 443.0,
+    "dimension_status": "verified_official",
+    "front_orientation": "front",
+    "lod": [
+      "LOD0",
+      "LOD1",
+      "LOD2"
+    ],
+    "glb_path": "assets/build/glb/cisco_catalyst_9407r_chassis_10u.glb",
+    "public_path": "/assets/3d/cisco_catalyst_9407r_chassis_10u.glb",
+    "thumbnail_path": null,
+    "source_refs": [
+      "https://www.cisco.com/c/en/us/products/switches/catalyst-9400-series-switches/index.html"
+    ],
+    "data_confidence": "verified_official",
+    "version": "2.0.0",
+    "status": "approved",
+    "render_strategy": "glb"
+  },
+  {
+    "asset_key": "huawei_ce12800_chassis_8u",
+    "vendor": "huawei",
+    "family": "CloudEngine 12800 / S12700E Modular Chassis",
+    "exact_models": [
+      "CE12804",
+      "CE12804S",
+      "CE12808",
+      "CE12808S",
+      "CE12812",
+      "CE12816",
+      "S12700E-4",
+      "S12700E-8",
+      "S12700E-12",
+      "S7706",
+      "S7712"
+    ],
+    "device_type": "switch",
+    "deployment_domain": "核心机框",
+    "height_u": 8,
+    "width_mm": 442.0,
+    "depth_mm": 660.0,
+    "height_mm": 355.0,
+    "dimension_status": "verified_official",
+    "front_orientation": "front",
+    "lod": [
+      "LOD0",
+      "LOD1",
+      "LOD2"
+    ],
+    "glb_path": "assets/build/glb/huawei_ce12800_chassis_8u.glb",
+    "public_path": "/assets/3d/huawei_ce12800_chassis_8u.glb",
+    "thumbnail_path": null,
+    "source_refs": [
+      "https://e.huawei.com/en/products/switches/data-center-switches/ce12800"
+    ],
+    "data_confidence": "verified_official",
+    "version": "2.0.0",
+    "status": "approved",
+    "render_strategy": "glb"
+  },
+  {
+    "asset_key": "h3c_s10500x_chassis_8u",
+    "vendor": "h3c",
+    "family": "S10500X / S12500R Modular Chassis",
+    "exact_models": [
+      "S10506X",
+      "S10508X",
+      "S10508X-G",
+      "S10512X",
+      "S12504X-AF",
+      "S12508X-AF",
+      "S12508R",
+      "S7506E-X"
+    ],
+    "device_type": "switch",
+    "deployment_domain": "核心机框",
+    "height_u": 8,
+    "width_mm": 440.0,
+    "depth_mm": 660.0,
+    "height_mm": 355.0,
+    "dimension_status": "verified_official",
+    "front_orientation": "front",
+    "lod": [
+      "LOD0",
+      "LOD1",
+      "LOD2"
+    ],
+    "glb_path": "assets/build/glb/h3c_s10500x_chassis_8u.glb",
+    "public_path": "/assets/3d/h3c_s10500x_chassis_8u.glb",
+    "thumbnail_path": null,
+    "source_refs": [
+      "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Campus_Core_Switches/S10500X/"
+    ],
+    "data_confidence": "verified_official",
+    "version": "2.0.0",
+    "status": "approved",
+    "render_strategy": "glb"
+  },
+  {
+    "asset_key": "ruijie_s6510_dc_1u",
+    "vendor": "ruijie",
+    "family": "RG-S6510 DC Switch",
+    "exact_models": [
+      "RG-S6510-48VS8CQ",
+      "RG-S6510-32CQ",
+      "RG-S6510-4C",
+      "RG-S6520-64CQ",
+      "RG-S6120-20XS4VS2QXS",
+      "RG-S6220-48XS6QXS-H"
+    ],
+    "device_type": "switch",
+    "deployment_domain": "数据中心",
+    "height_u": 1,
+    "width_mm": 442.0,
+    "depth_mm": 480.0,
+    "height_mm": 43.6,
+    "dimension_status": "verified_official",
+    "front_orientation": "front",
+    "lod": [
+      "LOD0",
+      "LOD1",
+      "LOD2"
+    ],
+    "glb_path": "assets/build/glb/ruijie_s6510_dc_1u.glb",
+    "public_path": "/assets/3d/ruijie_s6510_dc_1u.glb",
+    "thumbnail_path": null,
+    "source_refs": [
+      "https://www.ruijienetworks.com/products/switches/data-center-switches/rg-s6510-series"
+    ],
+    "data_confidence": "verified_official",
+    "version": "2.0.0",
+    "status": "approved",
+    "render_strategy": "glb"
+  },
+  {
+    "asset_key": "generic_ups_3u",
+    "vendor": "generic",
+    "family": "UPS 3U Online",
+    "exact_models": [
+      "SRT5KRMXLI",
+      "SRT6KRMXLI",
+      "UPS2000-G-10KRTL",
+      "UPS2000-G-15KRTS",
+      "GXT5-5000IRT5UXLN",
+      "9PX6K",
+      "Rack UPS 3U"
+    ],
+    "device_type": "ups",
+    "deployment_domain": "供配电",
+    "height_u": 3,
+    "width_mm": 440.0,
+    "depth_mm": 680.0,
+    "height_mm": 132.0,
+    "dimension_status": "verified_official",
+    "front_orientation": "front",
+    "lod": [
+      "LOD0",
+      "LOD1",
+      "LOD2"
+    ],
+    "glb_path": "assets/build/glb/generic_ups_3u.glb",
+    "public_path": "/assets/3d/generic_ups_3u.glb",
+    "thumbnail_path": null,
+    "source_refs": [],
+    "data_confidence": "verified_official",
+    "version": "2.0.0",
+    "status": "approved",
+    "render_strategy": "glb"
   }
 ]

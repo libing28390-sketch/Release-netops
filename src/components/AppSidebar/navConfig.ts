@@ -121,6 +121,7 @@ export const navConfig: NavGroup[] = [
     children: [
       { id: 'cmdb-credentials', label: '凭据中心', labelEn: 'Credentials', path: '/cmdb/credentials', icon: 'Key', requiredRole: 'Operator' },
       { id: 'cmdb-racks',       label: '机柜管理', labelEn: 'Rack Layout',   path: '/cmdb/racks',       icon: 'Columns3', requiredRole: 'Operator' },
+      { id: 'cmdb-odf',         label: '光配管理', labelEn: 'ODF Frames',    path: '/cmdb/odf',         icon: 'Cable', requiredRole: 'Operator' },
       { id: 'cmdb-assets',      label: '资产目录', labelEn: 'Asset Catalog', path: '/cmdb/assets',      icon: 'Package', requiredRole: 'Viewer' },
       { id: 'cmdb-resources',   label: '资源检索', labelEn: 'Resource Search', path: '/cmdb/resources',  icon: 'Search', requiredRole: 'Viewer' },
       { id: 'cmdb-devices',     label: '设备骨架', labelEn: 'Devices',       path: '/cmdb/devices',     icon: 'Server', requiredRole: 'Operator' },

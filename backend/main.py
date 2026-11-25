@@ -83,6 +83,7 @@ from api.knowledge_ingestion import router as knowledge_ingestion_router
 from api.tags import router as tags_router
 from api.scheduled_jobs import router as scheduled_jobs_router
 from api.racks import router as racks_router
+from api.odf import router as odf_router
 from api.credentials import router as credentials_router
 from api.librenms_native import router as librenms_native_router
 from api.cmdb import router as cmdb_router
@@ -933,6 +934,7 @@ app.include_router(templates_router,     prefix="/api")
 app.include_router(config_templates_router, prefix="/api")
 app.include_router(assets_router,        prefix="/api")
 app.include_router(racks_router,         prefix="/api")
+app.include_router(odf_router,           prefix="/api")
 app.include_router(credentials_router,   prefix="/api")
 app.include_router(librenms_native_router, prefix="/api")
 app.include_router(cmdb_router,          prefix="/api")
