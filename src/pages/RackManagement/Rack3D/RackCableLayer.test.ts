@@ -7,7 +7,13 @@ describe('rack cable physical port coordinates', () => {
     const port53 = getPortPhysicalCoordinates('FortyGigE1/0/53', true, true);
     const port54 = getPortPhysicalCoordinates('FGE1/0/54', true, true);
 
-    expect(new Set([port49.x, port53.x, port54.x]).size).toBe(3);
+    expect(
+      new Set([
+        `${port49.x.toFixed(3)}:${port49.yOffset.toFixed(3)}`,
+        `${port53.x.toFixed(3)}:${port53.yOffset.toFixed(3)}`,
+        `${port54.x.toFixed(3)}:${port54.yOffset.toFixed(3)}`,
+      ]).size,
+    ).toBe(3);
     expect(port49.x).not.toBe(getPortPhysicalCoordinates('XGE1/0/48', true, true).x);
   });
 
@@ -18,13 +24,13 @@ describe('rack cable physical port coordinates', () => {
       .toBe(getPortPhysicalCoordinates('XGE1/0/54', true, true).x);
   });
 
-  it('keeps SFP bank endpoints on the GLB bottom/top rows', () => {
-    const bottomRow = getPortPhysicalCoordinates('GE1/0/1', true, true);
-    const topRow = getPortPhysicalCoordinates('GE1/0/9', true, true);
+  it('keeps SFP bank endpoints on odd-top / even-bottom rows', () => {
+    const topOdd = getPortPhysicalCoordinates('GE1/0/1', true, true);
+    const bottomEven = getPortPhysicalCoordinates('GE1/0/2', true, true);
 
-    expect(bottomRow.yOffset).toBeLessThan(0);
-    expect(topRow.yOffset).toBeGreaterThan(0);
-    expect(Math.abs(bottomRow.yOffset)).toBeCloseTo(Math.abs(topRow.yOffset), 3);
+    expect(topOdd.yOffset).toBeGreaterThan(0);
+    expect(bottomEven.yOffset).toBeLessThan(0);
+    expect(topOdd.x).toBeCloseTo(bottomEven.x, 3);
   });
 
   it('maps passive patch-panel sockets across the full 12x2 field', () => {
@@ -39,8 +45,8 @@ describe('rack cable physical port coordinates', () => {
   });
 
   it('starts cable geometry at the receptacle face for SFP and QSFP', () => {
-    expect(getPortConnectorOffset('GE1/0/1', true)).toBeCloseTo(0.218, 3);
-    expect(getPortConnectorOffset('XGE1/0/49', true)).toBeCloseTo(0.24, 3);
-    expect(getPortConnectorOffset('SFP+1', false)).toBeCloseTo(0.218, 3);
+    expect(getPortConnectorOffset('GE1/0/1', true)).toBeCloseTo(0.155, 3);
+    expect(getPortConnectorOffset('XGE1/0/49', true)).toBeCloseTo(0.165, 3);
+    expect(getPortConnectorOffset('SFP+1', false)).toBeCloseTo(0.155, 3);
   });
 });

@@ -315,6 +315,39 @@ def api_validate_u_position(
         conn.close()
 
 
+@router.get("/racks/device-index")
+def api_rack_device_index(
+    rack_ids: str = Query('', max_length=4000, description="Comma-separated rack IDs (max 100)"),
+    user=require_role("Viewer"),
+):
+    """Lightweight bulk device-to-rack index for multi-rack 3D hall topology cables."""
+    requested = [rid.strip() for rid in rack_ids.split(',') if rid.strip()][:100]
+    if not requested:
+        return {"success": True, "data": {}, "message": ""}
+    conn = get_db_connection()
+    try:
+        scope = rack_scope_service.allowed_rack_scope(conn, user, "view")
+        visible_racks = rack_service.list_racks(
+            conn,
+            tenant_id=scope.tenant_id,
+            allowed_site_ids=scope.site_ids,
+        )
+        allowed_id_set = {str(r["id"]) for r in visible_racks}
+        filtered_ids = sorted(rid for rid in set(requested) if rid in allowed_id_set)
+        if not filtered_ids:
+            return {"success": True, "data": {}, "message": ""}
+        cache_key = f"device-index:{scope.cache_key}:{','.join(filtered_ids)}"
+        cache_hit, cached = read_cache.get('rack_page', cache_key)
+        if cache_hit:
+            return cached
+        index_map = rack_service.list_rack_device_index(conn, filtered_ids)
+        response = {"success": True, "data": index_map, "message": ""}
+        read_cache.set('rack_page', cache_key, response, RACK_CACHE_TTL_SECONDS)
+        return response
+    finally:
+        conn.close()
+
+
 @router.get("/racks/{rack_id}")
 def api_get_rack(rack_id: str, user=require_role("Viewer")):
     conn = get_db_connection()
@@ -525,24 +558,27 @@ def api_resolve_quality_issue(
 
 
 @router.get("/racks/{rack_id}/layout")
-def api_get_rack_layout(rack_id: str, user=require_role("Viewer")):
+def api_get_rack_layout(
+    rack_id: str,
+    include_ports: bool = Query(True, description="Include CMDB+SNMP physical port profiles"),
+    user=require_role("Viewer"),
+):
     """Full rack layout including devices and occupancy stats."""
     conn = get_db_connection()
     try:
         rack = rack_service.get_rack(conn, rack_id)
         rack_scope_service.enforce_loaded_rack(user, rack, "view")
-        revision_row = conn.execute(
-            "SELECT layout_revision FROM racks WHERE id = ?",
-            (rack_id,),
-        ).fetchone()
-        if not revision_row:
-            raise HTTPException(status_code=404, detail={"code": "RACK_NOT_FOUND", "message": "Rack not found"})
-        revision = int(revision_row['layout_revision'] if hasattr(revision_row, 'keys') else revision_row[0])
-        cache_key = f'layout:{rack_id}:{revision}'
+        revision = int(rack.get('layout_revision') or 0)
+        cache_key = f'layout:{rack_id}:{revision}:{1 if include_ports else 0}'
         cache_hit, cached = read_cache.get('rack_page', cache_key)
         if cache_hit:
             return cached
-        layout = rack_service.get_rack_layout(conn, rack_id)
+        layout = rack_service.get_rack_layout(
+            conn,
+            rack_id,
+            include_ports=include_ports,
+            rack=rack,
+        )
         response = {
             "success": True,
             "data": layout,

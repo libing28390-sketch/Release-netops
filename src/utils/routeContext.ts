@@ -233,6 +233,8 @@ export function getRouteContext(pathname: string): RouteContext {
       cmdbPage = 'credentials';
     } else if (second === 'racks') {
       cmdbPage = 'racks';
+    } else if (second === 'odf') {
+      cmdbPage = 'odf';
     } else if (second === 'assets') {
       cmdbPage = 'assets';
     } else if (second === 'resources') {

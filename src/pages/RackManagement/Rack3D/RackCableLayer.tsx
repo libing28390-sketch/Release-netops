@@ -4,6 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import { RackVM, RackDeviceVM } from '../types';
 import { RACK_INNER_WIDTH } from '../adapters/rackViewModel';
+import { resolveHardwareFaceplateSpec, resolveSlotPortCoordinates } from './deviceSlotSpec';
 
 export type CableMode = 'select' | 'all' | 'off';
 
@@ -193,30 +194,48 @@ const RackCablePlug: React.FC<{
   isQsfp: boolean;
   isFiber: boolean;
   opacity?: number;
-}> = ({ position, color, isQsfp, isFiber, opacity = 1 }) => {
+  hovered?: boolean;
+}> = ({ position, color, isQsfp, isFiber, opacity = 1, hovered = false }) => {
   const width = isQsfp ? 0.118 : 0.072;
   const height = isQsfp ? 0.078 : 0.048;
   return (
     <group position={position} renderOrder={12}>
-      {/* Short plug/boot sits partly inside the cage and partly outside the
-          faceplate, making the cable-to-module connection unambiguous. */}
+      {/* Crisp neon highlight collar when hovering an individual plugged port */}
+      {hovered && (
+        <mesh position={[0, 0, 0.004]}>
+          <boxGeometry args={[width + 0.042, height + 0.038, 0.022]} />
+          <meshBasicMaterial color="#22d3ee" wireframe toneMapped={false} />
+        </mesh>
+      )}
+      {/* Machined zinc-alloy transceiver housing with realistic pull-tab bail & duplex LC sleeves */}
       <mesh position={[0, 0, -0.014]}>
-        <boxGeometry args={[width, height, isQsfp ? 0.042 : 0.032]} />
+        <boxGeometry args={[width, height, isQsfp ? 0.046 : 0.036]} />
         <meshStandardMaterial
-          color="#17212a"
-          roughness={0.34}
-          metalness={0.64}
+          color="#334155"
+          roughness={0.26}
+          metalness={0.82}
+          transparent={opacity < 1}
+          opacity={opacity}
+        />
+      </mesh>
+      {/* Transceiver pull-tab bail (blue/cyan for optical SFP28, orange/gold ribbon for QSFP28) */}
+      <mesh position={[0, -height * 0.36, 0.014]}>
+        <boxGeometry args={[width * 0.72, isQsfp ? 0.012 : 0.008, 0.018]} />
+        <meshStandardMaterial
+          color={isQsfp ? '#f59e0b' : isFiber ? '#0ea5e9' : '#94a3b8'}
+          roughness={0.25}
+          metalness={0.45}
           transparent={opacity < 1}
           opacity={opacity}
         />
       </mesh>
       {(!isFiber || isQsfp) && (
-        <mesh position={[0, 0, 0.008]}>
-          <boxGeometry args={[width * 0.52, isQsfp ? 0.010 : 0.007, 0.006]} />
+        <mesh position={[0, 0.004, 0.010]}>
+          <boxGeometry args={[width * 0.56, isQsfp ? 0.012 : 0.008, 0.008]} />
           <meshStandardMaterial
             color={color}
             emissive={color}
-            emissiveIntensity={0.18}
+            emissiveIntensity={0.24}
             roughness={0.22}
             metalness={0.48}
             toneMapped={false}
@@ -226,20 +245,28 @@ const RackCablePlug: React.FC<{
         </mesh>
       )}
       {isFiber && !isQsfp ? (
-        [-0.011, 0.011].map(fiberOffset => (
-          <mesh key={fiberOffset} position={[fiberOffset, 0.002, 0.038]} rotation={[Math.PI / 2, 0, 0]}>
-            <cylinderGeometry args={[0.004, 0.005, 0.060, 8]} />
-            <meshStandardMaterial
-              color={color}
-              emissive={color}
-              emissiveIntensity={0.58}
-              roughness={0.24}
-              metalness={0.28}
-              toneMapped={false}
-              transparent={opacity < 1}
-              opacity={opacity}
-            />
-          </mesh>
+        [-0.012, 0.012].map(fiberOffset => (
+          <group key={fiberOffset}>
+            {/* White/ivory duplex LC clip sleeve */}
+            <mesh position={[fiberOffset, 0.003, 0.015]}>
+              <boxGeometry args={[0.013, 0.016, 0.022]} />
+              <meshStandardMaterial color="#e2e8f0" roughness={0.35} metalness={0.15} transparent={opacity < 1} opacity={opacity} />
+            </mesh>
+            {/* Strain-relief boot */}
+            <mesh position={[fiberOffset, 0.002, 0.040]} rotation={[Math.PI / 2, 0, 0]}>
+              <cylinderGeometry args={[0.0045, 0.0055, 0.056, 8]} />
+              <meshStandardMaterial
+                color={color}
+                emissive={color}
+                emissiveIntensity={0.58}
+                roughness={0.24}
+                metalness={0.28}
+                toneMapped={false}
+                transparent={opacity < 1}
+                opacity={opacity}
+              />
+            </mesh>
+          </group>
         ))
       ) : (
         <mesh position={[0, 0, 0.036]} rotation={[Math.PI / 2, 0, 0]}>
@@ -285,11 +312,11 @@ function isS6800QsfpInterface(interfaceName: string, isS6800: boolean): boolean 
 }
 
 export function getPortConnectorOffset(interfaceName: string, isS6800: boolean): number {
-  if (isS6800QsfpInterface(interfaceName, isS6800)) return 0.24;
+  if (isS6800QsfpInterface(interfaceName, isS6800)) return 0.165;
   const name = String(interfaceName || '').toLowerCase();
-  if (isS6800 && getS6800PortNumber(interfaceName) <= 48) return 0.218;
-  if (/(?:sfp|10ge|25ge|xge)/i.test(name)) return 0.218;
-  return 0.105;
+  if (isS6800 && getS6800PortNumber(interfaceName) <= 48) return 0.155;
+  if (/(?:sfp|10ge|25ge|xge)/i.test(name)) return 0.155;
+  return 0.145;
 }
 
 interface CableLaneOffset {
@@ -374,37 +401,34 @@ export function getPortPhysicalCoordinates(
     };
   }
 
-  // The supplied S6800 front reference has three 16-port SFP+ banks followed
-  // by two 3-port QSFP28 banks. Keep cable endpoints on those real bank
-  // positions instead of using the older generic 48-port approximation.
+  // Official H3C S6850 Series front panel layout:
+  // 4 x 12-port SFP28 banks (6 cols x 2 rows, odd top y=+0.044, even bottom y=-0.084)
+  // + 1 x 8-port QSFP28 bank (4 cols x 2 rows, ports 49..56, odd top, even bottom).
   if (isS6800) {
     const isHighSpeedPort = /(?:qsfp|fge|hge|40ge|100ge|40g|100g|fortygig|hundredgig)/i.test(name);
     const rawPort = trailingNumber ? parseInt(trailingNumber[1], 10) : 1;
-    // S6800-family inventories use both QSFP1..6 and native names such as
-    // XGE1/0/49 / FortyGigE1/0/53. Preserve an explicit 49–54 suffix; only
-    // compact QSFP1..6 notation needs the 49-based expansion.
-    const normalizedPort = isHighSpeedPort && rawPort <= 6 ? 49 + rawPort - 1 : rawPort;
-    const portNumber = Math.max(1, Math.min(54, normalizedPort));
-    const bankWidths = [0.7524, 0.7524, 0.7524, 0.5814, 0.5814];
-    const bankGap = 0.06;
-    let bankIndex = 0;
-    let offset = 0;
+    const normalizedPort = isHighSpeedPort && rawPort <= 8 ? 49 + rawPort - 1 : rawPort;
+    const portNumber = Math.max(1, Math.min(56, normalizedPort));
+    const isOdd = portNumber % 2 === 1;
+    const yOffset = isOdd ? 0.044 : -0.084;
+
     if (portNumber <= 48) {
-      bankIndex = Math.floor((portNumber - 1) / 16);
-      offset = (portNumber - 1) % 16;
-    } else {
-      bankIndex = portNumber <= 51 ? 3 : 4;
-      offset = (portNumber - (bankIndex === 3 ? 49 : 52));
+      const bankIndex = Math.floor((portNumber - 1) / 12);
+      const offsetInBank = (portNumber - 1) % 12;
+      const col = Math.floor(offsetInBank / 2); // 0..5
+      const bankWidth = 0.76;
+      const bankGap = 0.08;
+      const bankLeft = -2.08 + bankIndex * (bankWidth + bankGap);
+      const x = bankLeft + col * (bankWidth / 5);
+      return { x, yOffset };
     }
-    const bankLeft = -1.60 + bankWidths.slice(0, bankIndex).reduce((sum, width) => sum + width + bankGap, 0);
-    const bankWidth = bankWidths[bankIndex];
-    const columns: number = bankIndex < 3 ? 8 : 3;
-    const column = columns === 1 ? 0 : offset % columns;
-    const x = bankLeft + (columns === 1 ? bankWidth / 2 : column * (bankWidth / (columns - 1)));
-    // The GLB lays out each SFP bank bottom row first (ports 01–08), then
-    // top row (09–16). Keep the endpoint on that physical row instead of
-    // mirroring the two rows vertically.
-    return { x, yOffset: bankIndex < 3 ? (offset < columns ? -0.067 : 0.067) : 0 };
+
+    const qsfpOffset = portNumber - 49; // 0..7
+    const col = Math.floor(qsfpOffset / 2); // 0..3
+    const qsfpLeft = 1.34;
+    const qsfpWidth = 0.74;
+    const x = qsfpLeft + col * (qsfpWidth / 3);
+    return { x, yOffset };
   }
 
   // Management / Console Ports (Left Zone)
@@ -540,10 +564,20 @@ export const RackCableLayer: React.FC<RackCableLayerProps> = ({
         const srcPullOffset = srcDev.id === selectedDeviceId ? 0.6 : 0;
         const dstPullOffset = dstDev && dstDev.id === selectedDeviceId ? 0.6 : 0;
 
-        // Exact Physical Port Coordinate for Source
+        // Exact Physical Port Coordinate for Source (slot-aware for modular chassis & vendor box switches)
         const srcIsS6800 = isS6800Device(srcDev);
-        const srcIsQsfp = isS6800QsfpInterface(link.local_interface, srcIsS6800);
-        const srcCoords = getPortPhysicalCoordinates(
+        const srcSpec = resolveHardwareFaceplateSpec({
+          vendor: srcDev.vendor,
+          model: srcDev.model,
+          role: srcDev.role,
+          assetKey: srcDev.assetKey,
+          heightU: srcDev.heightU,
+        });
+        const srcSlotCoords = !srcIsS6800 && (srcSpec.formFactor === 'chassis' || srcSpec.vendorStyle !== 'generic')
+          ? resolveSlotPortCoordinates(srcSpec, link.local_interface, srcDev.coordinates.height)
+          : null;
+        const srcIsQsfp = srcSlotCoords ? srcSlotCoords.isQsfp : isS6800QsfpInterface(link.local_interface, srcIsS6800);
+        const srcCoords = srcSlotCoords || getPortPhysicalCoordinates(
           link.local_interface,
           true,
           srcIsS6800,
@@ -559,8 +593,20 @@ export const RackCableLayer: React.FC<RackCableLayerProps> = ({
 
         // Exact Physical Port Coordinate for Destination
         const dstIsS6800 = Boolean(dstDev && isS6800Device(dstDev));
-        const dstIsQsfp = isS6800QsfpInterface(link.remote_interface, dstIsS6800);
-        const dstCoords = getPortPhysicalCoordinates(
+        const dstSpec = dstDev
+          ? resolveHardwareFaceplateSpec({
+              vendor: dstDev.vendor,
+              model: dstDev.model,
+              role: dstDev.role,
+              assetKey: dstDev.assetKey,
+              heightU: dstDev.heightU,
+            })
+          : null;
+        const dstSlotCoords = dstDev && dstSpec && !dstIsS6800 && (dstSpec.formFactor === 'chassis' || dstSpec.vendorStyle !== 'generic')
+          ? resolveSlotPortCoordinates(dstSpec, link.remote_interface, dstDev.coordinates.height)
+          : null;
+        const dstIsQsfp = dstSlotCoords ? dstSlotCoords.isQsfp : isS6800QsfpInterface(link.remote_interface, dstIsS6800);
+        const dstCoords = dstSlotCoords || getPortPhysicalCoordinates(
           link.remote_interface,
           true,
           dstIsS6800,
@@ -797,7 +843,7 @@ export const RackCableLayer: React.FC<RackCableLayerProps> = ({
             // face plane.  Keep the tray fascia just behind the cable run but
             // in front of that bezel so it reads as a physical manager bar at
             // rack-wide zoom instead of disappearing into the chassis.
-            z={faceZ + 0.28}
+            z={faceZ + 0.135}
           />
         );
       })}
@@ -816,11 +862,11 @@ export const RackCableLayer: React.FC<RackCableLayerProps> = ({
             : link.status === 'stale'
               ? '#64748b'
               : link.status === 'up'
-                ? (isFiber ? '#2f78c4' : '#d1a021')
-                : (isFiber ? '#4b88bc' : '#b98b22');
+                ? (isFiber ? '#06b6d4' : '#eab308')
+                : (isFiber ? '#38bdf8' : '#ca8a04');
         const emissiveColor = link.status === 'down'
           ? '#8f2732'
-          : isFiber ? '#1f4f8c' : '#8f6814';
+          : isFiber ? '#0891b2' : '#a16207';
         const emissiveIntensity = link.is_preview
           ? 0.18
           : isHighlighted
@@ -889,6 +935,7 @@ export const RackCableLayer: React.FC<RackCableLayerProps> = ({
               isQsfp={srcIsQsfp}
               isFiber={isFiber}
               opacity={isDimmed ? 0.22 : 1}
+              hovered={hoveredCableId === link.id}
             />
             {item.dstDev && (
               <RackCablePlug
@@ -897,6 +944,7 @@ export const RackCableLayer: React.FC<RackCableLayerProps> = ({
                 isQsfp={dstIsQsfp}
                 isFiber={isFiber}
                 opacity={isDimmed ? 0.22 : 1}
+                hovered={hoveredCableId === link.id}
               />
             )}
 

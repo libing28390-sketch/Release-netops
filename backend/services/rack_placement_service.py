@@ -602,6 +602,9 @@ def get_placement(conn, device_id: str) -> dict[str, Any]:
                          (SELECT d.hostname FROM devices d
                            WHERE d.asset_id = rd.asset_id
                            ORDER BY d.id LIMIT 1) AS network_hostname,
+                         (SELECT d.ip_address FROM devices d
+                           WHERE d.asset_id = rd.asset_id
+                           ORDER BY d.id LIMIT 1) AS network_ip,
                          (SELECT d.sn FROM devices d
                            WHERE d.asset_id = rd.asset_id
                            ORDER BY d.id LIMIT 1) AS network_sn

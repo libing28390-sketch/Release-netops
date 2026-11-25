@@ -5693,5 +5693,11 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     except Exception as exc_p6:
         logger.error(f"[migration] Failed Phase 6 Supporting Engines migration: {exc_p6}", exc_info=True)
 
+    # Ensure ODF optical distribution frame CMDB tables exist on fresh databases
+    try:
+        from services.odf_service import ensure_odf_tables
+        ensure_odf_tables(conn)
+    except Exception as exc_odf:
+        logger.error(f"[migration] Failed ODF CMDB table initialization: {exc_odf}", exc_info=True)
 
     _ensure_initial_administrator(cursor, now)

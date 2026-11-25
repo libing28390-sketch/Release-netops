@@ -14,6 +14,7 @@ import {
   Bell,
   BookOpen,
   Building2,
+  Cable,
   CalendarClock,
   ChevronDown,
   ChevronLeft,
@@ -86,7 +87,7 @@ const LS_KEY = 'nexora_module_nav';
 
 /** Map icon string keys (from navConfig) → lucide component */
 const iconMap: Record<string, React.ComponentType<any>> = {
-  Activity, Archive, BarChart2, BarChart3, Bell, BookOpen, Bot, Boxes, BrainCircuit, Building2, CalendarClock, Coins,
+  Activity, Archive, BarChart2, BarChart3, Bell, BookOpen, Bot, Boxes, BrainCircuit, Building2, Cable, CalendarClock, Coins,
   ClipboardCheck, ClipboardList, Clock, CloudCog, Code2, Columns3, Cpu, Database,
   FileCode2, FileEdit, FileSearch, FileSpreadsheet, FileText, GitBranch, GitCompare, GitPullRequest, Globe, HeartPulse, Plug, SearchCheck,
   Gauge, History, Inbox, Key, Layers, Layers3, LayoutDashboard, MapPin, MessageSquare, Network, Package,

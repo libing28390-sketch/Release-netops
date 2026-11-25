@@ -1,4 +1,5 @@
 import { authHeaders } from '../helpers';
+import type { DevicePhysicalPortProfile } from '../types';
 
 export interface PhysicalInterfaceItem {
   id?: string;
@@ -23,7 +24,7 @@ export interface DeviceTelemetryResult {
   ipAddress: string;
   platform: string;
   status: string;
-  source: 'IF-MIB';
+  source: 'IF-MIB' | 'CMDB+SNMP';
   sampledAt?: string;
   queriedAt?: string;
   isStale: boolean;
@@ -113,6 +114,45 @@ function getPortSortKey(name: string): number {
 /**
  * Load authoritative real SNMP interface telemetry for any rack device (by device name, hostname, asset_id, or device_id)
  */
+/**
+ * Convert an authoritative backend CMDB + SNMP 1-minute physical port profile
+ * (already loaded in `/api/racks/{id}/layout` with zero extra polling) into the
+ * standard `DeviceTelemetryResult` shape when 15-minute realtime samples are absent.
+ */
+export function portProfileToTelemetryResult(
+  deviceId: string,
+  hostname: string,
+  profile: DevicePhysicalPortProfile,
+): DeviceTelemetryResult {
+  const interfaces: PhysicalInterfaceItem[] = (profile.ports || []).map(p => ({
+    name: p.name,
+    shortName: p.short_name || toShortInterfaceName(p.name),
+    status: p.oper_status === 'up' ? 'up' : 'down',
+    speedMbps: Number(p.speed_mbps || 0),
+    inBps: Number(p.in_bps || 0),
+    outBps: Number(p.out_bps || 0),
+    inErrors: Number(p.errors || 0),
+    outErrors: 0,
+    description: p.description || '',
+    cableType: p.port_type === 'sfp' || p.port_type === 'qsfp' ? 'fiber' : 'copper',
+  }));
+  const upCount = interfaces.filter(i => i.status === 'up').length;
+  return {
+    deviceId,
+    hostname,
+    ipAddress: '',
+    platform: '',
+    status: 'online',
+    source: 'CMDB+SNMP',
+    sampledAt: profile.sampled_at || undefined,
+    isStale: true,
+    temperatureC: profile.hardware_sensors?.temperature_c ?? undefined,
+    interfaces,
+    upCount,
+    downCount: interfaces.length - upCount,
+  };
+}
+
 export async function loadDeviceTelemetry(
   deviceName: string,
   rawDeviceId?: string

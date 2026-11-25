@@ -13,8 +13,8 @@ export const U_HEIGHT_3D = 0.4445;
 export const RACK_OUTER_WIDTH_DEFAULT = 6.0;
 export const RACK_INNER_WIDTH = 4.826;
 export const RACK_TOTAL_DEPTH_DEFAULT = 10.0;
-export const CHASSIS_DEPTH_FULL = 7.5;
-export const CHASSIS_DEPTH_HALF = 3.75;
+export const CHASSIS_DEPTH_FULL = 8.4;
+export const CHASSIS_DEPTH_HALF = 4.2;
 
 export interface HealthInfo {
   status?: string;
@@ -25,6 +25,8 @@ export interface HealthInfo {
   critical_open_alerts?: number;
   warning_open_alerts?: number;
   network_device_id?: string;
+  network_hostname?: string;
+  network_ip?: string;
 }
 
 export type HealthMap = Record<string, HealthInfo>;
@@ -290,7 +292,10 @@ export function normalizeRackToVM(
       rackId: raw.rack_id || rackData.id,
       name: raw.name || '未命名设备',
       assetId,
+      assetTag: (raw.physical_asset_tag || '').trim() || undefined,
       networkDeviceId: health?.network_device_id || networkDeviceId || undefined,
+      networkHostname: (raw.network_hostname || health?.network_hostname || '').trim() || undefined,
+      networkIp: (raw.network_ip || health?.network_ip || '').trim() || undefined,
       deviceTypeId: raw.device_type_id || '',
       vendor: raw.vendor || '',
       model: raw.model || '',
@@ -322,7 +327,8 @@ export function normalizeRackToVM(
         valid: isValid,
         issues
       },
-      coordinates
+      coordinates,
+      physicalPortProfile: raw.physical_port_profile || null
     });
   }
 

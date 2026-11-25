@@ -116,6 +116,7 @@ export const usePageTitle = ({
       const map: Record<string, string> = {
         credentials: language === 'zh' ? '凭据中心' : 'Credentials',
         racks: language === 'zh' ? '机柜管理' : 'Rack Management',
+        odf: language === 'zh' ? '光配管理 (ODF)' : 'ODF Management',
         sites: language === 'zh' ? '站点管理' : 'Sites',
         vrfs: language === 'zh' ? 'VRF管理' : 'VRFs',
         vlans: language === 'zh' ? 'VLAN管理' : 'VLANs',

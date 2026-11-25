@@ -1,10 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   RotateCcw,
   Layers,
   AlertTriangle,
-  DoorClosed,
-  DoorOpen,
   Info,
   Maximize2,
   Minimize2,
@@ -18,11 +16,17 @@ import {
   ZoomOut,
   Columns3,
   RefreshCw,
-  ChevronDown
+  ChevronDown,
+  Hand,
+  Lightbulb,
+  Moon,
+  Rotate3d,
+  Sun,
+  Crosshair,
 } from 'lucide-react';
 import { RackVM, RackDisplayMode, RackDeviceVM } from '../types';
 import { isWebGLAvailable } from './utils/webgl';
-import { RackScene } from './RackScene';
+import { RackScene, SceneInteractionMode, SingleRackLightingMode } from './RackScene';
 import { CameraPreset, DeviceFocusTarget } from './CameraController';
 import { RackDeviceTooltip } from './RackDeviceTooltip';
 import { CableMode, TopologyLinkItem } from './RackCableLayer';
@@ -30,6 +34,12 @@ import { API } from '../constants';
 import { authHeaders } from '../helpers';
 import { normalizeRackTopologyLinks, RawTopologyLinkItem } from './topology';
 import { inferRackProfile } from '../rackProfiles';
+import {
+  detectGpuProfile,
+  GraphicsQualityMode,
+  loadGraphicsPreference,
+  saveGraphicsPreference,
+} from './gpuProfile';
 
 interface Rack3DContainerProps {
   rackVM: RackVM;
@@ -46,14 +56,26 @@ interface RackLayerMenuPanelProps {
   showDoor: boolean;
   isDoorOpen: boolean;
   showULabels: boolean;
+  showPowerCords: boolean;
+  showBlankingPanels: boolean;
+  showAirflow: boolean;
+  showBayContext: boolean;
+  cabinetLightsOn: boolean;
   cableMode: CableMode;
   showPreviewCables: boolean;
   displayMode: RackDisplayMode;
+  graphicsMode: GraphicsQualityMode;
   onToggleDoor: () => void;
   onToggleDoorOpen: () => void;
   onToggleULabels: () => void;
+  onTogglePowerCords: () => void;
+  onToggleBlankingPanels: () => void;
+  onToggleAirflow: () => void;
+  onToggleBayContext: () => void;
+  onToggleCabinetLights: () => void;
   onCableModeChange: (mode: CableMode) => void;
   onDisplayModeChange: (mode: RackDisplayMode) => void;
+  onGraphicsModeChange: (mode: GraphicsQualityMode) => void;
 }
 
 const RackLayerMenuPanel: React.FC<RackLayerMenuPanelProps> = ({
@@ -61,14 +83,26 @@ const RackLayerMenuPanel: React.FC<RackLayerMenuPanelProps> = ({
   showDoor,
   isDoorOpen,
   showULabels,
+  showPowerCords,
+  showBlankingPanels,
+  showAirflow,
+  showBayContext,
+  cabinetLightsOn,
   cableMode,
   showPreviewCables,
   displayMode,
+  graphicsMode,
   onToggleDoor,
   onToggleDoorOpen,
   onToggleULabels,
+  onTogglePowerCords,
+  onToggleBlankingPanels,
+  onToggleAirflow,
+  onToggleBayContext,
+  onToggleCabinetLights,
   onCableModeChange,
-  onDisplayModeChange
+  onDisplayModeChange,
+  onGraphicsModeChange
 }) => (
   <div
     data-testid="rack-layer-panel"
@@ -105,6 +139,47 @@ const RackLayerMenuPanel: React.FC<RackLayerMenuPanelProps> = ({
           className={`rounded-md px-2 py-1 text-[10px] font-medium ${showULabels ? 'bg-cyan-600/20 text-cyan-300' : 'bg-slate-800 text-slate-400'}`}
         >
           {zh ? 'U 标尺' : 'U labels'}
+        </button>
+      </div>
+    </div>
+
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{zh ? '设施' : 'Infra'}</span>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={onTogglePowerCords}
+          className={`rounded-md px-2 py-1 text-[10px] font-medium ${showPowerCords ? 'bg-red-600/20 text-red-300' : 'bg-slate-800 text-slate-400'}`}
+        >
+          {zh ? '背面供电线' : 'PSU Cords'}
+        </button>
+        <button
+          type="button"
+          onClick={onToggleBlankingPanels}
+          className={`rounded-md px-2 py-1 text-[10px] font-medium ${showBlankingPanels ? 'bg-cyan-600/20 text-cyan-300' : 'bg-slate-800 text-slate-400'}`}
+        >
+          {zh ? '盲板' : 'Blanking'}
+        </button>
+        <button
+          type="button"
+          onClick={onToggleAirflow}
+          className={`rounded-md px-2 py-1 text-[10px] font-medium ${showAirflow ? 'bg-sky-600/20 text-sky-300' : 'bg-slate-800 text-slate-400'}`}
+        >
+          {zh ? '冷热气流' : 'Airflow'}
+        </button>
+        <button
+          type="button"
+          onClick={onToggleBayContext}
+          className={`rounded-md px-2 py-1 text-[10px] font-medium ${showBayContext ? 'bg-cyan-600/20 text-cyan-300' : 'bg-slate-800 text-slate-400'}`}
+        >
+          {zh ? '机房环境' : 'Bay Env'}
+        </button>
+        <button
+          type="button"
+          onClick={onToggleCabinetLights}
+          className={`rounded-md px-2 py-1 text-[10px] font-medium ${cabinetLightsOn ? 'bg-amber-500/20 text-amber-200' : 'bg-slate-800 text-slate-400'}`}
+        >
+          {zh ? '柜内灯' : 'Cab LED'}
         </button>
       </div>
     </div>
@@ -197,6 +272,32 @@ const RackLayerMenuPanel: React.FC<RackLayerMenuPanelProps> = ({
         </button>
       </div>
     </div>
+
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{zh ? '渲染' : 'GPU'}</span>
+      <div className="flex items-center rounded-lg border border-slate-800 bg-slate-900 p-0.5 text-[10px]">
+        <button
+          type="button"
+          onClick={() => onGraphicsModeChange('eco')}
+          className={`rounded-md px-2 py-0.5 font-medium transition-all ${
+            graphicsMode === 'eco' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+          }`}
+          title={zh ? '核显流畅模式：1x 分辨率 + 轻量光照，集成显卡高帧率' : 'iGPU Eco Mode'}
+        >
+          {zh ? '核显流畅' : 'iGPU Eco'}
+        </button>
+        <button
+          type="button"
+          onClick={() => onGraphicsModeChange('high')}
+          className={`rounded-md px-2 py-0.5 font-medium transition-all ${
+            graphicsMode === 'high' ? 'bg-violet-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+          }`}
+          title={zh ? '高清画质模式：高分采样 + IBL 环境反射' : 'High Quality Mode'}
+        >
+          {zh ? '高清画质' : 'High'}
+        </button>
+      </div>
+    </div>
   </div>
 );
 
@@ -237,6 +338,8 @@ class ThreeErrorBoundary extends React.Component<
   }
 }
 
+type DeviceMacroSpot = 'left' | 'middle' | 'right' | 'rear' | 'full';
+
 export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
   rackVM,
   selectedDeviceId,
@@ -249,16 +352,33 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
   const [webglSupported, setWebglSupported] = useState<boolean | null>(null);
   const [cameraPreset, setCameraPreset] = useState<CameraPreset>('reset');
   const [focusTarget, setFocusTarget] = useState<DeviceFocusTarget | null>(null);
+  const [focusedDeviceId, setFocusedDeviceId] = useState<string | null>(null);
+  const [activeSpot, setActiveSpot] = useState<DeviceMacroSpot | 'custom'>('full');
+  const [interactionMode, setInteractionMode] = useState<SceneInteractionMode>('orbit');
+  const [graphicsMode, setGraphicsMode] = useState<GraphicsQualityMode>(() => {
+    const pref = loadGraphicsPreference();
+    return pref === 'auto' ? detectGpuProfile(1).recommendedMode : pref;
+  });
+  const [tooltipCollapsed, setTooltipCollapsed] = useState(false);
   const [pulledOutDeviceId, setPulledOutDeviceId] = useState<string | null>(null);
   const [zoomAction, setZoomAction] = useState<{ type: 'in' | 'out'; timestamp: number } | null>(null);
-  // Keep the equipment face unobstructed in the first 3D frame.  The door is
-  // still available from More layers when a closed-cabinet presentation is
-  // needed.
+  // Keep the equipment face unobstructed in the first 3D frame. The door is
+  // still available from More layers when a closed-cabinet presentation is needed.
   const [isDoorOpen, setIsDoorOpen] = useState(false);
   const [showDoor, setShowDoor] = useState(false);
   const [showULabels, setShowULabels] = useState(true);
+  const [showPowerCords, setShowPowerCords] = useState(true);
+  const [showBlankingPanels, setShowBlankingPanels] = useState(false);
+  const [showAirflow, setShowAirflow] = useState(false);
+  const [showBayContext, setShowBayContext] = useState(true);
+  const [lightingMode, setLightingMode] = useState<SingleRackLightingMode>('daylight');
+  const [cabinetLightsOn, setCabinetLightsOn] = useState(true);
+
+  const cycleLightingMode = () => {
+    setLightingMode(prev => (prev === 'daylight' ? 'standby' : prev === 'standby' ? 'lights_out' : 'daylight'));
+  };
   const [displayMode, setDisplayMode] = useState<RackDisplayMode>('physical');
-  const [cableMode, setCableMode] = useState<CableMode>('select');
+  const [cableMode, setCableMode] = useState<CableMode>('all');
   const [rawTopologyLinks, setRawTopologyLinks] = useState<RawTopologyLinkItem[]>([]);
   const [topologyStatus, setTopologyStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [topologyTruncated, setTopologyTruncated] = useState(false);
@@ -268,41 +388,176 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
   const [showDataIssues, setShowDataIssues] = useState(false);
   const [showLayerMenu, setShowLayerMenu] = useState(false);
+
+  const recentSpotFocusRef = useRef<{ deviceId: string; ts: number } | null>(null);
+  const lastAutoFocusedDeviceIdRef = useRef<string | null>(null);
+  const hoverClearTimerRef = useRef<number | null>(null);
+
+  const handleHoverDevice = (device: RackDeviceVM | null) => {
+    if (hoverClearTimerRef.current !== null) {
+      window.clearTimeout(hoverClearTimerRef.current);
+      hoverClearTimerRef.current = null;
+    }
+    if (device) {
+      setHoveredDevice(device);
+    } else {
+      // Short grace delay lets users glide from a 3D device onto the bottom-right tooltip card
+      hoverClearTimerRef.current = window.setTimeout(() => {
+        setHoveredDevice(null);
+        hoverClearTimerRef.current = null;
+      }, 360);
+    }
+  };
+
+  useEffect(() => () => {
+    if (hoverClearTimerRef.current !== null) window.clearTimeout(hoverClearTimerRef.current);
+  }, []);
+
+  const handleGraphicsModeChange = (mode: GraphicsQualityMode) => {
+    setGraphicsMode(mode);
+    saveGraphicsPreference(mode);
+  };
+
   const nonUDevices = rackVM.nonUDevices || [];
   const placementIssueDevices = [...rackVM.invalidDevices, ...nonUDevices];
   const hasPlacementIssues = placementIssueDevices.length > 0 || !rackVM.dataQuality.valid;
 
+  const focusedDevice = React.useMemo(() => {
+    const id = focusedDeviceId || selectedDeviceId;
+    if (!id) return null;
+    return rackVM.validDevices.find(item => item.id === id) || null;
+  }, [focusedDeviceId, selectedDeviceId, rackVM.validDevices]);
+
   const handlePresetChange = (preset: CameraPreset) => {
     setFocusTarget(null);
+    setFocusedDeviceId(null);
+    setActiveSpot('full');
     setCameraPreset(preset);
   };
 
-  const handleDoubleClickDevice = (device: RackDeviceVM) => {
-    setFocusTarget({
+  const focusDeviceSpot = (device: RackDeviceVM, spot: DeviceMacroSpot) => {
+    const w = device.coordinates.width || 4.78;
+    const h = device.coordinates.height || 0.44;
+    const tallFactor = h > 1.2 ? Math.min(2.4, h * 0.72) : 0;
+    const base = {
       centerY: device.coordinates.centerY,
+      centerZ: device.coordinates.centerZ,
+      width: w,
+      height: h,
+      depth: device.coordinates.depth,
+      timestamp: Date.now(),
+    };
+    setFocusedDeviceId(device.id);
+    setActiveSpot(spot);
+    recentSpotFocusRef.current = { deviceId: device.id, ts: Date.now() };
+
+    if (spot === 'left') {
+      setFocusTarget({
+        ...base,
+        centerX: -w * 0.36,
+        face: 'front',
+        distance: Math.max(1.18, 1.18 + tallFactor * 0.55),
+        spotLabel: zh ? '左侧灯/铭牌' : 'Left LEDs',
+      });
+    } else if (spot === 'middle') {
+      setFocusTarget({
+        ...base,
+        centerX: -w * 0.03,
+        face: 'front',
+        distance: Math.max(1.48, 1.48 + tallFactor * 0.65),
+        spotLabel: zh ? '中段端口区' : 'Mid Ports',
+      });
+    } else if (spot === 'right') {
+      setFocusTarget({
+        ...base,
+        centerX: w * 0.35,
+        face: 'front',
+        distance: Math.max(1.18, 1.18 + tallFactor * 0.55),
+        spotLabel: zh ? '右侧上联口' : 'Right Uplinks',
+      });
+    } else if (spot === 'rear') {
+      setFocusTarget({
+        ...base,
+        centerX: 0,
+        face: 'rear',
+        distance: Math.max(3.15, 3.15 + tallFactor * 0.85),
+        spotLabel: zh ? '背面电源/风扇' : 'Rear PSU/Fan',
+      });
+    } else {
+      setFocusTarget({
+        ...base,
+        centerX: 0,
+        face: device.face,
+        spotLabel: zh ? '整机正面' : 'Full Front',
+      });
+    }
+  };
+
+  const handleDoubleClickDevice = (
+    device: RackDeviceVM,
+    hitPoint?: { x: number; y: number; z: number },
+  ) => {
+    const halfW = (device.coordinates.width || 4.78) * 0.46;
+    const halfH = (device.coordinates.height || 0.44) * 0.45;
+    const targetX = hitPoint ? Math.max(-halfW, Math.min(halfW, hitPoint.x)) : 0;
+    const targetY = hitPoint
+      ? Math.max(device.coordinates.centerY - halfH, Math.min(device.coordinates.centerY + halfH, hitPoint.y))
+      : device.coordinates.centerY;
+    const targetFace: 'front' | 'rear' = hitPoint
+      ? (hitPoint.z < (device.coordinates.centerZ || 0) ? 'rear' : 'front')
+      : device.face;
+
+    recentSpotFocusRef.current = { deviceId: device.id, ts: Date.now() };
+    setFocusedDeviceId(device.id);
+    setActiveSpot('custom');
+    setFocusTarget({
+      centerX: targetX,
+      centerY: targetY,
       centerZ: device.coordinates.centerZ,
       width: device.coordinates.width,
       height: device.coordinates.height,
       depth: device.coordinates.depth,
-      face: device.face,
-      timestamp: Date.now()
+      face: targetFace,
+      distance: 1.18,
+      spotLabel: zh ? '定点局部特写' : 'Spot Macro',
+      timestamp: Date.now(),
     });
   };
 
   useEffect(() => {
-    if (!selectedDeviceId) return;
+    if (!selectedDeviceId) {
+      lastAutoFocusedDeviceIdRef.current = null;
+      return;
+    }
+    // Avoid hijacking the camera on background rackVM polling refreshes when the
+    // same device remains selected, or right after a double-click spot macro.
+    if (lastAutoFocusedDeviceIdRef.current === selectedDeviceId) return;
+    if (
+      recentSpotFocusRef.current
+      && recentSpotFocusRef.current.deviceId === selectedDeviceId
+      && Date.now() - recentSpotFocusRef.current.ts < 800
+    ) {
+      lastAutoFocusedDeviceIdRef.current = selectedDeviceId;
+      return;
+    }
+
     const device = rackVM.validDevices.find(item => item.id === selectedDeviceId);
     if (!device) return;
+    lastAutoFocusedDeviceIdRef.current = selectedDeviceId;
+    setFocusedDeviceId(device.id);
+    setActiveSpot('full');
     setFocusTarget({
+      centerX: 0,
       centerY: device.coordinates.centerY,
       centerZ: device.coordinates.centerZ,
       width: device.coordinates.width,
       height: device.coordinates.height,
       depth: device.coordinates.depth,
       face: device.face,
+      spotLabel: zh ? '整机正面' : 'Full Front',
       timestamp: Date.now()
     });
-  }, [selectedDeviceId, rackVM.validDevices]);
+  }, [selectedDeviceId, rackVM.validDevices, zh]);
 
   useEffect(() => {
     setWebglSupported(isWebGLAvailable());
@@ -418,8 +673,9 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
         className="w-full h-full relative overflow-hidden flex flex-col select-none"
         style={{ background: '#090d16' }}
       >
-        {/* Top Floating Control Bar (Left Island) */}
-        <div className="absolute top-3 left-3 z-10 flex max-w-[calc(100%_-_19rem)] flex-wrap items-center gap-1.5 p-1.5 rounded-xl shadow-2xl backdrop-blur-xl bg-slate-950/90 border border-slate-700/70 text-slate-200">
+        {/* Docked Single-Header 3D Control Bar (zero overlap with 3D rack or search box) */}
+        <div className="shrink-0 z-20 flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/90 bg-slate-950/95 px-2.5 py-1.5 text-slate-200">
+        <div className="flex flex-wrap items-center gap-1">
           <span className="flex items-center gap-1 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-2 py-1 text-[10px] font-bold text-cyan-300">
             <Eye size={11} />
             {zh ? '只读' : 'Read-only'}
@@ -505,11 +761,11 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
               <RotateCcw size={12} />
             </button>
 
-            {/* Direct Zoom In / Out Buttons */}
+            {/* Direct Zoom In / Out Buttons (macro depth enabled) */}
             <button
               onClick={() => setZoomAction({ type: 'in', timestamp: Date.now() })}
               className="p-1 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
-              title={zh ? '放大视角 (+)' : 'Zoom In (+)'}
+              title={zh ? '放大视角 (+，支持微距看端口)' : 'Zoom In (+)'}
             >
               <ZoomIn size={12} />
             </button>
@@ -521,6 +777,62 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
               <ZoomOut size={12} />
             </button>
           </div>
+
+          <div className="w-[1px] h-3.5 bg-slate-700/80" />
+
+          {/* Orbit vs Pan Mouse Mode Toggle (eliminates awkward mouse dragging in close-up) */}
+          <div
+            className="flex items-center rounded-lg border border-slate-700/80 bg-slate-900 p-0.5 text-[11px]"
+            title={zh ? '切换左键拖动方式：旋转或平移（随时可按住空格键或右键临时平移，滚轮指向缩放）' : 'Toggle left-drag Orbit / Pan (or hold Space / Right-drag to pan, scroll to zoom at cursor)'}
+          >
+            <button
+              type="button"
+              onClick={() => setInteractionMode('orbit')}
+              className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 font-medium transition-colors ${
+                interactionMode === 'orbit' ? 'bg-cyan-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title={zh ? '左键旋转视角（右键或按住空格平移）' : 'Left-drag Orbit (Right-drag or hold Space to Pan)'}
+            >
+              <Rotate3d size={11} />
+              <span>{zh ? '旋转' : 'Orbit'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setInteractionMode('pan')}
+              className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 font-medium transition-colors ${
+                interactionMode === 'pan' ? 'bg-amber-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title={zh ? '左键平移画面（像看图纸一样滑动查看任意端口细节）' : 'Left-drag Pan across ports & LEDs'}
+            >
+              <Hand size={11} />
+              <span>{zh ? '平移' : 'Pan'}</span>
+            </button>
+          </div>
+
+          <div className="w-[1px] h-3.5 bg-slate-700/80" />
+
+          {/* Independent Single-Rack Lighting System Switch */}
+          <button
+            type="button"
+            onClick={cycleLightingMode}
+            className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-semibold transition-colors ${
+              lightingMode === 'daylight'
+                ? 'border-amber-400/50 bg-amber-400/15 text-amber-200 hover:bg-amber-400/25'
+                : lightingMode === 'standby'
+                  ? 'border-sky-400/50 bg-sky-500/15 text-sky-200 hover:bg-sky-500/25'
+                  : 'border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700'
+            }`}
+            title={zh ? '切换独立照明系统：巡检全亮 → 值守节能 → 熄灯观察指示灯（更多图层中可单独开关柜内灯）' : 'Cycle Lighting: Daylight -> Standby -> Lights-Out'}
+          >
+            {lightingMode === 'daylight' ? <Sun size={11} /> : lightingMode === 'standby' ? <Lightbulb size={11} /> : <Moon size={11} />}
+            <span>
+              {lightingMode === 'daylight'
+                ? (zh ? '照明·全亮' : 'Day')
+                : lightingMode === 'standby'
+                  ? (zh ? '照明·值守' : 'Eco')
+                  : (zh ? '照明·熄灯' : 'Off')}
+            </span>
+          </button>
 
           <div className="w-[1px] h-3.5 bg-slate-700/80" />
 
@@ -537,7 +849,6 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
               {zh ? '更多图层' : 'More layers'}
               <ChevronDown size={11} className={showLayerMenu ? 'rotate-180 transition-transform' : 'transition-transform'} />
             </button>
-
           </div>
 
           <div className="w-[1px] h-3.5 bg-slate-700/80" />
@@ -573,7 +884,7 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
         </div>
 
         {/* Top-Right Floating Island (Search Box & Capacity/Power Stats) */}
-        <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+        <div className="flex items-center gap-2">
           {/* Quick Search */}
           <div className="relative">
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl shadow-lg backdrop-blur-xl bg-slate-950/90 border border-slate-700/70 text-slate-200 text-xs">
@@ -653,6 +964,7 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
             )}
           </div>
         </div>
+        </div>
 
         {showLayerMenu && (
           <RackLayerMenuPanel
@@ -660,33 +972,73 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
             showDoor={showDoor}
             isDoorOpen={isDoorOpen}
             showULabels={showULabels}
+            showPowerCords={showPowerCords}
+            showBlankingPanels={showBlankingPanels}
+            showAirflow={showAirflow}
+            showBayContext={showBayContext}
+            cabinetLightsOn={cabinetLightsOn}
             cableMode={cableMode}
             showPreviewCables={showPreviewCables}
             displayMode={displayMode}
+            graphicsMode={graphicsMode}
             onToggleDoor={() => setShowDoor(value => !value)}
             onToggleDoorOpen={() => setIsDoorOpen(value => !value)}
             onToggleULabels={() => setShowULabels(value => !value)}
+            onTogglePowerCords={() => setShowPowerCords(value => !value)}
+            onToggleBlankingPanels={() => setShowBlankingPanels(value => !value)}
+            onToggleAirflow={() => setShowAirflow(value => !value)}
+            onToggleBayContext={() => setShowBayContext(value => !value)}
+            onToggleCabinetLights={() => setCabinetLightsOn(value => !value)}
             onCableModeChange={setCableMode}
             onDisplayModeChange={setDisplayMode}
+            onGraphicsModeChange={handleGraphicsModeChange}
           />
         )}
 
-        {/* Close-up Focus Mode Floating Badge */}
-        {focusTarget && (
-          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2.5 px-3.5 py-1.5 rounded-full shadow-2xl backdrop-blur-xl bg-slate-950/95 border border-cyan-500/70 text-xs text-cyan-200 animate-in fade-in slide-in-from-top-2">
-            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
-            <span className="font-semibold">{zh ? '已平滑对焦设备特写' : 'Device Focused'}</span>
-            <button
-              onClick={() => handlePresetChange('reset')}
-              className="ml-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition-colors shadow-md"
-            >
-              {zh ? '恢复全景' : 'Reset'}
-            </button>
-          </div>
-        )}
-
         {/* 3D Scene Viewport */}
-        <div className={`flex-1 w-full h-full pt-16 transition-[padding] duration-200 ${showLayerMenu ? 'pr-72' : ''}`}>
+        <div className={`relative flex-1 min-h-0 w-full transition-[padding] duration-200 ${showLayerMenu ? 'pr-72' : ''}`}>
+          {/* One-Click Local Macro Inspection Bar (top-center single sleek line — never collides with bottom tooltip/legend) */}
+          {focusTarget && focusedDevice && (
+            <div
+              data-testid="device-macro-bar"
+              className="absolute top-2.5 left-1/2 -translate-x-1/2 z-20 flex max-w-[calc(100%-1.5rem)] items-center gap-1 overflow-x-auto whitespace-nowrap rounded-xl border border-cyan-500/60 bg-slate-950/92 px-2.5 py-1 text-[11px] text-slate-200 shadow-2xl"
+            >
+              <span className="flex items-center gap-1 pr-1 font-semibold text-cyan-300">
+                <Crosshair size={11} className="shrink-0 text-cyan-400" />
+                <span className="max-w-[7.5rem] truncate">{focusedDevice.name}</span>
+              </span>
+              <div className="h-3 w-[1px] shrink-0 bg-slate-700" />
+              {([
+                { id: 'left', label: zh ? '左侧灯' : 'Left LEDs' },
+                { id: 'middle', label: zh ? '中段口' : 'Mid Ports' },
+                { id: 'right', label: zh ? '右侧上联' : 'Uplinks' },
+                { id: 'rear', label: zh ? '背面电源' : 'Rear PSU' },
+                { id: 'full', label: zh ? '整机' : 'Full' },
+              ] as Array<{ id: DeviceMacroSpot; label: string }>).map(spot => (
+                <button
+                  key={spot.id}
+                  type="button"
+                  onClick={() => focusDeviceSpot(focusedDevice, spot.id)}
+                  className={`shrink-0 rounded-lg px-2 py-0.5 text-[10px] font-semibold transition-colors ${
+                    activeSpot === spot.id
+                      ? 'bg-cyan-600 text-white shadow-sm'
+                      : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 hover:text-white'
+                  }`}
+                >
+                  {spot.label}
+                </button>
+              ))}
+              <div className="h-3 w-[1px] shrink-0 bg-slate-700" />
+              <button
+                type="button"
+                onClick={() => handlePresetChange('reset')}
+                className="shrink-0 rounded-lg bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-slate-200 hover:bg-slate-700 hover:text-white transition-colors"
+              >
+                {zh ? '恢复全景' : 'Reset'}
+              </button>
+            </div>
+          )}
+
           <RackScene
             rackVM={rackVM}
             selectedDeviceId={selectedDeviceId}
@@ -697,13 +1049,21 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
             showPreviewCables={showPreviewCables}
             zoomAction={zoomAction}
             focusTarget={focusTarget}
+            interactionMode={interactionMode}
+            graphicsMode={graphicsMode}
+            lightingMode={lightingMode}
+            cabinetLightsOn={cabinetLightsOn}
             onSelectDevice={onSelectDevice}
             onDoubleClickDevice={handleDoubleClickDevice}
-            onHoverDevice={setHoveredDevice}
+            onHoverDevice={handleHoverDevice}
             cameraPreset={cameraPreset}
             isDoorOpen={isDoorOpen}
             showDoor={showDoor}
             showULabels={showULabels}
+            showPowerCords={showPowerCords}
+            showBlankingPanels={showBlankingPanels}
+            showAirflow={showAirflow}
+            showBayContext={showBayContext}
             zh={zh}
           />
         </div>
@@ -732,8 +1092,8 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
           </div>
         )}
 
-        {/* Bottom Clean Status Strip (Health Breakdown) */}
-        <div className="absolute bottom-3 left-3 z-10 flex items-center gap-3 px-3 py-1.5 rounded-xl shadow-lg backdrop-blur-xl bg-slate-950/85 border border-slate-700/60 text-xs text-slate-300">
+        {/* Bottom Clean Status Strip (Health Breakdown + Macro Navigation Hint) */}
+        <div className="absolute bottom-3 left-3 z-10 flex flex-wrap items-center gap-2.5 px-3 py-1.5 rounded-xl shadow-lg backdrop-blur-xl bg-slate-950/85 border border-slate-700/60 text-xs text-slate-300">
           <div className="flex items-center gap-1 text-emerald-400">
             <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399]" />
             <span>{zh ? '正常' : 'Normal'} {healthyCount}</span>
@@ -775,7 +1135,7 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
             <span>
               {topologyStatus === 'loading'
                 ? (zh ? '拓扑加载中' : 'Loading topology')
-                  : topologyStatus === 'error'
+                : topologyStatus === 'error'
                   ? (zh ? '拓扑不可用' : 'Topology unavailable')
                   : topologyLinks.length === 0
                     ? (showPreviewCables ? (zh ? '预览线缆 · 未关联' : 'Preview cables · unlinked') : (zh ? '无已验证链路' : 'No verified links'))
@@ -793,13 +1153,26 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
               </button>
             )}
           </div>
+          <div className="hidden xl:block w-[1px] h-3 bg-slate-700" />
+          <span className="hidden xl:inline text-[10px] text-slate-400">
+            {zh ? '滚轮指向缩放 · 双击定点特写 · 空格/右键平移 · 方向键微调' : 'Scroll to cursor · Dbl-click macro · Space/Right-drag pan · Arrows nudge'}
+          </span>
         </div>
 
-        {/* Floating Device Tooltip HUD */}
+        {/* Floating Device Tooltip HUD (collapsible so it never blocks close-ups) */}
         {activeTooltipDevice && (
           <RackDeviceTooltip
             device={activeTooltipDevice}
             onOpenDetail={onSelectDevice}
+            collapsed={tooltipCollapsed}
+            onToggleCollapsed={() => setTooltipCollapsed(v => !v)}
+            onMouseEnter={() => {
+              if (hoverClearTimerRef.current !== null) {
+                window.clearTimeout(hoverClearTimerRef.current);
+                hoverClearTimerRef.current = null;
+              }
+            }}
+            onMouseLeave={() => handleHoverDevice(null)}
             zh={zh}
           />
         )}

@@ -27,6 +27,7 @@ import {
   Boxes,
   Bell,
   BookOpen,
+  Cable,
   ClipboardList,
   Clock,
   CloudCog,
@@ -78,7 +79,7 @@ import { useEscapeClose } from '../../hooks/useEscapeClose';
 
 /** Map icon string keys (from navConfig) → lucide component */
 const iconMap: Record<string, React.ComponentType<any>> = {
-  Activity, BarChart2, Bell, BookOpen, Bot, Boxes, BrainCircuit, ClipboardList, Clock, CloudCog, Coins, Cpu, FileCode2, FileSpreadsheet, FileText, FolderOpen, Gauge, GitBranch, GitPullRequest, Globe, HeartPulse, Key, Layers3, Lock, MessageSquare, Monitor, Network, Package, Plug, SearchCheck, Server, Settings, Shield, ShieldAlert, ShieldCheck, Terminal, User, Wrench, Zap,
+  Activity, BarChart2, Bell, BookOpen, Bot, Boxes, BrainCircuit, Cable, ClipboardList, Clock, CloudCog, Coins, Cpu, FileCode2, FileSpreadsheet, FileText, FolderOpen, Gauge, GitBranch, GitPullRequest, Globe, HeartPulse, Key, Layers3, Lock, MessageSquare, Monitor, Network, Package, Plug, SearchCheck, Server, Settings, Shield, ShieldAlert, ShieldCheck, Terminal, User, Wrench, Zap,
 };
 
 

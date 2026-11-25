@@ -12,14 +12,17 @@ import { QsfpPortAssembly } from './models/QsfpPortAssembly';
 import { SfpModuleAssembly, type SfpModuleMedia } from './models/SfpModuleAssembly';
 
 import { getPortPhysicalCoordinates, TopologyLinkItem } from './RackCableLayer';
+import { getRealisticFaceplateSilkscreenTexture } from './utils/textures';
 
 interface RackGlbDeviceProps {
   url: string;
+  width: number;
   height: number;
   depth: number;
   face: RackDeviceVM['face'];
   healthStatus: RackDeviceVM['healthStatus'];
   connectedPortNumbers: number[];
+  hardwareSensors?: { psu_status?: string; fan_status?: string } | null;
 }
 
 type LedMaterial = THREE.Material & {
@@ -30,7 +33,7 @@ type LedMaterial = THREE.Material & {
 
 interface AnimatedGlbLed {
   material: LedMaterial;
-  channel: 'power' | 'system' | 'alarm' | 'port';
+  channel: 'power' | 'system' | 'fan' | 'alarm' | 'port';
   portIndex?: number;
   connectionFace?: 'front' | 'rear';
   lane: 'primary' | 'secondary';
@@ -43,22 +46,29 @@ interface AnimatedGlbLed {
 interface RackGlbSceneState {
   scene: THREE.Object3D;
   leds: AnimatedGlbLed[];
+  nativeHeightM: number;
 }
 
 const RackGlbDevice: React.FC<RackGlbDeviceProps> = ({
   url,
+  width,
   height,
   depth,
   face,
   healthStatus,
   connectedPortNumbers,
+  hardwareSensors,
 }) => {
   const { scene } = useGLTF(url);
+  const lastLedTickRef = useRef(0);
+  const connectedPortsKey = connectedPortNumbers.join(',');
   const sceneState = React.useMemo<RackGlbSceneState>(() => {
     const clonedScene = scene.clone(true);
     const leds: AnimatedGlbLed[] = [];
     let ledIndex = 0;
-    const connectedPorts = new Set(connectedPortNumbers);
+    const connectedPorts = new Set(
+      connectedPortsKey ? connectedPortsKey.split(',').map(Number).filter(Number.isFinite) : [],
+    );
 
     clonedScene.traverse(object => {
       if (!(object instanceof THREE.Mesh)) return;
@@ -84,11 +94,13 @@ const RackGlbDevice: React.FC<RackGlbDeviceProps> = ({
       const rawPortIndex = Number(metadata?.port_index);
       const portIndex = Number.isFinite(rawPortIndex) ? rawPortIndex : undefined;
       const connectionFace = metadata?.connection_face === 'rear' ? 'rear' : metadata?.connection_face === 'front' ? 'front' : undefined;
-      const statusChannel: AnimatedGlbLed['channel'] = /ALARM|FAULT/.test(objectName)
+      const statusChannel: AnimatedGlbLed['channel'] = /ALARM|ALM|FAULT/.test(objectName)
         ? 'alarm'
-        : /POWER|PSU|AC[_ -]?OK/.test(objectName)
-          ? 'power'
-          : 'system';
+        : /FAN/.test(objectName)
+          ? 'fan'
+          : /POWER|PWR|PSU|AC[_ -]?OK/.test(objectName)
+            ? 'power'
+            : 'system';
       const lane: AnimatedGlbLed['lane'] = /(?:^|[_-])B(?:$|[_-])/.test(objectName)
         ? 'secondary'
         : 'primary';
@@ -129,11 +141,30 @@ const RackGlbDevice: React.FC<RackGlbDeviceProps> = ({
       object.material = Array.isArray(object.material) ? clonedMaterials : clonedMaterials[0];
     });
 
-    return { scene: clonedScene, leds };
-  }, [scene, face, connectedPortNumbers]);
+    clonedScene.updateMatrixWorld(true);
+    const nativeBox = new THREE.Box3().setFromObject(clonedScene);
+    const nativeSize = new THREE.Vector3();
+    nativeBox.getSize(nativeSize);
+    const nativeHeightM = Number.isFinite(nativeSize.y) && nativeSize.y > 0.01 ? nativeSize.y : 0.04355;
+
+    return { scene: clonedScene, leds, nativeHeightM };
+  }, [scene, face, connectedPortsKey]);
+
+  React.useEffect(() => () => {
+    sceneState.leds.forEach(led => {
+      try {
+        led.material.dispose();
+      } catch {
+        // Ignore already-disposed material
+      }
+    });
+  }, [sceneState]);
 
   useFrame(({ clock }) => {
     const time = clock.getElapsedTime();
+    // Throttle LED updates to ~15Hz to keep frame budget lean across dense racks
+    if (time - lastLedTickRef.current < 0.065) return;
+    lastLedTickRef.current = time;
     sceneState.leds.forEach(led => {
       let color = '#1f2937';
       let emissive = '#000000';
@@ -141,52 +172,81 @@ const RackGlbDevice: React.FC<RackGlbDeviceProps> = ({
 
       if (led.channel === 'port') {
         if (led.connected) {
-          // A connected link is represented by a steady green link LED. The
-          // secondary lens is kept dimmer because activity/speed telemetry is
-          // not part of the rack read model and must not be fabricated.
-          color = led.lane === 'secondary' ? '#236c57' : '#4dffad';
-          emissive = led.lane === 'secondary' ? '#126447' : '#20d889';
-          intensity = led.lane === 'secondary'
-            ? 0.65 + Math.sin(time * 1.6 + led.phase) * 0.08
-            : 2.8;
+          // Authentic pure hardware LED green (zero blue/cyan cast so it never
+          // washes out to mint/white against the brushed-silver S6850 faceplate).
+          const fastWave = Math.sin(time * 13.5 + led.phase * 3.1);
+          const burstGate = Math.sin(time * 3.7 + led.phase * 1.9);
+          const isPacketBurst = fastWave > -0.15 && burstGate > -0.35;
+          if (led.lane === 'secondary') {
+            color = isPacketBurst ? '#f59e0b' : '#3b2406';
+            emissive = isPacketBurst ? '#d97706' : '#1f1203';
+            intensity = isPacketBurst ? 1.35 : 0.15;
+          } else {
+            color = isPacketBurst ? '#00e632' : '#0a3a14';
+            emissive = isPacketBurst ? '#00c428' : '#041f09';
+            intensity = isPacketBurst ? 1.65 : 0.22;
+          }
         }
       } else if (healthStatus !== 'offline') {
         if (led.channel === 'power') {
-          color = '#4dffad';
-          emissive = '#20d889';
-          intensity = 2.25 + Math.sin(time * 1.7 + led.phase) * 0.12;
+          if (hardwareSensors?.psu_status === 'fault') {
+            color = '#ff2424';
+            emissive = '#dc2626';
+            intensity = Math.sin(time * 9 + led.phase) > 0 ? 1.85 : 0.1;
+          } else {
+            // Power / PSU LED: pure saturated hardware emerald green with gentle breathing
+            const pulse = 0.5 + 0.5 * Math.sin(time * 2.4 + led.phase);
+            color = '#00dc30';
+            emissive = '#00b824';
+            intensity = 1.25 + pulse * 0.45;
+          }
+        } else if (led.channel === 'fan') {
+          // FAN LED (S6850): pure green when healthy, amber/red on sensor/device fault
+          if (hardwareSensors?.fan_status === 'fault' || healthStatus === 'critical') {
+            color = '#ff2424';
+            emissive = '#dc2626';
+            intensity = Math.sin(time * 10 + led.phase) > 0 ? 1.85 : 0.1;
+          } else if (healthStatus === 'warning') {
+            color = '#ff9900';
+            emissive = '#ea580c';
+            intensity = Math.sin(time * 5 + led.phase) > 0 ? 1.65 : 0.1;
+          } else {
+            color = '#00cf2c';
+            emissive = '#00a820';
+            intensity = 1.3;
+          }
         } else if (led.channel === 'system') {
           if (healthStatus === 'critical') {
-            color = '#ff5d66';
-            emissive = '#ef4444';
-            intensity = 3.8 + Math.sin(time * 8 + led.phase) * 1.1;
+            color = '#ff2424';
+            emissive = '#dc2626';
+            intensity = Math.sin(time * 9 + led.phase) > 0 ? 1.85 : 0.12;
           } else if (healthStatus === 'warning') {
-            // Collector/telemetry warnings do not extinguish the physical
-            // system-ready lamp. Real switches keep SYS green and use the
-            // dedicated ALM lens for the amber blink.
-            color = '#4dffad';
-            emissive = '#22c55e';
-            intensity = 1.9 + Math.sin(time * 2.8 + led.phase) * 0.35;
+            color = '#00dc30';
+            emissive = '#00b824';
+            intensity = Math.sin(time * 4.5 + led.phase) > 0 ? 1.6 : 0.18;
           } else if (healthStatus === 'healthy') {
-            color = '#4dffad';
-            emissive = '#22c55e';
-            // Normal switches keep a clearly visible green heartbeat instead
-            // of a barely perceptible one-frame pulse at rack scale.
-            intensity = 0.85 + (0.5 + 0.5 * Math.sin(time * 3.2 + led.phase)) * 2.9;
+            // Standard H3C/enterprise switch SYS pure-green heartbeat (~1 Hz crisp blink)
+            const heartbeatOn = Math.sin(time * 5.2 + led.phase) > -0.1;
+            color = heartbeatOn ? '#00e632' : '#092e11';
+            emissive = heartbeatOn ? '#00c428' : '#031807';
+            intensity = heartbeatOn ? 1.7 : 0.12;
           } else {
-            color = '#8aa4b8';
-            emissive = '#416274';
-            intensity = 0.4 + Math.sin(time * 1.4 + led.phase) * 0.08;
+            color = '#64748b';
+            emissive = '#334155';
+            intensity = 0.35 + Math.sin(time * 1.4 + led.phase) * 0.08;
           }
         } else if (healthStatus === 'critical') {
-          color = '#ff4f58';
-          emissive = '#ef4444';
-          intensity = Math.sin(time * 11 + led.phase) > 0 ? 4.8 : 0.08;
+          // ALM LED: fast red blink on critical
+          color = '#ff1e1e';
+          emissive = '#dc2626';
+          intensity = Math.sin(time * 11 + led.phase) > 0 ? 1.95 : 0.08;
         } else if (healthStatus === 'warning') {
-          color = '#ffc34d';
-          emissive = '#f59e0b';
-          intensity = Math.sin(time * 5.5 + led.phase) > 0 ? 4.2 : 0.06;
+          // ALM LED: amber blink on warning
+          color = '#ff9800';
+          emissive = '#ea580c';
+          intensity = Math.sin(time * 5.5 + led.phase) > 0 ? 1.75 : 0.08;
         }
+        // When healthy, ALM LED remains OFF (dark lens #1f2937, intensity 0)
       }
 
       if (led.material.color) led.material.color.set(color);
@@ -201,16 +261,19 @@ const RackGlbDevice: React.FC<RackGlbDeviceProps> = ({
     });
   });
 
-  // Blender assets use meters and X/Y/Z = left-right/front-back/vertical;
-  // the viewer uses X/Y/Z = left-right/vertical/front-back.  The negative
-  // local Z scale preserves the positive vertical direction after the X
-  // quarter-turn, while local +Y remains viewer-front (+Z).
+  // RackVision v2 GLBs are native Y-up, centered at origin across 1U, 2U, 3U, 8U, 10U.
+  // Scaling Y by the GLB's measured native height preserves exact proportions for box,
+  // UPS (2U/3U), and modular chassis (8U/10U) hardware alike.
+  const sx = 10 * Math.max(0.2, width / 4.786);
+  const sy = Math.max(0.2, height / Math.max(0.02, sceneState.nativeHeightM));
+  const sz = 10 * Math.max(0.2, depth / 8.4);
+
   return (
     <primitive
       object={sceneState.scene}
-      position={[0, -height / 2, depth / 2]}
-      rotation={[Math.PI / 2, 0, 0]}
-      scale={[10, 10, -10]}
+      position={[0, 0, 0]}
+      rotation={[0, face === 'rear' ? Math.PI : 0, 0]}
+      scale={[sx, sy, sz]}
     />
   );
 };
@@ -252,7 +315,7 @@ interface RackDeviceItemProps {
   displayMode?: RackDisplayMode;
   links?: TopologyLinkItem[];
   onSelect: (deviceId: string) => void;
-  onDoubleClick?: (device: RackDeviceVM) => void;
+  onDoubleClick?: (device: RackDeviceVM, hitPoint?: { x: number; y: number; z: number }) => void;
   onHover?: (device: RackDeviceVM | null) => void;
 }
 
@@ -281,7 +344,29 @@ export const RackDeviceItem: React.FC<RackDeviceItemProps> = ({
   // either face so rear inspection exposes the real PSU/fan/management
   // details instead of silently reverting to the older procedural shell.
   const useGlbAsset = Boolean(device.assetAvailable && device.assetUrl && (device.face === 'front' || device.face === 'rear'));
-  const showQsfpOverlay = useGlbAsset && face === 'front' && isS6800Identity(device);
+  const silkscreenTexture = React.useMemo(
+    () => (useGlbAsset
+      ? getRealisticFaceplateSilkscreenTexture(
+          device.name,
+          vendor,
+          model,
+          role,
+          device.assetKey,
+          device.heightU,
+          device.physicalPortProfile,
+        )
+      : null),
+    [useGlbAsset, device.name, vendor, model, role, device.assetKey, device.heightU, device.physicalPortProfile],
+  );
+  const selectionBorderGeo = React.useMemo(() => {
+    const box = new THREE.BoxGeometry(coordinates.width + 0.08, coordinates.height + 0.04, 0.04);
+    const edges = new THREE.EdgesGeometry(box);
+    box.dispose();
+    return edges;
+  }, [coordinates.width, coordinates.height]);
+  // RackVision v2 GLBs include native 3D QSFP28 & SFP+ cages with per-port LEDs;
+  // disable the legacy procedural QSFP overlay that caused z-fighting/clipping.
+  const showQsfpOverlay = false;
   const showSfpModules = useGlbAsset && face === 'front' && isS6800Identity(device);
 
   // Derive which ports physically have active cable connections
@@ -295,8 +380,8 @@ export const RackDeviceItem: React.FC<RackDeviceItemProps> = ({
       if (!match) return null;
       const rawPort = parseInt(match[1], 10);
       const isHighSpeedPort = /(?:qsfp|fge|hge|40ge|100ge|40g|100g|fortygig|hundredgig)/i.test(interfaceName);
-      const normalizedPort = isHighSpeedPort && rawPort <= 6 ? 49 + rawPort - 1 : rawPort;
-      return isS6800 ? Math.max(1, Math.min(54, normalizedPort)) : rawPort;
+      const normalizedPort = isHighSpeedPort && rawPort <= 8 ? 49 + rawPort - 1 : rawPort;
+      return isS6800 ? Math.max(1, Math.min(56, normalizedPort)) : rawPort;
     };
     (links || []).forEach(l => {
       const isLocal = l.local_device_id === device.id || (l.local_device_name && l.local_device_name.toUpperCase() === devName);
@@ -310,8 +395,18 @@ export const RackDeviceItem: React.FC<RackDeviceItemProps> = ({
         if (portNumber != null) ports.push(portNumber);
       }
     });
+    // Also illuminate every real physical port with oper_status === 'up' from synced CMDB+SNMP profile
+    const profilePorts = device.physicalPortProfile?.ports || [];
+    const minPort = device.physicalPortProfile?.slots?.[0]?.min_port ?? 1;
+    const isFirewallZeroBased = /(firewall|f10\d\d|secpath|usg)/.test(deviceIdentity) && minPort === 0;
+    profilePorts.forEach(p => {
+      if (p.oper_status === 'up') {
+        const mapped = isFirewallZeroBased ? p.port + 1 : p.port;
+        ports.push(mapped);
+      }
+    });
     return Array.from(new Set(ports));
-  }, [device.assetKey, device.id, device.model, device.name, device.vendor, links]);
+  }, [device.assetKey, device.id, device.model, device.name, device.vendor, device.physicalPortProfile, links]);
 
   const connectedSfpModules = React.useMemo<Array<{ portNumber: number; media: SfpModuleMedia }>>(() => {
     if (!isS6800Identity(device)) return [];
@@ -372,7 +467,11 @@ export const RackDeviceItem: React.FC<RackDeviceItemProps> = ({
   // Smooth pull-out animation on selection / service maintenance mode
   useFrame((_, delta) => {
     if (!groupRef.current) return;
-    const targetZ = isPulledOut ? 3.8 : (isSelected ? 0.6 : 0);
+    const targetZ = isPulledOut ? 3.2 : 0;
+    if (Math.abs(groupRef.current.position.z - targetZ) < 0.002) {
+      groupRef.current.position.z = targetZ;
+      return;
+    }
     groupRef.current.position.z = THREE.MathUtils.damp(
       groupRef.current.position.z,
       targetZ,
@@ -390,7 +489,7 @@ export const RackDeviceItem: React.FC<RackDeviceItemProps> = ({
     e.stopPropagation();
     onSelect(device.id);
     if (onDoubleClick) {
-      onDoubleClick(device);
+      onDoubleClick(device, e.point ? { x: e.point.x, y: e.point.y, z: e.point.z } : undefined);
     }
   };
 
@@ -485,12 +584,21 @@ export const RackDeviceItem: React.FC<RackDeviceItemProps> = ({
             <group>
               <RackGlbDevice
                 url={device.assetUrl}
+                width={coordinates.width}
                 height={coordinates.height}
                 depth={coordinates.depth}
                 face={face}
                 healthStatus={healthStatus}
                 connectedPortNumbers={connectedPortNumbers}
+                hardwareSensors={device.physicalPortProfile?.hardware_sensors}
               />
+              {/* Mask unused 4th QSFP column (ports 55-56) on real 54-port H3C S6850 devices */}
+              {face === 'front' && isS6800Identity(device) && (device.physicalPortProfile?.slots?.[0]?.max_port ?? 56) <= 54 && (
+                <mesh position={[1.98, -0.02, coordinates.depth / 2 + 0.166]}>
+                  <boxGeometry args={[0.34, 0.28, 0.022]} />
+                  <meshStandardMaterial color="#cfd6df" roughness={0.32} metalness={0.72} />
+                </mesh>
+              )}
               {showSfpModules && connectedSfpModules.map(({ portNumber, media }) => {
                 const port = getPortPhysicalCoordinates(`GE1/0/${portNumber}`, true, true);
                 return (
@@ -556,6 +664,64 @@ export const RackDeviceItem: React.FC<RackDeviceItemProps> = ({
           />
         )}
         {renderFaceplate()}
+        {/* High-Resolution 2048x256 Brushed-Metal Silkscreen Overlay (port numbers + brand + model, transparent over 3D port cages) */}
+        {useGlbAsset && silkscreenTexture && face === 'front' && (
+          <mesh position={[0, 0, coordinates.depth / 2 + 0.145]}>
+            <planeGeometry args={[Math.min(coordinates.width - 0.36, 4.40), coordinates.height - 0.015]} />
+            <meshStandardMaterial
+              map={silkscreenTexture}
+              transparent
+              roughness={0.34}
+              metalness={0.55}
+              depthWrite={false}
+            />
+          </mesh>
+        )}
+        {(isSelected || hovered) && (
+          <lineSegments
+            geometry={selectionBorderGeo}
+            position={[0, 0, (face === 'rear' ? -1 : 1) * (coordinates.depth / 2 + 0.16)]}
+          >
+            <lineBasicMaterial
+              color={isSelected ? '#22d3ee' : '#38bdf8'}
+              transparent
+              opacity={isSelected ? 0.95 : 0.55}
+            />
+          </lineSegments>
+        )}
+        {useGlbAsset && displayMode !== 'physical' && (() => {
+          let tint = '#22c55e';
+          if (displayMode === 'health') {
+            tint = healthStatus === 'critical' ? '#ef4444'
+              : healthStatus === 'warning' ? '#f59e0b'
+              : healthStatus === 'offline' ? '#64748b'
+              : healthStatus === 'unknown' ? '#94a3b8'
+              : '#10b981';
+          } else if (displayMode === 'role') {
+            const r = (role || '').toLowerCase();
+            tint = r.includes('firewall') ? '#f43f5e'
+              : r.includes('wireless') || r === 'ac' ? '#22d3ee'
+              : r.includes('core') || r.includes('spine') ? '#a855f7'
+              : r.includes('server') || r.includes('storage') ? '#10b981'
+              : '#3b82f6';
+          } else if (displayMode === 'power') {
+            const w = metrics.ratedPowerWatts || 0;
+            tint = w >= 600 ? '#ef4444' : w >= 250 ? '#f59e0b' : w > 0 ? '#10b981' : '#64748b';
+          }
+          const faceDir = face === 'rear' ? -1 : 1;
+          return (
+            <group>
+              <mesh position={[0, 0, 0]}>
+                <boxGeometry args={[coordinates.width + 0.04, coordinates.height + 0.015, coordinates.depth + 0.18]} />
+                <meshBasicMaterial color={tint} transparent opacity={0.22} depthWrite={false} />
+              </mesh>
+              <mesh position={[0, coordinates.height / 2 - 0.018, faceDir * (coordinates.depth / 2 + 0.158)]}>
+                <boxGeometry args={[coordinates.width - 0.36, 0.026, 0.016]} />
+                <meshBasicMaterial color={tint} toneMapped={false} />
+              </mesh>
+            </group>
+          );
+        })()}
       </group>
     </group>
   );

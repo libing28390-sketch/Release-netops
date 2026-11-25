@@ -125,4 +125,20 @@ describe('useRackReadModel', () => {
     await act(async () => { await oldLoad; });
     expect(result.current.layout?.id).toBe('rack-new');
   });
+
+  it('keeps loadLayout referentially stable across rack loads to prevent duplicate effects', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(apiResponse(summaryPage))
+      .mockResolvedValueOnce(apiResponse(layout));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { result } = renderHook(() => useRackReadModel({ page: 1, pageSize: 50 }));
+    await waitFor(() => expect(result.current.summaryLoading).toBe(false));
+
+    const firstRef = result.current.loadLayout;
+    await act(async () => {
+      await result.current.loadLayout('rack-1');
+    });
+    expect(result.current.loadLayout).toBe(firstRef);
+  });
 });

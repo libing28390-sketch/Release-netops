@@ -2981,6 +2981,8 @@ def get_asset(asset_id: str, _user=require_role("Viewer")):
     try:
         row = conn.execute(
             '''SELECT pa.*, s.tenant_id AS site_tenant_id,
+               s.site_name AS site_name,
+               s.site_code AS site_code,
                d.id AS device_id,
                COALESCE(d.snmp_collection_enabled, TRUE) AS snmp_collection_enabled,
                d.onboarding_status AS onboarding_status,
