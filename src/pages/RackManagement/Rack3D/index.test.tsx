@@ -8,10 +8,18 @@ const { mockIsWebGLAvailable } = vi.hoisted(() => ({ mockIsWebGLAvailable: vi.fn
 
 vi.mock('./utils/webgl', () => ({ isWebGLAvailable: mockIsWebGLAvailable }));
 vi.mock('./RackScene', () => ({
-  RackScene: (props: { focusTarget?: { centerY: number } | null; selectedDeviceId?: string | null }) => (
+  RackScene: (props: {
+    focusTarget?: { centerX?: number; centerY: number; face?: string; distance?: number; spotLabel?: string } | null;
+    selectedDeviceId?: string | null;
+    interactionMode?: string;
+  }) => (
     <div
       data-testid="rack-scene"
       data-focus={props.focusTarget?.centerY ?? ''}
+      data-focus-x={props.focusTarget?.centerX ?? ''}
+      data-focus-face={props.focusTarget?.face ?? ''}
+      data-focus-distance={props.focusTarget?.distance ?? ''}
+      data-mode={props.interactionMode ?? 'orbit'}
       data-selected={props.selectedDeviceId || ''}
     />
   ),
@@ -230,5 +238,36 @@ describe('Rack3DContainer read-only workbench', () => {
     fireEvent.click(screen.getByTitle('重新请求拓扑数据'));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getByText('无已验证链路')).toBeTruthy());
+  });
+
+  it('supports Orbit/Pan toggle and one-click local macro spot jumps on focused device', async () => {
+    render(
+      <Rack3DContainer
+        rackVM={rackVM}
+        selectedDeviceId="rack-device-1"
+        onSelectDevice={vi.fn()}
+        onFallbackTo2D={vi.fn()}
+        isFullscreen={false}
+        onToggleFullscreen={vi.fn()}
+        zh
+      />,
+    );
+
+    const scene = screen.getByTestId('rack-scene');
+    expect(scene.getAttribute('data-mode')).toBe('orbit');
+
+    fireEvent.click(screen.getByText('平移'));
+    expect(scene.getAttribute('data-mode')).toBe('pan');
+
+    expect(screen.getByTestId('device-macro-bar')).toBeTruthy();
+    fireEvent.click(screen.getByText('左侧灯'));
+    expect(Number(scene.getAttribute('data-focus-x'))).toBeLessThan(-1);
+    expect(Number(scene.getAttribute('data-focus-distance'))).toBeCloseTo(1.18, 2);
+
+    fireEvent.click(screen.getByText('右侧上联'));
+    expect(Number(scene.getAttribute('data-focus-x'))).toBeGreaterThan(1);
+
+    fireEvent.click(screen.getByText('背面电源'));
+    expect(scene.getAttribute('data-focus-face')).toBe('rear');
   });
 });

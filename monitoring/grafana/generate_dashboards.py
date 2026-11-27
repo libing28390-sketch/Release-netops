@@ -919,6 +919,15 @@ def make_network_variables(multi_device=True, include_all_device=True, device_la
     ]
 
 
+def wireless_controller_targets(selector):
+    # A controller can also be assigned a switching role in the topology.
+    return (
+        f'(up{{{selector},role="wireless_controller"}} or '
+        f'(up{{{selector},asset_id!=""}} and on(asset_id) '
+        f'nexora_hw_sensor_info{{{HARDWARE_INVENTORY_JOB},asset_id!="",component_class=~"wireless_(controller|access_point|ssid|radio)"}}))'
+    )
+
+
 def make_wireless_variables():
     """Select known ACs plus devices with locally discovered wireless hardware."""
     def wireless_targets(*, site=None, vendor=None, role=None):
@@ -1858,15 +1867,16 @@ def build_wireless_dashboard():
     sel = f'{NETWORK_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     inventory_sel = f'{HARDWARE_INVENTORY_JOB},site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
     wireless_inventory_sel = f'{inventory_sel},source_type=~"librenms_rule|librenms_mib_rule"'
-    ac_sel = f'{NETWORK_JOB},role="wireless_controller",site_name=~"$site",vendor=~"$vendor",role=~"$role",hostname=~"$device"'
-    wireless_interface_sel = f'{NETWORK_JOB},role="wireless_controller",site_name=~"$site",vendor=~"$vendor",hostname=~"$device"'
+    ac_targets = wireless_controller_targets(sel)
+    wireless_interface_sel = sel
     wireless_interface_meta_sel = f'{wireless_interface_sel},ifName!=""'
     wireless_in_rate = counter_rate_expr("ifHCInOctets", "ifInOctets", wireless_interface_sel)
     wireless_out_rate = counter_rate_expr("ifHCOutOctets", "ifOutOctets", wireless_interface_sel)
     wireless_interface_join = (
         f"{filtered_interface_join(wireless_interface_meta_sel, alias_selector=wireless_interface_sel, fallback_status=False)} "
         f"and on(instance, ifIndex) (ifAdminStatus{{{wireless_interface_meta_sel}}} == 1) "
-        f"and on(instance, ifIndex) (ifOperStatus{{{wireless_interface_meta_sel}}} == 1)"
+        f"and on(instance, ifIndex) (ifOperStatus{{{wireless_interface_meta_sel}}} == 1) "
+        f"and on(asset_id, instance) ({ac_targets} == 1)"
     )
     wireless_total_rate = (
         f"max by (site_name,hostname,instance,ifIndex,ifName,ifAlias) "
@@ -1876,7 +1886,6 @@ def build_wireless_dashboard():
     # from the pinned LibreNMS rule bundle.
     device_labels = WIRELESS_DEVICE_LABELS
     # Prefer collected per-AP state rows for AP totals and status counts.
-    # Controller counts are also read only from normalized inventory.
     ap_state_selector = f'{wireless_inventory_sel},component_class="wireless_access_point"'
     ap_state_rows = f"nexora_hw_component_state{{{ap_state_selector}}}"
     ap_state_online_rows = f'nexora_hw_component_state{{{ap_state_selector},state_description=~"^(associated|run|online)$"}}'
@@ -1911,14 +1920,9 @@ def build_wireless_dashboard():
         f"(({ap_state_detail_coverage}) * 0)"
     )
     clients = wireless_clients_by_device(wireless_inventory_sel)
-    ac_total = f"count(count by ({device_labels}) (up{{{ac_sel}}}))"
-    ac_online_targets = f"count(count by ({device_labels}) (up{{{ac_sel}}} == 1))"
-    ac_online = (
-        f"{ac_online_targets} or on() (({ac_total} > 0) * 0)"
-    )
-    ac_offline = (
-        f"({ac_total} - {ac_online_targets}) or on() (({ac_total} > 0) * 0)"
-    )
+    ac_status = f"max by (asset_id,instance) ({ac_targets})"
+    ac_online = f"sum({ac_status})"
+    ac_offline = f"sum(1 - {ac_status})"
     missing_wireless_data_note = "暂无数据不代表数量为 0。"
     ap_total_description = f"按控制器 AP 清单及最近一次完整采集保留的纳管身份计数；单次缺行不会缩减总数。{missing_wireless_data_note}"
     ap_online_description = "优先按 AP 状态统计；覆盖不完整时采用 LibreNMS 规则采集的控制器上报数。"

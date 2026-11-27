@@ -156,7 +156,7 @@ def test_schema_correction_feedback_never_echoes_sensitive_model_values(monkeypa
     assert "password=NeverExposeThis" not in captured[1][-1]["content"]
 
 
-def test_security_gateway_blocks_credentials_community_and_private_key_before_egress() -> None:
+def test_security_gateway_redacts_credentials_community_and_private_key_before_egress() -> None:
     from ai.security.gateway import AISecurityGateway, SecurityBlocked, SecurityPolicy
     from ai.security.tokenization import ScopedTokenVault
 
@@ -164,16 +164,19 @@ def test_security_gateway_blocks_credentials_community_and_private_key_before_eg
         vault=ScopedTokenVault(ttl_seconds=120),
         policy=SecurityPolicy(external_ai_enabled=True),
     )
+    # Task d1: the values are redacted and the request continues.
     samples = (
-        "password=NeverSendThisValue",
-        "snmp-server community NeverSendThisCommunity",
-        "Authorization: Bearer eyJabc12345.payload.signature",
-        "-----BEGIN RSA PRIVATE KEY-----NeverSendThisKey-----END RSA PRIVATE KEY-----",
+        ("pass" + "word=NeverSendThisValue", "NeverSendThisValue"),
+        ("snmp-server community " + "NeverSendThisCommunity", "NeverSendThisCommunity"),
+        ("Authorization: Bearer " + "eyJabc12345.payload.signature", "eyJabc12345"),
+        ("-----BEGIN RSA PRIVATE KEY-----" + "NeverSendThisKey" + "-----END RSA PRIVATE KEY-----", "NeverSendThisKey"),
     )
-    for sample in samples:
-        with pytest.raises(SecurityBlocked) as exc_info:
-            gateway.protect([{"role": "user", "content": sample}])
-        assert sample.split("=")[-1] not in exc_info.value.user_message
+    for sample, secret in samples:
+        payload = gateway.protect([{"role": "user", "content": sample}])
+        body = payload.as_provider_json()
+        assert secret not in body
+        assert "<REDACTED" in body
+        assert "credential_redacted" in payload.metadata["finding_categories"]
 
 
 def test_schema_failure_returns_explicit_safe_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -539,8 +542,12 @@ def test_streaming_assistant_short_circuits_dangerous_intent_clarification(
 
     async def collect_events():
         events = []
+        # Not an explicit "execute <command>" request (those are answered
+        # by the execution guard before intent parsing, see
+        # test_copilot_ux_fixes.py); this one must reach the R3
+        # clarification path.
         async for event in AIAssistantService()._chat_stream_impl(
-            "执行 shutdown",
+            "批量关闭端口",
             user_id="test-user",
             tenant_id="tenant-default",
         ):

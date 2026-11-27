@@ -17,17 +17,20 @@ _BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
 _PRIVATE_KEY_RE = re.compile(r"(?is)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----")
 
 _REDACTION_PATTERNS = [
-    # SNMP Community (Huawei / H3C / Cisco)
-    (re.compile(r'(?i)(snmp-agent\s+community\s+(?:(?:read|write|cipher|simple)\s+)*)(\S+)'), r'\1<REDACTED>'),
-    (re.compile(r'(?i)(snmp-server\s+community\s+)(\S+)'), r'\1<REDACTED>'),
+    # SNMP Community (Huawei / H3C / Cisco) — horizontal whitespace only so
+    # "include snmp-agent community\ndisplay ..." never eats the next line.
+    (re.compile(r'(?i)(?<!display )(?<!show )(?<!include )(snmp-agent[ \t]+community[ \t]+(?:(?:read|write|cipher|simple)[ \t]+)*)([^\s`]+)'), r'\1<REDACTED>'),
+    (re.compile(r'(?i)(?<!display )(?<!show )(?<!include )(snmp-server[ \t]+community[ \t]+)([^\s`]+)'), r'\1<REDACTED>'),
     
     # CLI Passwords & Secrets
-    (re.compile(r'(?i)(password\s+(?:(?:level\s+\d+\s+)?(?:irreversible[-_ ]?cipher|cipher|simple|hash|7|0)\s+)?)(\S+)'), r'\1<REDACTED>'),
-    (re.compile(r'(?i)(secret\s+(?:(?:level\s+\d+\s+)?(?:irreversible[-_ ]?cipher|cipher|simple|hash|5|8|9)\s+)?)(\S+)'), r'\1<REDACTED>'),
+    # (?<![\w-]) keeps "trace-secret Bearer" or "db-password x" from being
+    # read as the CLI keyword followed by its value.
+    (re.compile(r'(?i)(?<![\w-])(password\s+(?:(?:level\s+\d+\s+)?(?:irreversible[-_ ]?cipher|cipher|simple|hash|7|8|9|0)\s+)?)(\S+)'), r'\1<REDACTED>'),
+    (re.compile(r'(?i)(?<![\w-])(secret\s+(?:(?:level\s+\d+\s+)?(?:irreversible[-_ ]?cipher|cipher|simple|hash|0|5|7|8|9)\s+)?)(\S+)'), r'\1<REDACTED>'),
     (re.compile(r'(?i)(key-string\s+(?:(?:cipher|simple)\s+)?)(\S+)'), r'\1<REDACTED>'),
-    (re.compile(r'(?i)(pre-shared-key\s+(?:(?:cipher|local|remote)\s+)?)(\S+)'), r'\1<REDACTED>'),
-    (re.compile(r'(?i)(tacacs-server\s+key\s+(?:(?:cipher|simple|0|7)\s+)?)(\S+)'), r'\1<REDACTED>'),
-    (re.compile(r'(?i)(radius-server\s+shared-key\s+(?:(?:cipher|simple)\s+)?)(\S+)'), r'\1<REDACTED>'),
+    (re.compile(r'(?i)(pre-shared-key\s+(?:(?:cipher|simple|local|remote)\s+)*)(\S+)'), r'\1<REDACTED>'),
+    (re.compile(r'(?i)(tacacs-server\s+(?:key|shared-key)\s+(?:(?:irreversible[-_ ]?cipher|cipher|simple|0|7|8|9)\s+)?)(\S+)'), r'\1<REDACTED>'),
+    (re.compile(r'(?i)(radius-server\s+(?:shared-key|key)\s+(?:(?:irreversible[-_ ]?cipher|cipher|simple|0|7|8|9)\s+)?)(\S+)'), r'\1<REDACTED>'),
     (re.compile(r'(?i)(authentication-password\s+(?:(?:cipher|simple)\s+)?)(\S+)'), r'\1<REDACTED>'),
     
     # JSON / Key-Value Credentials
@@ -48,6 +51,11 @@ def sanitize_text(text: str) -> str:
     if not text:
         return text
     sanitized = text
+    try:
+        from ai.security.classification import redact_cn_secret_assignments
+        sanitized, _ = redact_cn_secret_assignments(sanitized)
+    except Exception:
+        pass
     for pattern, replacement in _REDACTION_PATTERNS:
         sanitized = pattern.sub(replacement, sanitized)
     return sanitized

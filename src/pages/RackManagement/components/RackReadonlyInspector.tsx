@@ -58,6 +58,12 @@ export const RackReadonlyInspector: React.FC<RackReadonlyInspectorProps> = ({
     right_side: zh ? '右侧挂' : 'Right side',
     unknown: zh ? '待确认' : 'Unknown',
   };
+  const placementStatusLabel: Record<string, string> = {
+    confirmed: zh ? '已确认' : 'Confirmed',
+    estimated: zh ? '估算' : 'Estimated',
+    unknown: zh ? '待确认' : 'Unknown',
+    invalid: zh ? '异常' : 'Invalid',
+  };
   const fidelityLabel: Record<string, string> = {
     exact: zh ? '精确模型' : 'Exact model',
     family: zh ? '系列模型' : 'Family model',
@@ -72,18 +78,41 @@ export const RackReadonlyInspector: React.FC<RackReadonlyInspectorProps> = ({
     unknown: zh ? '无遥测' : 'No telemetry',
   };
 
-  const fields = [
-    [zh ? '位置' : 'Placement', `${uRange}${hasKnownUPlacement ? ` · ${device.heightU}U` : ''}`],
-    [zh ? '安装方式' : 'Mount kind', mountKindLabel[device.mountKind || 'unknown'] || device.mountKind || '—'],
-    [zh ? '安装位置' : 'Position', positionLabel[device.position || 'unknown'] || device.position || '—'],
-    [zh ? '安装面' : 'Face', device.face === 'front' ? (zh ? '前面板' : 'Front') : (zh ? '后面板' : 'Rear')],
-    [zh ? '位置状态' : 'Placement status', device.placementStatus || (zh ? '未提供' : 'Not provided')],
-    [zh ? '位置说明' : 'Location note', device.locationNote || '—'],
-    [zh ? '厂商 / 型号' : 'Vendor / model', `${device.vendor || '—'} / ${device.model || '—'}`],
-    [zh ? '序列号' : 'Serial number', device.serialNumber || '—'],
-    [zh ? '资产关联' : 'Asset link', device.assetId || (zh ? '未关联' : 'Not linked')],
-    [zh ? '监控对象' : 'Monitoring target', device.networkDeviceId || (zh ? '未关联' : 'Not linked')],
-    ...(device.assetKey ? [[zh ? '3D 资产' : '3D asset', `${fidelityLabel[device.assetFidelity || 'generic'] || device.assetFidelity || '—'} · ${device.assetKey}`]] : []),
+  const assetDisplay = device.assetTag || device.assetId || (zh ? '未关联' : 'Not linked');
+  const monitoringTargetDisplay = (() => {
+    const parts = [device.networkHostname, device.networkIp].filter(Boolean);
+    if (parts.length > 0) return parts.join(' · ');
+    if (device.networkDeviceId) return zh ? '已关联监控' : 'Linked';
+    return zh ? '未关联' : 'Not linked';
+  })();
+
+  const fields: Array<{ label: string; value: string; title?: string }> = [
+    { label: zh ? '位置' : 'Placement', value: `${uRange}${hasKnownUPlacement ? ` · ${device.heightU}U` : ''}` },
+    { label: zh ? '安装方式' : 'Mount kind', value: mountKindLabel[device.mountKind || 'unknown'] || device.mountKind || '—' },
+    { label: zh ? '安装位置' : 'Position', value: positionLabel[device.position || 'unknown'] || device.position || '—' },
+    { label: zh ? '安装面' : 'Face', value: device.face === 'front' ? (zh ? '前面板' : 'Front') : (zh ? '后面板' : 'Rear') },
+    {
+      label: zh ? '位置状态' : 'Placement status',
+      value: device.placementStatus
+        ? (placementStatusLabel[device.placementStatus.toLowerCase()] || device.placementStatus)
+        : (zh ? '未提供' : 'Not provided'),
+    },
+    { label: zh ? '位置说明' : 'Location note', value: device.locationNote || '—' },
+    { label: zh ? '厂商 / 型号' : 'Vendor / model', value: `${device.vendor || '—'} / ${device.model || '—'}` },
+    { label: zh ? '序列号' : 'Serial number', value: device.serialNumber || '—' },
+    {
+      label: zh ? '资产关联' : 'Asset link',
+      value: assetDisplay,
+      title: device.assetId ? `ID: ${device.assetId}` : undefined,
+    },
+    {
+      label: zh ? '监控对象' : 'Monitoring target',
+      value: monitoringTargetDisplay,
+      title: device.networkDeviceId ? `ID: ${device.networkDeviceId}` : undefined,
+    },
+    ...(device.assetKey
+      ? [{ label: zh ? '3D 资产' : '3D asset', value: `${fidelityLabel[device.assetFidelity || 'generic'] || device.assetFidelity || '—'} · ${device.assetKey}` }]
+      : []),
   ];
 
   return (
@@ -93,10 +122,10 @@ export const RackReadonlyInspector: React.FC<RackReadonlyInspectorProps> = ({
           <Eye size={15} className="text-cyan-600" />
           <div>
             <p className="text-xs font-bold" style={{ color: 'var(--heading-text)' }}>
-              {zh ? '只读设备 Inspector' : 'Read-only Device Inspector'}
+              {zh ? '设备资产与监控详情' : 'Device Asset & Monitoring Details'}
             </p>
             <p className="text-[10px]" style={{ color: 'var(--muted-text)' }}>
-              {zh ? '位置来自 2D CMDB；健康与接口来自监控服务' : 'Placement comes from 2D CMDB; health and interfaces come from monitoring.'}
+              {zh ? 'U 位来自 CMDB 机柜台账；健康与端口状态来自实时监控' : 'U-slot comes from CMDB rack inventory; health and ports come from live monitoring.'}
             </p>
           </div>
         </div>
@@ -106,8 +135,8 @@ export const RackReadonlyInspector: React.FC<RackReadonlyInspectorProps> = ({
       </div>
 
       <div className="grid grid-cols-2 gap-2 text-[11px]">
-        {fields.map(([label, value]) => (
-          <div key={label} className="rounded-lg border p-2" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)' }}>
+        {fields.map(({ label, value, title }) => (
+          <div key={label} title={title} className="rounded-lg border p-2" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)' }}>
             <div className="mb-1 text-[10px] font-semibold" style={{ color: 'var(--muted-text)' }}>{label}</div>
             <div className="break-all font-medium" style={{ color: 'var(--body-text)' }}>{value}</div>
           </div>
@@ -162,6 +191,7 @@ export const RackReadonlyInspector: React.FC<RackReadonlyInspectorProps> = ({
         deviceId={device.networkDeviceId || device.assetId || device.id}
         deviceName={device.name}
         deviceRole={device.role}
+        fallbackPortProfile={device.physicalPortProfile}
         zh={zh}
       />
     </div>

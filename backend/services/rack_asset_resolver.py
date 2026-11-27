@@ -31,6 +31,16 @@ def _norm_vendor(value: Any) -> str:
     return {
         "通用": "generic",
         "通用厂商": "generic",
+        "思科": "cisco",
+        "cisco systems": "cisco",
+        "华为": "huawei",
+        "huawei technologies": "huawei",
+        "锐捷": "ruijie",
+        "锐捷网络": "ruijie",
+        "ruijie networks": "ruijie",
+        "新华三": "h3c",
+        "华三": "h3c",
+        "new h3c": "h3c",
     }.get(normalized, normalized)
 
 
@@ -44,10 +54,29 @@ def _norm_device_type(value: Any) -> str:
     normalized = _norm(value).replace("-", "_")
     aliases = {
         "交换机": "switch",
+        "核心交换机": "switch",
+        "核心机框": "switch",
+        "框式交换机": "switch",
+        "盒式交换机": "switch",
+        "汇聚交换机": "switch",
+        "接入交换机": "switch",
+        "core": "switch",
+        "distribution": "switch",
+        "aggregation": "switch",
+        "access": "switch",
+        "spine": "switch",
+        "leaf": "switch",
+        "tor": "switch",
         "路由器": "router",
         "防火墙": "firewall",
         "服务器": "server",
         "存储": "storage",
+        "ups": "ups",
+        "不间断电源": "ups",
+        "电池包": "ups",
+        "电源": "ups",
+        "无线控制器": "wireless_controller",
+        "ac": "wireless_controller",
         "配线架": "patch_panel",
         "配线箱": "patch_panel",
         "patch panel": "patch_panel",
@@ -113,10 +142,28 @@ def _catalog() -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, Any], ...]]:
     return registry, mapping
 
 
+@lru_cache(maxsize=256)
+def _available_public_path(public_path: str) -> bool:
+    if not public_path or not public_path.startswith("/"):
+        return False
+    relative_path = public_path.lstrip("/")
+    for published_root in (_ROOT / "public", _ROOT / "dist"):
+        published_root = published_root.resolve()
+        path = (published_root / relative_path).resolve()
+        try:
+            path.relative_to(published_root)
+        except ValueError:
+            continue
+        if path.is_file():
+            return True
+    return False
+
+
 def clear_catalog_cache() -> None:
     """Clear the process cache for an operator-triggered catalog refresh."""
 
     _catalog.cache_clear()
+    _available_public_path.cache_clear()
 
 
 def list_catalog(*, vendor: str = "", device_type: str = "", status: str = "") -> list[dict[str, Any]]:
@@ -144,29 +191,53 @@ def _height_matches(entry: dict[str, Any], height_u: int | None) -> bool:
     if height_u is None or entry.get("height_u") in (None, ""):
         return True
     try:
-        return int(entry["height_u"]) == int(height_u)
+        req_u = int(height_u)
+        ent_u = int(entry["height_u"])
+        if req_u == ent_u:
+            return True
+        # Allow modular core chassis (>=4U) to flex-match any modular chassis asset (>=4U)
+        if req_u >= 4 and ent_u >= 4 and _norm(entry.get("device_type")) == "switch":
+            return True
+        return False
     except (TypeError, ValueError):
         return False
+
+
+def _score_candidate(entry: dict[str, Any], requested_model: str, height_u: int | None) -> tuple[int, str]:
+    """Prefer approved GLBs, exact model-prefix / port-density / form-factor matches."""
+    score = 0
+    if _available(entry):
+        score += 100
+    key = _norm(entry.get("asset_key"))
+    family = _norm(entry.get("family"))
+    if requested_model:
+        if any(_norm_model(m) == requested_model for m in (entry.get("exact_models") or [])):
+            score += 60
+        elif any(requested_model.startswith(_norm_model(m)[:5]) or _norm_model(m).startswith(requested_model[:5]) for m in (entry.get("exact_models") or []) if len(_norm_model(m)) >= 4):
+            score += 35
+        # Port density & DC vs Campus matching
+        if re.search(r"(?:24|28|30)", requested_model) and "24p" in key:
+            score += 25
+        if re.search(r"(?:48|52|54|56)", requested_model) and ("48p" in key or "6800" in key or "6510" in key or "93180" in key):
+            score += 20
+        if re.search(r"(?:nexus|n9k|ce68|s68|s6510)", requested_model) and any(tok in key for tok in ("nexus", "ce68", "s68", "s6510", "_dc_")):
+            score += 30
+        if re.search(r"(?:940|950|ce128|s127|s105|s125|n180|chassis)", requested_model) and ("chassis" in key or "dc_family" in key):
+            score += 40
+    if height_u is not None and entry.get("height_u") not in (None, ""):
+        try:
+            if int(entry["height_u"]) == int(height_u):
+                score += 15
+        except (TypeError, ValueError):
+            pass
+    return (-score, key)
 
 
 def _available(entry: dict[str, Any]) -> bool:
     if str(entry.get("status") or "draft").strip().lower() != "approved":
         return False
     public_path = str(entry.get("public_path") or "").strip()
-    if not public_path or not public_path.startswith("/"):
-        return False
-
-    relative_path = public_path.lstrip("/")
-    for published_root in (_ROOT / "public", _ROOT / "dist"):
-        published_root = published_root.resolve()
-        path = (published_root / relative_path).resolve()
-        try:
-            path.relative_to(published_root)
-        except ValueError:
-            continue
-        if path.is_file():
-            return True
-    return False
+    return _available_public_path(public_path)
 
 
 def _result(
@@ -298,7 +369,7 @@ def resolve_asset(
         and bool(item.get("exact_models"))
     ]
     if family_candidates:
-        entry = sorted(family_candidates, key=lambda item: str(item.get("asset_key")))[0]
+        entry = sorted(family_candidates, key=lambda item: _score_candidate(item, requested_model, height_u))[0]
         return _result(
             entry,
             level="family",
@@ -326,14 +397,16 @@ def resolve_asset(
             fallback_reason="no exact or family mapping was available",
         )
 
-    global_generic = next(
-        (
-            item for item in registry
-            if _norm(item.get("vendor")) == "generic"
-            and _norm(item.get("device_type")) == requested_kind
-            and _height_matches(item, height_u)
-        ),
-        None,
+    global_generic_candidates = [
+        item for item in registry
+        if _norm(item.get("vendor")) == "generic"
+        and _norm(item.get("device_type")) == requested_kind
+        and _height_matches(item, height_u)
+    ]
+    global_generic = (
+        sorted(global_generic_candidates, key=lambda item: _score_candidate(item, requested_model, height_u))[0]
+        if global_generic_candidates
+        else None
     )
     if global_generic:
         return _result(

@@ -183,6 +183,7 @@ async def check_model_health(
     user_id: str = "system:model-health-monitor",
     tenant_id: str = "tenant-default",
     roles: Optional[list[str]] = None,
+    lightweight: bool = False,
 ) -> dict[str, Any]:
     """Run one safe health probe for an enabled chat-capable model."""
     with get_db_connection() as conn:
@@ -221,13 +222,81 @@ async def check_model_health(
         return _non_probe_result(model, status="disabled", error_code="AI_MODEL_DISABLED", message="model is disabled")
     if not model[5]:
         return _non_probe_result(model, status="disabled", error_code="AI_PROVIDER_DISABLED", message="provider is disabled")
-    if str(model[3] or "chat").lower() not in {"chat", "reasoning"}:
+    model_type_lower = str(model[3] or "chat").lower()
+    if model_type_lower not in {"chat", "reasoning", "embedding"}:
         return _non_probe_result(
             model,
             status="not_supported",
             error_code="AI_MODEL_HEALTH_UNSUPPORTED_TYPE",
-            message="health probes support chat and reasoning models only",
+            message="health probes support chat, reasoning, and embedding models only",
         )
+
+    if model_type_lower == "embedding":
+        import httpx
+        from ai.security.crypto import decrypt_api_key
+
+        started = time.perf_counter()
+        with get_db_connection() as conn:
+            prov = conn.execute(
+                """
+                SELECT p.base_url, p.api_key_encrypted, p.proxy_url, p.id
+                FROM ai_model m
+                JOIN ai_provider p ON p.id = m.provider_id
+                WHERE m.id = ?
+                """,
+                (model_id,),
+            ).fetchone()
+        base_url = str((prov[0] if prov else "") or "").rstrip("/")
+        api_key = decrypt_api_key(prov[1], provider_id=str(prov[3])) if (prov and prov[1]) else ""
+        timeout_sec = 20.0
+        proxy_url = str(prov[2]).strip() if (prov and prov[2]) else None
+        endpoint = base_url if base_url.endswith("/embeddings") else f"{base_url}/embeddings"
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        try:
+            async with httpx.AsyncClient(timeout=timeout_sec, proxy=proxy_url or None) as client:
+                resp = await client.post(endpoint, headers=headers, json={"model": model[2], "input": "ping"})
+            latency_ms = max(1, int(round((time.perf_counter() - started) * 1000)))
+            if resp.status_code == 200:
+                payload = resp.json()
+                emb = ((payload.get("data") or [{}])[0] or {}).get("embedding") or []
+                dim = len(emb) if isinstance(emb, list) else 0
+                if dim > 0:
+                    checked_at = datetime.now(timezone.utc).isoformat()
+                    sla = _record_model_health(model_id, status="healthy", checked_at=checked_at, latency_ms=latency_ms, error_code=None)
+                    return {
+                        "model_id": model[0],
+                        "model_name": model[1],
+                        "model_code": model[2],
+                        "success": True,
+                        "health_status": "healthy",
+                        "latency_ms": latency_ms,
+                        "last_health_check_at": checked_at,
+                        "error_code": None,
+                        "message": f"embedding probe succeeded (dim={dim})",
+                        "sla": sla,
+                    }
+            err_msg = f"HTTP {resp.status_code}: {resp.text[:200]}"
+            err_code = "AI_EMBEDDING_PROBE_FAILED"
+        except Exception as exc:
+            latency_ms = max(1, int(round((time.perf_counter() - started) * 1000)))
+            err_msg = str(exc)
+            err_code = "AI_EMBEDDING_PROBE_ERROR"
+        checked_at = datetime.now(timezone.utc).isoformat()
+        sla = _record_model_health(model_id, status="unhealthy", checked_at=checked_at, latency_ms=latency_ms, error_code=err_code)
+        return {
+            "model_id": model[0],
+            "model_name": model[1],
+            "model_code": model[2],
+            "success": False,
+            "health_status": "unhealthy",
+            "latency_ms": latency_ms,
+            "last_health_check_at": checked_at,
+            "error_code": err_code,
+            "message": err_msg,
+            "sla": sla,
+        }
 
     # Keep manual retries bounded as well as scheduled probes.  This mirrors
     # the provider-level health backoff and prevents a double-click/retry loop
@@ -256,6 +325,52 @@ async def check_model_health(
             pass
 
     started = time.perf_counter()
+    if lightweight:
+        # Zero-token connectivity & auth probe via GET /models before falling back to completion.
+        try:
+            import httpx
+            from ai.security.crypto import decrypt_api_key
+
+            with get_db_connection() as conn:
+                prov = conn.execute(
+                    """
+                    SELECT p.base_url, p.api_key_encrypted, p.proxy_url, p.id
+                    FROM ai_model m
+                    JOIN ai_provider p ON p.id = m.provider_id
+                    WHERE m.id = ?
+                    """,
+                    (model_id,),
+                ).fetchone()
+            base_url = str((prov[0] if prov else "") or "").rstrip("/")
+            api_key = decrypt_api_key(prov[1], provider_id=str(prov[3])) if (prov and prov[1]) else ""
+            proxy_url = str(prov[2]).strip() if (prov and prov[2]) else None
+            if base_url:
+                endpoint = base_url if base_url.endswith("/models") else f"{base_url}/models"
+                headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+                async with httpx.AsyncClient(timeout=10.0, proxy=proxy_url or None) as client:
+                    resp = await client.get(endpoint, headers=headers)
+                if resp.status_code == 200:
+                    latency_ms = max(1, int((time.perf_counter() - started) * 1000))
+                    checked_at = utc_now_iso()
+                    sla = _record_model_health(
+                        model_id, status="healthy", checked_at=checked_at, latency_ms=latency_ms, error_code=None
+                    )
+                    return {
+                        "model_id": model[0],
+                        "model_name": model[1],
+                        "model_code": model[2],
+                        "success": True,
+                        "health_status": "healthy",
+                        "latency_ms": latency_ms,
+                        "last_health_check_at": checked_at,
+                        "error_code": None,
+                        "message": "lightweight /models probe succeeded (0 tokens)",
+                        "sla": sla,
+                    }
+        except Exception:
+            # Fall through to standard gateway probe if /models is unsupported.
+            pass
+
     try:
         await llm_gateway.chat(
             scene=MODEL_HEALTH_SCENE,
@@ -316,7 +431,7 @@ def cleanup_model_health_history() -> None:
 
 
 async def run_scheduled_model_health_checks() -> dict[str, int]:
-    """Probe all enabled chat/reasoning models with bounded concurrency."""
+    """Probe all enabled models (chat, reasoning, embedding, etc.) with bounded concurrency."""
     if not bool(getattr(settings, "AI_MODEL_HEALTH_MONITOR_ENABLED", True)):
         return {"checked": 0, "healthy": 0, "unhealthy": 0, "skipped": 0}
     if not (bool(getattr(settings, "AI_ENABLED", False)) or bool(getattr(settings, "EXTERNAL_AI_ENABLED", False))):
@@ -330,16 +445,18 @@ async def run_scheduled_model_health_checks() -> dict[str, int]:
             FROM ai_model m
             JOIN ai_provider p ON p.id = m.provider_id
             WHERE m.enabled = 1 AND p.enabled = 1
-              AND LOWER(COALESCE(m.model_type, 'chat')) IN ('chat', 'reasoning')
+              AND LOWER(COALESCE(m.model_type, 'chat')) IN ('chat', 'reasoning', 'embedding')
             ORDER BY m.priority DESC, m.created_at DESC
             """
         ).fetchall()
 
     semaphore = asyncio.Semaphore(max(1, int(getattr(settings, "AI_MODEL_HEALTH_MAX_CONCURRENCY", 2))))
 
+    use_lightweight = bool(getattr(settings, "AI_HEALTH_LIGHTWEIGHT_SCHEDULED_PROBE", True))
+
     async def probe(row: Any) -> dict[str, Any]:
         async with semaphore:
-            return await check_model_health(str(row[0]))
+            return await check_model_health(str(row[0]), lightweight=use_lightweight)
 
     results = await asyncio.gather(*(probe(row) for row in models), return_exceptions=True)
     healthy = sum(1 for result in results if isinstance(result, dict) and result.get("success"))

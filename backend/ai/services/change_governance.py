@@ -23,10 +23,14 @@ class ChangeGovernanceService:
         commands: List[str],
         verification_commands: List[str],
         rollback_commands: List[str],
-        created_by: str = "ai_agent",
+        created_by: str = "",
         requester_id: str = "",
         tenant_id: str = "",
     ) -> Dict[str, Any]:
+        if not str(created_by or "").strip() or not str(requester_id or created_by or "").strip():
+            # Every draft has an accountable human requester; there is no
+            # anonymous "ai_agent" requester that bypasses separation of duties.
+            raise ValueError("A change draft requires an authenticated requester")
         rollback_plan = "\n".join(str(cmd) for cmd in (rollback_commands or []) if str(cmd).strip())
         target_devices = [{"device_id": str(device_id)}] if device_id else []
         description = (
@@ -45,8 +49,8 @@ class ChangeGovernanceService:
                 order_type="config_change",
                 priority="medium",
                 status="draft",
-                requester_id=str(requester_id or created_by or "ai_agent"),
-                requester_username=str(created_by or "ai_agent"),
+                requester_id=str(requester_id or created_by),
+                requester_username=str(created_by),
                 tenant_id=str(tenant_id or ""),
                 command_template={
                     "source": "ai_governance",
@@ -94,14 +98,19 @@ class ChangeGovernanceService:
             ).fetchone()
             if not row:
                 raise LookupError(f"Change order '{change_id}' not found")
-            row_tenant = str(row[2] or "")
-            if tenant_id and row_tenant and row_tenant != str(tenant_id):
+            row_tenant = str(row[2] or "").strip()
+            # Tenants must match exactly; a missing tenant on either side no
+            # longer skips the check.
+            if row_tenant != str(tenant_id or "").strip():
                 raise LookupError(f"Change order '{change_id}' not found")
             current_status = str(row[1] or "")
             if current_status not in {"draft", "initial_review", "final_review"}:
                 raise ValueError(f"Change order in status '{current_status}' cannot be approved")
-            requester_username = str(row[3] or "")
-            if requester_username and requester_username != "ai_agent" and requester_username == approver:
+            requester_username = str(row[3] or "").strip()
+            requester_id = str(row[4] or "").strip()
+            same_id = bool(requester_id) and requester_id == str(approver_id or "").strip()
+            same_name = bool(requester_username) and requester_username == str(approver or "").strip()
+            if same_id or same_name:
                 raise PermissionError("Separation of duties violation: requester cannot approve their own change order")
 
             conn.execute(

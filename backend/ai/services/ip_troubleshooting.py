@@ -4,10 +4,13 @@ AI Service for Intelligent IP Location and Multi-Layer Troubleshooting (IP -> AR
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional
 
 from database.core import get_db_connection
 from ai.security.sanitizer import sanitize_data
+
+logger = logging.getLogger(__name__)
 
 
 class IPTroubleshootingService:
@@ -114,8 +117,9 @@ class IPTroubleshootingService:
                                 "last_updated": arp_row[3],
                                 "source": "arp_cache",
                             }
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        # arp_cache is an optional legacy fallback; missing it only means no ARP record.
+                        logger.debug("Legacy arp_cache fallback unavailable for IP trace code=AI_IP_TRACE_ARP_CACHE_UNAVAILABLE error=%s", type(exc).__name__)
 
                 # 3. Check Active Alarms
                 try:
@@ -136,11 +140,11 @@ class IPTroubleshootingService:
                             facts["active_alarms"].append(
                                 {"title": a[0], "severity": a[1], "created_at": a[2]}
                             )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Active alarm lookup failed during IP trace code=AI_IP_TRACE_ALARMS_FAILED error=%s", type(exc).__name__)
 
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("IP trace query failed; returning partial facts code=AI_IP_TRACE_FAILED error=%s", type(exc).__name__)
 
         return facts
 

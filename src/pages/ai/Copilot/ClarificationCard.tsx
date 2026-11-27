@@ -21,11 +21,15 @@ const fieldLabels: Record<string, string> = {
   action: '动作',
   confirmation: '确认授权',
   feature: '功能',
+  vendor: '厂商',
+  product_series: '产品系列',
   cli_platform: '平台',
   platform_or_model: '平台或型号',
   target_device: '目标设备',
   product_model: '型号',
   software_version: '版本',
+  desired_operation: '要执行的操作',
+  symptom_or_metric: '现象或指标',
 };
 
 export const ClarificationCard: React.FC<ClarificationCardProps> = ({
@@ -52,7 +56,9 @@ export const ClarificationCard: React.FC<ClarificationCardProps> = ({
     ? clarification.options.filter((option) => option && (option.label || option.value)).slice(0, 12)
     : [];
   const missingFields = (clarification.missing_fields || [])
-    .map((field) => fieldLabels[field] || field)
+    // Field names come from the intent model; never show an unknown
+    // snake_case key such as "desired_operation" to the user.
+    .map((field) => fieldLabels[field] || (/^[a-z0-9_]+$/.test(field) ? '其他信息' : field))
     .slice(0, 4);
 
   return (

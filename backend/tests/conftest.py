@@ -29,6 +29,13 @@ os.environ.setdefault(
     "test-only-credential-placeholder",
 )
 
+# database.core loads the developer's .env into os.environ without
+# overriding values that are already set.  Pin the retrieval engine before
+# that import so a local rollout setting (e.g. AI_RETRIEVAL_ENGINE=v2) does
+# not change what the suite tests; RAG tests select an engine explicitly.
+# NEXORA_TEST_RETRIEVAL_ENGINE runs the whole suite on another engine.
+os.environ["AI_RETRIEVAL_ENGINE"] = os.environ.get("NEXORA_TEST_RETRIEVAL_ENGINE", "v1")
+
 import database
 import database.core as database_core
 import database.schema as database_schema

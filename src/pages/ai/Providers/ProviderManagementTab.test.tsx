@@ -1,9 +1,11 @@
 import React from 'react';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ProviderManagementTab } from './ProviderManagementTab';
-import { createAIProvider, deleteAIProvider, getAIProviderDeletePreview, getAIProvidersPage, testAIProvider, updateAIProvider } from '../../../api/ai';
+import { ProviderManagementTab, getAllowlistCeilingError, invalidEndpointPatternLines, parseEndpointPatterns } from './ProviderManagementTab';
+import { getProviderPageCopy } from './ProviderManagementTab.copy';
+import { ApiError } from '../../../api/http';
+import { createAIProvider, deleteAIProvider, getAIProviderDeletePreview, getAIProviderKeyHistory, getAIProvidersPage, invalidateAIProviderKey, testAIProvider, updateAIProvider } from '../../../api/ai';
 
 vi.mock('../../../contexts/AppDomainContext', () => ({
   useCoreApp: vi.fn(),
@@ -16,6 +18,8 @@ vi.mock('../../../api/ai', () => ({
   deleteAIProvider: vi.fn(),
   getAIProviderDeletePreview: vi.fn(),
   testAIProvider: vi.fn(),
+  getAIProviderKeyHistory: vi.fn(),
+  invalidateAIProviderKey: vi.fn(),
 }));
 
 const provider = {
@@ -41,6 +45,8 @@ const updateProvider = vi.mocked(updateAIProvider);
 const deleteProvider = vi.mocked(deleteAIProvider);
 const getDeletePreview = vi.mocked(getAIProviderDeletePreview);
 const testProvider = vi.mocked(testAIProvider);
+const getKeyHistory = vi.mocked(getAIProviderKeyHistory);
+const invalidateKey = vi.mocked(invalidateAIProviderKey);
 const showToast = vi.fn();
 
 describe('ProviderManagementTab browser key paths', () => {
@@ -61,6 +67,10 @@ describe('ProviderManagementTab browser key paths', () => {
     });
     createProvider.mockResolvedValue(provider as any);
     updateProvider.mockResolvedValue(provider as any);
+    updateProvider.mockClear();
+    invalidateKey.mockReset();
+    getKeyHistory.mockReset();
+    invalidateKey.mockResolvedValue({ ...provider, api_key_masked: undefined, health_status: 'disabled' } as any);
     testProvider.mockResolvedValue({ success: true, message: 'ok', model_tested: 'deepseek-chat', sample_response: 'ok', latency_ms: 12 } as any);
   });
 
@@ -106,6 +116,56 @@ describe('ProviderManagementTab browser key paths', () => {
     expect(createProvider.mock.calls[0][0]).not.toHaveProperty('data_processing_agreement_ref');
     expect(createProvider.mock.calls[0][0]).not.toHaveProperty('approved_endpoint_patterns');
   }, 20_000);
+
+  it('groups presets and saves the selected supplier with its shared protocol', async () => {
+    const user = userEvent.setup();
+    render(<ProviderManagementTab />);
+
+    await user.click(await screen.findByRole('button', { name: '添加 Provider' }));
+    const picker = screen.getByLabelText('供应商类型');
+    expect(Array.from(picker.querySelectorAll('optgroup'), (group) => [group.label, group.children.length])).toEqual([
+      ['中国大陆服务商', 10],
+      ['国际模型厂商', 6],
+      ['国际企业云平台', 3],
+      ['国际推理托管与聚合', 5],
+      ['本地与自定义', 3],
+    ]);
+
+    await user.type(screen.getByLabelText('API Key'), 'deepseek-only-secret');
+    await user.selectOptions(picker, 'volcengine');
+    expect(screen.getByLabelText('API Key')).toHaveProperty('value', '');
+    expect(screen.getByLabelText('Base URL')).toHaveProperty('value', 'https://ark.cn-beijing.volces.com/api/v3');
+    expect(screen.getByLabelText('数据区域')).toHaveProperty('value', 'cn');
+    await user.type(screen.getByLabelText('Provider 名称'), '豆包北京');
+    await user.type(screen.getByLabelText('API Key'), 'ark-test-key');
+    await user.type(screen.getByLabelText('绑定模型'), 'ep-test-model');
+    await user.click(screen.getByRole('button', { name: '确认添加' }));
+
+    await waitFor(() => expect(createProvider).toHaveBeenCalledWith(expect.objectContaining({
+      provider_type: 'openai_compatible',
+      base_url: 'https://ark.cn-beijing.volces.com/api/v3',
+      data_region: 'cn',
+      api_key: 'ark-test-key',
+      default_model_code: 'ep-test-model',
+    })));
+  }, 20_000);
+
+  it('uses the configured endpoint when re-opening a saved regional cloud preset', async () => {
+    const user = userEvent.setup();
+    const bedrockUrl = 'https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1';
+    getProviders.mockResolvedValueOnce({
+      items: [{ ...provider, provider_type: 'openai_compatible', base_url: bedrockUrl }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      total_pages: 1,
+    });
+    render(<ProviderManagementTab />);
+
+    await user.click((await screen.findAllByRole('button', { name: '编辑 DeepSeek 主供应商' }))[0]);
+    expect(screen.getByLabelText('供应商类型')).toHaveProperty('value', 'bedrock');
+    expect(screen.getByLabelText('Base URL')).toHaveProperty('value', bedrockUrl);
+  });
 
   it('keeps the existing API key when editing a provider without re-entering it', async () => {
     const user = userEvent.setup();
@@ -194,6 +254,16 @@ describe('ProviderManagementTab browser key paths', () => {
     expect(await screen.findByText(/允许的数据分类级别不足/)).toBeTruthy();
   });
 
+  it('explains when the provider has no enabled model to test', async () => {
+    const user = userEvent.setup();
+    testProvider.mockRejectedValueOnce(new ApiError(400, 'Add an enabled model', undefined, undefined, 'AI_PROVIDER_NO_ENABLED_MODEL'));
+    render(<ProviderManagementTab />);
+
+    await user.click(await screen.findByRole('button', { name: '测试连通性' }));
+
+    expect(await screen.findByText('此供应商还没有启用的模型。请先在「模型与路由」添加或启用模型，再测试连通性。')).toBeTruthy();
+  });
+
   it('explains an invalid API key instead of showing a generic gateway failure', async () => {
     testProvider.mockResolvedValueOnce({
       success: false,
@@ -254,5 +324,185 @@ describe('ProviderManagementTab browser key paths', () => {
       'error',
     ));
     expect(deleteProvider).not.toHaveBeenCalled();
+  });
+
+  // ── L6-c: clearing fields and one-request key replacement ──────────────
+
+  const compliantProvider = {
+    ...provider,
+    proxy_url: 'http://proxy.internal:8080',
+    tags: ['prod'],
+    allowed_data_classification: 'INTERNAL',
+    no_training_confirmed: true,
+    retention_days: 30,
+    data_processing_agreement_ref: 'DPA-2026-001',
+    approved_endpoint_patterns: ['https://api.deepseek.com'],
+  };
+
+  const mockSingleProvider = (item: Record<string, unknown>) => {
+    getProviders.mockResolvedValue({
+      items: [item as any],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      total_pages: 1,
+      facets: { data_regions: ['unknown'], health_statuses: ['unhealthy'], provider_types: ['deepseek'], tags: ['prod'] },
+    });
+  };
+
+  it('sends emptied proxy, tags and DPA so the server clears them', async () => {
+    mockSingleProvider(compliantProvider);
+    const user = userEvent.setup();
+    render(<ProviderManagementTab />);
+    await screen.findAllByText('DeepSeek 主供应商');
+    await user.click(screen.getAllByRole('button', { name: '编辑 DeepSeek 主供应商' })[0]);
+
+    await user.clear(screen.getByLabelText('代理地址 (可选)'));
+    await user.clear(screen.getByLabelText('标签 (逗号分隔)'));
+    await user.clear(screen.getByLabelText('DPA 协议编号/链接'));
+    await user.click(screen.getByLabelText(/Zero-Training/));
+    await user.click(screen.getByRole('button', { name: '保存修改' }));
+
+    await waitFor(() => expect(updateProvider).toHaveBeenCalledTimes(1));
+    const payload = updateProvider.mock.calls[0][1] as Record<string, unknown>;
+    expect(payload.proxy_url).toBe('');
+    expect(payload.tags).toEqual([]);
+    expect(payload.data_processing_agreement_ref).toBe('');
+    expect(payload.no_training_confirmed).toBe(false);
+    expect(payload.retention_days).toBe(30);
+    expect(payload.api_key).toBeUndefined();
+    // The allowlist was not touched, so it is not sent.
+    expect(payload).not.toHaveProperty('approved_endpoint_patterns');
+  });
+
+  it('replaces the key in the same update request instead of a second rotate call', async () => {
+    const user = userEvent.setup();
+    render(<ProviderManagementTab />);
+    await screen.findAllByText('DeepSeek 主供应商');
+    await user.click(screen.getAllByRole('button', { name: '编辑 DeepSeek 主供应商' })[0]);
+    await user.type(screen.getByLabelText('API Key'), '  sk-new-key  ');
+    await user.click(screen.getByRole('button', { name: '保存修改' }));
+
+    await waitFor(() => expect(updateProvider).toHaveBeenCalledTimes(1));
+    expect(updateProvider).toHaveBeenCalledWith(provider.id, expect.objectContaining({ api_key: 'sk-new-key' }));
+  });
+
+  // ── L6-d: egress allowlist, key invalidation, key history ──────────────
+
+  it('shows the egress allowlist and sends it only when it was edited', async () => {
+    mockSingleProvider(compliantProvider);
+    const user = userEvent.setup();
+    render(<ProviderManagementTab />);
+    await screen.findAllByText('DeepSeek 主供应商');
+    expect(within(screen.getByRole('list', { name: '已批准的外发地址' })).getByText('https://api.deepseek.com')).toBeTruthy();
+
+    await user.click(screen.getAllByRole('button', { name: '编辑 DeepSeek 主供应商' })[0]);
+    const allowlist = screen.getByLabelText('外发白名单');
+    await user.type(allowlist, '{enter}http://insecure.example.com');
+    await user.click(screen.getByRole('button', { name: '保存修改' }));
+    expect(showToast).toHaveBeenCalledWith('白名单第 2 行不是 HTTPS 地址', 'error');
+    expect(updateProvider).not.toHaveBeenCalled();
+
+    await user.clear(allowlist);
+    await user.type(allowlist, 'https://api.deepseek.com/*');
+    await user.click(screen.getByRole('button', { name: '保存修改' }));
+    await waitFor(() => expect(updateProvider).toHaveBeenCalledWith(provider.id, expect.objectContaining({
+      approved_endpoint_patterns: ['https://api.deepseek.com/*'],
+    })));
+  });
+
+  it('explains an allowlist that goes beyond the deployment allowlist', async () => {
+    mockSingleProvider(compliantProvider);
+    const expected = '外发白名单超出了服务器配置的部署级白名单范围：https://*。这里只能在部署级白名单范围内收窄；如需放行新的地址，请先由服务器管理员在服务器配置 AI_PROVIDER_ENDPOINT_ALLOWLIST 中添加。';
+    updateProvider.mockRejectedValueOnce(Object.assign(new Error('raw server text'), {
+      status: 400,
+      code: 'AI_PROVIDER_ALLOWLIST_EXCEEDS_DEPLOYMENT',
+      detail: {
+        code: 'AI_PROVIDER_ALLOWLIST_EXCEEDS_DEPLOYMENT',
+        message: 'raw server text',
+        details: { rejected_patterns: ['https://*'], deployment_allowlist_configured: true },
+      },
+    }));
+    const user = userEvent.setup();
+    render(<ProviderManagementTab />);
+    await screen.findAllByText('DeepSeek 主供应商');
+    await user.click(screen.getAllByRole('button', { name: '编辑 DeepSeek 主供应商' })[0]);
+
+    const allowlist = screen.getByLabelText('外发白名单');
+    expect(screen.getByText(/只能在服务器配置的部署级白名单范围内收窄/)).toBeTruthy();
+    await user.clear(allowlist);
+    await user.type(allowlist, 'https://*');
+    await user.click(screen.getByRole('button', { name: '保存修改' }));
+
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith(expected, 'error'));
+    expect(screen.getByText(expected)).toBeTruthy();
+    expect(allowlist.getAttribute('aria-invalid')).toBe('true');
+    expect(showToast).not.toHaveBeenCalledWith('raw server text', 'error');
+  });
+
+  it('explains the exact-Base-URL rule when no deployment allowlist is configured', () => {
+    const message = getAllowlistCeilingError({
+      code: 'AI_PROVIDER_ALLOWLIST_EXCEEDS_DEPLOYMENT',
+      detail: { details: { rejected_patterns: ['https://api.example.com/*'], deployment_allowlist_configured: false } },
+    }, getProviderPageCopy('zh'));
+    expect(message).toContain('服务器未配置部署级白名单');
+    expect(message).toContain('https://api.example.com/*');
+    expect(getAllowlistCeilingError(new Error('other'), getProviderPageCopy('zh'))).toBeNull();
+    expect(getAllowlistCeilingError({ detail: { code: 'AI_PROVIDER_ALLOWLIST_EXCEEDS_DEPLOYMENT' } }, getProviderPageCopy('zh'))).toContain('部署级白名单范围');
+  });
+
+  it('invalidates the key only after an explicit acknowledgement', async () => {
+    const user = userEvent.setup();
+    render(<ProviderManagementTab />);
+    await screen.findAllByText('DeepSeek 主供应商');
+    await user.click(screen.getByRole('button', { name: '作废 DeepSeek 主供应商 的密钥' }));
+
+    const dialog = screen.getByRole('alertdialog');
+    const confirm = within(dialog).getByRole('button', { name: '确认作废' });
+    expect((confirm as HTMLButtonElement).disabled).toBe(true);
+    await user.type(within(dialog).getByLabelText('作废原因'), '密钥疑似泄露');
+    await user.click(within(dialog).getByLabelText('我了解作废后该 Provider 会立即停止调用'));
+    expect((confirm as HTMLButtonElement).disabled).toBe(false);
+    await user.click(confirm);
+
+    await waitFor(() => expect(invalidateKey).toHaveBeenCalledWith(provider.id, '密钥疑似泄露'));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(showToast).toHaveBeenCalledWith('已作废“DeepSeek 主供应商”的密钥', 'success');
+  });
+
+  it('lists key versions and activity without any key material', async () => {
+    getKeyHistory.mockResolvedValue({
+      provider_id: provider.id,
+      retention_days: 30,
+      versions: [
+        { key_version: 2, status: 'active', created_by: 'admin', created_at: '2026-11-20T08:00:00Z', ciphertext_retained: true },
+        { key_version: 1, status: 'retired', created_by: 'admin', created_at: '2026-10-01T08:00:00Z', retired_at: '2026-11-20T08:00:00Z', ciphertext_retained: false },
+      ],
+      audit: [{ key_version: 2, action: 'rotate', actor: 'admin', reason_code: 'manual_rotation', created_at: '2026-11-20T08:00:00Z' }],
+    });
+    const user = userEvent.setup();
+    render(<ProviderManagementTab />);
+    await screen.findAllByText('DeepSeek 主供应商');
+    await user.click(screen.getByRole('button', { name: '查看 DeepSeek 主供应商 的密钥历史' }));
+
+    const drawer = await screen.findByRole('dialog', { name: 'DeepSeek 主供应商 · 密钥历史' });
+    expect((await within(drawer).findAllByText('v2')).length).toBe(2);
+    expect(within(drawer).getByText('使用中')).toBeTruthy();
+    expect(within(drawer).getByText('已替换')).toBeTruthy();
+    expect(within(drawer).getByText('手动轮换')).toBeTruthy();
+    expect(drawer.textContent).not.toContain('sk-');
+    expect(getKeyHistory).toHaveBeenCalledWith(provider.id);
+
+    await user.click(within(drawer).getByRole('button', { name: '关闭' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+});
+
+describe('egress allowlist parsing', () => {
+  it('normalizes, de-duplicates and validates lines', () => {
+    expect(parseEndpointPatterns(' https://a.example.com/ \n\nhttps://a.example.com\nhttps://b.example.com/*')).toEqual([
+      'https://a.example.com', 'https://b.example.com/*',
+    ]);
+    expect(invalidEndpointPatternLines('https://ok.example.com\nhttp://bad.example.com\n\nnot a url\nhttps://*.example.com/v1')).toEqual([2, 4]);
   });
 });

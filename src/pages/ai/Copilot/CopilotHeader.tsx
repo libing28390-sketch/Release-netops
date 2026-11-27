@@ -1,5 +1,5 @@
-import React from 'react';
-import { RotateCcw, ChevronDown, Sparkles, Bot, ShieldCheck } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Download, FileCode2, FileText, RotateCcw, Sparkles } from 'lucide-react';
 
 interface CopilotModelOption {
   id: string;
@@ -22,82 +22,154 @@ const getModelHealthLabel = (status?: string) => {
   }
 };
 
+const getModelHealthClass = (status?: string) => {
+  switch (String(status || 'unknown').toLowerCase()) {
+    case 'healthy': return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400';
+    case 'unhealthy': return 'bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-400';
+    default: return 'bg-gray-200/70 text-gray-600 dark:bg-gray-700 dark:text-gray-300';
+  }
+};
+
 interface CopilotHeaderProps {
   sessionTitle: string;
   selectedModel: string;
-  onSelectModel: (model: string) => void;
   models?: CopilotModelOption[];
   onClearChat: () => void;
+  onExportMarkdown?: () => void;
+  onExportJson?: () => void;
+  canExport?: boolean;
 }
 
+/**
+ * Page header.  The model is chosen only in the composer; the header shows
+ * the current model read-only (name + health badge).  The fallback to the
+ * first configured model mirrors the composer, so both always agree.
+ */
 export const CopilotHeader: React.FC<CopilotHeaderProps> = ({
   sessionTitle,
   selectedModel,
-  onSelectModel,
   models = [],
   onClearChat,
+  onExportMarkdown,
+  onExportJson,
+  canExport = false,
 }) => {
-  const defaultModels: CopilotModelOption[] = [
-    { id: 'm0', name: 'DeepSeek V4 Flash (默认极速)', model_code: 'deepseek-v4-flash', provider_name: 'DeepSeek' },
-    { id: 'm0pro', name: 'DeepSeek V4 Pro (专业旗舰)', model_code: 'deepseek-v4-pro', provider_name: 'DeepSeek' },
-  ];
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
 
-  const effectiveModels = models.length > 0 ? models : defaultModels;
+  useEffect(() => {
+    if (!exportOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) {
+        setExportOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setExportOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [exportOpen]);
 
-  const groupedModels = effectiveModels.reduce((acc, m) => {
-    const pName = m.provider_name || 'AI 供应商';
-    if (!acc[pName]) acc[pName] = [];
-    acc[pName].push(m);
-    return acc;
-  }, {} as Record<string, typeof effectiveModels>);
+  const currentModel = models.find((m) => m.id === selectedModel) || models[0];
+  const modelName = currentModel ? (currentModel.name || currentModel.model_code || '默认模型') : '默认模型';
+  const healthLabel = currentModel ? getModelHealthLabel(currentModel.health_status) : '';
 
   return (
-    <header className="h-14 min-w-0 shrink-0 border-b border-gray-200/70 dark:border-gray-800 bg-white/80 dark:bg-gray-900/80 backdrop-blur-xs px-3 sm:px-4 flex items-center justify-between gap-2 select-none">
-      {/* Title & Model Selector */}
-      <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+    <header className="h-13 min-w-0 shrink-0 border-b border-gray-100 dark:border-gray-800/70 bg-white/90 dark:bg-gray-900/90 backdrop-blur-xs px-4 flex items-center justify-between gap-2 select-none">
+      {/* Minimal Gemini-style Header: Title + Subtle Model Badge */}
+      <div className="flex min-w-0 items-center gap-2.5">
         <div className="flex min-w-0 items-center gap-2">
-          <Bot className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-          <h2 className="font-bold text-gray-900 dark:text-white text-sm truncate max-w-[240px]">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-tr from-blue-500 via-indigo-500 to-purple-500 text-white shadow-2xs">
+            <Sparkles className="w-3.5 h-3.5" />
+          </span>
+          <h2 className="font-semibold text-gray-900 dark:text-white text-sm truncate max-w-[260px]">
             {sessionTitle || '新对话'}
           </h2>
         </div>
 
-        {/* Model Select Pill */}
-        <div className="relative group">
-          <select
-            value={selectedModel}
-            onChange={(e) => onSelectModel(e.target.value)}
-            className="appearance-none bg-gray-100 dark:bg-gray-800 hover:bg-gray-200/70 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-xs font-medium pl-3 pr-7 py-1 rounded-full border border-gray-200/80 dark:border-gray-700 cursor-pointer focus:outline-none transition"
-          >
-            {Object.entries(groupedModels).map(([providerName, modelList]) => (
-              <optgroup key={providerName} label={providerName}>
-                {modelList.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name || m.model_code} · {m.model_type || 'chat'} · {m.context_length ? `${Math.round(m.context_length / 1000)}k` : 'ctx'} · {getModelHealthLabel(m.health_status)}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-          <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-2 text-gray-400 pointer-events-none" />
+        <div
+          aria-label="当前模型"
+          title={currentModel ? `${currentModel.provider_name || 'AI 供应商'} · ${currentModel.model_code || modelName}（在输入框中切换模型）` : '未配置可选模型，使用服务端默认模型'}
+          className="flex min-w-0 items-center gap-1.5 bg-gray-100/80 dark:bg-gray-800/80 text-gray-600 dark:text-gray-300 text-[11px] font-medium px-2.5 py-0.5 rounded-full"
+        >
+          <span data-testid="copilot-header-model-name" className="truncate max-w-[180px]">{modelName}</span>
+          {currentModel && (
+            <span
+              data-testid="copilot-header-model-health"
+              className={`shrink-0 rounded-full px-1.5 py-px text-[10px] ${getModelHealthClass(currentModel.health_status)}`}
+            >
+              {healthLabel}
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Actions: Clear Chat */}
-      <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-        <span className="hidden sm:flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full font-medium">
-          <ShieldCheck className="w-3 h-3" /> 内网事实优先
-        </span>
-
+      {/* Minimal Actions: Export + Clear Chat */}
+      <div className="flex shrink-0 items-center gap-1">
+        {(onExportMarkdown || onExportJson) && (
+          <div ref={exportMenuRef} className="relative">
+            <button
+              type="button"
+              disabled={!canExport}
+              aria-expanded={exportOpen}
+              aria-haspopup="menu"
+              onClick={() => setExportOpen((prev) => !prev)}
+              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+              title={canExport ? '导出当前会话' : '当前会话暂无消息可导出'}
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>导出</span>
+            </button>
+            {exportOpen && canExport && (
+              <div
+                role="menu"
+                className="absolute right-0 top-full z-30 mt-1.5 w-48 rounded-xl border border-gray-200/90 bg-white p-1.5 text-xs shadow-lg dark:border-gray-700 dark:bg-gray-800"
+              >
+                {onExportMarkdown && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setExportOpen(false);
+                      onExportMarkdown();
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-gray-700 transition hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                    <span>导出为 Markdown (.md)</span>
+                  </button>
+                )}
+                {onExportJson && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setExportOpen(false);
+                      onExportJson();
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-gray-700 transition hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+                  >
+                    <FileCode2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                    <span>导出为 JSON (.json)</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         <button
           type="button"
           onClick={onClearChat}
-          className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 hover:text-red-600 dark:text-gray-400 dark:hover:text-red-400 rounded-lg transition"
+          className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-full transition"
           title="清空当前对话"
         >
           <RotateCcw className="w-4 h-4" />
         </button>
-
       </div>
     </header>
   );

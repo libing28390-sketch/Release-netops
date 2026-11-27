@@ -2010,6 +2010,10 @@ def create_device(device: dict = Body(...), user=require_role("Operator")):
         )
         return _sanitize_device_item(dict(new_device))
     except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return JSONResponse(status_code=500, content={"status": "error", "error": str(e)})
     finally:
         conn.close()
@@ -2026,8 +2030,15 @@ def delete_device(device_id: str):
                WHERE d.id = ?''',
             (device_id,),
         ).fetchone()
+        asset_id = str(row['asset_id'] or '').strip() if row else ''
+        # Clean up all non-cascading (NO ACTION / RESTRICT) FK references and
+        # delete the devices row BEFORE deleting the linked physical_asset.
+        from api.assets import cleanup_device_fk_references
+        cleanup_device_fk_references(conn, device_id, asset_id=asset_id or None)
+        conn.execute('DELETE FROM devices WHERE id = ?', (device_id,))
+
         # Plan-A: cascade-delete linked asset
-        if row and row['asset_id']:
+        if asset_id:
             # PAM: archive (don't delete) sessions and access requests so the
             # audit trail survives device removal. The FK on pam_sessions.asset_id
             # is configured ON DELETE SET NULL (PG) so the column itself is
@@ -2036,13 +2047,15 @@ def delete_device(device_id: str):
             now_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
             conn.execute(
                 "UPDATE pam_sessions SET archived = 1, updated_at = ? WHERE asset_id = ?",
-                (now_iso, row['asset_id']),
+                (now_iso, asset_id),
             )
             conn.execute(
                 "UPDATE pam_access_requests SET updated_at = ? WHERE asset_id = ?",
-                (now_iso, row['asset_id']),
+                (now_iso, asset_id),
             )
-            conn.execute('DELETE FROM pam_session_tokens WHERE asset_id = ?', (row['asset_id'],))
+            conn.execute('DELETE FROM pam_session_tokens WHERE asset_id = ?', (asset_id,))
+            from api.assets import _cleanup_telemetry_fk_references
+            _cleanup_telemetry_fk_references(conn, asset_id=asset_id)
             # A direct device delete must remove the canonical rack placement
             # before deleting the linked physical asset.  The asset-delete
             # endpoint already performs this cleanup, but this endpoint is
@@ -2050,26 +2063,13 @@ def delete_device(device_id: str):
             # rack_devices row behind makes a later re-import fail with a
             # false U-position conflict.
             rack_device_rows = conn.execute(
-                'SELECT id FROM rack_devices WHERE asset_id = ?', (row['asset_id'],)
+                'SELECT id FROM rack_devices WHERE asset_id = ?', (asset_id,)
             ).fetchall()
             if rack_device_rows:
                 from services import rack_service
                 for rack_device_row in rack_device_rows:
                     rack_service.delete_rack_device(conn, rack_device_row['id'], commit=False)
-            conn.execute('DELETE FROM physical_assets WHERE id = ?', (row['asset_id'],))
-        # Remove many-to-many tag associations before deleting the device row.
-        # The FK is not cascade-enabled on older PostgreSQL installations.
-        conn.execute("DELETE FROM tag_assignments WHERE resource_type='device' AND resource_id = ?", (device_id,))
-        # ``ip_inventory`` is a legacy derived projection and is not covered
-        # by the foreign-key cascade on all supported PostgreSQL installations.
-        conn.execute('DELETE FROM ip_inventory WHERE device_id = ?', (device_id,))
-        # WAN links are device-owned records, but the original WAN migrations
-        # intentionally omitted foreign keys for compatibility.  Remove the
-        # link and its telemetry before deleting the device so the outbound
-        # monitoring page cannot retain an undeletable orphan.
-        from services.wan_link_service import delete_wan_links_for_device
-        delete_wan_links_for_device(conn, device_id)
-        conn.execute('DELETE FROM devices WHERE id = ?', (device_id,))
+            conn.execute('DELETE FROM physical_assets WHERE id = ?', (asset_id,))
         if row:
             # Reconcile automatic VLAN rows in the same transaction after
             # device-owned interfaces, endpoints, snapshots, and observations
@@ -2105,6 +2105,10 @@ def delete_device(device_id: str):
         )
         return {"status": "success"}
     except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return JSONResponse(status_code=500, content={"status": "error", "error": str(e)})
     finally:
         conn.close()
@@ -2512,6 +2516,10 @@ def update_device_config(device_id: str, payload: dict = Body(...)):
         conn.commit()
         return {"status": "success"}
     except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return JSONResponse(status_code=500, content={"status": "error", "error": str(e)})
     finally:
         conn.close()
@@ -3029,6 +3037,10 @@ def import_devices(payload: dict = Body(...), user=require_role("Operator")):
         )
         return {"status": "success"}
     except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return JSONResponse(status_code=500, content={"status": "error", "error": str(e)})
     finally:
         conn.close()

@@ -13,6 +13,9 @@ from database.core import get_db_connection
 from ai.security.permissions import require_ai_permission
 from ai.services.model_health import build_health_timeline, check_model_health
 from ai.schemas.model import (
+    AIModelCatalogImportRequest,
+    AIModelCatalogImportResponse,
+    AIModelCatalogResponse,
     AIModelCreate,
     AIModelHealthCheckResponse,
     AIModelHealthServiceResponse,
@@ -25,6 +28,7 @@ from ai.schemas.model import (
 )
 from api.knowledge_contracts import DefaultModelRequest, ModelAccessRequest
 from ai.security.tokenization import opaque_user_id
+from ai.services.model_catalog import discover_provider_model_catalog
 
 router = APIRouter(prefix="/models", tags=["AI Models & Routes"])
 
@@ -103,6 +107,79 @@ def list_models(user=Depends(require_ai_permission("ai.view"))):
         return visible
 
 
+@router.get("/catalog/{provider_id}", response_model=AIModelCatalogResponse)
+def list_provider_model_catalog(
+    provider_id: str,
+    user=Depends(require_ai_permission("ai.model.manage")),
+):
+    """Discover model codes from a provider's saved account configuration."""
+    items = discover_provider_model_catalog(provider_id, user=user)
+    return {"items": items, "source": "public" if any(item.get("source") == "public" for item in items) else "account"}
+
+
+@router.post("/catalog/{provider_id}/import", response_model=AIModelCatalogImportResponse)
+def import_provider_model_catalog(
+    provider_id: str,
+    payload: AIModelCatalogImportRequest,
+    user=Depends(require_ai_permission("ai.model.manage")),
+):
+    """Register selected catalog models atomically without changing routes."""
+    del user
+    now_iso = datetime.now(timezone.utc).isoformat()
+    created = 0
+    skipped = 0
+    seen_codes: set[str] = set()
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        provider = cursor.execute(
+            "SELECT enabled FROM ai_provider WHERE id = ? FOR UPDATE",
+            (provider_id,),
+        ).fetchone()
+        if not provider:
+            raise HTTPException(status_code=404, detail="Provider not found")
+        if not provider[0]:
+            raise HTTPException(status_code=409, detail="Cannot add a model to a disabled provider")
+
+        for item in payload.items:
+            model_code = item.model_code
+            if model_code in seen_codes:
+                skipped += 1
+                continue
+            seen_codes.add(model_code)
+            model_id = f"model_{uuid.uuid4().hex[:12]}"
+            inserted = cursor.execute(
+                """
+                INSERT INTO ai_model (
+                    id, provider_id, name, model_code, model_type,
+                    thinking_supported, tool_call_supported, json_supported,
+                    context_length, max_output_tokens, default_temperature,
+                    default_max_tokens, enabled, is_default, priority,
+                    created_at, updated_at, stream_supported, display_name
+                ) VALUES (?, ?, ?, ?, ?, 0, 0, 0, 32768, 4096, 0.7, 2048, 1, 0, 10, ?, ?, 0, ?)
+                ON CONFLICT (provider_id, model_code) DO NOTHING
+                RETURNING id
+                """,
+                (
+                    model_id,
+                    provider_id,
+                    item.name,
+                    model_code,
+                    item.model_type,
+                    now_iso,
+                    now_iso,
+                    item.name,
+                ),
+            ).fetchone()
+            if inserted:
+                created += 1
+            else:
+                skipped += 1
+
+        conn.commit()
+    return {"created": created, "skipped": skipped}
+
+
 @router.post("", response_model=AIModelResponse, status_code=status.HTTP_201_CREATED)
 def create_model(payload: AIModelCreate, user=Depends(require_ai_permission("ai.model.manage"))):
     """Create a new AI Model."""
@@ -154,6 +231,60 @@ def create_model(payload: AIModelCreate, user=Depends(require_ai_permission("ai.
         enabled=payload.enabled, is_default=payload.is_default, priority=payload.priority,
         created_at=now_iso, updated_at=now_iso
     )
+
+
+@router.get("/semantic-embedding/status")
+def semantic_embedding_health(user=Depends(require_ai_permission("ai.view"))):
+    """Status of semantic embedding engine, configured embedding models, and chunk coverage."""
+    from ai.providers.embedding import semantic_embedding_status
+
+    base = dict(semantic_embedding_status() or {})
+    configured_models = []
+    chunk_stats = {"total_chunks": 0, "semantic_v2_chunks": 0, "local_v1_chunks": 0}
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            rows = cursor.execute(
+                """
+                SELECT m.id, m.name, m.model_code, p.name AS provider_name, m.enabled, p.enabled AS provider_enabled
+                FROM ai_model m
+                JOIN ai_provider p ON p.id = m.provider_id
+                WHERE LOWER(COALESCE(m.model_type, '')) = 'embedding'
+                ORDER BY m.enabled DESC, m.name ASC
+                """
+            ).fetchall()
+            for r in rows:
+                configured_models.append(
+                    {
+                        "id": r[0],
+                        "name": r[1],
+                        "model_code": r[2],
+                        "provider_name": r[3],
+                        "enabled": bool(r[4]) and bool(r[5]),
+                    }
+                )
+            stat_row = cursor.execute(
+                """
+                SELECT
+                    COUNT(*) AS total_chunks,
+                    COUNT(*) FILTER (WHERE c.embedding_v2 IS NOT NULL) AS semantic_v2_chunks,
+                    COUNT(*) FILTER (WHERE c.embedding_vector IS NOT NULL) AS local_v1_chunks
+                FROM ai_document_chunk c
+                JOIN ai_document d ON d.id = c.document_id
+                WHERE d.status = 'active'
+                """
+            ).fetchone()
+            if stat_row:
+                chunk_stats = {
+                    "total_chunks": int(stat_row[0] or 0),
+                    "semantic_v2_chunks": int(stat_row[1] or 0),
+                    "local_v1_chunks": int(stat_row[2] or 0),
+                }
+    except Exception:
+        pass
+    base["configured_embedding_models"] = configured_models
+    base["chunk_stats"] = chunk_stats
+    return base
 
 
 @router.get("/health-summary", response_model=AIModelHealthSummaryResponse)
@@ -238,7 +369,7 @@ def model_health_summary(
     current_statuses: list[str] = []
     for row in visible_rows:
         model_type = str(row[5] or "chat").lower()
-        monitorable = bool(row[6]) and bool(row[7]) and model_type in {"chat", "reasoning"}
+        monitorable = bool(row[6]) and bool(row[7]) and model_type in {"chat", "reasoning", "embedding"}
         if not monitorable:
             health_status = "disabled" if not row[6] or not row[7] else "not_supported"
         else:
@@ -305,6 +436,16 @@ def model_health_summary(
     )
 
 
+@router.post("/health-check-all")
+async def model_health_check_all(user=Depends(require_ai_permission("ai.model.manage"))):
+    """Probe all enabled models (chat, reasoning, embedding) whose provider is enabled."""
+    from ai.services.model_health import run_scheduled_model_health_checks
+
+    del user
+    summary = await run_scheduled_model_health_checks()
+    return summary
+
+
 @router.post("/{model_id}/health-check", response_model=AIModelHealthCheckResponse)
 async def model_health_check(model_id: str, user=Depends(require_ai_permission("ai.model.manage"))):
     """Run one model health probe through the production AI gateway."""
@@ -352,9 +493,11 @@ def update_model(model_id: str, payload: AIModelUpdate, user=Depends(require_ai_
         if updates.get("is_default"):
             conn.execute("UPDATE ai_model SET is_default = 0 WHERE id <> ?", (model_id,))
         allowed = {"provider_id", "name", "model_code", "model_type", "thinking_supported", "tool_call_supported", "json_supported", "context_length", "max_output_tokens", "default_temperature", "default_max_tokens", "enabled", "is_default", "priority", "stream_supported", "display_name", "cost_input_per_1k", "cost_output_per_1k"}
+        int_bool_fields = {"thinking_supported", "tool_call_supported", "json_supported", "enabled", "is_default", "stream_supported"}
         fields = [key for key in updates if key in allowed]
         if fields:
-            conn.execute(f"UPDATE ai_model SET {', '.join(f'{key} = ?' for key in fields)}, updated_at = ? WHERE id = ?", tuple(updates[key] for key in fields) + (now_iso, model_id))
+            values = tuple(int(updates[key]) if key in int_bool_fields else updates[key] for key in fields)
+            conn.execute(f"UPDATE ai_model SET {', '.join(f'{key} = ?' for key in fields)}, updated_at = ? WHERE id = ?", values + (now_iso, model_id))
         else:
             conn.execute("UPDATE ai_model SET updated_at = ? WHERE id = ?", (now_iso, model_id))
         conn.commit()

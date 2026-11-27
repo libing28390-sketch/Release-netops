@@ -100,7 +100,7 @@ const NavSection: React.FC<NavSectionProps> = ({
       <div
         className={cn(
           'overflow-hidden transition-all duration-300',
-          isOpen ? 'max-h-[500px] opacity-100' : 'max-h-0 opacity-0'
+          isOpen ? 'max-h-[720px] opacity-100' : 'max-h-0 opacity-0'
         )}
       >
         <div className="mt-1 space-y-px">

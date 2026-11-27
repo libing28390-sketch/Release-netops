@@ -20,9 +20,10 @@ router = APIRouter(prefix="/agents", tags=["AI Agents & Tools"])
 class AgentRunRequest(BaseModel):
     agent_code: str = Field("troubleshooting_agent", description="Agent code identifier")
     question: str = Field(..., description="Troubleshooting problem description")
-    max_steps: int = Field(6, ge=1, le=50)
-    max_tool_calls: int = Field(12, ge=1, le=200)
-    timeout_seconds: int = Field(180, ge=5, le=3600)
+    max_steps: int = Field(6, ge=1, le=20)
+    max_tool_calls: int = Field(12, ge=1, le=50)
+    # Wall-clock budget for the whole run (all steps), in seconds.
+    timeout_seconds: int = Field(180, ge=5, le=900)
 
 
 @router.get("")

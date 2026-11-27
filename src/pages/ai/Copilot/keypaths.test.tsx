@@ -37,10 +37,7 @@ describe('Copilot browser key paths', () => {
     await user.click(screen.getByRole('button', { name: /模型/ }));
     await user.click(screen.getByRole('button', { name: /OpenAI GPT-4o/ }));
     expect(onSelectModel).toHaveBeenCalledWith('m-openai');
-
-    await user.click(screen.getByRole('button', { name: '选择诊断范围' }));
-    fireEvent.change(screen.getByRole('textbox', { name: '厂商' }), { target: { value: 'Cisco' } });
-    expect(onContextChange.mock.calls.at(-1)?.[0]).toEqual({ vendor: 'Cisco' });
+    expect(screen.queryByRole('button', { name: '选择诊断范围' })).toBeNull();
   });
 
   it('loads an existing question for editing and sends the revised text', async () => {
@@ -67,22 +64,67 @@ describe('Copilot browser key paths', () => {
     expect(screen.queryByText('正在编辑问题，修改后点击发送即可提交新问题')).toBeNull();
   });
 
-  it('keeps header model selection and inspector actions keyboard accessible', async () => {
+  it('shows the current model read-only in the header and keeps its actions keyboard accessible', async () => {
     const user = userEvent.setup();
-    const onSelectModel = vi.fn();
     const onClearChat = vi.fn();
-    render(
+    const { rerender } = render(
       <CopilotHeader
         sessionTitle="OSPF 排障"
         selectedModel="m-deepseek"
-        onSelectModel={onSelectModel}
         models={models}
         onClearChat={onClearChat}
       />,
     );
-    await user.selectOptions(screen.getByRole('combobox'), 'm-openai');
-    expect(onSelectModel).toHaveBeenCalledWith('m-openai');
+    // The header no longer offers a model picker; the composer is the only one.
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(screen.queryByLabelText('选择模型')).toBeNull();
+    const current = screen.getByLabelText('当前模型');
+    expect(current.textContent).toContain('DeepSeek V4 Flash');
+    expect(current.textContent).toContain('健康');
+
+    rerender(
+      <CopilotHeader
+        sessionTitle="OSPF 排障"
+        selectedModel="m-openai"
+        models={models}
+        onClearChat={onClearChat}
+      />,
+    );
+    expect(screen.getByLabelText('当前模型').textContent).toContain('OpenAI GPT-4o');
+
     await user.click(screen.getByTitle('清空当前对话'));
     expect(onClearChat).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to the first model, or to the default model when none is configured', () => {
+    const { rerender } = render(
+      <CopilotHeader sessionTitle="新对话" selectedModel="unknown-id" models={models} onClearChat={vi.fn()} />,
+    );
+    expect(screen.getByLabelText('当前模型').textContent).toContain('DeepSeek V4 Flash');
+
+    rerender(<CopilotHeader sessionTitle="新对话" selectedModel="" models={[]} onClearChat={vi.fn()} />);
+    const current = screen.getByLabelText('当前模型');
+    expect(current.textContent).toContain('默认模型');
+    expect(screen.queryByTestId('copilot-header-model-health')).toBeNull();
+  });
+
+  it('switches the model through the composer and the header follows it', async () => {
+    const user = userEvent.setup();
+    const Harness: React.FC = () => {
+      const [selected, setSelected] = React.useState('m-deepseek');
+      return (
+        <>
+          <CopilotHeader sessionTitle="OSPF 排障" selectedModel={selected} models={models} onClearChat={vi.fn()} />
+          <CopilotComposer onSend={vi.fn()} selectedModel={selected} onSelectModel={setSelected} models={models} />
+        </>
+      );
+    };
+    render(<Harness />);
+    expect(screen.getByLabelText('当前模型').textContent).toContain('DeepSeek V4 Flash');
+
+    await user.click(screen.getByTitle('点击展开模型与推理控制面板'));
+    await user.click(screen.getByRole('button', { name: /模型/ }));
+    await user.click(screen.getByRole('button', { name: /OpenAI GPT-4o/ }));
+    await waitFor(() => expect(screen.getByLabelText('当前模型').textContent).toContain('OpenAI GPT-4o'));
   });
 });

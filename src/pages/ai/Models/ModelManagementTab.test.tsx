@@ -10,7 +10,9 @@ import {
   getAIModelDeletePreview,
   getAIModelRoutes,
   getAIModels,
+  getAIProviderModelCatalog,
   getAIProviders,
+  importAIProviderModels,
   setAIUserDefaultModel,
   updateAIModel,
   upsertAIModelRoute,
@@ -27,13 +29,15 @@ vi.mock('../../../api/ai', () => ({
   getAIModelDeletePreview: vi.fn(),
   getAIModelRoutes: vi.fn(),
   getAIModels: vi.fn(),
+  getAIProviderModelCatalog: vi.fn(),
   getAIProviders: vi.fn(),
+  importAIProviderModels: vi.fn(),
   setAIUserDefaultModel: vi.fn(),
   updateAIModel: vi.fn(),
   upsertAIModelRoute: vi.fn(),
 }));
 
-const provider = { id: 'prov-1', name: 'DeepSeek 主供应商', provider_type: 'deepseek' };
+const provider = { id: 'prov-1', name: 'DeepSeek 主供应商', provider_type: 'deepseek', enabled: true };
 const model = {
   id: 'model-1',
   provider_id: provider.id,
@@ -103,6 +107,26 @@ describe('ModelManagementTab browser key paths', () => {
   });
 
   afterEach(() => cleanup());
+
+  it('imports selected catalog models and refreshes the model table without writing routes', async () => {
+    const user = userEvent.setup();
+    const remote = { name: 'DeepSeek Pro', model_code: 'deepseek-v4-pro', model_type: 'chat' as const };
+    vi.mocked(getAIProviderModelCatalog).mockResolvedValueOnce({ items: [{ ...remote, already_registered: false }], source: 'account' });
+    vi.mocked(importAIProviderModels).mockImplementationOnce(async () => {
+      getModels.mockResolvedValueOnce([model as any, { ...model, ...remote, id: 'model-2' } as any]);
+      return { created: 1, skipped: 0 };
+    });
+    const routeCalls = upsertRoute.mock.calls.length;
+    render(<ModelManagementTab />);
+
+    await user.click(await screen.findByRole('button', { name: '从供应商导入' }));
+    await user.click(await screen.findByRole('button', { name: '读取模型列表' }));
+    await user.click(await screen.findByRole('button', { name: '导入所选 (1)' }));
+
+    expect(importAIProviderModels).toHaveBeenCalledWith(provider.id, [remote]);
+    expect(await screen.findByText('DeepSeek Pro')).toBeTruthy();
+    expect(upsertRoute.mock.calls).toHaveLength(routeCalls);
+  });
 
   it('renders model/provider mapping and switches the default and scene route', async () => {
     const user = userEvent.setup();
@@ -209,6 +233,42 @@ describe('ModelManagementTab browser key paths', () => {
       'error',
     ));
     expect(deleteModel).not.toHaveBeenCalled();
+  });
+
+  it('shows the page header, summary bar and health badges in the redesigned layout', async () => {
+    render(<ModelManagementTab />);
+    await screen.findAllByText('DeepSeek V4 Flash');
+
+    expect(screen.getByRole('heading', { level: 2, name: /AI Model 模型管理/ })).toBeTruthy();
+    const summary = screen.getByLabelText('模型概况');
+    expect(summary.textContent).toContain('个模型');
+    expect(summary.textContent).toContain('已启用');
+    expect(summary.textContent).toContain('0/12');
+    // Capability flags are shown as compact badges in one column.
+    expect(screen.getAllByText('流式').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('JSON').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('shows an empty state instead of an empty table when there are no models', async () => {
+    getModels.mockResolvedValueOnce([]);
+    render(<ModelManagementTab />);
+
+    expect(await screen.findByText('还没有模型')).toBeTruthy();
+    expect(screen.queryByRole('table')).toBeNull();
+    // Only the header action creates a model, so the button name stays unique.
+    expect(screen.getAllByRole('button', { name: '添加 Model' })).toHaveLength(1);
+  });
+
+  it('offers a clear-filters action once a filter is applied', async () => {
+    const user = userEvent.setup();
+    render(<ModelManagementTab />);
+    await screen.findAllByText('DeepSeek V4 Flash');
+
+    expect(screen.queryByRole('button', { name: '清除筛选' })).toBeNull();
+    await user.type(screen.getByRole('searchbox', { name: '搜索模型' }), 'no-such-model');
+    expect(await screen.findByText('没有符合筛选条件的模型。')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '清除筛选' }));
+    expect((await screen.findAllByText('DeepSeek V4 Flash')).length).toBeGreaterThanOrEqual(1);
   });
 
   it('cancels deletion safely when the usage preview is unavailable', async () => {

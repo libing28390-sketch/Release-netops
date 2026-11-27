@@ -13,7 +13,9 @@ import hashlib
 import math
 import os
 import re
+import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, List, Mapping, Sequence
 
@@ -209,7 +211,440 @@ class StableLocalEmbeddingProvider(BaseEmbeddingProvider):
         return [round(value / norm, 8) for value in vector]
 
 
+class SidecarEmbeddingProvider(BaseEmbeddingProvider):
+    """Semantic embeddings from the in-cluster bge-m3 sidecar.
+
+    Text never leaves the deployment: the endpoint host must be on a local
+    allowlist (loopback / the compose service name / AI_EMBEDDING_ALLOWED_HOSTS)
+    and URLs with credentials, query strings or fragments are rejected.
+
+    Failure handling is built for the query path: a failed call opens a short
+    cooldown (AI_EMBEDDING_SIDECAR_COOLDOWN_SECONDS) during which calls fail
+    immediately with ``EmbeddingProviderError`` instead of waiting for the
+    timeout again, so retrieval degrades to lexical recall without latency.
+    """
+
+    mode = "local_semantic"
+    _DEFAULT_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "embedding-sidecar"})
+
+    def __init__(
+        self,
+        endpoint: str | None = None,
+        *,
+        model_id: str | None = None,
+        dimensions: int | None = None,
+        version: str | None = None,
+        token: str | None = None,
+        query_timeout_seconds: float | None = None,
+        batch_timeout_seconds: float | None = None,
+        cooldown_seconds: float | None = None,
+        batch_size: int | None = None,
+        transport: Any = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        from urllib.parse import urlparse
+
+        raw = str(endpoint or os.environ.get("AI_EMBEDDING_SIDECAR_URL", "http://embedding-sidecar:8005")).strip().rstrip("/")
+        if len(raw) > 2048:
+            raise EmbeddingProviderError("Embedding sidecar endpoint is too long")
+        parsed = urlparse(raw)
+        try:
+            host = (parsed.hostname or "").lower()
+            _ = parsed.port
+        except ValueError as exc:
+            raise EmbeddingProviderError("Embedding sidecar endpoint is malformed") from exc
+        if parsed.scheme not in {"http", "https"} or not host or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise EmbeddingProviderError("Embedding sidecar endpoint must be an HTTP(S) URL without credentials or query parameters")
+        allowed = set(self._DEFAULT_HOSTS) | {
+            item.strip().lower() for item in os.environ.get("AI_EMBEDDING_ALLOWED_HOSTS", "").split(",") if item.strip()
+        }
+        if host not in allowed:
+            raise EmbeddingProviderError("Embedding sidecar host is not in the local allowlist")
+        self.endpoint = raw
+        self.model_id = str(model_id or os.environ.get("AI_SEMANTIC_EMBEDDING_MODEL", "bge-m3"))
+        self.dimensions = int(dimensions or os.environ.get("AI_SEMANTIC_EMBEDDING_DIMENSIONS", "1024"))
+        self.version = str(version or os.environ.get("AI_SEMANTIC_EMBEDDING_VERSION", "bge-m3-int8-v1"))
+        self.batch_size = max(1, min(int(batch_size or os.environ.get("AI_EMBEDDING_SIDECAR_BATCH", "32")), 64))
+        self._token = token if token is not None else os.environ.get("AI_EMBEDDING_SIDECAR_TOKEN", "")
+        self._query_timeout = max(0.05, min(float(query_timeout_seconds or int(os.environ.get("AI_EMBEDDING_QUERY_TIMEOUT_MS", "1500")) / 1000.0), 30.0))
+        self._batch_timeout = max(1.0, min(float(batch_timeout_seconds or os.environ.get("AI_EMBEDDING_BATCH_TIMEOUT_SECONDS", "60")), 600.0))
+        self._cooldown = max(0.0, float(cooldown_seconds if cooldown_seconds is not None else os.environ.get("AI_EMBEDDING_SIDECAR_COOLDOWN_SECONDS", "30")))
+        self._transport = transport
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._unavailable_until = 0.0
+        self._last_error: str | None = None
+        self._contract_checked = False
+        self._query_cache: "OrderedDict[str, list[float]]" = OrderedDict()
+        self._query_cache_max = max(0, int(os.environ.get("AI_EMBEDDING_QUERY_CACHE_SIZE", "512")))
+        self._client: Any = None
+
+    # -- transport ---------------------------------------------------------
+    def _http(self) -> Any:
+        import httpx
+
+        if self._client is None:
+            with self._lock:
+                if self._client is None:
+                    # trust_env=False: never route in-cluster traffic through
+                    # an inherited HTTP(S)_PROXY.
+                    self._client = httpx.Client(
+                        transport=self._transport,
+                        trust_env=False,
+                        headers={"Authorization": f"Bearer {self._token}"} if self._token else {},
+                        limits=httpx.Limits(max_connections=8, max_keepalive_connections=4),
+                    )
+        return self._client
+
+    def _fail(self, code: str, exc: Exception | None = None) -> EmbeddingProviderError:
+        with self._lock:
+            self._unavailable_until = self._clock() + self._cooldown
+            self._last_error = code
+        error = EmbeddingProviderError(f"Embedding sidecar unavailable: {code}")
+        if exc is not None:
+            error.__cause__ = exc
+        return error
+
+    def _request(self, method: str, path: str, *, timeout: float, payload: Any = None) -> Any:
+        if self._clock() < self._unavailable_until:
+            raise EmbeddingProviderError(f"Embedding sidecar unavailable: {self._last_error or 'COOLDOWN'} (cooling down)")
+        import httpx
+
+        try:
+            response = self._http().request(method, f"{self.endpoint}{path}", json=payload, timeout=httpx.Timeout(timeout, connect=min(timeout, 2.0)))
+        except httpx.TimeoutException as exc:
+            raise self._fail("TIMEOUT", exc)
+        except httpx.HTTPError as exc:
+            raise self._fail("CONNECTION_FAILED", exc)
+        if response.status_code == 503:
+            raise self._fail("NOT_READY")
+        if response.status_code in (401, 403):
+            raise self._fail("UNAUTHORIZED")
+        if response.status_code >= 400:
+            raise self._fail(f"HTTP_{response.status_code}")
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise self._fail("INVALID_RESPONSE", exc)
+
+    def _check_contract(self) -> None:
+        if self._contract_checked:
+            return
+        info = self._request("GET", "/v1/info", timeout=self._query_timeout)
+        if str(info.get("model_id")) != self.model_id or int(info.get("dimensions") or 0) != self.dimensions:
+            # A different model behind the same URL must never be mixed into
+            # an index built for another model; this is not a transient error.
+            raise self._fail("MODEL_CONTRACT_MISMATCH")
+        if str(info.get("version") or "") != self.version:
+            raise self._fail("MODEL_VERSION_MISMATCH")
+        self._contract_checked = True
+
+    def _embed(self, texts: Sequence[str], *, kind: str, timeout: float) -> List[List[float]]:
+        self._check_contract()
+        payload = self._request("POST", "/v1/embeddings", timeout=timeout, payload={"input": list(texts), "kind": kind})
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list) or len(data) != len(texts):
+            raise self._fail("BATCH_SIZE_MISMATCH")
+        vectors: List[List[float]] = []
+        for vector in data:
+            if not isinstance(vector, list) or len(vector) != self.dimensions:
+                raise self._fail("DIMENSION_MISMATCH")
+            values = [float(value) for value in vector]
+            if not all(math.isfinite(value) for value in values):
+                raise self._fail("NON_FINITE_VECTOR")
+            vectors.append(values)
+        with self._lock:
+            self._last_error = None
+        return vectors
+
+    # -- provider interface ------------------------------------------------
+    def embed_documents(self, texts: Sequence[str], **_: Any) -> List[List[float]]:
+        values = [str(text or "") for text in texts]
+        result: List[List[float]] = []
+        for start in range(0, len(values), self.batch_size):
+            result.extend(self._embed(values[start:start + self.batch_size], kind="document", timeout=self._batch_timeout))
+        return result
+
+    def embed_query(self, text: str) -> List[float]:
+        value = str(text or "")
+        key = hashlib.sha256(value.encode("utf-8")).hexdigest()
+        with self._lock:
+            cached = self._query_cache.get(key)
+            if cached is not None:
+                self._query_cache.move_to_end(key)
+                return list(cached)
+        vector = self._embed([value], kind="query", timeout=self._query_timeout)[0]
+        if self._query_cache_max:
+            with self._lock:
+                self._query_cache[key] = vector
+                while len(self._query_cache) > self._query_cache_max:
+                    self._query_cache.popitem(last=False)
+        return list(vector)
+
+    def embed_text(self, text: str, dimensions: int | None = None) -> List[float]:
+        if dimensions is not None and int(dimensions) != self.dimensions:
+            raise EmbeddingProviderError("Sidecar embedding dimensions are fixed by the model")
+        return self.embed_documents([text])[0]
+
+    def status(self) -> dict[str, Any]:
+        """Health for diagnostics; never raises and never returns text."""
+        cooling = self._clock() < self._unavailable_until
+        state = {
+            "provider": "sidecar",
+            "model_id": self.model_id,
+            "dimensions": self.dimensions,
+            "version": self.version,
+            "contract_verified": self._contract_checked,
+            "cooling_down": cooling,
+            "last_error": self._last_error,
+        }
+        if not cooling:
+            try:
+                self._check_contract()
+                state.update({"status": "ready", "contract_verified": True})
+                return state
+            except EmbeddingProviderError:
+                state["last_error"] = self._last_error
+        state["status"] = "unavailable"
+        return state
+
+
 embedding_provider: BaseEmbeddingProvider = StableLocalEmbeddingProvider()
+
+# The semantic provider is separate from ``embedding_provider`` on purpose:
+# the legacy ``embedding_vector`` column is vector(1536) built by the lexical
+# fallback, while bge-m3 vectors (1024) go to their own column.  Mixing them
+# would make every similarity meaningless.
+_SEMANTIC_PROVIDER: BaseEmbeddingProvider | None = None
+_SEMANTIC_PROVIDER_KEY: tuple[str, ...] | None = None
+_SEMANTIC_LOCK = threading.Lock()
+_DB_EMBEDDING_CHECKED_AT: float = 0.0
+_DB_EMBEDDING_CACHE: "OpenAICompatibleDBEmbeddingProvider | None" = None
+
+
+class OpenAICompatibleDBEmbeddingProvider(BaseEmbeddingProvider):
+    """Semantic embedding provider backed by an enabled DB ai_model (model_type='embedding')."""
+
+    mode = "provider"
+    version = "v2"
+    batch_size = 32
+
+    def __init__(
+        self,
+        *,
+        model_code: str,
+        endpoint: str,
+        api_key: str,
+        provider_name: str,
+        proxy_url: str | None = None,
+        dimensions: int = 1024,
+        timeout_seconds: float = 8.0,
+    ) -> None:
+        self.model_id = model_code
+        self.endpoint = endpoint
+        self._api_key = api_key
+        self.provider_name = provider_name
+        self.proxy_url = proxy_url
+        self.dimensions = dimensions
+        self.timeout_seconds = timeout_seconds
+        self._query_cache: OrderedDict[str, list[float]] = OrderedDict()
+        self._cache_lock = threading.Lock()
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "provider": "db_openai_compatible",
+            "provider_name": self.provider_name,
+            "model": self.model_id,
+            "dimensions": self.dimensions,
+            "available": True,
+            "status": "ready",
+        }
+
+    def embed_documents(self, texts: Sequence[str], **_: Any) -> List[List[float]]:
+        import httpx
+
+        items = [str(t or "")[:4000] for t in texts]
+        if not items:
+            return []
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        vectors: List[List[float]] = []
+        with httpx.Client(timeout=self.timeout_seconds, proxy=self.proxy_url or None) as client:
+            for i in range(0, len(items), self.batch_size):
+                batch = items[i : i + self.batch_size]
+                resp = client.post(self.endpoint, headers=headers, json={"model": self.model_id, "input": batch})
+                if resp.status_code != 200:
+                    raise EmbeddingProviderError(f"DB embedding HTTP {resp.status_code}")
+                data = resp.json().get("data") or []
+                if len(data) != len(batch):
+                    raise EmbeddingProviderError("DB embedding batch size mismatch")
+                for obj in data:
+                    vec = [float(x) for x in (obj.get("embedding") or [])]
+                    if vec:
+                        self.dimensions = len(vec)
+                    vectors.append(vec)
+        return vectors
+
+    def embed_text(self, text: str, dimensions: int | None = None) -> List[float]:
+        key = str(text or "")[:4000]
+        with self._cache_lock:
+            cached = self._query_cache.get(key)
+            if cached is not None:
+                self._query_cache.move_to_end(key)
+                return list(cached)
+        vecs = self.embed_documents([key])
+        vec = vecs[0] if vecs else []
+        if vec:
+            with self._cache_lock:
+                self._query_cache[key] = list(vec)
+                while len(self._query_cache) > 256:
+                    self._query_cache.popitem(last=False)
+        return vec
+
+
+def _load_db_embedding_provider() -> OpenAICompatibleDBEmbeddingProvider | None:
+    global _DB_EMBEDDING_CHECKED_AT, _DB_EMBEDDING_CACHE
+    now = time.monotonic()
+    if now - _DB_EMBEDDING_CHECKED_AT < 30.0:
+        return _DB_EMBEDDING_CACHE
+    _DB_EMBEDDING_CHECKED_AT = now
+    try:
+        from database.core import get_db_connection
+        from ai.security.crypto import decrypt_api_key
+
+        with get_db_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT m.model_code, p.id, p.name, p.base_url, p.api_key_encrypted, p.proxy_url
+                FROM ai_model m
+                JOIN ai_provider p ON p.id = m.provider_id
+                WHERE LOWER(COALESCE(m.model_type, '')) = 'embedding'
+                  AND m.enabled = 1 AND p.enabled = 1
+                ORDER BY m.priority DESC, m.updated_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        if not row or not row[0] or not row[3]:
+            _DB_EMBEDDING_CACHE = None
+            return None
+        base_url = str(row[3]).rstrip("/")
+        endpoint = base_url if base_url.endswith("/embeddings") else f"{base_url}/embeddings"
+        api_key = decrypt_api_key(row[4], provider_id=str(row[1])) if row[4] else ""
+        proxy_url = str(row[5]).strip() if row[5] else None
+        _DB_EMBEDDING_CACHE = OpenAICompatibleDBEmbeddingProvider(
+            model_code=str(row[0]),
+            endpoint=endpoint,
+            api_key=str(api_key or ""),
+            provider_name=str(row[2] or "provider"),
+            proxy_url=proxy_url,
+        )
+        return _DB_EMBEDDING_CACHE
+    except Exception:
+        _DB_EMBEDDING_CACHE = None
+        return None
+
+
+def semantic_embedding_provider() -> BaseEmbeddingProvider | None:
+    """Configured semantic provider, or None when semantic vectors are off.
+
+    ``AI_SEMANTIC_EMBEDDING_PROVIDER``: ``auto``/``none`` (checks enabled DB
+    embedding model first), ``off``/``disabled`` (strictly off), or ``sidecar``.
+    """
+    global _SEMANTIC_PROVIDER, _SEMANTIC_PROVIDER_KEY
+    kind = str(os.environ.get("AI_SEMANTIC_EMBEDDING_PROVIDER", "auto") or "auto").strip().lower()
+    if kind in {"off", "disabled"}:
+        return None
+    if kind in {"", "none", "auto"}:
+        return _load_db_embedding_provider()
+    if kind != "sidecar":
+        raise EmbeddingProviderError("AI_SEMANTIC_EMBEDDING_PROVIDER must be 'auto', 'none', 'off', or 'sidecar'")
+    key = tuple(
+        str(os.environ.get(name, ""))
+        for name in (
+            "AI_EMBEDDING_SIDECAR_URL", "AI_SEMANTIC_EMBEDDING_MODEL", "AI_SEMANTIC_EMBEDDING_DIMENSIONS",
+            "AI_SEMANTIC_EMBEDDING_VERSION", "AI_EMBEDDING_SIDECAR_TOKEN", "AI_EMBEDDING_ALLOWED_HOSTS",
+        )
+    )
+    with _SEMANTIC_LOCK:
+        if _SEMANTIC_PROVIDER is None or _SEMANTIC_PROVIDER_KEY != key:
+            _SEMANTIC_PROVIDER = SidecarEmbeddingProvider()
+            _SEMANTIC_PROVIDER_KEY = key
+        return _SEMANTIC_PROVIDER
+
+
+def semantic_embedding_status() -> dict[str, Any]:
+    try:
+        provider = semantic_embedding_provider()
+    except EmbeddingProviderError:
+        return {"provider": "invalid", "status": "misconfigured"}
+    if provider is None:
+        return {"provider": "none", "status": "disabled"}
+    status = getattr(provider, "status", None)
+    return status() if callable(status) else {"provider": type(provider).__name__, "status": "unknown"}
+
+
+def rerank_documents(
+    query: str,
+    documents: Sequence[str],
+    *,
+    top_n: int | None = None,
+    model: str | None = None,
+    timeout_seconds: float = 5.0,
+) -> list[dict[str, Any]] | None:
+    """Rerank candidate passages via the configured OpenAI-compatible /rerank endpoint (e.g., SiliconFlow BAAI/bge-reranker-v2-m3).
+
+    Returns a list of ``{"index": int, "relevance_score": float}`` sorted by
+    descending relevance, or ``None`` when no compatible provider is configured
+    or the call fails (callers gracefully fall back to the existing ranking).
+    """
+    if not query or len(documents) < 2:
+        return None
+    if str(os.environ.get("AI_RERANKER_ENABLED", "true")).strip().lower() in {"0", "false", "off", "disabled"}:
+        return None
+    provider = _load_db_embedding_provider()
+    if provider is None:
+        return None
+    base = provider.endpoint
+    if base.endswith("/embeddings"):
+        rerank_url = base[: -len("/embeddings")] + "/rerank"
+    else:
+        rerank_url = base.rstrip("/") + "/rerank"
+    rerank_model = str(model or os.environ.get("AI_RERANKER_MODEL") or "BAAI/bge-reranker-v2-m3").strip()
+    headers = {"Content-Type": "application/json"}
+    if getattr(provider, "_api_key", ""):
+        headers["Authorization"] = f"Bearer {provider._api_key}"
+    payload: dict[str, Any] = {
+        "model": rerank_model,
+        "query": str(query)[:1000],
+        "documents": [str(doc or "")[:2000] for doc in documents],
+    }
+    if top_n is not None and top_n > 0:
+        payload["top_n"] = min(int(top_n), len(documents))
+    try:
+        import httpx
+
+        with httpx.Client(timeout=timeout_seconds, proxy=provider.proxy_url or None) as client:
+            resp = client.post(rerank_url, headers=headers, json=payload)
+        if resp.status_code != 200:
+            return None
+        results = resp.json().get("results")
+        if not isinstance(results, list) or not results:
+            return None
+        ranked = [
+            {
+                "index": int(item["index"]),
+                "relevance_score": float(item.get("relevance_score") or 0.0),
+            }
+            for item in results
+            if isinstance(item, dict) and isinstance(item.get("index"), int)
+        ]
+        ranked.sort(key=lambda x: x["relevance_score"], reverse=True)
+        return ranked or None
+    except Exception:
+        return None
+
+
 
 _EMBEDDING_IDEMPOTENCY_CACHE: dict[str, list[float]] = {}
 _EMBEDDING_IDEMPOTENCY_CACHE_MAX = 4096

@@ -5,6 +5,8 @@ Supports Normalized Markdown Middle Format & Heading/CLI-Aware Smart Chunking
 
 from __future__ import annotations
 
+import logging
+
 import json
 import hashlib
 import re
@@ -24,6 +26,7 @@ from ai.providers.embedding import (
     embedding_provider,
     embedding_metadata,
 )
+from ai.services import semantic_vectors
 from ai.security.gateway import SecurityBlocked
 from ai.services.knowledge_metadata import (
     DIRECTORY_VENDOR_MAP,
@@ -42,6 +45,9 @@ from ai.services.knowledge_metadata import (
     metadata_governance,
 )
 from ai.services.knowledge_source_parser import KnowledgeSourceParseError, parse_knowledge_source
+
+
+logger = logging.getLogger(__name__)
 
 
 def _json_db_value(value: Dict[str, Any]) -> Any:
@@ -572,6 +578,10 @@ class KnowledgeService:
                             (replacement_path, now_iso, descendant_id),
                         )
                     # Keep document metadata directory path aligned with the renamed directory.
+                    # Best effort: on PostgreSQL a failed statement aborts the
+                    # whole transaction, so isolate it in a savepoint instead
+                    # of swallowing the error and failing every later UPDATE.
+                    cursor.execute("SAVEPOINT knowledge_directory_document_path")
                     try:
                         cursor.execute(
                             """
@@ -581,8 +591,10 @@ class KnowledgeService:
                             """,
                             (replacement_path, descendant_path),
                         )
+                        cursor.execute("RELEASE SAVEPOINT knowledge_directory_document_path")
                     except Exception:
-                        pass
+                        cursor.execute("ROLLBACK TO SAVEPOINT knowledge_directory_document_path")
+                        logger.warning("Directory rename could not update document directory paths")
             except Exception as exc:
                 conn.rollback()
                 raise ValueError("目录重命名失败，可能存在路径冲突") from exc
@@ -1811,6 +1823,21 @@ class KnowledgeService:
             embedding_dimensions=contract.dimensions,
             embedding_model=str(embedding_info.get("embedding_model") or ""),
         )
+        # Semantic (bge-m3) vectors are written next to the legacy ones.  A
+        # sidecar outage stores the document without them; the backfill
+        # script fills the gap later (see ai.services.semantic_vectors).
+        semantic_batch = semantic_vectors.embed_chunks(
+            [chk.embedding_content for chk in structured_chunks],
+            tenant_id=tenant_id,
+            task_id=f"knowledge-ingestion-semantic:{doc_id}",
+        )
+        if semantic_batch.status != "disabled":
+            notify(
+                "semantic_embedding",
+                "completed" if semantic_batch.status == "ok" else "degraded",
+                vector_count=sum(1 for vector in semantic_batch.vectors if vector is not None),
+                error_code=semantic_batch.error_code,
+            )
 
         owns_connection = db_connection is None
         connection_context = get_db_connection() if owns_connection else nullcontext(db_connection)
@@ -1869,6 +1896,8 @@ class KnowledgeService:
                 column="embedding_vector",
                 expected_dimensions=contract.dimensions,
             )
+            if semantic_batch.status == "ok":
+                semantic_batch = semantic_vectors.guard_column(cursor, semantic_batch)
             for idx, (chk, vec) in enumerate(zip(structured_chunks, embedding_vectors)):
                 section_name = chk.to_dict()["section"]
                 # Every chunk carries the complete document metadata so a
@@ -1931,6 +1960,7 @@ class KnowledgeService:
                     "embedding_dimensions": len(vec),
                     "embedding_version": embedding_info.get("embedding_version"),
                 })
+                chunk_values.update(semantic_batch.columns_for(idx, chk.embedding_content, now=now_iso))
                 chunk_values = {key: value for key, value in chunk_values.items() if key in chunk_columns}
                 chunk_columns_ordered = list(chunk_values)
                 cursor.execute(

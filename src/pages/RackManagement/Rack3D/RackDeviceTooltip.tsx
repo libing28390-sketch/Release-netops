@@ -1,17 +1,30 @@
 import React, { useState, useEffect, memo } from 'react';
-import { AlertTriangle, Network, ExternalLink, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Network, ExternalLink, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
 import { RackDeviceVM } from '../types';
-import { loadDeviceTelemetry, DeviceTelemetryResult, PhysicalInterfaceItem } from '../adapters/snmpTelemetry';
+import {
+  loadDeviceTelemetry,
+  portProfileToTelemetryResult,
+  DeviceTelemetryResult,
+  PhysicalInterfaceItem,
+} from '../adapters/snmpTelemetry';
 
 interface RackDeviceTooltipProps {
   device: RackDeviceVM;
   onOpenDetail: (deviceId: string) => void;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
   zh: boolean;
 }
 
 export const RackDeviceTooltip: React.FC<RackDeviceTooltipProps> = memo(({
   device,
   onOpenDetail,
+  collapsed = false,
+  onToggleCollapsed,
+  onMouseEnter,
+  onMouseLeave,
   zh
 }) => {
   const [telemetry, setTelemetry] = useState<DeviceTelemetryResult | null>(null);
@@ -26,6 +39,18 @@ export const RackDeviceTooltip: React.FC<RackDeviceTooltipProps> = memo(({
     setSelectedPortName(null);
     loadDeviceTelemetry(device.name, device.networkDeviceId || device.assetId || device.id).then(result => {
       if (cancelled) return;
+      if (result.status === 'empty' && device.physicalPortProfile && device.physicalPortProfile.ports.length > 0) {
+        const snapshot = portProfileToTelemetryResult(
+          device.networkDeviceId || device.assetId || device.id,
+          device.name,
+          device.physicalPortProfile,
+        );
+        setTelemetryStatus('ready');
+        setTelemetry(snapshot);
+        const firstUp = snapshot.interfaces.find(i => i.status === 'up');
+        setSelectedPortName((firstUp || snapshot.interfaces[0])?.name || null);
+        return;
+      }
       setTelemetryStatus(result.status);
       setTelemetry(result.status === 'ready' ? result.data : null);
       if (result.status === 'ready' && result.data.interfaces.length > 0) {
@@ -36,7 +61,7 @@ export const RackDeviceTooltip: React.FC<RackDeviceTooltipProps> = memo(({
     return () => {
       cancelled = true;
     };
-  }, [device.assetId, device.id, device.name, device.networkDeviceId, telemetryReloadKey]);
+  }, [device.assetId, device.id, device.name, device.networkDeviceId, device.physicalPortProfile, telemetryReloadKey]);
 
   // Interfaces list
   const interfaces: PhysicalInterfaceItem[] = React.useMemo(() => {
@@ -97,9 +122,50 @@ export const RackDeviceTooltip: React.FC<RackDeviceTooltipProps> = memo(({
     return `${bps} bps`;
   };
 
+  if (collapsed) {
+    return (
+      <div
+        data-testid="device-tooltip-collapsed"
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
+        className="absolute bottom-3 right-3 z-20 flex items-center gap-2 rounded-full border border-slate-700/80 bg-slate-950/92 px-3 py-1.5 text-xs text-slate-100 shadow-2xl backdrop-blur-xl"
+      >
+        <span className={`w-2 h-2 rounded-full ${healthDot}`} />
+        <button
+          type="button"
+          onClick={() => onOpenDetail(device.id)}
+          className="font-bold text-white hover:text-cyan-300 transition-colors"
+          title={zh ? '打开设备详情抽屉' : 'Open device details'}
+        >
+          {device.name}
+        </button>
+        <span className="text-[10px] text-slate-400">{uRange}</span>
+        {interfaces.length > 0 && (
+          <span className="font-mono text-[10px] text-emerald-400 font-semibold">{upCount}/{interfaces.length} UP</span>
+        )}
+        {onToggleCollapsed && (
+          <button
+            type="button"
+            onClick={e => {
+              e.stopPropagation();
+              onToggleCollapsed();
+            }}
+            className="ml-0.5 flex items-center gap-0.5 rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] text-cyan-300 hover:border-cyan-500/60 hover:bg-slate-800"
+            title={zh ? '展开设备接口卡片' : 'Expand port card'}
+          >
+            <ChevronUp size={11} />
+            <span>{zh ? '展开' : 'Expand'}</span>
+          </button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div
       onClick={() => onOpenDetail(device.id)}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
       className="absolute bottom-4 right-4 z-20 w-88 rounded-xl shadow-2xl backdrop-blur-xl bg-slate-950/95 border border-slate-700/80 text-slate-100 p-3.5 cursor-pointer hover:border-cyan-500/70 transition-colors duration-150"
     >
       {/* Header: Device Name & Status */}
@@ -110,9 +176,24 @@ export const RackDeviceTooltip: React.FC<RackDeviceTooltipProps> = memo(({
             {device.role}
           </span>
         </div>
-        <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${healthColor}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${healthDot}`} />
-          <span>{healthLabel}</span>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${healthColor}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${healthDot}`} />
+            <span>{healthLabel}</span>
+          </div>
+          {onToggleCollapsed && (
+            <button
+              type="button"
+              onClick={e => {
+                e.stopPropagation();
+                onToggleCollapsed();
+              }}
+              className="rounded-md border border-slate-700/80 bg-slate-900 p-1 text-slate-400 hover:border-cyan-500/60 hover:text-white transition-colors"
+              title={zh ? '收起悬浮卡片（避免遮挡局部特写）' : 'Collapse card for unobstructed close-up'}
+            >
+              <ChevronDown size={12} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -133,7 +214,9 @@ export const RackDeviceTooltip: React.FC<RackDeviceTooltipProps> = memo(({
                 : telemetryStatus === 'error'
                   ? (zh ? '接口遥测不可用' : 'Interface telemetry unavailable')
                 : interfaces.length > 0
-                  ? `${interfaces.length}× ${zh ? '真实接口（IF-MIB）' : 'verified interfaces (IF-MIB)'}`
+                  ? `${interfaces.length}× ${telemetry?.source === 'CMDB+SNMP'
+                      ? (zh ? '真实接口（CMDB+SNMP）' : 'real ports (CMDB+SNMP)')
+                      : (zh ? '真实接口（IF-MIB）' : 'verified interfaces (IF-MIB)')}`
                   : (zh ? '无接口遥测数据' : 'No interface telemetry')}
             </span>
           </div>
@@ -172,7 +255,7 @@ export const RackDeviceTooltip: React.FC<RackDeviceTooltipProps> = memo(({
         ) : (
           <>
             {/* Physical Port Matrix (Fixed Geometry - Zero Layout Shift) */}
-            <div className="flex flex-col gap-1 mb-2">
+            <div className="flex flex-col gap-1 mb-2 overflow-x-auto">
               {[topRow, bottomRow].map((row, rowIndex) => (
                 <div key={rowIndex} className="flex gap-1">
                   {row.map(p => {
@@ -182,7 +265,7 @@ export const RackDeviceTooltip: React.FC<RackDeviceTooltipProps> = memo(({
                       <div
                         key={p.name}
                         onMouseEnter={() => setSelectedPortName(p.name)}
-                        className={`flex-1 h-5 rounded-[3px] border flex items-center justify-center transition-colors cursor-pointer ${
+                        className={`flex-1 min-w-[10px] h-5 rounded-[3px] border flex items-center justify-center transition-colors cursor-pointer ${
                           isSelected
                             ? 'border-cyan-400 ring-2 ring-cyan-500/60 bg-cyan-950/90 brightness-125'
                             : isUp

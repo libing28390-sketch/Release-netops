@@ -4431,35 +4431,17 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
                 continue
 
             c_id = f"cred-{uuid.uuid4().hex[:12]}"
-            c_name = f"cred-{d_host}-{d_id}"
+            c_name = f"cred-{d_host}-{d_id[:8]}"
 
             if _USE_PG:
-                cursor.execute('SELECT 1 FROM credentials WHERE credential_name = %s LIMIT 1', (c_name,))
-                if cursor.fetchone():
-                    c_name = f"cred-{d_host}-{d_id}-{c_id[-6:]}"
-                use_savepoint = not bool(getattr(conn, 'autocommit', False))
-                if use_savepoint:
-                    cursor.execute('SAVEPOINT sp_cred_migrate')
-                try:
-                    cursor.execute('''
-                        INSERT INTO credentials (id, credential_name, credential_type, username, encrypted_password, enable_password, snmp_community, created_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (credential_name) DO NOTHING
-                    ''', (c_id, c_name, 'ssh_password', uname, pwd, d_en_pwd, d_snmp, now))
-                    if cursor.rowcount:
-                        cursor.execute('UPDATE devices SET credential_id = %s WHERE id = %s', (c_id, d_id))
-                    if use_savepoint:
-                        cursor.execute('RELEASE SAVEPOINT sp_cred_migrate')
-                except Exception as row_exc:
-                    if use_savepoint:
-                        cursor.execute('ROLLBACK TO SAVEPOINT sp_cred_migrate')
-                    logger.warning(f"[migration] Skipped credential migration for device {d_id}: {row_exc}")
-            else:
-                cursor.execute('SELECT 1 FROM credentials WHERE credential_name = ? LIMIT 1', (c_name,))
-                if cursor.fetchone():
-                    c_name = f"cred-{d_host}-{d_id}-{c_id[-6:]}"
                 cursor.execute('''
-                    INSERT OR IGNORE INTO credentials (id, credential_name, credential_type, username, encrypted_password, enable_password, snmp_community, created_at)
+                    INSERT INTO credentials (id, credential_name, credential_type, username, encrypted_password, enable_password, snmp_community, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ''', (c_id, c_name, 'ssh_password', uname, pwd, d_en_pwd, d_snmp, now))
+                cursor.execute('UPDATE devices SET credential_id = %s WHERE id = %s', (c_id, d_id))
+            else:
+                cursor.execute('''
+                    INSERT INTO credentials (id, credential_name, credential_type, username, encrypted_password, enable_password, snmp_community, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (c_id, c_name, 'ssh_password', uname, pwd, d_en_pwd, d_snmp, now))
                 cursor.execute('UPDATE devices SET credential_id = ? WHERE id = ?', (c_id, d_id))
@@ -5711,5 +5693,11 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     except Exception as exc_p6:
         logger.error(f"[migration] Failed Phase 6 Supporting Engines migration: {exc_p6}", exc_info=True)
 
+    # Ensure ODF optical distribution frame CMDB tables exist on fresh databases
+    try:
+        from services.odf_service import ensure_odf_tables
+        ensure_odf_tables(conn)
+    except Exception as exc_odf:
+        logger.error(f"[migration] Failed ODF CMDB table initialization: {exc_odf}", exc_info=True)
 
     _ensure_initial_administrator(cursor, now)

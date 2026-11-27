@@ -104,6 +104,51 @@ export interface DeviceType {
   description: string;
 }
 
+export interface DevicePhysicalPort {
+  name: string;
+  short_name: string;
+  slot: number;
+  subslot: number;
+  port: number;
+  port_type: 'rj45' | 'sfp' | 'qsfp' | string;
+  speed_mbps: number;
+  oper_status: 'up' | 'down' | string;
+  admin_status?: string;
+  in_bps?: number;
+  out_bps?: number;
+  errors?: number;
+  description?: string;
+}
+
+export interface DevicePhysicalSlotSummary {
+  slot: number;
+  total_ports: number;
+  up_count: number;
+  rj45_count: number;
+  sfp_count: number;
+  qsfp_count: number;
+  min_port: number;
+  max_port: number;
+}
+
+export interface DeviceHardwareSensorSummary {
+  psu_status: 'ok' | 'fault' | 'unknown' | string;
+  fan_status: 'ok' | 'fault' | 'unknown' | string;
+  temperature_c: number | null;
+  sensor_count: number;
+}
+
+export interface DevicePhysicalPortProfile {
+  source: string;
+  total_ports: number;
+  up_count: number;
+  down_count: number;
+  sampled_at?: string | null;
+  slots: DevicePhysicalSlotSummary[];
+  hardware_sensors?: DeviceHardwareSensorSummary | null;
+  ports: DevicePhysicalPort[];
+}
+
 export interface RackDevice {
   id: string;
   name: string;
@@ -133,6 +178,7 @@ export interface RackDevice {
   physical_hostname?: string;
   network_device_id?: string;
   network_hostname?: string;
+  network_ip?: string;
   network_sn?: string;
   asset_id: string;
   model: string;
@@ -142,6 +188,7 @@ export interface RackDevice {
   is_full_depth: number;
   depth_class?: 'half' | 'full' | 'unknown' | string;
   power_watts?: number;
+  physical_port_profile?: DevicePhysicalPortProfile | null;
 }
 
 export interface RackLayout {
@@ -244,7 +291,10 @@ export interface RackDeviceVM {
   rackId: string;
   name: string;
   assetId: string;
+  assetTag?: string;
   networkDeviceId?: string;
+  networkHostname?: string;
+  networkIp?: string;
   deviceTypeId: string;
   vendor: string;
   model: string;
@@ -279,6 +329,7 @@ export interface RackDeviceVM {
     issues: string[];
   };
   coordinates: RackDeviceCoordinates;
+  physicalPortProfile?: DevicePhysicalPortProfile | null;
 }
 
 export interface RackVM {

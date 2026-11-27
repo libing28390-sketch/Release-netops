@@ -68,12 +68,12 @@ describe('KUI-018 knowledge administration responsive gates', () => {
     expect((screen.getByRole('button', { name: 'Next page' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it('keeps evaluation table scrollable with a sticky dark-aware header', async () => {
+  it('keeps evaluation table scrollable with a sticky, theme-token header', async () => {
     render(<RagEvaluationPanel />);
     const table = await screen.findByRole('table');
     const header = table.querySelector('thead');
     expect(header?.className).toContain('sticky');
-    expect(header?.className).toContain('dark:bg-slate-800/95');
+    expect(header?.className).toContain('bg-surface-muted');
     expect(table.parentElement?.className).toContain('overflow-x-auto');
     expect(table.className).toContain('min-w-[640px]');
   });
@@ -82,7 +82,7 @@ describe('KUI-018 knowledge administration responsive gates', () => {
     render(<RetrievalTracePanel />);
     expect(await screen.findByText(/暂无检索记录/)).toBeTruthy();
     const root = screen.getByText('检索过程追踪').closest('div.mx-auto');
-    expect(root?.className).toContain('dark:text-slate-100');
+    expect(root?.className).toContain('text-fg');
     expect(root?.className).toContain('w-full');
     expect((await screen.findAllByText(/默认脱敏/)).length).toBeGreaterThan(0);
   });

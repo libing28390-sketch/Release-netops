@@ -46,6 +46,7 @@ export function useRackReadModel(filters: RackSummaryFilters) {
   const summaryAbortRef = useRef<AbortController | null>(null);
   const layoutAbortRef = useRef<AbortController | null>(null);
   const layoutRequestSeqRef = useRef(0);
+  const layoutRackIdRef = useRef('');
   const layoutCacheRef = useRef<Map<string, CachedLayout>>(new Map());
 
   useEffect(() => {
@@ -115,6 +116,7 @@ export function useRackReadModel(filters: RackSummaryFilters) {
     layoutAbortRef.current?.abort();
 
     if (!rackId) {
+      layoutRackIdRef.current = '';
       setLayout(null);
       setLayoutRackId('');
       setLayoutLoading(false);
@@ -126,6 +128,7 @@ export function useRackReadModel(filters: RackSummaryFilters) {
     if (!force && cached && cached.expiresAt > Date.now()) {
       layoutCacheRef.current.delete(rackId);
       layoutCacheRef.current.set(rackId, cached);
+      layoutRackIdRef.current = rackId;
       setLayout(cached.data);
       setLayoutRackId(rackId);
       setLayoutLoading(false);
@@ -137,7 +140,7 @@ export function useRackReadModel(filters: RackSummaryFilters) {
     layoutAbortRef.current = controller;
     setLayoutLoading(true);
     setLayoutError('');
-    if (layoutRackId !== rackId) setLayout(null);
+    if (layoutRackIdRef.current !== rackId) setLayout(null);
 
     try {
       const response = await fetch(`${API}/racks/${encodeURIComponent(rackId)}/layout`, {
@@ -157,11 +160,13 @@ export function useRackReadModel(filters: RackSummaryFilters) {
         if (!oldestKey) break;
         layoutCacheRef.current.delete(oldestKey);
       }
+      layoutRackIdRef.current = rackId;
       setLayout(nextLayout);
       setLayoutRackId(rackId);
       return nextLayout;
     } catch (error: any) {
       if (controller.signal.aborted || requestSeq !== layoutRequestSeqRef.current || error?.name === 'AbortError') return null;
+      layoutRackIdRef.current = rackId;
       setLayout(null);
       setLayoutRackId(rackId);
       setLayoutError(error instanceof Error ? error.message : String(error));
@@ -169,7 +174,7 @@ export function useRackReadModel(filters: RackSummaryFilters) {
     } finally {
       if (!controller.signal.aborted && requestSeq === layoutRequestSeqRef.current) setLayoutLoading(false);
     }
-  }, [layoutRackId]);
+  }, []);
 
   useEffect(() => () => {
     summaryAbortRef.current?.abort();

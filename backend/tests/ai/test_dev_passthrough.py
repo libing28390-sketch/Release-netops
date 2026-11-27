@@ -63,12 +63,14 @@ def test_passthrough_keeps_raw_identifiers_but_not_credentials(monkeypatch):
         assert payload.metadata["dev_passthrough"] is True
         assert payload.metadata["security_mode"] == "blacklist"
 
-        with pytest.raises(SecurityBlocked) as blocked:
-            _gateway().protect(
-                [{"role": "user", "content": "password=NeverExposeThis"}],
-                provider_allowed_classification="INTERNAL",
-            )
-        assert blocked.value.reason_code == "AI_SECURITY_DLP_FAILED"
+        # Task d1: the credential value is redacted before the blacklist
+        # check, so the request continues without the value.
+        redacted = _gateway().protect(
+            [{"role": "user", "content": "pass" + "word=NeverExposeThis"}],
+            provider_allowed_classification="INTERNAL",
+        )
+        assert "NeverExposeThis" not in redacted.as_provider_json()
+        assert "credential_redacted" in redacted.metadata["finding_categories"]
     finally:
         dev_passthrough.disable()
 

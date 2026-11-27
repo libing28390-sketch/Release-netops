@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import json
 import re
 from dataclasses import dataclass, field
@@ -13,6 +14,8 @@ from ai.services.knowledge_metadata import parse_markdown_document
 from ai.services.document_entity_resolution import resolve_document_entities
 from ai.services.product_alias_service import normalize_alias, trigram_similarity
 from ai.services.query_normalizer import NormalizedQuery, normalize_query
+
+logger = logging.getLogger(__name__)
 
 
 MAX_RESOLUTION_CANDIDATES = 70
@@ -461,8 +464,9 @@ class ProductResolver:
                                 row_os_family = row_os_family or row_meta.get("os_family")
                                 row_os_generation = row_os_generation or row_meta.get("os_generation")
                                 document_type = document_type or str(row_meta.get("document_type") or "").strip().casefold()
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                # Metadata from the normalized body is optional; the row is still ranked without it.
+                                logger.debug("Could not parse document metadata for product resolution code=AI_PRODUCT_METADATA_PARSE_FAILED error=%s", type(exc).__name__)
                         canonical_row_series = self._canonical_series(row_series)
                         if series and not self._series_matches(series, canonical_row_series):
                             continue

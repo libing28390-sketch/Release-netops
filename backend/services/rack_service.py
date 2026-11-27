@@ -12,6 +12,7 @@ from decimal import Decimal
 
 from services import rack_asset_resolver
 from services import rack_placement_service
+from services import rack_port_profile_service
 
 logger = logging.getLogger(__name__)
 
@@ -1099,18 +1100,20 @@ def list_rack_devices(conn, rack_id: str) -> list[dict]:
                pa.asset_tag AS physical_asset_tag,
                pa.serial_number AS physical_serial_number,
                pa.hostname AS physical_hostname,
-               (SELECT d.id FROM devices d
-                 WHERE d.asset_id = rd.asset_id
-                 ORDER BY d.id LIMIT 1) AS network_device_id,
-               (SELECT d.hostname FROM devices d
-                 WHERE d.asset_id = rd.asset_id
-                 ORDER BY d.id LIMIT 1) AS network_hostname,
-               (SELECT d.sn FROM devices d
-                 WHERE d.asset_id = rd.asset_id
-                 ORDER BY d.id LIMIT 1) AS network_sn
+               d_net.id AS network_device_id,
+               d_net.hostname AS network_hostname,
+               d_net.ip_address AS network_ip,
+               d_net.sn AS network_sn
         FROM rack_devices rd
         JOIN device_types dt ON rd.device_type_id = dt.id
         LEFT JOIN physical_assets pa ON pa.id = rd.asset_id
+        LEFT JOIN (
+            SELECT asset_id, MIN(id) AS min_device_id
+            FROM devices
+            WHERE asset_id IS NOT NULL AND asset_id <> ''
+            GROUP BY asset_id
+        ) d_first ON d_first.asset_id = rd.asset_id
+        LEFT JOIN devices d_net ON d_net.id = d_first.min_device_id
         WHERE rd.rack_id = ?
         ORDER BY CASE WHEN rd.start_u IS NULL THEN 1 ELSE 0 END, rd.start_u ASC, rd.position ASC
     """, (rack_id,)).fetchall()
@@ -1129,6 +1132,49 @@ def list_rack_devices(conn, rack_id: str) -> list[dict]:
         })
         devices.append(device)
     return devices
+
+
+def list_rack_device_index(conn, rack_ids: list[str]) -> dict[str, list[dict]]:
+    """Return lightweight device identity index grouped by rack_id for multi-rack topology mapping."""
+    cleaned_ids = [str(rid or '').strip() for rid in rack_ids if str(rid or '').strip()]
+    if not cleaned_ids:
+        return {}
+    placeholders = ','.join('?' for _ in cleaned_ids)
+    rows = conn.execute(
+        f"""
+        SELECT rd.rack_id,
+               rd.id,
+               rd.name,
+               pa.hostname AS physical_hostname,
+               d_net.id AS network_device_id,
+               d_net.hostname AS network_hostname
+        FROM rack_devices rd
+        LEFT JOIN physical_assets pa ON pa.id = rd.asset_id
+        LEFT JOIN (
+            SELECT asset_id, MIN(id) AS min_device_id
+            FROM devices
+            WHERE asset_id IS NOT NULL AND asset_id <> ''
+            GROUP BY asset_id
+        ) d_first ON d_first.asset_id = rd.asset_id
+        LEFT JOIN devices d_net ON d_net.id = d_first.min_device_id
+        WHERE rd.rack_id IN ({placeholders})
+        ORDER BY rd.rack_id, rd.id
+        """,
+        tuple(cleaned_ids),
+    ).fetchall()
+    grouped: dict[str, list[dict]] = {rid: [] for rid in cleaned_ids}
+    for row in rows:
+        item = _row_to_dict(row)
+        rid = str(item.get('rack_id') or '')
+        if rid in grouped:
+            grouped[rid].append({
+                'id': item.get('id'),
+                'name': item.get('name'),
+                'physical_hostname': item.get('physical_hostname'),
+                'network_device_id': item.get('network_device_id'),
+                'network_hostname': item.get('network_hostname'),
+            })
+    return grouped
 
 
 def get_rack_device(conn, device_id: str) -> dict:
@@ -1229,10 +1275,21 @@ def _placement_occupancy(device: dict, total_u: int) -> tuple[set[int], set[int]
     )
 
 
-def get_rack_layout(conn, rack_id: str) -> dict:
+def get_rack_layout(
+    conn,
+    rack_id: str,
+    *,
+    include_ports: bool = True,
+    rack: dict | None = None,
+) -> dict:
     """Return rack info + all devices for rendering a rack diagram."""
-    rack = get_rack(conn, rack_id)
+    rack = rack if rack is not None else get_rack(conn, rack_id)
     devices = list_rack_devices(conn, rack_id)
+    if include_ports:
+        devices = rack_port_profile_service.enrich_rack_devices_with_port_profiles(
+            conn,
+            devices,
+        )
 
     # Compute occupancy
     front_occupied = set()

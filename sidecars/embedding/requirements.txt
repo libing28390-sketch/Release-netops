@@ -1,0 +1,6 @@
+fastapi>=0.111.0,<1.0.0
+uvicorn>=0.29.0,<1.0.0
+pydantic>=2.6.0,<3.0.0
+numpy>=1.26,<3
+onnxruntime>=1.18,<2
+tokenizers>=0.19,<1

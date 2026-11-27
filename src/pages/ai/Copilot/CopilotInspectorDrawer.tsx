@@ -3,6 +3,7 @@ import { X, Cpu, Clock, Database, Layers, ShieldAlert, Code, Copy, Check } from 
 import type { AssistantRetrievalTrace } from '../../../api/ai';
 import { ActionButton } from '../../../components/ui/ActionIconButton';
 import { useFocusTrap } from '../../../hooks/useFocusTrap';
+import { modelWasSkipped, retrievalCount } from './knowledgeNotice';
 
 interface CopilotInspectorDrawerProps {
   isOpen: boolean;
@@ -48,10 +49,17 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
     : retrieval?.status === 'hit'
       ? '本地 RAG 已执行 · 已命中'
       : '未收到本次检索 Trace';
-  const llmSkipped = retrieval?.status === 'no_match' || retrieval?.status === 'clarification_required';
+  // A knowledge miss can still be answered by the model as an unverified
+  // general reference, so "no_match" alone must not show "未调用".
+  const llmSkipped = modelWasSkipped({
+    retrievalStatus: retrieval?.status,
+    executionMode: activeMessage?.execution_mode,
+    routeModel: activeMessage?.route_model,
+  });
   const metric = (value: unknown, suffix = '') => (
     typeof value === 'number' && Number.isFinite(value) ? `${value}${suffix}` : (llmSkipped ? '未调用' : '未上报')
   );
+  const topRelevance = retrieval?.runtime?.quality?.top_relevance_score;
 
   return (
     <div
@@ -156,9 +164,11 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
                 </div>
               )}
               <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-gray-500 dark:text-gray-400">
-                <span>Metadata candidates</span><span className="text-right text-gray-700 dark:text-gray-200">{metric(retrieval.metadata_candidate_documents)}</span>
-                <span>Final documents</span><span className="text-right text-gray-700 dark:text-gray-200">{metric(retrieval.final_document_count)}</span>
-                <span>Vector top-N</span><span className="text-right text-gray-700 dark:text-gray-200">{metric(retrieval.vector_top_n)}</span>
+                {/* Retrieval counters: retrieval ran, so a missing value is 0, not "未调用". */}
+                <span>Metadata candidates</span><span className="text-right text-gray-700 dark:text-gray-200">{retrievalCount(retrieval.metadata_candidate_documents, retrieval.status)}</span>
+                <span>Final documents</span><span className="text-right text-gray-700 dark:text-gray-200" data-copilot-final-documents="true">{retrievalCount(retrieval.final_document_count, retrieval.status)}</span>
+                <span>Vector top-N</span><span className="text-right text-gray-700 dark:text-gray-200">{retrievalCount(retrieval.vector_top_n, retrieval.status)}</span>
+                <span>Top relevance</span><span className="text-right text-gray-700 dark:text-gray-200">{typeof topRelevance === 'number' ? topRelevance.toFixed(2) : '—'}</span>
               </div>
               {Object.keys(retrievalRequest).length > 0 && (
                 <div className="rounded border border-gray-200 bg-white p-2 text-[10px] text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
@@ -177,7 +187,10 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
               {activeMessage.sources.map((src: any, idx: number) => (
                 <div key={idx} className="p-2 bg-white dark:bg-gray-900 rounded border border-gray-200 dark:border-gray-700">
                   <div className="font-semibold text-gray-800 dark:text-gray-200">{src.document}</div>
-                  <div className="text-[10px] text-gray-400">{src.section} · Relevance: 88%</div>
+                  {/* Was a hard-coded "Relevance: 88%"; show the real score only when the server sent one. */}
+                  <div className="text-[10px] text-gray-400">
+                    {src.section}{typeof src.relevance_score === 'number' ? ` · Relevance: ${Math.round(src.relevance_score * 100)}%` : ''}
+                  </div>
                 </div>
               ))}
             </div>

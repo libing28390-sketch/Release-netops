@@ -4,7 +4,7 @@ Pydantic Schemas for AI Model and Scene Route Management
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -90,6 +90,47 @@ class AIModelUpdate(BaseModel):
         if normalized not in SUPPORTED_MODEL_TYPES:
             raise ValueError(f'Unsupported model_type: {normalized}')
         return normalized
+
+
+class AIModelCatalogEntry(BaseModel):
+    model_code: str
+    name: str
+    model_type: Literal["chat", "embedding", "rerank", "unknown"]
+    already_registered: bool
+    source: Literal["account", "public"] = "account"
+
+
+class AIModelCatalogResponse(BaseModel):
+    items: list[AIModelCatalogEntry] = Field(default_factory=list)
+    source: Literal["account", "public"] = "account"
+
+
+class AIModelCatalogImportItem(BaseModel):
+    model_code: str
+    name: str
+    model_type: Literal["chat", "embedding", "reasoning", "rerank"]
+
+    @field_validator("model_code")
+    @classmethod
+    def validate_import_model_code(cls, value: str) -> str:
+        return _validate_model_code(value)
+
+    @field_validator("name")
+    @classmethod
+    def validate_import_name(cls, value: str) -> str:
+        normalized = str(value or "").strip()
+        if not normalized or len(normalized) > 256 or any(ord(char) < 32 for char in normalized):
+            raise ValueError("name must be non-empty, single-line, and <= 256 characters")
+        return normalized
+
+
+class AIModelCatalogImportRequest(BaseModel):
+    items: list[AIModelCatalogImportItem] = Field(..., min_length=1, max_length=500)
+
+
+class AIModelCatalogImportResponse(BaseModel):
+    created: int
+    skipped: int
 
 
 class AIModelResponse(AIModelBase):

@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query
 
 from core.rbac import require_role
+from core.read_cache import RACK_CACHE_TTL_SECONDS, read_cache
 from database import get_db_connection
 from services import rack_scope_service
 from services.device_health_service import annotate_devices_with_health, build_health_overview, fetch_device_health_history, fetch_device_health_trend, load_devices_for_health, record_device_health_snapshot
@@ -72,6 +73,13 @@ def device_health_overview(
         if normalized_rack_id:
             _enforce_health_rack_scope(conn, _user, normalized_rack_id)
         scope = _health_asset_scope(conn, _user)
+        cache_key = None
+        if normalized_rack_id and hasattr(conn, 'execute') and isinstance(_user, dict):
+            scope_key = scope.cache_key if scope else 'all'
+            cache_key = f'health-overview:{scope_key}:{normalized_rack_id}'
+            cache_hit, cached = read_cache.get('rack_page', cache_key)
+            if cache_hit:
+                return cached
         load_kwargs = {'rack_id': normalized_rack_id or None}
         if scope:
             load_kwargs.update(
@@ -96,6 +104,8 @@ def device_health_overview(
         # consumers while the HTTP contract is now carried under ``data``.
         if normalized_rack_id:
             response.update(overview)
+        if cache_key:
+            read_cache.set('rack_page', cache_key, response, RACK_CACHE_TTL_SECONDS)
         return response
     finally:
         conn.close()

@@ -27,6 +27,7 @@ import {
   Boxes,
   Bell,
   BookOpen,
+  Cable,
   ClipboardList,
   Clock,
   CloudCog,
@@ -59,6 +60,13 @@ import {
   MessageSquare,
   Wrench,
   ShieldCheck,
+  Plug,
+  HeartPulse,
+  SearchCheck,
+  Package,
+  GitPullRequest,
+  Coins,
+  BrainCircuit,
 } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { navConfig } from './navConfig';
@@ -71,7 +79,7 @@ import { useEscapeClose } from '../../hooks/useEscapeClose';
 
 /** Map icon string keys (from navConfig) → lucide component */
 const iconMap: Record<string, React.ComponentType<any>> = {
-  Activity, BarChart2, Bell, BookOpen, Bot, Boxes, ClipboardList, Clock, CloudCog, Cpu, FileCode2, FileSpreadsheet, FileText, FolderOpen, Gauge, GitBranch, Globe, Key, Layers3, Lock, MessageSquare, Monitor, Network, Server, Settings, Shield, ShieldAlert, ShieldCheck, Terminal, User, Wrench, Zap,
+  Activity, BarChart2, Bell, BookOpen, Bot, Boxes, BrainCircuit, Cable, ClipboardList, Clock, CloudCog, Coins, Cpu, FileCode2, FileSpreadsheet, FileText, FolderOpen, Gauge, GitBranch, GitPullRequest, Globe, HeartPulse, Key, Layers3, Lock, MessageSquare, Monitor, Network, Package, Plug, SearchCheck, Server, Settings, Shield, ShieldAlert, ShieldCheck, Terminal, User, Wrench, Zap,
 };
 
 
@@ -419,6 +427,14 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
 
               return (
                 <React.Fragment key={child.id}>
+                  {child.groupLabel && (
+                    <div
+                      className="select-none pb-1 pl-9 pr-3 pt-3 text-xs font-medium text-fg-subtle first:pt-1"
+                      role="presentation"
+                    >
+                      {L(child.groupLabel, child.groupLabelEn)}
+                    </div>
+                  )}
                   <NavItem
                     label={L(child.label, child.labelEn)}
                     active={isThisChildActive}

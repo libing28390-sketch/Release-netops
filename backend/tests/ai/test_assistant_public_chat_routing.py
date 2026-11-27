@@ -44,6 +44,7 @@ def test_web_lookup_gate_honors_public_region_and_tenant_policy(monkeypatch: pyt
     monkeypatch.setattr(assistant_module.settings, "AI_ENABLED", True)
     monkeypatch.setattr(assistant_module.settings, "EXTERNAL_AI_ENABLED", True)
     monkeypatch.setattr(assistant_module.settings, "AI_KILL_SWITCH", False)
+    monkeypatch.setattr(assistant_module.settings, "AI_WEB_SEARCH_ENABLED", True)
 
     service = assistant_module.AIAssistantService()
     assert service._web_lookup_allowed(tenant_id="tenant-a") is True

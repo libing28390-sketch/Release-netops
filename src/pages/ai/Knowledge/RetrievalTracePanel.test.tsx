@@ -56,6 +56,7 @@ describe('RetrievalTracePanel', () => {
   it('shows an empty state when no trace exists', async () => {
     listTraces.mockResolvedValue({ items: [], limit: 50, status: 'all', redacted: true });
     render(<RetrievalTracePanel />);
-    expect(await screen.findByText('暂无检索记录；先在 Copilot 中提问，或执行一次本地检索。')).toBeTruthy();
+    expect(await screen.findByText('暂无检索记录')).toBeTruthy();
+    expect(screen.getByText('先在 Copilot 中提问，或执行一次本地检索。')).toBeTruthy();
   });
 });

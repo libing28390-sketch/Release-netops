@@ -1,10 +1,12 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { ArrowUp, Plus, MapPin, Sliders, AlertTriangle, BookOpen, ChevronDown, ChevronRight, Check, RotateCcw, Sparkles, Cpu, Zap, Square } from 'lucide-react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { ArrowUp, Plus, MapPin, Sliders, AlertTriangle, BookOpen, ChevronDown, ChevronRight, Check, RotateCcw, Globe, Cpu, Zap, Square, Paperclip, FileText, X, Network, Bell } from 'lucide-react';
+import type { CopilotToolDefinition, ParsedCopilotAttachment } from '../../../api/ai';
 
 export interface CopilotModelOption {
   id: string;
   name: string;
   model_code: string;
+  provider_id?: string;
   provider_name: string;
   model_type?: string;
   context_length?: number;
@@ -36,6 +38,8 @@ interface CopilotComposerProps {
   onEditDraftConsumed?: () => void;
   onStop?: () => void;
   isStreaming?: boolean;
+  tools?: CopilotToolDefinition[];
+  onUploadFile?: (file: File) => Promise<ParsedCopilotAttachment>;
 }
 
 export const CopilotComposer: React.FC<CopilotComposerProps> = ({
@@ -52,18 +56,30 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
   onEditDraftConsumed,
   onStop,
   isStreaming = false,
+  tools = [],
+  onUploadFile,
 }) => {
   const [input, setInput] = useState('');
   const [showQuickMenu, setShowQuickMenu] = useState(false);
+  const [activeQuickIndex, setActiveQuickIndex] = useState(0);
   const [showModelPopover, setShowModelPopover] = useState(false);
   const [activeSubPanel, setActiveSubPanel] = useState<'main' | 'models' | 'reasoning' | 'speed'>('main');
   const [reasoningLevel, setReasoningLevel] = useState<'normal' | 'high'>('high');
   const [speedLevel, setSpeedLevel] = useState<'fast' | 'precise' | 'creative'>('fast');
-  const [showContext, setShowContext] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [attachedFiles, setAttachedFiles] = useState<ParsedCopilotAttachment[]>([]);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const webSearchEnabled = Boolean(context?.web_search);
+  const toggleWebSearch = () => {
+    onContextChange?.({ ...context, web_search: !webSearchEnabled });
+  };
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const quickMenuRef = useRef<HTMLDivElement>(null);
   const quickMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const modelPopoverTriggerRef = useRef<HTMLButtonElement>(null);
   const modelSectionTriggerRef = useRef<HTMLButtonElement>(null);
@@ -89,9 +105,21 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
   // Click outside to close popovers
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        popoverRef.current &&
+        !popoverRef.current.contains(target) &&
+        !modelPopoverTriggerRef.current?.contains(target)
+      ) {
         setShowModelPopover(false);
         setActiveSubPanel('main');
+      }
+      if (
+        quickMenuRef.current &&
+        !quickMenuRef.current.contains(target) &&
+        !quickMenuTriggerRef.current?.contains(target)
+      ) {
+        setShowQuickMenu(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -116,11 +144,151 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
     return () => document.removeEventListener('keydown', handleEscape);
   }, [showModelPopover, showQuickMenu]);
 
+  const getToolIcon = (cmd: string, category?: string) => {
+    if (cmd === '/ip') return <MapPin className="w-3.5 h-3.5 text-emerald-500 shrink-0" />;
+    if (cmd === '/mac') return <Cpu className="w-3.5 h-3.5 text-cyan-500 shrink-0" />;
+    if (cmd === '/neighbors' || category === 'topology') return <Network className="w-3.5 h-3.5 text-violet-500 shrink-0" />;
+    if (cmd === '/alarms' || category === 'monitoring') return <Bell className="w-3.5 h-3.5 text-rose-500 shrink-0" />;
+    if (cmd === '/config') return <Sliders className="w-3.5 h-3.5 text-indigo-500 shrink-0" />;
+    if (cmd === '/troubleshoot') return <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />;
+    if (cmd === '/sop' || category === 'knowledge') return <BookOpen className="w-3.5 h-3.5 text-blue-500 shrink-0" />;
+    if (cmd === '/web' || category === 'web') return <Globe className="w-3.5 h-3.5 text-sky-500 shrink-0" />;
+    return <Zap className="w-3.5 h-3.5 text-indigo-500 shrink-0" />;
+  };
+
+  const quickCommands = useMemo(() => {
+    if (tools.length > 0) {
+      return tools.map((t) => ({
+        cmd: t.cmd,
+        label: t.label,
+        hint: t.hint,
+        enableWeb: Boolean(t.enable_web),
+        icon: getToolIcon(t.cmd, t.category),
+        expand: (args: string) => {
+          const cleanArgs = args.trim();
+          if (t.prompt_template && t.prompt_template.includes('{args}')) {
+            return cleanArgs
+              ? t.prompt_template.replace('{args}', cleanArgs)
+              : t.prompt_template.replace('{args}', '').replace(/[:：]\s*$/, '').trim() || t.title;
+          }
+          return cleanArgs ? `${t.title}：${cleanArgs}` : t.title;
+        },
+      }));
+    }
+    return [
+      {
+        cmd: '/ip',
+        label: '/ip 定位目标 IP',
+        hint: '/ip 10.0.0.1',
+        icon: <MapPin className="w-3.5 h-3.5 text-emerald-500 shrink-0" />,
+        expand: (args: string) => (args ? `${args} 在哪台交换机哪个端口？` : '192.168.10.20 在哪台交换机哪个端口？'),
+      },
+      {
+        cmd: '/mac',
+        label: '/mac 定位 MAC 地址',
+        hint: '/mac aa:bb:cc:dd:ee:ff',
+        icon: <Cpu className="w-3.5 h-3.5 text-cyan-500 shrink-0" />,
+        expand: (args: string) => (args ? `查询 MAC 地址 ${args} 所在交换机和端口` : '查询 MAC 地址所在交换机和端口'),
+      },
+      {
+        cmd: '/config',
+        label: '/config 生成设备配置',
+        hint: '/config 华为 S6800 OSPF',
+        icon: <Sliders className="w-3.5 h-3.5 text-indigo-500 shrink-0" />,
+        expand: (args: string) => (args ? `请生成配置：${args}` : '生成一份华为 S6800 OSPF 配置'),
+      },
+      {
+        cmd: '/troubleshoot',
+        label: '/troubleshoot 故障排查',
+        hint: '/troubleshoot OSPF ExStart',
+        icon: <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />,
+        expand: (args: string) => (args ? `排查网络故障：${args}` : 'OSPF 邻居状态 ExStart 如何排查？'),
+      },
+      {
+        cmd: '/sop',
+        label: '/sop 检索本地 SOP',
+        hint: '/sop 变更规范',
+        icon: <BookOpen className="w-3.5 h-3.5 text-blue-500 shrink-0" />,
+        expand: (args: string) => (args ? `检索本地知识库 SOP：${args}` : '查询本地 SOP 手册'),
+      },
+      {
+        cmd: '/web',
+        label: '/web 联网实时查询',
+        hint: '/web 今天武汉天气',
+        icon: <Globe className="w-3.5 h-3.5 text-sky-500 shrink-0" />,
+        enableWeb: true,
+        expand: (args: string) => (args || '查查今天武汉的天气'),
+      },
+    ];
+  }, [tools]);
+
+  const isSlashTyping = input.startsWith('/') && !input.includes(' ');
+  const slashQuery = isSlashTyping ? input.trim().toLowerCase() : '';
+  const filteredQuickCommands = useMemo(() => {
+    if (!slashQuery) return quickCommands;
+    return quickCommands.filter((item) => item.cmd.startsWith(slashQuery) || item.label.toLowerCase().includes(slashQuery));
+  }, [quickCommands, slashQuery]);
+
+  const isQuickMenuOpen = showQuickMenu || (isSlashTyping && filteredQuickCommands.length > 0);
+
+  useEffect(() => {
+    setActiveQuickIndex(0);
+  }, [slashQuery, showQuickMenu]);
+
+  const selectQuickCommand = (item: (typeof quickCommands)[number]) => {
+    if (item.enableWeb && !webSearchEnabled) {
+      onContextChange?.({ ...context, web_search: true });
+    }
+    setInput(`${item.cmd} `);
+    setShowQuickMenu(false);
+    textareaRef.current?.focus();
+  };
+
+  const expandSlashInput = (raw: string): string => {
+    const trimmed = raw.trim();
+    if (!trimmed.startsWith('/')) return trimmed;
+    const match = /^(\/[a-zA-Z]+)(?:\s+([\s\S]*))?$/.exec(trimmed);
+    if (!match) return trimmed;
+    const cmdKey = match[1].toLowerCase();
+    const args = (match[2] || '').trim();
+    const found = quickCommands.find((item) => item.cmd === cmdKey);
+    if (!found) return trimmed;
+    if (found.enableWeb && !webSearchEnabled) {
+      onContextChange?.({ ...context, web_search: true });
+    }
+    return found.expand(args);
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !onUploadFile) return;
+    setUploadError(null);
+    setUploadingFile(true);
+    try {
+      const parsed = await onUploadFile(file);
+      setAttachedFiles((prev) => [...prev.filter((item) => item.filename !== parsed.filename), parsed]);
+    } catch (err: any) {
+      setUploadError(err?.message || '文件解析失败，请确认格式为 Word / Excel / PDF / 文本');
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!input.trim() || disabled) return;
-    onSend(input.trim());
+    if ((!input.trim() && attachedFiles.length === 0) || disabled || uploadingFile) return;
+    const expanded = input.trim() ? expandSlashInput(input) : '请分析以上上传的文档内容并给出核心要点。';
+    const attachmentBlock = attachedFiles.length > 0
+      ? attachedFiles
+          .map((item) => `【附件：${item.filename}】\n${item.text}`)
+          .join('\n\n') + '\n\n'
+      : '';
+    onSend(`${attachmentBlock}${expanded}`);
     setInput('');
+    setAttachedFiles([]);
+    setUploadError(null);
+    setShowQuickMenu(false);
     setIsEditing(false);
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -137,35 +305,48 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (isQuickMenuOpen && filteredQuickCommands.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setActiveQuickIndex((prev) => (prev + 1) % filteredQuickCommands.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setActiveQuickIndex((prev) => (prev - 1 + filteredQuickCommands.length) % filteredQuickCommands.length);
+        return;
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && isSlashTyping)) {
+        e.preventDefault();
+        const chosen = filteredQuickCommands[activeQuickIndex] || filteredQuickCommands[0];
+        if (chosen) selectQuickCommand(chosen);
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
     }
   };
 
-  const quickCommands = [
-    { label: '/ip 定位目标 IP', icon: <MapPin className="w-3.5 h-3.5 text-emerald-500" />, prompt: '192.168.10.20 在哪台交换机？' },
-    { label: '/config 生成配置', icon: <Sliders className="w-3.5 h-3.5 text-indigo-500" />, prompt: '生成一份华为 S6800 OSPF 配置' },
-    { label: '/troubleshoot 故障排查', icon: <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />, prompt: 'OSPF 邻居状态 ExStart 如何排查？' },
-    { label: '/knowledge 检索 SOP', icon: <BookOpen className="w-3.5 h-3.5 text-blue-500" />, prompt: '查询本地 SOP 手册' },
-  ];
-
-  // Fallback default DeepSeek models if DB list is empty
-  const defaultModels: CopilotModelOption[] = [
-    { id: 'm0', name: 'DeepSeek V4 Flash (默认极速)', model_code: 'deepseek-v4-flash', provider_name: 'DeepSeek' },
-    { id: 'm0pro', name: 'DeepSeek V4 Pro (专业旗舰)', model_code: 'deepseek-v4-pro', provider_name: 'DeepSeek' },
-  ];
-
-  const effectiveModels = models.length > 0 ? models : defaultModels;
+  // Only models that really exist.  The former hard-coded DeepSeek fallback
+  // showed options (id "m0") that the server does not know, so picking one
+  // sent an unknown model id; with no configured model the server default is
+  // used and the picker says so.
+  const effectiveModels = models;
   const currentModelObj = effectiveModels.find((m) => m.id === selectedModel) || effectiveModels[0];
+  const currentModelLabel = currentModelObj && effectiveModels.some((model) => model.id !== currentModelObj.id && model.name === currentModelObj.name)
+    ? currentModelObj.model_code
+    : currentModelObj?.name;
 
   // Group models by provider
-  const groupedModels = effectiveModels.reduce((acc, m) => {
-    const pName = m.provider_name || 'AI 供应商';
-    if (!acc[pName]) acc[pName] = [];
-    acc[pName].push(m);
-    return acc;
-  }, {} as Record<string, CopilotModelOption[]>);
+  const groupedModels = new Map<string, CopilotModelOption[]>();
+  for (const model of effectiveModels) {
+    const key = model.provider_id || model.provider_name;
+    const group = groupedModels.get(key);
+    if (group) group.push(model);
+    else groupedModels.set(key, [model]);
+  }
 
   const resetDefaults = () => {
     if (effectiveModels.length > 0 && onSelectModel) {
@@ -181,56 +362,72 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
   };
 
   return (
-    <div className="relative max-w-[820px] mx-auto w-full shrink-0 px-3 sm:px-4 pb-3 sm:pb-4 pt-1 font-sans">
-      <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
-        <button type="button" onClick={() => setShowContext((value) => !value)} className="rounded-full border border-gray-200 dark:border-gray-700 px-2.5 py-1 hover:border-indigo-300 hover:text-indigo-600" aria-expanded={showContext}>
-          {showContext ? '收起诊断范围' : '选择诊断范围'}
-        </button>
-        {context.device_id && <span className="rounded-full bg-indigo-50 dark:bg-indigo-950/40 px-2 py-1">设备 {String(context.device_id)}</span>}
-        {context.interface && <span className="rounded-full bg-indigo-50 dark:bg-indigo-950/40 px-2 py-1">接口 {String(context.interface)}</span>}
-        {attachmentNotice && <span className="rounded-full bg-amber-50 dark:bg-amber-950/30 px-2 py-1 text-amber-700 dark:text-amber-300">{attachmentNotice}</span>}
-      </div>
-      {showContext && (
-        <div className="mb-2 grid grid-cols-1 gap-2 rounded-xl border border-gray-200 bg-white/90 p-2 text-xs dark:border-gray-700 dark:bg-gray-900/90 sm:grid-cols-2">
-          {([
-            ['device_id', '设备 ID'], ['interface', '接口'], ['site_id', 'Site'], ['time_range', '时间范围'], ['vendor', '厂商'], ['platform', '平台'],
-          ] as Array<[string, string]>).map(([key, label]) => (
-            <label key={key} className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400">
-              <span className="w-14 shrink-0">{label}</span>
-              <input value={String(context[key] || '')} onChange={(event) => updateContext(key, event.target.value)} className="min-w-0 flex-1 rounded border border-gray-200 dark:border-gray-700 bg-transparent px-2 py-1 text-gray-800 dark:text-gray-200" aria-label={label} />
-            </label>
+    <div className="relative max-w-3xl mx-auto w-full shrink-0 px-3 sm:px-4 pb-4 pt-1 font-sans">
+      {(attachmentNotice || uploadError || attachedFiles.length > 0) && (
+        <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
+          {attachedFiles.map((file) => (
+            <span
+              key={file.filename}
+              className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50/80 px-2.5 py-1 text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300"
+            >
+              <FileText className="w-3 h-3 shrink-0" />
+              <span className="max-w-[180px] truncate font-medium">{file.filename}</span>
+              <span className="text-[10px] opacity-75">{file.char_count} 字</span>
+              <button
+                type="button"
+                onClick={() => setAttachedFiles((prev) => prev.filter((item) => item.filename !== file.filename))}
+                className="ml-0.5 rounded-full p-0.5 hover:bg-indigo-200/60 dark:hover:bg-indigo-900/60"
+                title="移除附件"
+                aria-label={`移除附件 ${file.filename}`}
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </span>
           ))}
-          <label className="flex items-center gap-2 text-gray-500 dark:text-gray-400 sm:col-span-2">
-            <span>附件预检</span>
-            <input type="file" accept=".txt,.md,.log,.html" onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (!file || !onAttachmentText) return;
-              const reader = new FileReader();
-              reader.onload = () => onAttachmentText(String(reader.result || ''));
-              reader.readAsText(file);
-            }} className="min-w-0 text-[11px]" aria-label="选择附件进行安全预检" />
-          </label>
+          {uploadError && (
+            <span className="rounded-full bg-rose-50 dark:bg-rose-950/30 px-2.5 py-1 text-rose-700 dark:text-rose-300">{uploadError}</span>
+          )}
+          {attachmentNotice && (
+            <span className="rounded-full bg-amber-50 dark:bg-amber-950/30 px-2.5 py-1 text-amber-700 dark:text-amber-300">{attachmentNotice}</span>
+          )}
         </div>
       )}
-      {/* Quick Menu Popover */}
-      {showQuickMenu && (
-        <div className="absolute bottom-full left-2 z-20 mb-2 w-64 max-w-[calc(100vw-1rem)] space-y-1 rounded-2xl border border-gray-200 bg-white p-2 text-xs shadow-xl dark:border-gray-700 dark:bg-gray-800 sm:left-4">
-          <div className="px-2 py-1 text-[10px] font-semibold text-gray-400 uppercase">快捷指令</div>
-          {quickCommands.map((cmd, idx) => (
-            <button
-              key={idx}
-              type="button"
-              onClick={() => {
-                setInput(cmd.prompt);
-                setShowQuickMenu(false);
-                textareaRef.current?.focus();
-              }}
-              className="flex min-h-10 w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs text-gray-700 transition hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:text-gray-200 dark:hover:bg-gray-700"
-            >
-              {cmd.icon}
-              <span className="truncate">{cmd.label}</span>
-            </button>
-          ))}
+      {/* Quick Menu & Inline Slash-Command Popover */}
+      {isQuickMenuOpen && (
+        <div
+          ref={quickMenuRef}
+          role="listbox"
+          aria-label="快捷指令列表"
+          className="absolute bottom-full left-3 z-20 mb-2 w-80 max-w-[calc(100vw-1rem)] space-y-1 rounded-2xl border border-gray-200/80 bg-white p-2 text-xs shadow-xl dark:border-gray-700 dark:bg-gray-800 sm:left-4 sm:w-96"
+        >
+          <div className="flex items-center justify-between px-2 py-1 text-[10px] font-semibold text-gray-400">
+            <span>快捷指令</span>
+            <span className="font-normal">↑↓ 选择 · Tab/Enter 填入</span>
+          </div>
+          {filteredQuickCommands.map((cmd, idx) => {
+            const isActive = idx === activeQuickIndex;
+            return (
+              <button
+                key={cmd.cmd}
+                type="button"
+                role="option"
+                aria-selected={isActive}
+                onMouseEnter={() => setActiveQuickIndex(idx)}
+                onClick={() => selectQuickCommand(cmd)}
+                className={`flex min-h-9 w-full items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-left text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+                  isActive
+                    ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-200'
+                    : 'text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700'
+                }`}
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  {cmd.icon}
+                  <span className="truncate font-medium">{cmd.label}</span>
+                </span>
+                <span className="shrink-0 text-[10px] text-gray-400 dark:text-gray-500">{cmd.hint}</span>
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -242,14 +439,14 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
             <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-2 shadow-2xl w-64 space-y-1 text-xs select-none">
               <div className="px-3 py-1.5 text-[11px] font-bold text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700/60 flex items-center justify-between">
                 <span>选择 AI 模型</span>
-                <span className="text-[10px] text-indigo-500">已用 {effectiveModels.length} 个模型</span>
+                <span className="text-[10px] text-indigo-500">可选 {effectiveModels.length} 个模型</span>
               </div>
 
               <div className="max-h-60 overflow-y-auto space-y-2 pt-1">
-                {Object.entries(groupedModels).map(([pName, mList]) => (
-                  <div key={pName} className="space-y-1">
+                {Array.from(groupedModels, ([providerId, mList]) => (
+                  <div key={providerId} className="space-y-1">
                     <div className="px-2.5 text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase">
-                      {pName} 供应商
+                      {mList[0].provider_name || 'AI'} 供应商
                     </div>
                     {mList.map((m) => {
                       const isSelected = m.id === selectedModel;
@@ -263,13 +460,20 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
                           }}
                           type="button"
                           aria-pressed={isSelected}
+                          aria-label={`${m.name} · ${m.model_code} · ${getModelHealthLabel(m.health_status)}`}
+                          title={m.model_code}
                           className={`flex min-h-10 w-full items-center justify-between rounded-xl border px-3 py-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
                             isSelected
                               ? 'border-indigo-200 bg-indigo-50 font-semibold text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300'
                               : 'border-transparent text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700/60'
                           }`}
                         >
-                          <span className="min-w-0 truncate"><span>{m.name}</span><span className="ml-1 text-[10px] text-gray-400">{m.model_type || 'chat'} · {m.context_length ? `${Math.round(m.context_length / 1000)}k` : 'ctx'} · {getModelHealthLabel(m.health_status)}</span></span>
+                          <span className="min-w-0">
+                            <span className="block truncate">{m.name}</span>
+                            <span className="block break-all text-[10px] text-gray-500 dark:text-gray-400">
+                              {m.model_code} · {getModelHealthLabel(m.health_status)}
+                            </span>
+                          </span>
                           {isSelected && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />}
                         </button>
                       );
@@ -358,7 +562,7 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
             >
               <span className="font-medium text-gray-700 dark:text-gray-300">模型</span>
               <div className="flex items-center gap-1 text-gray-500">
-                <span className="truncate max-w-[90px] text-right font-medium">{currentModelObj?.name?.split(' ')[0] || selectedModel}</span>
+                <span className="truncate max-w-[90px] text-right font-medium" title={currentModelObj?.model_code}>{currentModelLabel || selectedModel}</span>
                 <ChevronRight className="w-3.5 h-3.5 text-gray-400" />
               </div>
             </button>
@@ -425,24 +629,12 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
         </div>
       )}
 
-      {/* Input Box Container (ChatGPT Style 24px Pill/Rounded Container) */}
+      {/* Input Box Container (Gemini Style Two-Row Rounded Card) */}
       <form
         onSubmit={handleSubmit}
-        className="flex flex-wrap items-end gap-2 rounded-2xl border border-gray-300/60 bg-[#f4f4f5] px-3.5 py-2.5 shadow-xs transition focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500/20 dark:border-gray-700 dark:bg-gray-800/90 sm:flex-nowrap sm:rounded-[24px]"
+        className="flex flex-col rounded-3xl border border-gray-200/90 bg-white px-4 pt-3 pb-2.5 shadow-[0_2px_12px_rgba(15,23,42,0.06)] transition-all focus-within:border-gray-300 focus-within:shadow-[0_4px_20px_rgba(15,23,42,0.09)] dark:border-gray-700/80 dark:bg-gray-800/95 dark:focus-within:border-gray-600"
       >
-        {/* Quick Menu Toggle Button */}
-        <button
-          ref={quickMenuTriggerRef}
-          type="button"
-          onClick={() => setShowQuickMenu(!showQuickMenu)}
-          aria-expanded={showQuickMenu}
-          className="order-2 mb-0.5 inline-flex min-h-10 min-w-10 flex-shrink-0 items-center justify-center rounded-full p-2 text-gray-500 transition hover:bg-gray-200/60 hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white sm:order-none"
-          title="打开快捷指令"
-        >
-          <Plus className="w-4 h-4" />
-        </button>
-
-        {/* Text Area Input */}
+        {/* Top Row: Full-Width Text Area */}
         <textarea
           ref={textareaRef}
           rows={1}
@@ -450,39 +642,95 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="询问 Nexora AI，或输入 / 使用快捷指令..."
-          className="order-1 min-h-10 min-w-0 basis-full resize-none border-none bg-transparent py-1.5 font-sans text-sm leading-relaxed text-gray-900 placeholder-gray-400 focus:outline-none dark:text-gray-100 sm:order-none sm:min-h-[28px] sm:basis-auto sm:flex-1"
+          className="min-h-[36px] w-full resize-none border-none bg-transparent px-1 py-1 font-sans text-[15px] leading-relaxed text-gray-900 placeholder-gray-400 focus:outline-none dark:text-gray-100 dark:placeholder-gray-500"
         />
 
-        {/* Model & Inference Selector Pill (Matching Image 1 Trigger Style) */}
-        <div className="order-3 mb-0.5 min-w-0 flex-shrink sm:order-none">
-          <button
-            ref={modelPopoverTriggerRef}
-            type="button"
-            onClick={() => {
-              setShowModelPopover(!showModelPopover);
-              setActiveSubPanel('main');
-            }}
-            aria-expanded={showModelPopover}
-            className="inline-flex min-h-10 max-w-full items-center gap-1.5 rounded-xl border border-gray-300/80 bg-white/90 px-3 text-xs font-semibold text-gray-700 shadow-2xs transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-gray-600 dark:bg-gray-700/90 dark:text-gray-200 dark:hover:bg-gray-700"
-            title="点击展开模型与推理控制面板"
-          >
-            <Zap className="w-3 h-3 text-amber-500 fill-amber-500" />
-            <span className="max-w-[7rem] truncate sm:max-w-[12rem]">{currentModelObj?.name?.split(' ')[0] || 'DeepSeek V4'} {reasoningLevel === 'high' ? '最高' : ''}</span>
-            <ChevronDown className="w-3 h-3 text-gray-400 ml-0.5" />
-          </button>
-        </div>
+        {/* Bottom Row: Left Tools + Right Model & Send */}
+        <div className="mt-1.5 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1">
+            {/* Quick Menu Toggle Button */}
+            <button
+              ref={quickMenuTriggerRef}
+              type="button"
+              onClick={() => setShowQuickMenu(!showQuickMenu)}
+              aria-expanded={showQuickMenu}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white"
+              title="打开快捷指令"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
 
-        {/* Circular Send Button */}
-        <button
-          type={isStreaming ? 'button' : 'submit'}
-          onClick={isStreaming ? onStop : undefined}
-          disabled={isStreaming ? !onStop : disabled || !input.trim()}
-          className="order-4 mb-0.5 inline-flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white shadow-xs transition hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-gray-300 dark:disabled:bg-gray-700 sm:order-none"
-          title={isStreaming ? '停止生成' : '发送'}
-          aria-label={isStreaming ? '停止生成' : '发送'}
-        >
-          {isStreaming ? <Square className="w-3.5 h-3.5 fill-current" /> : <ArrowUp className="w-4 h-4" />}
-        </button>
+            {/* Local Document Upload Button (Word / Excel / PDF / Text) */}
+            {onUploadFile && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".docx,.xlsx,.pdf,.txt,.md,.csv,.log,.json"
+                  onChange={(e) => void handleFileChange(e)}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  disabled={uploadingFile || disabled}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white"
+                  title="上传本地文档（支持 Word / Excel / PDF / 文本）"
+                  aria-label="上传本地文档"
+                >
+                  <Paperclip className={`w-4 h-4 ${uploadingFile ? 'animate-pulse text-indigo-500' : ''}`} />
+                </button>
+              </>
+            )}
+
+            {/* Web Search Toggle Pill */}
+            <button
+              type="button"
+              onClick={toggleWebSearch}
+              aria-pressed={webSearchEnabled}
+              className={`inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+                webSearchEnabled
+                  ? 'bg-blue-50 text-blue-600 hover:bg-blue-100/80 dark:bg-blue-950/60 dark:text-blue-300'
+                  : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200'
+              }`}
+              title={webSearchEnabled ? '已开启联网查询（点击关闭）' : '开启联网查询公开实时信息'}
+            >
+              <Globe className="w-3.5 h-3.5" />
+              <span>联网</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Model & Inference Selector Ghost Pill */}
+            <button
+              ref={modelPopoverTriggerRef}
+              type="button"
+              onClick={() => {
+                setShowModelPopover(!showModelPopover);
+                setActiveSubPanel('main');
+              }}
+              aria-expanded={showModelPopover}
+              className="inline-flex h-8 max-w-[11rem] items-center gap-1.5 rounded-full px-2.5 text-xs font-medium text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white sm:max-w-[14rem]"
+              title="点击展开模型与推理控制面板"
+            >
+              <Zap className="w-3.5 h-3.5 shrink-0 text-amber-500 fill-amber-500" />
+              <span className="truncate">{currentModelLabel || '默认模型'}{reasoningLevel === 'high' ? ' · 深度' : ''}</span>
+              <ChevronDown className="w-3.5 h-3.5 shrink-0 text-gray-400" />
+            </button>
+
+            {/* Circular Send Button */}
+            <button
+              type={isStreaming ? 'button' : 'submit'}
+              onClick={isStreaming ? onStop : undefined}
+              disabled={isStreaming ? !onStop : disabled || !input.trim()}
+              className="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-gray-900 text-white transition hover:bg-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-200 dark:disabled:bg-gray-700 dark:disabled:text-gray-500"
+              title={isStreaming ? '停止生成' : '发送'}
+              aria-label={isStreaming ? '停止生成' : '发送'}
+            >
+              {isStreaming ? <Square className="w-3 h-3 fill-current" /> : <ArrowUp className="w-4 h-4" />}
+            </button>
+          </div>
+        </div>
       </form>
 
       {/* Disclaimer Subtitle */}

@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { Html } from '@react-three/drei';
 import {
@@ -87,6 +88,26 @@ export const RackFrame: React.FC<RackFrameProps> = ({
   renderStructure = true
 }) => {
   const [hoveredEmptyU, setHoveredEmptyU] = useState<number | null>(null);
+  const frontDoorRef = useRef<THREE.Group>(null);
+  const rearLeftDoorRef = useRef<THREE.Group>(null);
+  const rearRightDoorRef = useRef<THREE.Group>(null);
+
+  // Smooth spring-damped hinge animation for front & rear split perforated doors
+  useFrame((_, delta) => {
+    const dt = Math.min(delta, 0.05);
+    if (frontDoorRef.current) {
+      const targetAngle = isDoorOpen ? -Math.PI * 0.58 : 0;
+      frontDoorRef.current.rotation.y = THREE.MathUtils.damp(frontDoorRef.current.rotation.y, targetAngle, 7, dt);
+    }
+    if (rearLeftDoorRef.current) {
+      const targetL = isDoorOpen ? Math.PI * 0.52 : 0;
+      rearLeftDoorRef.current.rotation.y = THREE.MathUtils.damp(rearLeftDoorRef.current.rotation.y, targetL, 7, dt);
+    }
+    if (rearRightDoorRef.current) {
+      const targetR = isDoorOpen ? -Math.PI * 0.52 : 0;
+      rearRightDoorRef.current.rotation.y = THREE.MathUtils.damp(rearRightDoorRef.current.rotation.y, targetR, 7, dt);
+    }
+  });
   const rackHeight = totalU * U_HEIGHT_3D;
   const rackWidth = (widthMm / 600) * RACK_OUTER_WIDTH_DEFAULT;
   const rackDepth = (depthMm / 1000) * RACK_TOTAL_DEPTH_DEFAULT;
@@ -108,11 +129,8 @@ export const RackFrame: React.FC<RackFrameProps> = ({
   ], [postOffsetW, postOffsetD, rackHeight]);
 
   const railWidth = 0.22;
-  // Keep the mounting rails inside the actual rack width.  A fixed 19-inch
-  // offset makes 450mm/non-standard cabinets render their rails outside the
-  // enclosure even when the read model supplies a different width_mm.
   const railXOffset = (rackWidth * (RACK_INNER_WIDTH / RACK_OUTER_WIDTH_DEFAULT)) / 2;
-  const railZOffset = (rackDepth * 0.72) / 2;
+  const railZOffset = rackDepth * 0.42;
 
   // Geometry for edge highlights
   const postEdgeGeo = useMemo(() => {
@@ -224,87 +242,24 @@ export const RackFrame: React.FC<RackFrameProps> = ({
         </>
       )}
 
-      {/* Four mobile casters sit below the plinth.  Keep them outside the
-          structural conditional so the production GLB and procedural frame
-          share the same visible base detail. */}
-      {[
-        // Set the front pair just outside the plinth face so the wheel ring
-        // remains visible even when the production GLB has a deep base lip.
-        { x: -postOffsetW, z: postOffsetD + 0.38, front: true },
-        { x: postOffsetW, z: postOffsetD + 0.38, front: true },
-        { x: -postOffsetW, z: -postOffsetD - 0.38, front: false },
-        { x: postOffsetW, z: -postOffsetD - 0.38, front: false },
-      ].map((caster, index) => (
-        <RackCasterAssembly
-          key={`caster-${index}`}
-          x={caster.x}
-          // The GLB's caster bounds extend below the logical plinth to about
-          // y=-1.0; matching that datum keeps the wheel under the base rather
-          // than floating in the lowest empty U slots.
-          y={-0.93}
-          z={caster.z}
-          front={caster.front}
-        />
-      ))}
-
-      {/* The GLB carries the physical rails; this lightweight overlay keeps
-          the viewer's U-number ruler available without duplicating posts or
-          the cabinet shell. */}
+      {/* U-number ruler overlays aligned flush with the EIA-310 rails with proper depth testing. */}
       {showULabels && !renderStructure && (
         <>
-          <mesh
-            position={[-railXOffset, rackHeight / 2, railZOffset + 0.04]}
-            renderOrder={20}
-          >
+          <mesh position={[-railXOffset - 0.14, rackHeight / 2, railZOffset + 0.025]}>
             <planeGeometry args={[railWidth, rackHeight]} />
-            <meshBasicMaterial
-              map={railTexture}
-              transparent
-              opacity={0.98}
-              depthTest={false}
-              depthWrite={false}
-            />
+            <meshBasicMaterial map={railTexture} transparent opacity={0.95} />
           </mesh>
-          <mesh
-            position={[railXOffset, rackHeight / 2, railZOffset + 0.04]}
-            renderOrder={20}
-          >
+          <mesh position={[railXOffset + 0.14, rackHeight / 2, railZOffset + 0.025]}>
             <planeGeometry args={[railWidth, rackHeight]} />
-            <meshBasicMaterial
-              map={railTexture}
-              transparent
-              opacity={0.98}
-              depthTest={false}
-              depthWrite={false}
-            />
+            <meshBasicMaterial map={railTexture} transparent opacity={0.95} />
           </mesh>
-          <mesh
-            position={[-railXOffset, rackHeight / 2, -railZOffset - 0.04]}
-            rotation={[0, Math.PI, 0]}
-            renderOrder={20}
-          >
+          <mesh position={[-railXOffset - 0.14, rackHeight / 2, -railZOffset - 0.025]} rotation={[0, Math.PI, 0]}>
             <planeGeometry args={[railWidth, rackHeight]} />
-            <meshBasicMaterial
-              map={railTexture}
-              transparent
-              opacity={0.98}
-              depthTest={false}
-              depthWrite={false}
-            />
+            <meshBasicMaterial map={railTexture} transparent opacity={0.95} />
           </mesh>
-          <mesh
-            position={[railXOffset, rackHeight / 2, -railZOffset - 0.04]}
-            rotation={[0, Math.PI, 0]}
-            renderOrder={20}
-          >
+          <mesh position={[railXOffset + 0.14, rackHeight / 2, -railZOffset - 0.025]} rotation={[0, Math.PI, 0]}>
             <planeGeometry args={[railWidth, rackHeight]} />
-            <meshBasicMaterial
-              map={railTexture}
-              transparent
-              opacity={0.98}
-              depthTest={false}
-              depthWrite={false}
-            />
+            <meshBasicMaterial map={railTexture} transparent opacity={0.95} />
           </mesh>
         </>
       )}
@@ -363,12 +318,26 @@ export const RackFrame: React.FC<RackFrameProps> = ({
         })}
       </group>
 
-      {/* Lightweight Honeycomb Mesh Front Door (shown as a compact open leaf) */}
+      {/* Animated Hinged Honeycomb Mesh Front Door + Rear Split Mesh Doors */}
       {showDoor && (
+        <>
         <group
+          ref={frontDoorRef}
           position={[-rackWidth / 2, 0, (rackDepth / 2) + 0.05]}
-          rotation={[0, isDoorOpen ? -Math.PI / 5.2 : 0, 0]}
         >
+          {/* Steel vertical stiles & swing-handle lock assembly */}
+          <mesh position={[0.07, rackHeight / 2, 0]}>
+            <boxGeometry args={[0.14, rackHeight, 0.06]} />
+            <meshStandardMaterial color="#1f2937" roughness={0.38} metalness={0.72} />
+          </mesh>
+          <mesh position={[rackWidth - 0.07, rackHeight / 2, 0]}>
+            <boxGeometry args={[0.14, rackHeight, 0.06]} />
+            <meshStandardMaterial color="#1f2937" roughness={0.38} metalness={0.72} />
+          </mesh>
+          <mesh position={[rackWidth - 0.24, rackHeight * 0.5 + 0.25, 0.085]}>
+            <boxGeometry args={[0.05, 0.16, 0.03]} />
+            <meshStandardMaterial color="#0f172a" roughness={0.4} metalness={0.6} />
+          </mesh>
           {/* Door Mesh Panel */}
           <mesh position={[rackWidth / 2, rackHeight / 2, 0]}>
             <planeGeometry args={[rackWidth - 0.15, rackHeight - 0.1]} />
@@ -383,10 +352,32 @@ export const RackFrame: React.FC<RackFrameProps> = ({
 
           {/* Door Handle */}
           <mesh position={[rackWidth - 0.25, rackHeight / 2, 0.04]}>
-            <boxGeometry args={[0.06, 0.8, 0.06]} />
-            <meshStandardMaterial color="#cbd5e1" roughness={0.3} metalness={0.6} />
+            <boxGeometry args={[0.1, 0.9, 0.07]} />
+            <meshStandardMaterial color="#cbd5e1" roughness={0.25} metalness={0.85} />
           </mesh>
         </group>
+        {/* Rear Split Double-Leaf Honeycomb Doors */}
+        <group ref={rearLeftDoorRef} position={[-rackWidth / 2, 0, -(rackDepth / 2) - 0.05]}>
+          <mesh position={[rackWidth * 0.25, rackHeight / 2, 0]}>
+            <planeGeometry args={[rackWidth * 0.48, rackHeight - 0.12]} />
+            <meshStandardMaterial map={doorTexture} transparent opacity={0.45} roughness={0.44} metalness={0.45} side={THREE.DoubleSide} />
+          </mesh>
+          <mesh position={[rackWidth * 0.48, rackHeight / 2, -0.04]}>
+            <boxGeometry args={[0.06, 0.65, 0.05]} />
+            <meshStandardMaterial color="#94a3b8" roughness={0.3} metalness={0.8} />
+          </mesh>
+        </group>
+        <group ref={rearRightDoorRef} position={[rackWidth / 2, 0, -(rackDepth / 2) - 0.05]}>
+          <mesh position={[-rackWidth * 0.25, rackHeight / 2, 0]}>
+            <planeGeometry args={[rackWidth * 0.48, rackHeight - 0.12]} />
+            <meshStandardMaterial map={doorTexture} transparent opacity={0.45} roughness={0.44} metalness={0.45} side={THREE.DoubleSide} />
+          </mesh>
+          <mesh position={[-rackWidth * 0.48, rackHeight / 2, -0.04]}>
+            <boxGeometry args={[0.06, 0.65, 0.05]} />
+            <meshStandardMaterial color="#94a3b8" roughness={0.3} metalness={0.8} />
+          </mesh>
+        </group>
+        </>
       )}
     </group>
   );

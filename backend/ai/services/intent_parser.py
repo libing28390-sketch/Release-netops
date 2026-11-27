@@ -85,6 +85,7 @@ _DANGEROUS_INTENT_MARKERS = (
     "shutdown all", "bulk shutdown", "mass shutdown", "disable interface", "disable port",
     "bulk change", "full network change",
     "下发配置", "修改配置", "变更配置", "删除配置", "清空配置", "重启设备", "重载设备",
+    "删除所有", "清空所有", "删除全部", "清空全部", "重启交换机", "重启路由器", "重启防火墙",
     "批量关闭", "批量启用", "批量开启", "批量变更", "批量操作", "批量下发",
     "关闭端口", "关闭接口", "禁用端口", "禁用接口", "全网变更", "全网操作",
 )
@@ -181,14 +182,21 @@ def _deterministic_identifier_intent(query: str) -> IntentDecision | None:
     mac_match = _MAC_LITERAL_RE.search(normalized)
     ip_markers = ("定位", "追踪", "查找", "ip location", "trace ip", "locate ip", "where is ip")
     mac_markers = ("定位", "追踪", "查找", "mac location", "trace mac", "locate mac", "where is mac")
+    # Plain-language "where is it connected" questions about a literal
+    # address are location requests too ("10.1.1.5 接在哪台交换机哪个端口？").
+    location_markers = (
+        "接在", "连在", "挂在", "插在", "在哪", "哪台交换机", "哪个交换机", "哪个端口", "哪个口",
+        "哪台设备", "接入位置", "上联", "which switch", "which port", "connected to", "where is",
+    )
+    asks_location = any(marker in lower for marker in location_markers)
 
-    if ip_match and ("ip" in lower or any(marker in lower for marker in ip_markers)):
+    if ip_match and ("ip" in lower or asks_location or any(marker in lower for marker in ip_markers)):
         return IntentDecision(
             intent=IntentType.IP_LOCATION,
             filters={"ip": ip_match.group(0)},
             confidence=1.0,
         )
-    if mac_match and ("mac" in lower or any(marker in lower for marker in mac_markers)):
+    if mac_match and ("mac" in lower or asks_location or any(marker in lower for marker in mac_markers)):
         return IntentDecision(
             intent=IntentType.MAC_LOCATION,
             filters={"mac": mac_match.group(0).lower()},
@@ -211,6 +219,26 @@ def _deterministic_identifier_intent(query: str) -> IntentDecision | None:
             missing_fields=["mac"],
             clarification_question="请提供需要定位的 MAC 地址。",
         )
+    return None
+
+
+def _classification_denied_local_intent(query: str, error_code: str) -> IntentDecision | None:
+    """Local read-only intent when the security gateway refuses to send the query.
+
+    Only used when the gateway denied the request for data classification and
+    the text carries a literal IP or MAC: those are the identifiers that make
+    a query CONFIDENTIAL, and locating them is the read-only operation Nexora
+    can answer from its own CMDB/ARP data.
+    """
+    if "CLASSIFICATION" not in str(error_code or "").upper():
+        return None
+    normalized = " ".join((query or "").strip().split())
+    ip_match = _IP_LITERAL_RE.search(normalized)
+    if ip_match:
+        return IntentDecision(intent=IntentType.IP_LOCATION, filters={"ip": ip_match.group(0)}, confidence=0.8)
+    mac_match = _MAC_LITERAL_RE.search(normalized)
+    if mac_match:
+        return IntentDecision(intent=IntentType.MAC_LOCATION, filters={"mac": mac_match.group(0).lower()}, confidence=0.8)
     return None
 
 
@@ -251,6 +279,72 @@ def is_asset_analysis_query(query: str) -> bool:
     return has_inventory_scope and (has_aggregation or dimension_hits >= 2)
 
 
+_ALERT_STATUS_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # Order matters: the more specific phrase wins.
+    ("unhandled", ("未处理", "没处理", "没有处理", "待处理", "未确认", "没确认", "没有确认", "未认领", "unhandled", "unacknowledged")),
+    ("investigating", ("处理中", "调查中", "investigating")),
+    ("acknowledged", ("已确认", "已认领", "acknowledged")),
+    ("suppressed", ("已屏蔽", "被屏蔽", "抑制", "suppressed")),
+    ("resolved", ("已恢复", "已解决", "已处理", "resolved")),
+    ("active", ("未恢复", "没恢复", "没有恢复", "未解决", "活动", "active", "unresolved", "open")),
+)
+_ALERT_LIST_MARKERS = ("哪些", "列出", "列表", "明细", "清单", "有什么", "list", "which")
+_ALERT_RELATIVE_RE = re.compile(
+    r"(?:最近|过去|近|last|past)\s*(\d{1,3})\s*(小时|个小时|h|hours?|天|日|d|days?)", re.IGNORECASE
+)
+
+
+def extract_alert_time_range(query: str) -> str | None:
+    """Normalise an explicit alert time window to a token.
+
+    Tokens: ``today``, ``yesterday``, ``this_week``, ``<n>h``, ``<n>d``.
+    A bare "最近" (no number) is deliberately not a window.
+    """
+    normalized = " ".join(str(query or "").lower().split())
+    if not normalized:
+        return None
+    if any(marker in normalized for marker in ("今天", "今日", "today")):
+        return "today"
+    if any(marker in normalized for marker in ("昨天", "昨日", "yesterday")):
+        return "yesterday"
+    if any(marker in normalized for marker in ("本周", "这周", "这一周", "this week")):
+        return "this_week"
+    match = _ALERT_RELATIVE_RE.search(normalized)
+    if match:
+        amount = max(1, min(int(match.group(1)), 720 if match.group(2)[0] in "小h" else 90))
+        return f"{amount}h" if match.group(2)[0] in "小h" else f"{amount}d"
+    return None
+
+
+def extract_alert_status(query: str) -> str | None:
+    normalized = " ".join(str(query or "").lower().split())
+    for status, markers in _ALERT_STATUS_MARKERS:
+        if any(marker in normalized for marker in markers):
+            return status
+    return None
+
+
+def extract_alert_filters(query: str) -> Dict[str, str]:
+    """Local, unambiguous alert filters (time window, workflow status, vendor)."""
+    filters: Dict[str, str] = {}
+    time_range = extract_alert_time_range(query)
+    if time_range:
+        filters["time_range"] = time_range
+    status = extract_alert_status(query)
+    if status:
+        filters["status"] = status
+    vendor = extract_asset_filters(query).get("vendor")
+    if vendor:
+        filters["vendor"] = vendor
+    return filters
+
+
+_ALERT_EXISTENCE_MARKERS = (
+    "有告警", "有没有告警", "有报警", "有没有报警", "是否告警", "是否有告警",
+    "有告警吗", "有告警没有", "告警没", "告警吗", "any alert", "any alarm", "has alert", "has alarm",
+)
+
+
 def is_alert_aggregation_query(query: str) -> bool:
     """Return whether an alert question asks for a local aggregate.
 
@@ -260,10 +354,21 @@ def is_alert_aggregation_query(query: str) -> bool:
     device, site, alert ID, or explicit aggregate.
     """
     normalized = " ".join((query or "").lower().split())
+    if not normalized or not any(marker in normalized for marker in _ALERT_MARKERS):
+        return False
+    # A count/summary, an explicit time window ("今天", "最近 3 小时"), a
+    # workflow status ("未处理", "未恢复"), an explicit vendor/site scope
+    # ("华三的设备有告警没有"), an existence check ("有没有告警"), or a listing
+    # request is a scoped, read-only question Nexora answers from alert_events.
+    # Plain "查询最近的告警" has none of these and keeps the clarification path.
+    alert_filters = extract_alert_filters(normalized)
     return bool(
-        normalized
-        and any(marker in normalized for marker in _ALERT_MARKERS)
-        and any(marker in normalized for marker in _ALERT_AGGREGATION_MARKERS)
+        any(marker in normalized for marker in _ALERT_AGGREGATION_MARKERS)
+        or any(marker in normalized for marker in _ALERT_EXISTENCE_MARKERS)
+        or alert_filters.get("time_range")
+        or alert_filters.get("status")
+        or alert_filters.get("vendor")
+        or any(marker in normalized for marker in _ALERT_LIST_MARKERS)
     )
 
 
@@ -682,12 +787,28 @@ class IntentParser:
         return result
 
     def is_knowledge_query(self, query: str) -> bool:
-        metadata = self.parse_knowledge_metadata(query)
+        text = str(query or "").strip()
+        lowered = text.lower()
+        # Do not hijack queries targeting a specific live IP address.
+        if re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", text):
+            return False
+        metadata = self.parse_knowledge_metadata(text)
         return bool(
             metadata.get("vendor")
             or metadata.get("product_series")
+            or metadata.get("product_model")
             or metadata.get("feature")
-            or any(token in (query or "").lower() for token in ("配置", "命令", "回显", "故障", "ospf", "vlan", "arp", "access", "trunk", "lacp", "loopback", "ntp", "snmp", "hsrp", "vrrp", "bfd", "super password", "aaa", "static route", "静态路由", "acl", "ssh", "stelnet", "port-security", "端口安全", "hardware"))
+            or any(
+                token in lowered
+                for token in (
+                    "配置", "命令", "回显", "故障", "排障", "排查", "怎么查", "怎么排查",
+                    "规格", "端口规格", "参数", "交换容量", "包转发率", "丢包", "闪断", "环路",
+                    "ospf", "vlan", "arp", "access", "trunk", "lacp", "loopback",
+                    "ntp", "snmp", "hsrp", "vrrp", "bfd", "super password", "aaa",
+                    "static route", "静态路由", "acl", "ssh", "stelnet",
+                    "port-security", "端口安全", "hardware",
+                )
+            )
         )
 
     @staticmethod
@@ -841,9 +962,21 @@ class IntentParser:
             ):
                 add("device_or_scope")
         elif intent == IntentType.ALARM_SEARCH.value:
-            if not cls._has_field(values, "alarm_id", "device_id", "device_identifier", "site", "time_range"):
+            # Fill what the question states explicitly before asking: the
+            # model often classifies "今天未处理的告警" correctly but leaves
+            # time_range empty.
+            local_alert_filters = extract_alert_filters(query)
+            for key, value in local_alert_filters.items():
+                values.setdefault(key, value)
+            if local_alert_filters:
+                # Stated in the user's own words, so the local alert query
+                # receives them even when the model left them out.
+                decision = decision.model_copy(update={"filters": {**(decision.filters or {}), **local_alert_filters}})
+            if not cls._has_field(values, "alarm_id", "device_id", "device_identifier", "site", "time_range", "status"):
                 add("device_or_time_range")
-            if any(marker in normalized for marker in ("告警", "报警", "alarm", "今天", "昨天", "最近", "过去", "时间")) and not cls._has_field(values, "time_range"):
+            # Ask for a window only when the user mentioned one that could
+            # not be read (e.g. "最近的告警"), not for every alert question.
+            if any(marker in normalized for marker in ("今天", "昨天", "最近", "过去", "时间", "本周")) and not cls._has_field(values, "time_range", "status"):
                 add("time_range")
         elif intent in {IntentType.CONFIG_SEARCH.value, IntentType.TROUBLESHOOTING.value}:
             if not cls._has_field(values, "device_id", "device_identifier", "device_name", "site"):
@@ -1018,6 +1151,7 @@ class IntentParser:
         if is_alert_aggregation_query(query):
             decision = IntentDecision(
                 intent=IntentType.ALARM_SEARCH,
+                filters=extract_alert_filters(query),
                 confidence=1.0,
             )
             ai_metrics.intent_observed("deterministic", decision.intent.value)
@@ -1032,6 +1166,14 @@ class IntentParser:
             ai_metrics.intent_observed("deterministic", decision.intent.value)
             return self._legacy_result(query, decision, parse_status="deterministic")
 
+        # Never ask a provider to classify an explicit dangerous operation, and
+        # never let a destructive command mentioning VLAN/switch fall through to
+        # read-only knowledge retrieval.
+        high_risk_decision = self._deterministic_high_risk_decision(query)
+        if high_risk_decision is not None:
+            ai_metrics.intent_observed("deterministic", high_risk_decision.intent.value)
+            return self._legacy_result(query, high_risk_decision, parse_status="deterministic")
+
         if self.is_knowledge_query(query):
             metadata = self.parse_knowledge_metadata(query)
             decision = IntentDecision(
@@ -1042,14 +1184,6 @@ class IntentParser:
             )
             ai_metrics.intent_observed("deterministic", decision.intent.value)
             return self._legacy_result(query, decision, parse_status="deterministic")
-
-        # Never ask a provider to classify an explicit dangerous operation.
-        # The local policy gate is authoritative until the user completes an
-        # independent confirmation flow.
-        high_risk_decision = self._deterministic_high_risk_decision(query)
-        if high_risk_decision is not None:
-            ai_metrics.intent_observed("deterministic", high_risk_decision.intent.value)
-            return self._legacy_result(query, high_risk_decision, parse_status="deterministic")
 
         sys_prompt = (
             "You are an intent parser for Nexora Network Operations. "
@@ -1083,6 +1217,14 @@ class IntentParser:
             response = await self._chat_intent(messages, user_id=user_id, route_meta=route_meta)
         except Exception as error:
             code = self._error_code(error)
+            local_decision = _classification_denied_local_intent(query, code)
+            if local_decision is not None:
+                # The text contains an address the gateway must not send out,
+                # so the cloud parser can never classify it.  A read-only
+                # local lookup is the useful, safe answer instead of
+                # "service temporarily unavailable".
+                ai_metrics.intent_observed("classification_local", local_decision.intent.value)
+                return self._legacy_result(query, local_decision, parse_status="classification_local_fallback")
             ai_metrics.intent_observed("provider_error", "general_qa")
             return self._safe_fallback(
                 query,
