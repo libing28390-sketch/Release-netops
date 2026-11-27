@@ -1211,3 +1211,118 @@ def test_dual_homed_server_lag_compatibility_exposes_both_ports_as_terminal():
     assert len(result["locations"]) == 2
     assert {loc["switch_name"] for loc in result["locations"]} == {"TOR-1", "TOR-2"}
     assert result["errors"] == []
+
+
+def test_live_lag_member_and_per_port_lldp_verbose_parsers():
+    from services.ip_locator_trace_service import (
+        _lag_member_command,
+        _lldp_interface_verbose_command,
+        _parse_lag_member_ports,
+        _parse_lldp_verbose_neighbors,
+    )
+
+    h3c_dev = {"id": "sw-254", "hostname": "WXTJY-1015-SW254", "platform": "hp_comware"}
+    assert _lag_member_command(h3c_dev, "BAGG2") == "display link-aggregation verbose Bridge-Aggregation2"
+    assert _lldp_interface_verbose_command(h3c_dev, "XGE1/3/0/4") == (
+        "display lldp neighbor-information interface Ten-GigabitEthernet1/3/0/4 verbose"
+    )
+
+    lag_out = (
+        "Loadsharing Type: Shar -- Loadsharing, NonS -- Non-Loadsharing\n"
+        "Aggregate Interface: Bridge-Aggregation2\n"
+        "  XGE1/3/0/4     S        32768    12  0x3  ABCDEF\n"
+        "  XGE2/3/0/4(R)  S        32768    13  0x3  ABCDEF\n"
+    )
+    assert _parse_lag_member_ports(lag_out, "bridge-aggregation2") == ["XGE1/3/0/4", "XGE2/3/0/4"]
+
+    lldp_out = (
+        "LLDP neighbor-information of port 10[Ten-GigabitEthernet1/3/0/4]:\n"
+        "  System name             : WXTJY-1F-SW4\n"
+        "  Port ID                 : Ten-GigabitEthernet1/0/49\n"
+        "  Management address      : 10.16.40.4\n"
+    )
+    neighbors = _parse_lldp_verbose_neighbors(lldp_out, "XGE1/3/0/4")
+    assert len(neighbors) == 1
+    assert neighbors[0]["neighbor_name"] == "WXTJY-1F-SW4"
+    assert neighbors[0]["neighbor_ip"] == "10.16.40.4"
+    assert neighbors[0]["neighbor_port"] == "Ten-GigabitEthernet1/0/49"
+
+
+def test_per_port_lldp_verbose_recovers_from_full_snapshot_failure_without_duplicate_lag_cli(monkeypatch):
+    from services import ip_locator_trace_service as ts
+
+    h3c_dev = {
+        "id": "sw-254",
+        "hostname": "WXTJY-1015-SW254",
+        "ip_address": "10.16.40.254",
+        "platform": "hp_comware",
+    }
+    sent_commands: list[str] = []
+
+    def fake_send_command(device, command, force_refresh=False):
+        sent_commands.append(command)
+        if "link-aggregation verbose" in command:
+            return (
+                "Aggregate Interface: Bridge-Aggregation2\n"
+                "  XGE1/3/0/4     S        32768    12  0x3  ABCDEF\n"
+                "  XGE2/3/0/4(R)  S        32768    13  0x3  ABCDEF\n"
+            )
+        if "lldp neighbor-information interface" in command:
+            return (
+                "LLDP neighbor-information of port 10[Ten-GigabitEthernet1/3/0/4]:\n"
+                "  System name             : WXTJY-1F-SW4\n"
+                "  Port ID                 : Ten-GigabitEthernet1/0/49\n"
+                "  Management address      : 10.16.40.4\n"
+            )
+        return ""
+
+    from services.ip_locator_cli_service import LocatorCLIResult
+
+    monkeypatch.setattr(ts.legacy, "_send_command", fake_send_command)
+    monkeypatch.setattr(
+        ts,
+        "_run_cli_with_device_lease",
+        lambda *args, **kwargs: LocatorCLIResult(
+            value=[],
+            collected_at="",
+            task_id="t-1",
+            status={"status": "query_failed", "reason": "full_lldp_timeout"},
+        ),
+    )
+
+    result = ts._initial_result("192.168.11.111", "default", {}, ts.TraceLimits())
+    expanded, phys_names, resolved = ts._expand_lag_member_ports_live(
+        None, h3c_dev, "BAGG2", result=result,
+    )
+    assert resolved is True
+    assert phys_names == ["XGE1/3/0/4", "XGE2/3/0/4"]
+
+    selected, _, _, status = ts._load_lldp_snapshot(
+        h3c_dev,
+        "BAGG2",
+        cache=None,
+        scope={},
+        scope_hash="h",
+        tenant_id="tenant-default",
+        target_ip="192.168.11.111",
+        network_domain_id="",
+        site_id="",
+        vrf="default",
+        force_refresh=True,
+        durable_run_id="",
+        run_owner_id="",
+        cancel_check=None,
+        result=result,
+        wait_seconds=10,
+        expanded_member_ports=expanded,
+        physical_member_names=phys_names,
+    )
+    assert status["status"] == "found"
+    assert status["source"] == "per_port_lldp_verbose"
+    assert len(selected) == 1
+    assert selected[0]["neighbor_name"] == "WXTJY-1F-SW4"
+    assert selected[0]["neighbor_ip"] == "10.16.40.4"
+    # LAG expansion CLI must only have been sent ONCE, not duplicated inside _load_lldp_snapshot
+    lag_cmds = [c for c in sent_commands if "link-aggregation verbose" in c]
+    assert len(lag_cmds) == 1
+    assert any("WXTJY-1F-SW4 (10.16.40.4)" in step for step in result["trace_steps"])

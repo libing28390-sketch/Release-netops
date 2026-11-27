@@ -1,6 +1,6 @@
 import { DataTable } from '../components/DataTable';
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { Search, MapPin, ArrowRight, Loader2, Server, Monitor, Network, AlertCircle, ChevronDown, ChevronUp, Cable, Clock, RotateCcw, Activity, Wifi, Globe, Zap, CheckCircle2, XCircle, Minus, Database, RefreshCw, Filter, Download, X, ShieldAlert, Check, Play, FileText, Copy, Router, ExternalLink, Cpu, MemoryStick, Eye, Users, Settings } from 'lucide-react';
+import { Search, MapPin, ArrowRight, Loader2, Server, Monitor, Network, AlertCircle, ChevronDown, ChevronUp, Cable, Clock, RotateCcw, Activity, Wifi, Globe, Zap, CheckCircle2, XCircle, Minus, Database, RefreshCw, Filter, Download, X, ShieldAlert, Check, Play, FileText, Copy, Router, ExternalLink, Cpu, MemoryStick, Eye, Users, Settings, Terminal } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { ActionButton } from '../components/ui/ActionIconButton';
@@ -182,6 +182,7 @@ interface LocateResult {
   errors: string[];
   trace_status?: string;
   trace_hops?: TraceHop[];
+  trace_steps?: string[];
   mac_lookup?: MacLookupInfo;
   mac_lookup_attempts?: MacLookupInfo[];
   context?: LocatorContext;
@@ -2123,6 +2124,28 @@ ${rep.repair_commands}
                     ))}
                   </div>
                 </div>
+              )}
+
+              {(result.trace_steps?.length ?? 0) > 0 && (
+                <details className="group rounded-xl border border-slate-200/80 dark:border-white/10 bg-slate-950 text-slate-200 overflow-hidden" open>
+                  <summary className="flex items-center justify-between gap-2 px-4 py-2.5 cursor-pointer select-none bg-slate-900/90 hover:bg-slate-900 text-xs font-semibold text-slate-200 list-none">
+                    <span className="flex items-center gap-2">
+                      <Terminal size={13} className="text-cyan-400" />
+                      {zh ? '逐步查找过程' : 'Step-by-Step Trace Log'}
+                      <span className="rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 px-2 py-0.5 text-[10px] font-mono">
+                        {result.trace_steps!.length}
+                      </span>
+                    </span>
+                    <ChevronDown size={13} className="text-slate-400 transition-transform group-open:rotate-180" />
+                  </summary>
+                  <div className="px-4 py-3 font-mono text-[11.5px] leading-relaxed space-y-1 max-h-72 overflow-y-auto whitespace-pre-wrap break-all select-text">
+                    {result.trace_steps!.map((step, idx) => (
+                      <div key={idx} className="text-slate-200/95">
+                        {step}
+                      </div>
+                    ))}
+                  </div>
+                </details>
               )}
 
               <div className="pt-3 border-t border-black/5 dark:border-white/10">
