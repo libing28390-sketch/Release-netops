@@ -1832,6 +1832,7 @@ def _current_endpoint_observation_id(row: dict[str, Any]) -> str:
 
 def _current_endpoint_projection(
     conn, *, device_id: str = "", observation_source: str = "arp",
+    target_ip: str | None = None,
 ) -> list[dict[str, Any]]:
     """Decorate current ARP/ND rows, collection state, and explicit mappings."""
     from services.ipam_current_endpoint_observation_service import list_current_endpoint_observations
@@ -1841,6 +1842,7 @@ def _current_endpoint_projection(
         raise ValueError("unsupported_current_address_observation_source")
     source_rows = list_current_endpoint_observations(
         conn, device_id=device_id or None, observation_source=normalized_source,
+        **({"target_ip": target_ip} if target_ip is not None else {}),
     )
     if not source_rows:
         return []
@@ -2275,11 +2277,16 @@ def _current_fdb_path_metadata(conn, source_rows: list[dict[str, Any]]) -> dict[
     return result
 
 
-def _current_fdb_endpoint_projection(conn, *, device_id: str = "") -> list[dict[str, Any]]:
+def _current_fdb_endpoint_projection(
+    conn, *, device_id: str = "", target_mac: str | None = None,
+) -> list[dict[str, Any]]:
     """Project current FDB rows as MAC-only observations; never as IP ownership."""
     from services.ipam_current_fdb_observation_service import list_current_fdb_observations
 
-    source_rows = list_current_fdb_observations(conn, device_id=device_id or None)
+    source_rows = list_current_fdb_observations(
+        conn, device_id=device_id or None,
+        **({"target_mac": target_mac} if target_mac is not None else {}),
+    )
     path_metadata = _current_fdb_path_metadata(conn, [dict(row) for row in source_rows])
     staged: list[dict[str, Any]] = []
     path_groups: dict[tuple[str, ...], list[dict[str, Any]]] = {}
