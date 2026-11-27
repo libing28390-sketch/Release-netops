@@ -818,6 +818,7 @@ def _load_devices(
     start_device_id: str = "",
     site_id: str = "",
     authorized_device_ids: Iterable[str] | None = None,
+    allow_snmp_only: bool = False,
 ) -> list[dict[str, Any]]:
     try:
         devices = [
@@ -826,6 +827,7 @@ def _load_devices(
                 tenant_id=str(tenant_id or "tenant-default"),
                 site_id=str(site_id) if site_id else None,
                 device_ids=authorized_device_ids,
+                **({"allow_snmp_only": True} if allow_snmp_only else {}),
             )
         ]
     except Exception as exc:
@@ -2716,11 +2718,14 @@ def _trace_ip_uncached(
         cancel_check=cancel_check,
     )
 
-    def read_live_fact(kind: str, device: dict[str, Any], **target_fields: Any):
+    def read_live_fact(kind: str, device: dict[str, Any], *,
+                       expected_space: str = "", **target_fields: Any):
         if not operation_budget_available():
             return None
         fact = live_facts.read(kind, device, **target_fields)
         if fact is None or not operation_budget_available():
+            return None
+        if expected_space and fact.record.get("address_space_id") != expected_space:
             return None
         # Positive exact-instance reads are not full collection generations.
         # Persist a separate, short-lived locator-only observation; never
@@ -4221,7 +4226,15 @@ def _trace_ip_uncached(
                             "source": "full_snapshot",
                         }
                     if not records and not mac_negative and not (status and status.get("status") in {"unsupported", "query_failed", "disabled"}):
-                        fact = read_live_fact("mac", current, mac=mac, vlan=vlan_hint)
+                        # A CLI ARP fact may not carry an address-space ID.
+                        # Do not use cross-device SNMP context by VRF name alone.
+                        expected_space = str(arp.get("address_space_id") or "")
+                        source_id = str(arp.get("device_id") or "")
+                        fact = (
+                            read_live_fact("mac", current, mac=mac, vlan=vlan_hint,
+                                           expected_space=expected_space)
+                            if expected_space or source_id == current_id else None
+                        )
                         if fact is not None:
                             records = [dict(fact.record)]
                             mac_collected_at = fact.observed_at
@@ -5068,6 +5081,7 @@ def _try_snmp_endpoint(target_ip: str, **kwargs: Any) -> dict[str, Any] | None:
         tenant_id=str(kwargs.get("tenant_id") or "tenant-default"),
         site_id=str(kwargs.get("site_id") or ""),
         authorized_device_ids=kwargs.get("authorized_device_ids"),
+        allow_snmp_only=True,
     )
     allowed_ids = {str(device["id"]) for device in devices if device.get("id")}
     if not allowed_ids:
