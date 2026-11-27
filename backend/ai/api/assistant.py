@@ -419,7 +419,7 @@ async def chat_assistant(req: ChatRequest, user=Depends(require_ai_permission("a
             site_ids=user.get("site_ids") or [],
             model_id=requested_model_id,
             model_selection_source=model_selection_source,
-            context=req.context.model_dump(exclude_none=True),
+            context={**req.context.model_dump(exclude_none=True), **({"conversation_id": req.conversation_id} if req.conversation_id else {})},
             request_id=request_id_var.get("-"),
             pending_clarification=pending_clarification,
             clarification_response=clarification_response,
@@ -1542,3 +1542,81 @@ async def parse_copilot_attachment_file(
         "user_message": "附件已自动脱敏并通过安全预检" if needs_redact else "附件已解析并通过安全预检",
         "text": safe_text,
     }
+
+
+class OpsMemoryCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(..., min_length=1, max_length=140)
+    content: str = Field(..., min_length=1, max_length=1000)
+    memory_type: Literal["semantic", "episodic"] = "semantic"
+    entity_key: str = Field(default="global", max_length=120)
+    tags: List[str] = Field(default_factory=list, max_length=10)
+    related_entity: Optional[str] = Field(default=None, max_length=120)
+    relation: Optional[str] = Field(default="related_to", max_length=40)
+
+
+@router.get("/memories")
+def list_ops_memories(
+    memory_type: Optional[str] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    user=Depends(require_ai_permission("ai.assistant")),
+):
+    from ai.services.memory_graph import list_memory_nodes
+
+    tenant_id = str(user.get("tenant_id") or "tenant-default")
+    items = list_memory_nodes(tenant_id=tenant_id, memory_type=memory_type, limit=limit)
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/memories")
+def create_ops_memory(
+    req: OpsMemoryCreateRequest,
+    user=Depends(require_ai_permission("ai.assistant")),
+):
+    from ai.services.memory_graph import save_memory_node
+
+    tenant_id = str(user.get("tenant_id") or "tenant-default")
+    user_id = str(user.get("username") or "operator")
+    rel = [(req.relation or "related_to", req.related_entity)] if req.related_entity else []
+    try:
+        return save_memory_node(
+            title=req.title,
+            content=req.content,
+            memory_type=req.memory_type,
+            entity_key=req.entity_key,
+            tags=req.tags,
+            tenant_id=tenant_id,
+            created_by=user_id,
+            related_entities=rel,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/memories/{memory_id}/reinforce")
+def reinforce_ops_memory(
+    memory_id: str,
+    user=Depends(require_ai_permission("ai.assistant")),
+):
+    from ai.services.memory_graph import reinforce_memory_node
+
+    tenant_id = str(user.get("tenant_id") or "tenant-default")
+    ok = reinforce_memory_node(memory_id, tenant_id=tenant_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="memory not found")
+    return {"status": "reinforced", "id": memory_id}
+
+
+@router.delete("/memories/{memory_id}")
+def remove_ops_memory(
+    memory_id: str,
+    user=Depends(require_ai_permission("ai.assistant")),
+):
+    from ai.services.memory_graph import delete_memory_node
+
+    tenant_id = str(user.get("tenant_id") or "tenant-default")
+    ok = delete_memory_node(memory_id, tenant_id=tenant_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="memory not found")
+    return {"status": "deleted", "id": memory_id}

@@ -17,9 +17,10 @@ _BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
 _PRIVATE_KEY_RE = re.compile(r"(?is)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----")
 
 _REDACTION_PATTERNS = [
-    # SNMP Community (Huawei / H3C / Cisco)
-    (re.compile(r'(?i)(snmp-agent\s+community\s+(?:(?:read|write|cipher|simple)\s+)*)(\S+)'), r'\1<REDACTED>'),
-    (re.compile(r'(?i)(snmp-server\s+community\s+)(\S+)'), r'\1<REDACTED>'),
+    # SNMP Community (Huawei / H3C / Cisco) — horizontal whitespace only so
+    # "include snmp-agent community\ndisplay ..." never eats the next line.
+    (re.compile(r'(?i)(?<!display )(?<!show )(?<!include )(snmp-agent[ \t]+community[ \t]+(?:(?:read|write|cipher|simple)[ \t]+)*)([^\s`]+)'), r'\1<REDACTED>'),
+    (re.compile(r'(?i)(?<!display )(?<!show )(?<!include )(snmp-server[ \t]+community[ \t]+)([^\s`]+)'), r'\1<REDACTED>'),
     
     # CLI Passwords & Secrets
     # (?<![\w-]) keeps "trace-secret Bearer" or "db-password x" from being

@@ -133,11 +133,19 @@ def render_alert_analysis(query: str, analysis: Dict[str, Any]) -> str:
     active = int(alerts.get("active_count", 0) or 0)
     recent = int(alerts.get("recent_24h_count", 0) or 0)
     scope = analysis.get("scope") if isinstance(analysis.get("scope"), dict) else {}
-    scope_parts = [part for part in (scope.get("time_range"), scope.get("status")) if part]
+    scope_parts = [part for part in (scope.get("vendor"), scope.get("time_range"), scope.get("status")) if part]
+    vendor_prefix = f"{scope['vendor']} 设备" if scope.get("vendor") else "当前范围"
+    direct_verdict = (
+        f"**有告警**：{vendor_prefix}当前共有 **{active}** 条未恢复告警（最近 24 小时新增 **{recent}** 条）。"
+        if active > 0
+        else f"**无未恢复告警**：{vendor_prefix}当前没有未恢复告警（最近 24 小时共记录 **{recent}** 条历史告警）。"
+    )
     lines = [
         "## Nexora 告警查询结果",
         "",
-        "> 数据来源：PostgreSQL `alert_events` 与设备只读快照；不调用外部模型。",
+        direct_verdict,
+        "",
+        "> 数据来源：PostgreSQL `alert_events` 与设备只读快照；不调用外部模型（0 Token）。",
         "",
     ]
     if any(marker in raw_query for marker in ("在线设备", "离线设备", "多少台", "设备数", "设备总数")):
@@ -619,11 +627,12 @@ class NaturalQueryService:
                 ]),
             },
             "scope": {
+                "vendor": vendor.upper() if vendor else "",
                 "time_range": window[2] if window else "",
                 "status": _ALERT_STATUS_LABELS.get(status_filter, ""),
             },
-            # Bounded, newest first, for the local answer only: hostname,
-            # severity, title and state -- never device ids or messages.
+            # Prefer showing active (unresolved) alerts first so operators asking
+            # "华三的设备有告警没有" immediately see the actual active alarms.
             "records": [
                 {
                     "created_at": _format_alert_time(_row_value(row, "created_at")),
@@ -635,7 +644,7 @@ class NaturalQueryService:
                         _text(_row_value(row, "workflow_status"), "open"), _text(_row_value(row, "workflow_status"))
                     ),
                 }
-                for row in alert_rows[:ALERT_LIST_LIMIT]
+                for row in (active_alerts + [r for r in alert_rows if _text(_row_value(r, "resolved_at"))])[:ALERT_LIST_LIMIT]
             ],
             "evidence": [
                 {"source_type": "alert_events", "source_id": "alert_events", "record_count": len(alert_rows)},

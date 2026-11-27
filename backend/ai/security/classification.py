@@ -129,6 +129,17 @@ def is_redacted_assignment_match(match: re.Match[str]) -> bool:
     value = _CN_ASSIGNMENT_OPERATOR_RE.sub("", value, count=1)
     if _REDACTED_ASSIGNMENT_VALUE_RE.fullmatch(value) or _REDACTED_VALUE_PREFIX_RE.match(value):
         return True
+    # Pure punctuation/markdown backtick or CJK prose after a keyword (e.g.
+    # "`display snmp-agent community`" or "display snmp-agent community 查看团体名")
+    # is never a real credential secret value.
+    cleaned_val = value.strip("`()[]{}<>.,;:!?。，；：！？")
+    if not cleaned_val or not any(ch.isascii() and ch.isalnum() for ch in cleaned_val):
+        return True
+    # Read-only display/show SNMP community inspection commands without a secret value.
+    line_start = match.string.rfind("\n", 0, match.start()) + 1
+    line_prefix = match.string[line_start:match.start()].lower()
+    if re.search(r"\b(?:display|show)\s+snmp(?:-agent|-server)?\s+$", line_prefix):
+        return True
     if value.casefold() in _ASSIGNMENT_MODIFIER_VALUES:
         return bool(re.search(r"\bcommunity\s+$", match.group(0), re.IGNORECASE))
     return False
