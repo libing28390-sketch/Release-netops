@@ -4548,20 +4548,22 @@ def _trace_ip_uncached(
                     expanded_member_ports: set[str] | None = None
                     physical_member_names: list[str] | None = None
                     lag_members_resolved = not is_lag_port
-                    if conn is not None:
+                    if conn is not None and not force_refresh:
                         topology = _topology_neighbors(conn, current_id, port)
                     if not topology and is_lag_port:
                         expanded_member_ports, physical_member_names, lag_members_resolved = _expand_lag_member_ports_live(
                             conn, current, port, result=result,
                         )
-                        if conn is not None and lag_members_resolved and expanded_member_ports:
-                            # Re-check topology_links using freshly expanded physical member ports
+                        if conn is not None and not force_refresh and lag_members_resolved and expanded_member_ports:
+                            # Preserve all distinct neighbors across member interfaces.
+                            by_neighbor = {}
                             for phys_p in sorted(expanded_member_ports):
                                 if phys_p == port_norm_lower:
                                     continue
-                                topology = _topology_neighbors(conn, current_id, phys_p)
-                                if topology:
-                                    break
+                                for neighbor in _topology_neighbors(conn, current_id, phys_p):
+                                    key = (neighbor.get("neighbor_id"), neighbor.get("neighbor_port"))
+                                    by_neighbor.setdefault(key, neighbor)
+                            topology = list(by_neighbor.values())
                     elif not is_lag_port:
                         expanded_member_ports = {port_norm_lower} if port_norm_lower else set()
                         physical_member_names = [port] if port else []
@@ -4582,6 +4584,12 @@ def _trace_ip_uncached(
                             vrf=vrf,
                             variant="topology_links",
                         )
+                        _include_evidence_timestamp(result, topology_collected_at)
+                        topology_age = _route_age_seconds(topology_collected_at)
+                        if topology_age is not None:
+                            result["freshness"]["topology"] = max(
+                                int(result["freshness"].get("topology") or 0), topology_age,
+                            )
                     elif not terminal_identity.get("is_terminal") or force_refresh:
                         topology, topology_collected_at, _, topology_status = _load_lldp_snapshot(
                             current,
@@ -4627,8 +4635,13 @@ def _trace_ip_uncached(
                             )
                         neighbor_device = neighbor_candidates[0] if len(neighbor_candidates) == 1 else None
                         neighbor_id = str((neighbor_device or {}).get("id") or neighbor.get("neighbor_id") or "")
-                        if neighbor_device and neighbor_id not in visited:
-                            child_devices.append(neighbor_device)
+                        if neighbor_device:
+                            if neighbor_id not in visited:
+                                if not any(str(child.get("id") or "") == neighbor_id for child in child_devices):
+                                    child_devices.append(neighbor_device)
+                            else:
+                                result["coverage_gaps"].append(f"topology_incomplete:{current_id}:{port}")
+                                unmanaged_neighbors_on_port.append(neighbor_id)
                         elif neighbor.get("neighbor_name") or neighbor_id:
                             if _is_fit_ap_neighbor(neighbor):
                                 fit_ap_neighbors.append(neighbor)
@@ -4654,29 +4667,17 @@ def _trace_ip_uncached(
 
                     identity = terminal_identity
                     hop["terminal_evidence"] = identity
-                    is_hypervisor_trunk = (
-                        not unmanaged_neighbors_on_port
-                        and (_is_hypervisor_mac(mac) or bool(hypervisor_neighbors))
-                        and (
-                            (bool(identity.get("is_physical")) and bool(identity.get("is_trunk")) and not bool(identity.get("is_aggregation")))
-                            or (bool(identity.get("is_aggregation")) and lag_members_resolved)
-                        )
-                    )
-                    is_server_lag_port = (
-                        bool(identity.get("is_aggregation"))
-                        and lag_members_resolved
-                        and not unmanaged_neighbors_on_port
-                        and not is_hypervisor_trunk
-                    )
-                    is_server_trunk_port = (
-                        bool(identity.get("is_physical"))
-                        and bool(identity.get("is_trunk"))
-                        and not bool(identity.get("is_aggregation"))
-                        and not unmanaged_neighbors_on_port
-                        and not is_hypervisor_trunk
-                    )
-                    is_fit_ap_port = bool(fit_ap_neighbors) and bool(identity.get("is_physical")) and not bool(identity.get("is_aggregation"))
-                    if identity.get("is_terminal") or is_hypervisor_trunk or is_server_lag_port or is_server_trunk_port or is_fit_ap_port:
+                    # A forwarding MAC on a trunk or LAG proves a direction,
+                    # not a directly attached server. LLDP names and OUIs alone
+                    # are hints, not proof of the endpoint or of dual-homing.
+                    if (identity.get("is_trunk") or identity.get("is_aggregation")
+                            or fit_ap_neighbors or hypervisor_neighbors):
+                        hop["is_uplink"] = True
+                        hop["endpoint_classification"] = "LAST_VISIBLE_PORT"
+                        result["coverage_gaps"].append(f"topology_incomplete:{current_id}:{port}")
+                        _log_trace_step(result, f"[{label}] 端口 {port} 为最后可见方向，未确认终端直连")
+                        continue
+                    if identity.get("is_terminal") and not unmanaged_neighbors_on_port:
                         candidate_payload: dict[str, Any] = {
                             "device_id": current_id,
                             "device": label,
@@ -4687,26 +4688,16 @@ def _trace_ip_uncached(
                             "l2_path": path + [hop],
                             "confidence": "high",
                         }
-                        if is_fit_ap_port:
-                            candidate_payload["endpoint_classification"] = "WIRELESS_AP_UPLINK"
-                            candidate_payload["ap_neighbor"] = fit_ap_neighbors[0].get("neighbor_name") or ""
-                        elif is_hypervisor_trunk:
-                            candidate_payload["endpoint_classification"] = "VIRTUAL_MACHINE_HOST"
-                            if hypervisor_neighbors:
-                                candidate_payload["hypervisor_host"] = hypervisor_neighbors[0].get("neighbor_name") or ""
-                        elif is_server_lag_port:
-                            candidate_payload["endpoint_classification"] = "SERVER_LAG_ENDPOINT"
-                        elif is_server_trunk_port:
-                            candidate_payload["endpoint_classification"] = "SERVER_TRUNK_ENDPOINT"
-                        else:
-                            candidate_payload["endpoint_classification"] = "WIRED_ACCESS_ENDPOINT"
-                            active_mac_count = _count_edge_port_active_macs(conn, current_id, port)
-                            if active_mac_count >= 3 and not _is_hypervisor_mac(mac):
-                                candidate_payload["edge_port_warning"] = {
-                                    "code": "suspected_unmanaged_switch",
-                                    "active_mac_count": active_mac_count,
-                                    "message": f"该边缘端口下同时检测到 {active_mac_count} 个活跃 MAC，现场疑似私接非网管桌面小交换机/Hub",
-                                }
+                        candidate_payload["endpoint_classification"] = "WIRED_ACCESS_ENDPOINT"
+                        active_mac_count = _count_edge_port_active_macs(conn, current_id, port)
+                        if active_mac_count >= 3 and not _is_hypervisor_mac(mac):
+                            candidate_payload["edge_port_warning"] = {
+                                "code": "suspected_unmanaged_switch",
+                                "active_mac_count": active_mac_count,
+                                "message": f"该边缘端口下同时检测到 {active_mac_count} 个活跃 MAC，现场疑似私接非网管桌面小交换机/Hub",
+                            }
+                            candidate_payload["confidence"] = "low"
+                            result["coverage_gaps"].append(f"topology_incomplete:{current_id}:{port}")
                         final_candidates.append(candidate_payload)
                         _log_trace_step(
                             result,
@@ -5426,6 +5417,7 @@ def add_legacy_compatibility(result: dict[str, Any]) -> dict[str, Any]:
             conclusion in {"path_has_unverified_branch", "deadline_exceeded_with_candidate"}
             and bool(enriched.get("found"))
         )
+        uncertain_location = partial_known_location and location.get("confidence") == "low"
         location_type = (
             "SNMP_ENDPOINT"
             if conclusion == "endpoint_evidence_confirmed" and enriched.get("source") == "snmp"
@@ -5461,9 +5453,11 @@ def add_legacy_compatibility(result: dict[str, Any]) -> dict[str, Any]:
                 "port": location.get("port") or "",
                 "vlan": location.get("vlan") or "",
                 "type": location_type,
-                "is_uplink": location_type in {"TRACE_INCOMPLETE", "ARP_DIRECT"},
+                "is_uplink": uncertain_location or location_type in {"TRACE_INCOMPLETE", "ARP_DIRECT"},
                 "note": (
-                    "物理接入口已确认；部分路径证据仍待核验"
+                    "最后可见端口；终端直连尚未确认"
+                    if uncertain_location
+                    else "物理接入口已确认；部分路径证据仍待核验"
                     if partial_known_location
                     else "SNMP ARP/FDB 接入口证据"
                     if conclusion == "endpoint_evidence_confirmed" and enriched.get("source") == "snmp"
