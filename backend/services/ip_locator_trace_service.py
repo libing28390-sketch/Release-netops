@@ -1277,10 +1277,13 @@ def _find_next_hop_device_candidates(
         return []
     placeholders = ", ".join("?" for _ in eligible_ids)
     allowed_ids = sorted(eligible_ids)
+    ip_text = str(next_hop).strip()
+    cidr_like = f"{ip_text}/%"
     queries = (
         (
             "SELECT id, hostname, role, platform, ip_address FROM devices "
-            f"WHERE TRIM(ip_address) = ? AND id IN ({placeholders})",
+            f"WHERE (TRIM(ip_address) = ? OR TRIM(ip_address) LIKE ?) AND id IN ({placeholders})",
+            [ip_text, cidr_like, *allowed_ids],
         ),
         (
             "SELECT d.id, d.hostname, d.role, d.platform, d.ip_address "
@@ -1291,28 +1294,35 @@ def _find_next_hop_device_candidates(
             " AND s.successful_generation = a.generation "
             "JOIN devices d ON a.device_id = d.id "
             f"WHERE host(a.ip_address) = ? AND d.id IN ({placeholders})",
+            [ip_text, *allowed_ids],
         ),
         (
             "SELECT d.id, d.hostname, d.role, d.platform, d.ip_address "
             "FROM interfaces i JOIN devices d ON i.device_id = d.id "
-            "WHERE COALESCE(NULLIF(BTRIM(i.primary_ip), ''), NULLIF(BTRIM(i.ip_address), '')) = ? "
+            "WHERE ("
+            "  COALESCE(NULLIF(TRIM(i.primary_ip), ''), NULLIF(TRIM(i.ip_address), '')) = ? "
+            "  OR COALESCE(NULLIF(TRIM(i.primary_ip), ''), NULLIF(TRIM(i.ip_address), '')) LIKE ?"
+            ") "
             f"AND d.id IN ({placeholders})",
+            [ip_text, cidr_like, *allowed_ids],
         ),
         (
             "SELECT d.id, d.hostname, d.role, d.platform, d.ip_address "
             "FROM ip_addresses ip JOIN devices d ON ip.device_id = d.id "
-            f"WHERE TRIM(ip.address) = ? AND d.id IN ({placeholders})",
+            f"WHERE (TRIM(ip.address) = ? OR TRIM(ip.address) LIKE ?) AND d.id IN ({placeholders})",
+            [ip_text, cidr_like, *allowed_ids],
         ),
         (
             "SELECT d.id, d.hostname, d.role, d.platform, d.ip_address "
             "FROM ip_inventory inv JOIN devices d ON inv.device_id = d.id "
-            f"WHERE TRIM(inv.ip) = ? AND d.id IN ({placeholders})",
+            f"WHERE (TRIM(inv.ip) = ? OR TRIM(inv.ip) LIKE ?) AND d.id IN ({placeholders})",
+            [ip_text, cidr_like, *allowed_ids],
         ),
     )
     matches: dict[str, dict[str, Any]] = {}
-    for (query,) in queries:
+    for query, query_params in queries:
         try:
-            rows = conn.execute(query, [str(next_hop).strip(), *allowed_ids]).fetchall()
+            rows = conn.execute(query, query_params).fetchall()
         except Exception:
             continue
         for raw in rows:
@@ -1323,6 +1333,75 @@ def _find_next_hop_device_candidates(
                 # only establish the address-to-ID relation.
                 matches[device_id] = dict(eligible_devices[device_id])
     return [matches[device_id] for device_id in sorted(matches)]
+
+
+def _brief_query_error(exc: Exception) -> str:
+    """Summarize a CLI/route query exception without exposing credentials or internals."""
+    text = f"{type(exc).__name__} {exc}".lower()
+    if any(k in text for k in ("timeout", "timed out")):
+        return "连接或命令超时"
+    if any(k in text for k in ("auth", "permission denied", "login failed", "credential")):
+        return "SSH 认证失败"
+    if any(k in text for k in ("unsupported", "action_code", "not supported", "no published")):
+        return "平台未配置路由查询动作"
+    if any(k in text for k in ("refused", "unreachable", "no route to host", "eof", "reset by peer")):
+        return "设备不可达或连接中断"
+    return type(exc).__name__
+
+
+def _fallback_direct_gateways_from_arp(
+    conn: Any,
+    target_ip: str,
+    eligible_devices: dict[str, dict[str, Any]],
+    vrf: str = "",
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    """Recover direct gateway candidates from current ARP tables when L3 route queries fail."""
+    ip_text = str(target_ip or "").strip()
+    if not ip_text or not eligible_devices:
+        return []
+    allowed_ids = sorted(str(dev_id) for dev_id in eligible_devices if str(dev_id))
+    if not allowed_ids:
+        return []
+    placeholders = ", ".join("?" for _ in allowed_ids)
+    hits: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+    queries = (
+        (
+            "SELECT a.source_device_id AS device_id, a.interface_name AS interface, a.vlan_id AS vlan, a.observed_at AS last_updated "
+            "FROM ipam_current_arp_observations a "
+            f"WHERE TRIM(a.ip_address) = ? AND a.source_device_id IN ({placeholders}) "
+            "ORDER BY a.observed_at DESC",
+            [ip_text, *allowed_ids],
+        ),
+        (
+            "SELECT device_id, interface, vlan, last_updated "
+            "FROM arp_table "
+            f"WHERE TRIM(ip_address) = ? AND device_id IN ({placeholders}) "
+            "ORDER BY last_updated DESC",
+            [ip_text, *allowed_ids],
+        ),
+    )
+    for query, params in queries:
+        try:
+            rows = conn.execute(query, params).fetchall()
+        except Exception:
+            continue
+        for raw in rows:
+            item = dict(raw)
+            dev_id = str(item.get("device_id") or "")
+            if dev_id and dev_id in eligible_devices and dev_id not in hits:
+                route_stub = {
+                    "destination": f"{ip_text}/32",
+                    "protocol": "direct",
+                    "next_hop": "directly connected",
+                    "interface": str(item.get("interface") or ""),
+                    "source": "arp_fallback",
+                    "vrf": vrf,
+                    "last_updated": str(item.get("last_updated") or ""),
+                }
+                hits[dev_id] = (dict(eligible_devices[dev_id]), route_stub)
+        if hits:
+            break
+    return [hits[dev_id] for dev_id in sorted(hits)]
 
 
 _LAG_NAME_RE = re.compile(
@@ -2672,7 +2751,8 @@ def _trace_ip_uncached(
                             storage_failed = True
                             result["coverage_gaps"].append(f"observation_persist_failed:{device_id}:route")
                 except Exception as exc:
-                    result["errors"].append(f"{label} 路由查询失败")
+                    reason = _brief_query_error(exc)
+                    result["errors"].append(f"{label} 路由查询失败（{reason}）")
                     result["coverage_gaps"].append(f"route_failed:{device_id}")
                     _set_cache_source(result, "route", device, "query_failed", vrf=branch["vrf"])
                     logger.debug("[IPLocatorV2] route query failed for %s: %s", label, exc)
@@ -2836,6 +2916,31 @@ def _trace_ip_uncached(
                 })
         if frontier and len(queried_device_ids) >= limits.max_devices:
             result["coverage_gaps"].append("device_budget_exceeded")
+        if not direct_devices and not cancelled and not deadline_exceeded:
+            for fb_device, fb_route in _fallback_direct_gateways_from_arp(conn, target_ip, by_id, vrf):
+                fb_id = str(fb_device.get("id") or "")
+                fb_label = _device_label(fb_device)
+                fb_hop = {
+                    "device_id": fb_id,
+                    "device": fb_label,
+                    "vrf": vrf,
+                    "prefix": fb_route.get("destination") or "",
+                    "protocol": "direct",
+                    "next_hop": "directly connected",
+                    "interface": fb_route.get("interface") or "",
+                    "source": "arp_fallback",
+                    "collected_at": fb_route.get("last_updated") or "",
+                    "age_seconds": None,
+                }
+                direct_devices.append((fb_device, fb_route, [fb_hop]))
+                result["gateway_candidates"].append({
+                    "device_id": fb_id,
+                    "device": fb_label,
+                    "interface": fb_route.get("interface") or "",
+                    "prefix": fb_route.get("destination") or "",
+                    "vrf": vrf,
+                })
+                result["coverage_gaps"].append(f"l3_route_fallback_to_arp:{fb_id}")
     finally:
         conn.close()
 
@@ -4201,6 +4306,7 @@ def _trace_ip_uncached(
                     child_devices: list[dict[str, Any]] = []
                     fit_ap_neighbors: list[dict[str, Any]] = []
                     hypervisor_neighbors: list[dict[str, Any]] = []
+                    unmanaged_neighbors_on_port: list[str] = []
                     if len(topology) > limits.max_candidates_per_hop:
                         result["coverage_gaps"].append(f"neighbor_candidate_budget_exceeded:{current_id}:{port}")
                     for neighbor in topology[: limits.max_candidates_per_hop]:
@@ -4222,6 +4328,8 @@ def _trace_ip_uncached(
                             elif _is_hypervisor_neighbor(neighbor):
                                 hypervisor_neighbors.append(neighbor)
                             else:
+                                unmanaged_name = str(neighbor.get("neighbor_name") or neighbor_id)
+                                unmanaged_neighbors_on_port.append(unmanaged_name)
                                 result["coverage_gaps"].append(f"neighbor_unmanaged:{neighbor.get('neighbor_name')}")
                     if child_devices:
                         hop["is_uplink"] = True
@@ -4236,13 +4344,27 @@ def _trace_ip_uncached(
                     identity = terminal_identity
                     hop["terminal_evidence"] = identity
                     is_hypervisor_trunk = (
+                        not unmanaged_neighbors_on_port
+                        and (_is_hypervisor_mac(mac) or bool(hypervisor_neighbors))
+                        and (
+                            (bool(identity.get("is_physical")) and bool(identity.get("is_trunk")) and not bool(identity.get("is_aggregation")))
+                            or bool(identity.get("is_aggregation"))
+                        )
+                    )
+                    is_server_lag_port = (
+                        bool(identity.get("is_aggregation"))
+                        and not unmanaged_neighbors_on_port
+                        and not is_hypervisor_trunk
+                    )
+                    is_server_trunk_port = (
                         bool(identity.get("is_physical"))
                         and bool(identity.get("is_trunk"))
                         and not bool(identity.get("is_aggregation"))
-                        and (_is_hypervisor_mac(mac) or bool(hypervisor_neighbors))
+                        and not unmanaged_neighbors_on_port
+                        and not is_hypervisor_trunk
                     )
                     is_fit_ap_port = bool(fit_ap_neighbors) and bool(identity.get("is_physical")) and not bool(identity.get("is_aggregation"))
-                    if identity.get("is_terminal") or is_hypervisor_trunk or is_fit_ap_port:
+                    if identity.get("is_terminal") or is_hypervisor_trunk or is_server_lag_port or is_server_trunk_port or is_fit_ap_port:
                         candidate_payload: dict[str, Any] = {
                             "device_id": current_id,
                             "device": label,
@@ -4260,6 +4382,10 @@ def _trace_ip_uncached(
                             candidate_payload["endpoint_classification"] = "VIRTUAL_MACHINE_HOST"
                             if hypervisor_neighbors:
                                 candidate_payload["hypervisor_host"] = hypervisor_neighbors[0].get("neighbor_name") or ""
+                        elif is_server_lag_port:
+                            candidate_payload["endpoint_classification"] = "SERVER_LAG_ENDPOINT"
+                        elif is_server_trunk_port:
+                            candidate_payload["endpoint_classification"] = "SERVER_TRUNK_ENDPOINT"
                         else:
                             candidate_payload["endpoint_classification"] = "WIRED_ACCESS_ENDPOINT"
                             active_mac_count = _count_edge_port_active_macs(conn, current_id, port)
@@ -4337,16 +4463,30 @@ def _trace_ip_uncached(
         else ""
     )
 
-    def _gap_is_unrelated_cross_site_route_failure(gap: str) -> bool:
-        if not confirmed_candidate_site or not gap.startswith("route_failed:"):
+    def _gap_is_unrelated_to_confirmed_endpoint(gap: str) -> bool:
+        if len(final_candidates) != 1:
             return False
-        failed_dev_id = gap.split(":", 1)[1].strip()
-        failed_site = _device_site_key(by_id.get(failed_dev_id))
-        return bool(failed_site and failed_site != confirmed_candidate_site)
+        if gap.startswith("route_failed:"):
+            failed_dev_id = gap.split(":", 1)[1].strip()
+            # If the same gateway recovered via direct ARP fallback and confirmed
+            # the attached port, its earlier route_failed gap is superseded.
+            if f"l3_route_fallback_to_arp:{failed_dev_id}" in result["coverage_gaps"]:
+                return True
+            if not confirmed_candidate_site:
+                return False
+            failed_site = _device_site_key(by_id.get(failed_dev_id))
+            return bool(failed_site and failed_site != confirmed_candidate_site)
+        if gap.startswith("next_hop_unmanaged:"):
+            # Once a direct gateway + L2 MAC trace has uniquely confirmed a
+            # physical attachment, an unmanaged next-hop discovered on a
+            # parallel non-direct L3 branch (e.g. default/remote route on
+            # another router/firewall) does not invalidate the direct port.
+            return bool(direct_devices)
+        return False
 
     has_unverified_branch = any(
         any(str(gap).startswith(prefix) for prefix in fatal_gap_prefixes)
-        and not _gap_is_unrelated_cross_site_route_failure(str(gap))
+        and not _gap_is_unrelated_to_confirmed_endpoint(str(gap))
         for gap in result["coverage_gaps"]
     )
     if len(final_candidates) == 1 and not has_unverified_branch and not deadline_exceeded:
@@ -4370,6 +4510,25 @@ def _trace_ip_uncached(
             collected_at=str(result.get("evidence_collected_at") or _now_iso()),
             result=result,
         )
+    elif len(final_candidates) == 2 and not has_unverified_branch and not deadline_exceeded and (
+        len({str(c.get("device_id") or "") for c in final_candidates}) == 2
+        and len({str(c.get("mac") or "").lower() for c in final_candidates if c.get("mac")}) == 1
+        and all(
+            c.get("endpoint_classification") in {
+                "SERVER_LAG_ENDPOINT",
+                "SERVER_TRUNK_ENDPOINT",
+                "VIRTUAL_MACHINE_HOST",
+                "WIRED_ACCESS_ENDPOINT",
+            }
+            for c in final_candidates
+        )
+    ):
+        # Data-center dual-homed / M-LAG / vPC / IRF server attachment across
+        # two distinct switches for the same MAC with no downstream switches.
+        result["found"] = True
+        result["status"] = "completed"
+        result["conclusion"] = "dual_homed_access_confirmed"
+        result["location"] = final_candidates[0]
     elif len(final_candidates) > 1:
         result["found"] = False
         result["status"] = "partial"
@@ -4976,23 +5135,37 @@ def add_legacy_compatibility(result: dict[str, Any]) -> dict[str, Any]:
             if conclusion == "arp_only"
             else "TRACE_INCOMPLETE"
         )
-        enriched["locations"] = [{
-            "switch_id": location.get("device_id") or "",
-            "switch_name": location.get("device") or "",
-            "port": location.get("port") or "",
-            "vlan": location.get("vlan") or "",
-            "type": location_type,
-            "is_uplink": location_type in {"TRACE_INCOMPLETE", "ARP_DIRECT"},
-            "note": (
-                "物理接入口已确认；部分路径证据仍待核验"
-                if partial_known_location
-                else "SNMP ARP/FDB 接入口证据"
-                if conclusion == "endpoint_evidence_confirmed" and enriched.get("source") == "snmp"
-                else "当前 ARP/FDB 代次已确认物理 Access 端口"
-                if conclusion == "endpoint_evidence_confirmed"
-                else "CLI 四阶段路径追踪结果"
-            ),
-        }]
+        if conclusion == "dual_homed_access_confirmed" and len(enriched.get("terminal_candidates") or []) >= 2:
+            enriched["locations"] = [
+                {
+                    "switch_id": item.get("device_id") or "",
+                    "switch_name": item.get("device") or "",
+                    "port": item.get("port") or "",
+                    "vlan": item.get("vlan") or "",
+                    "type": "PATH_TRACED",
+                    "is_uplink": False,
+                    "note": "双归/M-LAG 服务器接入端口已确认",
+                }
+                for item in (enriched.get("terminal_candidates") or [])
+            ]
+        else:
+            enriched["locations"] = [{
+                "switch_id": location.get("device_id") or "",
+                "switch_name": location.get("device") or "",
+                "port": location.get("port") or "",
+                "vlan": location.get("vlan") or "",
+                "type": location_type,
+                "is_uplink": location_type in {"TRACE_INCOMPLETE", "ARP_DIRECT"},
+                "note": (
+                    "物理接入口已确认；部分路径证据仍待核验"
+                    if partial_known_location
+                    else "SNMP ARP/FDB 接入口证据"
+                    if conclusion == "endpoint_evidence_confirmed" and enriched.get("source") == "snmp"
+                    else "当前 ARP/FDB 代次已确认物理 Access 端口"
+                    if conclusion == "endpoint_evidence_confirmed"
+                    else "CLI 四阶段路径追踪结果"
+                ),
+            }]
         enriched["mac"] = location.get("mac") or enriched.get("mac")
         if enriched.get("mac"):
             enriched["mac_display"] = legacy._format_mac(str(enriched["mac"]))
@@ -5027,6 +5200,7 @@ def add_legacy_compatibility(result: dict[str, Any]) -> dict[str, Any]:
         "registered_vip_ambiguous": "scope_ambiguous",
         "endpoint_evidence_confirmed": "terminal",
         "managed_access_confirmed": "terminal",
+        "dual_homed_access_confirmed": "terminal",
         "device_interface": "device_interface",
         "arp_only": "arp_only",
         "topology_incomplete": "incomplete",
@@ -5050,7 +5224,7 @@ def add_legacy_compatibility(result: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(enriched.get("mac_lookup"), dict):
         coverage = [str(item) for item in enriched.get("coverage_gaps") or []]
         mac_status = (
-            "found" if enriched.get("conclusion") in {"managed_access_confirmed", "endpoint_evidence_confirmed"}
+            "found" if enriched.get("conclusion") in {"managed_access_confirmed", "endpoint_evidence_confirmed", "dual_homed_access_confirmed"}
             else "query_failed" if any("mac_failed:" in item for item in coverage)
             else "unsupported" if any("unsupported" in item for item in coverage)
             else "not_found" if any("mac_not_found:" in item for item in coverage)
@@ -5078,6 +5252,7 @@ def add_legacy_compatibility(result: dict[str, Any]) -> dict[str, Any]:
             "neighbor_unsupported:",
             "next_hop_neighbor_",
             "observation_persist_failed:",
+            "l3_route_fallback_to_arp:",
         )
         for gap in enriched["coverage_gaps"]:
             message = str(gap)
@@ -5088,13 +5263,31 @@ def add_legacy_compatibility(result: dict[str, Any]) -> dict[str, Any]:
             if message not in existing_errors:
                 existing_errors.append(message)
         # Once a terminal access port is definitively confirmed, drop unrelated
-        # non-path route-query noise (e.g. wireless controllers) from user errors
-        # while retaining them in coverage_gaps for diagnostics.
-        if enriched.get("conclusion") in {"managed_access_confirmed", "endpoint_evidence_confirmed"}:
+        # non-path route-query noise (e.g. wireless controllers or parallel
+        # unmanaged next-hops) from user errors while retaining them in
+        # coverage_gaps for diagnostics.
+        if enriched.get("conclusion") in {"managed_access_confirmed", "endpoint_evidence_confirmed", "dual_homed_access_confirmed"}:
             existing_errors = [
                 msg for msg in existing_errors
-                if not str(msg).endswith("路由查询失败")
+                if "路由查询失败" not in str(msg)
+                and not str(msg).startswith("next_hop_unmanaged:")
             ]
+        elif enriched.get("conclusion") == "topology_incomplete":
+            l2_hops = enriched.get("l2_paths") or []
+            if l2_hops and isinstance(l2_hops[-1], dict):
+                last_hop = l2_hops[-1]
+                sw = str(last_hop.get("device") or last_hop.get("device_id") or "").strip()
+                pt = str(last_hop.get("port") or "").strip()
+                ev = last_hop.get("terminal_evidence") if isinstance(last_hop.get("terminal_evidence"), dict) else {}
+                if sw and pt:
+                    if ev.get("is_aggregation"):
+                        hint = f"MAC 表命中 {sw} 聚合口 {pt}，但未发现下游交换机邻居且无法确认为终端直连口"
+                    elif not ev.get("is_access") and not ev.get("is_trunk"):
+                        hint = f"MAC 表命中 {sw}:{pt}，但该接口端口模式未采集或非 Access 边缘口，请同步接口信息后重试"
+                    else:
+                        hint = f"MAC 表命中 {sw}:{pt}，但下行链路/接入口角色尚未确认"
+                    if hint not in existing_errors:
+                        existing_errors.insert(0, hint)
         enriched["errors"] = existing_errors
     cache = dict(enriched.get("cache") or {})
     cache.setdefault("enabled", True)

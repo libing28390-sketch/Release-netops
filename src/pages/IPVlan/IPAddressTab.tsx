@@ -1936,7 +1936,21 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                 ) : (
                   <tr>
                     <td colSpan={14} className="py-12 text-center text-xs text-[var(--ui-fg-muted)] font-medium">
-                      {zh ? '当前筛选范围暂无 IP 记录' : 'No IP record in the current scope'}
+                      <div className="flex flex-col items-center gap-2">
+                        <span>{zh ? '当前筛选范围暂无已登记的 IP 记录' : 'No registered IP record in the current scope'}</span>
+                        <span className="text-[11px] font-normal text-slate-400">
+                          {zh
+                            ? '网络自动采集的终端展示在「发现终端」中，确认所属网络后可登记到本台账。'
+                            : 'Network-discovered endpoints appear under Discovered Endpoints and can be registered here once confirmed.'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => navigate('/ipam/endpoints')}
+                          className="mt-1 inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 transition-colors"
+                        >
+                          {zh ? '前往「发现终端」查看与登记' : 'Go to Discovered Endpoints'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 )}

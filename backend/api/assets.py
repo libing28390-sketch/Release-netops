@@ -1831,17 +1831,46 @@ def _sync_enriched_asset_rack_device(item: dict, actor) -> dict[str, str]:
         conn.close()
 
 
-def _delete_linked_device(conn, asset_id: str) -> None:
-    """Cascade-delete the devices row linked to the asset, cleaning up all FK references first."""
-    row = conn.execute('SELECT id FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
-    if not row:
+def _cleanup_telemetry_fk_references(conn, *, device_id: str | None = None, asset_id: str | None = None) -> None:
+    """Remove telemetry child rows bottom-up so ON DELETE RESTRICT FKs never block deletion."""
+    conditions: list[str] = []
+    params: list[str] = []
+    if device_id:
+        conditions.append('device_id = ?')
+        params.append(device_id)
+    if asset_id:
+        conditions.append('asset_id = ?')
+        params.append(asset_id)
+    if not conditions:
         return
-    device_id = row['id'] if isinstance(row, dict) else row[0]
+    cfg_rows = conn.execute(
+        f"SELECT id FROM telemetry_device_configs WHERE {' OR '.join(conditions)}",
+        params,
+    ).fetchall()
+    cfg_ids = [r['id'] if isinstance(r, dict) else r[0] for r in cfg_rows]
+    if not cfg_ids:
+        return
+    cfg_ph = ','.join('?' for _ in cfg_ids)
+    sub_rows = conn.execute(
+        f'SELECT id FROM telemetry_subscriptions WHERE config_id IN ({cfg_ph})',
+        cfg_ids,
+    ).fetchall()
+    sub_ids = [r['id'] if isinstance(r, dict) else r[0] for r in sub_rows]
+    if sub_ids:
+        sub_ph = ','.join('?' for _ in sub_ids)
+        conn.execute(f'DELETE FROM telemetry_subscription_runtime WHERE subscription_id IN ({sub_ph})', sub_ids)
+        conn.execute(
+            f'DELETE FROM telemetry_config_jobs WHERE subscription_id IN ({sub_ph}) OR device_config_id IN ({cfg_ph})',
+            [*sub_ids, *cfg_ids],
+        )
+    else:
+        conn.execute(f'DELETE FROM telemetry_config_jobs WHERE device_config_id IN ({cfg_ph})', cfg_ids)
+    conn.execute(f'DELETE FROM telemetry_subscriptions WHERE config_id IN ({cfg_ph})', cfg_ids)
+    conn.execute(f'DELETE FROM telemetry_device_configs WHERE id IN ({cfg_ph})', cfg_ids)
 
-    # IPAM prefixes are site-scoped resources, so deleting a device must not
-    # delete every prefix at the device's site. It must, however, remove
-    # device-owned address observations and detach prefix gateway references;
-    # otherwise IPAM keeps showing stale addresses after the device is gone.
+
+def cleanup_device_fk_references(conn, device_id: str, asset_id: str | None = None) -> None:
+    """Clean up all non-cascading (NO ACTION / RESTRICT) FK references to a device."""
     interface_cursor = conn.execute(
         'SELECT id FROM interfaces WHERE device_id = ?', (device_id,)
     )
@@ -1860,8 +1889,15 @@ def _delete_linked_device(conn, asset_id: str) -> None:
             f'UPDATE prefixes SET gateway_interface_id = NULL WHERE gateway_interface_id IN ({placeholders})',
             interface_ids,
         )
+        conn.execute(
+            f'DELETE FROM topology_links WHERE source_interface_id IN ({placeholders}) OR target_interface_id IN ({placeholders})',
+            [*interface_ids, *interface_ids],
+        )
 
-    # Delete from all tables that reference devices(id)
+    # Delete from all tables with NO ACTION / RESTRICT FKs referencing devices(id)
+    conn.execute('DELETE FROM ipam_fhrp_group_members WHERE device_id = ?', (device_id,))
+    _cleanup_telemetry_fk_references(conn, device_id=device_id, asset_id=asset_id)
+    conn.execute('DELETE FROM links WHERE source_device_id = ? OR target_device_id = ?', (device_id, device_id))
     conn.execute('DELETE FROM jobs WHERE device_id = ?', (device_id,))
     conn.execute('DELETE FROM config_snapshots WHERE device_id = ?', (device_id,))
     conn.execute('DELETE FROM topology_links WHERE source_device_id = ? OR target_device_id = ?', (device_id, device_id))
@@ -1887,6 +1923,14 @@ def _delete_linked_device(conn, asset_id: str) -> None:
     from services.wan_link_service import delete_wan_links_for_device
     delete_wan_links_for_device(conn, device_id)
 
+
+def _delete_linked_device(conn, asset_id: str) -> None:
+    """Cascade-delete the devices row linked to the asset, cleaning up all FK references first."""
+    row = conn.execute('SELECT id FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
+    if not row:
+        return
+    device_id = row['id'] if isinstance(row, dict) else row[0]
+    cleanup_device_fk_references(conn, device_id, asset_id=asset_id)
     conn.execute('DELETE FROM devices WHERE id = ?', (device_id,))
     # Credentials are managed resources, not children of an asset. Deleting
     # an asset only removes the device binding; credential cleanup is an
@@ -3882,6 +3926,7 @@ def _delete_asset_in_connection(conn, asset_id: str, user) -> None:
         (now_iso, asset_id),
     )
     conn.execute('DELETE FROM pam_session_tokens WHERE asset_id = ?', (asset_id,))
+    _cleanup_telemetry_fk_references(conn, asset_id=asset_id)
     conn.execute('DELETE FROM physical_assets WHERE id = ?', (asset_id,))
     _audit_asset_event(
         conn,
