@@ -323,6 +323,7 @@ def _pipeline_versions(
 
 def _trace_contract_version() -> str:
     from services.topology_lldp_snapshot_service import lldp_snapshot_versions
+    from services.ip_locator_endpoint_evidence import find_current_endpoint_evidence
 
     all_functions = (
         _route_command, legacy.parse_routing_table, _parse_target_route_output, _route_row, _best_routes,
@@ -332,6 +333,7 @@ def _trace_contract_version() -> str:
         getattr(legacy, "_parse_mac_output", None), getattr(legacy, "_parse_mac_table_line", None),
         getattr(legacy, "_collect_lldp_from_device", None), _lldp_neighbors,
         _load_lldp_snapshot, _record_topology_snapshot_dependency, lldp_snapshot_versions,
+        _trace_ip_uncached, find_current_endpoint_evidence,
     )
     material = {
         "functions": [_callable_fingerprint(function) for function in all_functions],
@@ -2136,7 +2138,6 @@ def _load_lldp_snapshot(
         # snapshot failed/lacked details still drill down cleanly without adding
         # redundant SSH round-trips on already-verified terminal access ports.
         label = _device_label(device)
-        per_port_clean_empty = False
         for phys_port in phys_ports[:2]:
             lldp_cmd = _lldp_interface_verbose_command(device, phys_port)
             if not lldp_cmd:
@@ -2155,14 +2156,13 @@ def _load_lldp_snapshot(
                     snapshot_status = {"status": "found", "source": "per_port_lldp_verbose"}
                     collected_at = collected_at or _now_iso()
                     break
-                per_port_clean_empty = True
-                _log_trace_step(result, f"[{label}] `{lldp_cmd}` 未发现 LLDP 邻居")
+                # An empty parse does not prove a negative LLDP result.
+                # Preserve the full snapshot failure unless a parser has
+                # positively identified a complete, empty response.
+                _log_trace_step(result, f"[{label}] `{lldp_cmd}` 未解析到 LLDP 邻居，结果未确认")
             except Exception as exc:
                 _log_trace_step(result, f"[{label}] `{lldp_cmd}` 查询失败（{_brief_query_error(exc)}）")
                 logger.debug("[IPLocatorV2] per-port LLDP verbose failed for %s/%s: %s", label, phys_port, exc)
-        if not selected and full_snapshot_failed and per_port_clean_empty:
-            snapshot_status = {"status": "not_found", "source": "per_port_lldp_verbose"}
-            collected_at = collected_at or _now_iso()
     elif full_snapshot_failed and not selected:
         return [], collected_at, task_id, snapshot_status
     if collected_at:
@@ -2647,7 +2647,7 @@ def _trace_ip_uncached(
                 target_ip,
                 tenant_id=tenant_id or None,
                 site_id=site_id or None,
-                vrf=vrf if vrf and vrf.lower() not in {"default", "global"} else None,
+                vrf=vrf,
                 authorized_device_ids=exact_scope_ids,
             )
             if exact_matches:
@@ -2677,10 +2677,12 @@ def _trace_ip_uncached(
                         "peer_ip": peer.ip,
                         "peer_oper_status": peer.oper_status,
                     }
-                result["status"] = "completed"
-                result["conclusion"] = "device_interface"
-                result["found"] = True
-                result["location"] = local_location
+                unique_match = len(exact_matches) == 1
+                result["status"] = "completed" if unique_match else "partial"
+                result["conclusion"] = "device_interface" if unique_match else "ambiguous_terminal_candidates"
+                result["found"] = unique_match
+                if unique_match:
+                    result["location"] = local_location
                 result["terminal_candidates"] = [
                     {
                         "device_id": m.device_id,
@@ -2706,7 +2708,7 @@ def _trace_ip_uncached(
                 target_ip,
                 tenant_id=tenant_id or None,
                 site_id=site_id or None,
-                vrf=vrf if vrf and vrf.lower() not in {"default", "global"} else None,
+                vrf=vrf,
                 authorized_device_ids=by_id.keys(),
             )
             seen_gw_ids: set[str] = set()
@@ -3871,7 +3873,7 @@ def _trace_ip_uncached(
     # MAC recursion starts at each ARP hit, then follows only known topology
     # neighbours.  All SQL reads are finished before a CLI call is made.
     final_candidates: list[dict[str, Any]] = []
-    visited_l2: set[tuple[str, str]] = set()
+    visited_l2: set[tuple[str, str, str]] = set()
     try:
         conn = get_db_connection()
     except Exception:
@@ -3892,7 +3894,7 @@ def _trace_ip_uncached(
                         result["coverage_gaps"].append("L2 路径超过最大跳数")
                     continue
                 visited = set(visited) | {current_id}
-                pair = (current_id, mac)
+                pair = (current_id, mac, str(arp.get("vlan") or ""))
                 if pair in visited_l2:
                     continue
                 if current_id not in queried_device_ids and len(queried_device_ids) >= limits.max_devices:
@@ -4750,6 +4752,9 @@ def _trace_ip_uncached(
         "next_hop_ambiguous:",
         "next_hop_candidate_budget_exceeded:",
         "neighbor_ambiguous:",
+        "neighbor_query_failed:",
+        "neighbor_unsupported:",
+        "neighbor_parse_incomplete:",
         "route_loop:",
         "next_hop_out_of_scope:",
         "device_budget_exceeded",
@@ -4828,25 +4833,8 @@ def _trace_ip_uncached(
             collected_at=str(result.get("evidence_collected_at") or _now_iso()),
             result=result,
         )
-    elif len(final_candidates) == 2 and not has_unverified_branch and not deadline_exceeded and (
-        len({str(c.get("device_id") or "") for c in final_candidates}) == 2
-        and len({str(c.get("mac") or "").lower() for c in final_candidates if c.get("mac")}) == 1
-        and all(
-            c.get("endpoint_classification") in {
-                "SERVER_LAG_ENDPOINT",
-                "SERVER_TRUNK_ENDPOINT",
-                "VIRTUAL_MACHINE_HOST",
-                "WIRED_ACCESS_ENDPOINT",
-            }
-            for c in final_candidates
-        )
-    ):
-        # Data-center dual-homed / M-LAG / vPC / IRF server attachment across
-        # two distinct switches for the same MAC with no downstream switches.
-        result["found"] = True
-        result["status"] = "completed"
-        result["conclusion"] = "dual_homed_access_confirmed"
-        result["location"] = final_candidates[0]
+    # A shared MAC alone cannot establish dual-homing: mobility, loops and
+    # overlapping broadcast domains can produce the same observations.
     elif len(final_candidates) > 1:
         result["found"] = False
         result["status"] = "partial"
