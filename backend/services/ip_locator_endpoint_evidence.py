@@ -170,10 +170,12 @@ def find_current_endpoint_evidence(
                     start_device_id=start,
                 )
             ]
+            # An unresolved in-scope ARP source must not disappear from the
+            # uniqueness decision just because its FDB cannot confirm a port.
             # Multiple current IP/context identities are ambiguous even if
             # they happen to share the same MAC or physical port.
             if len(arp_rows) != 1:
-                continue
+                return None
             arp = arp_rows[0]
             mac = discovery._normalized_mac(arp.get("mac"))
             vlan = discovery._normalize_vlan_number(arp.get("vlan"))
@@ -185,22 +187,22 @@ def find_current_endpoint_evidence(
                 or _id(arp.get("evidence_status")).lower() != "recent"
                 or _id(arp.get("timestamp_status")).lower() != "valid"
             ):
-                continue
+                return None
 
             if source_context == "unknown":
                 if not is_default_vrf:
-                    continue
+                    return None
             elif source_context == "global":
                 if not is_default_vrf or effective_context != "explicit_global":
-                    continue
+                    return None
             elif source_context == "vrf":
                 if (
                     is_default_vrf or effective_context != "explicit_vrf"
                     or _id(arp.get("vrf_id")) != requested_vrf
                 ):
-                    continue
+                    return None
             else:
-                continue
+                return None
 
             fdb_rows = [
                 row for row in discovery._current_fdb_endpoint_projection(
@@ -216,7 +218,7 @@ def find_current_endpoint_evidence(
                 and _id(row.get("local_context_key")) == _id(arp.get("local_context_key"))
             ]
             if len(fdb_rows) != 1:
-                continue
+                return None
             fdb = fdb_rows[0]
             if (
                 not fdb.get("coverage_complete")
@@ -227,7 +229,7 @@ def find_current_endpoint_evidence(
                 or _id(fdb.get("path_classification")).lower() != "access_edge"
                 or not _id(fdb.get("switch_port"))
             ):
-                continue
+                return None
 
             # The FDB path projector classifies an interface by port mode,
             # while this IP-to-port join also needs to prove that the learned
@@ -246,7 +248,7 @@ def find_current_endpoint_evidence(
                 if normalize_interface_name(_id(row.get("interface_name"))).strip().lower() == port_key
             ]
             if len(interface_rows) != 1:
-                continue
+                return None
             interface = interface_rows[0]
             if (
                 _id(interface.get("interface_type")).lower()
@@ -254,7 +256,7 @@ def find_current_endpoint_evidence(
                 or _id(interface.get("switchport_mode")).lower() != "access"
                 or discovery._normalize_vlan_number(interface.get("access_vlan")) != vlan
             ):
-                continue
+                return None
 
             arp_observed_at, _ = _iso_utc(arp.get("observed_at"))
             fdb_observed_at, _ = _iso_utc(fdb.get("observed_at"))
