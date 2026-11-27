@@ -229,3 +229,92 @@ def test_targeted_current_projection_retains_same_target_conflicts(isolated_db):
         assert discovery._current_fdb_endpoint_projection(
             conn, device_id=DEVICE_ID, target_mac="02:11:22:33:44:55",
         ) == []
+
+@pytest.mark.parametrize("failure", [
+    "", "unknown_scope", "wrong_space", "unauthorized", "wrong_vlan",
+    "stale_link", "stale_interface", "ambiguous_fdb", "inferred_link",
+])
+def test_cross_device_current_fdb_requires_positive_tagged_path(monkeypatch, failure):
+    from services.ip_locator_endpoint_evidence import _current_cross_device_fdb_path
+
+    stamp = _now()
+    gateway = "gw"
+    access = "sw"
+    mac = TARGET_MAC
+    vlan = "7"
+    common = {
+        "tenant_id": "tenant-default", "site_id": SITE_ID,
+        "address_space_id": "global-space", "scope_status": "resolved",
+        "mac": mac, "vlan": vlan, "entry_type": "dynamic",
+        "coverage_complete": True, "evidence_status": "recent",
+        "timestamp_status": "valid", "observed_at": stamp,
+    }
+    root = dict(common, source_device_id=gateway, switch_port="GE1/0/1",
+                path_classification="trunk_tagged_interface")
+    edge = dict(common, source_device_id=access, switch_port="GE1/0/2",
+                path_classification="access_edge")
+    arp = dict(common, source_vrf_context_status="global")
+    def port(name, mode):
+        return {
+            "id": name, "interface_name": name, "interface_type": "physical",
+            "switchport_mode": mode, "access_vlan": 7, "native_vlan": 1,
+            "allowed_vlans": "7", "admin_status": "up", "oper_status": "up",
+            "last_seen": stamp,
+        }
+
+    interfaces = {
+        gateway: [port("GE1/0/1", "trunk")],
+        access: [port("GE1/0/1", "trunk"), port("GE1/0/2", "access")],
+    }
+    link = {
+        "id": "link-1", "source_device_id": gateway, "target_device_id": access,
+        "source_port": "GE1/0/1", "target_port": "GE1/0/1", "status": "up",
+        "link_kind": "physical", "discovery_source": "lldp", "last_seen": stamp,
+    }
+    allowed = {gateway, access}
+    rows = [edge]
+    if failure == "unknown_scope":
+        arp["source_vrf_context_status"] = "unknown"
+    elif failure == "wrong_space":
+        edge["address_space_id"] = "other-space"
+    elif failure == "unauthorized":
+        allowed.remove(access)
+    elif failure == "wrong_vlan":
+        interfaces[access][0]["allowed_vlans"] = "8"
+    elif failure == "stale_link":
+        link["last_seen"] = "2000-01-01T00:00:00+00:00"
+    elif failure == "stale_interface":
+        interfaces[access][0]["last_seen"] = "2000-01-01T00:00:00+00:00"
+    elif failure == "ambiguous_fdb":
+        rows.append(dict(edge, switch_port="GE1/0/3"))
+    elif failure == "inferred_link":
+        link["is_inferred"] = True
+
+    class Rows:
+        def __init__(self, rows):
+            self.rows = rows
+        def fetchall(self):
+            return self.rows
+
+    class Connection:
+        def execute(self, sql, params):
+            if "FROM interfaces" in sql:
+                return Rows(interfaces[params[0]])
+            if "FROM topology_links" in sql:
+                return Rows([link])
+            raise AssertionError(sql)
+
+    monkeypatch.setattr(
+        discovery, "_current_fdb_endpoint_projection",
+        lambda conn, **kwargs: rows if kwargs["device_id"] == access else [],
+    )
+    result = _current_cross_device_fdb_path(
+        Connection(), arp=arp, first_fdb=root, allowed=allowed,
+        tenant="tenant-default", mac=mac, vlan=vlan,
+    )
+    if failure:
+        assert result is None
+    else:
+        assert [item["source_device_id"] for item in result] == [gateway, access]
+        assert result[0]["transit"]["link_id"] == "link-1"
+        assert result[-1]["switch_port"] == "GE1/0/2"
