@@ -178,6 +178,7 @@ def _current_cross_device_fdb_path(
                 or not current.get("coverage_complete")
                 or current.get("path_ambiguity") or current.get("virtual_gateway_mac")
                 or _id(current.get("evidence_status")) != "recent"
+                or _id(current.get("timestamp_status")) != "valid"
                 or not fresh(current.get("observed_at"))):
             return None
         visited.add(device)
@@ -213,6 +214,9 @@ def _current_cross_device_fdb_path(
                 if _id(link.get("status")).lower() != "up":
                     continue
                 if (_id(link.get("link_kind")).lower() != "physical"
+                        or _id(link.get("discovery_source")).lower() not in {"lldp", "cdp"}
+                        or link.get("is_inferred") or link.get("is_unmanaged")
+                        or not _id(link.get("id"))
                         or link.get("source_aggregation_name") or link.get("target_aggregation_name")
                         or not fresh(link.get("last_seen"))):
                     return None
