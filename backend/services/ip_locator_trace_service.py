@@ -336,6 +336,7 @@ def _trace_contract_version() -> str:
         getattr(legacy, "_collect_lldp_from_device", None), _lldp_neighbors,
         _load_lldp_snapshot, _record_topology_snapshot_dependency, lldp_snapshot_versions,
         _trace_ip_uncached, find_current_endpoint_evidence, _current_cross_device_fdb_path,
+        _parse_lag_member_ports, _expand_lag_member_ports_live, _topology_neighbors,
     )
     material = {
         "functions": [_callable_fingerprint(function) for function in all_functions],
@@ -1460,6 +1461,14 @@ def _parse_lag_member_ports(output: str, lag_norm: str = "") -> list[str]:
             continue
         for match in _PHYSICAL_MEMBER_TOKEN_RE.finditer(stripped):
             raw_port = match.group(1)
+            tail = stripped[match.end():]
+            # Known non-forwarding markers in Comware, VRP and IOS summaries.
+            # Unknown vendor formats remain candidate hints, not terminal proof.
+            if re.match(r"^\s*(?:\(R\))?\s+(?:U|I|Unselect(?:ed)?|Down)\b", tail, re.IGNORECASE):
+                continue
+            flag = re.match(r"^\s*\(([A-Za-z]+)\)", tail)
+            if flag and flag.group(1) in {"D", "I", "s", "H", "w", "u", "f", "M"}:
+                continue
             norm = legacy.normalize_interface_name(raw_port).lower()
             if not norm or norm == lag_norm or _LAG_NAME_RE.match(re.sub(r"\s+", "", norm)):
                 continue
@@ -1555,6 +1564,7 @@ def _expand_lag_member_ports_live(
     port: str,
     *,
     result: dict[str, Any] | None = None,
+    force_refresh: bool = False,
 ) -> tuple[set[str], list[str], bool]:
     """Expand a LAG to physical members via DB first, then live CLI if DB has no members.
 
@@ -1600,7 +1610,7 @@ def _expand_lag_member_ports_live(
             pass
         physical_norms = sorted(p for p in expanded if p != normalized and not _LAG_NAME_RE.match(re.sub(r"\s+", "", p)))
 
-    if physical_norms:
+    if physical_norms and not force_refresh:
         _log_trace_step(result, f"[{label}] 聚合口 {port} 展开成员物理接口: {', '.join(physical_norms)}")
         return expanded, physical_norms, True
 
@@ -1611,6 +1621,8 @@ def _expand_lag_member_ports_live(
             output = legacy._send_command(device, cmd, force_refresh=True)
             parsed_members = _parse_lag_member_ports(str(output or ""), lag_norm=normalized)
             if parsed_members:
+                if force_refresh:
+                    expanded = {normalized}
                 for mp in parsed_members:
                     expanded.add(legacy.normalize_interface_name(mp).lower())
                 _log_trace_step(result, f"[{label}] 聚合成员查询 `{cmd}` 返回成员: {', '.join(parsed_members)}")
@@ -1621,6 +1633,10 @@ def _expand_lag_member_ports_live(
             _log_trace_step(result, f"[{label}] 聚合成员查询 `{cmd}` 失败（{_brief_query_error(exc)}）")
             logger.debug("[IPLocatorV2] live LAG member query failed for %s/%s: %s", label, port, exc)
 
+    if physical_norms and force_refresh:
+        if isinstance(result, dict):
+            result.setdefault("coverage_gaps", []).append(f"neighbor_parse_incomplete:{device_id}:lag_members")
+        return expanded, physical_norms, False
     return expanded, [], False
 
 
@@ -2106,7 +2122,7 @@ def _load_lldp_snapshot(
             lag_conn = get_db_connection()
             try:
                 member_ports, phys_ports, _ = _expand_lag_member_ports_live(
-                    lag_conn, device, port, result=result,
+                    lag_conn, device, port, result=result, force_refresh=force_refresh,
                 )
             finally:
                 lag_conn.close()
@@ -4580,7 +4596,7 @@ def _trace_ip_uncached(
                         topology = _topology_neighbors(conn, current_id, port)
                     if not topology and is_lag_port:
                         expanded_member_ports, physical_member_names, lag_members_resolved = _expand_lag_member_ports_live(
-                            conn, current, port, result=result,
+                            conn, current, port, result=result, force_refresh=force_refresh,
                         )
                         if conn is not None and not force_refresh and lag_members_resolved and expanded_member_ports:
                             # Preserve all distinct neighbors across member interfaces.
