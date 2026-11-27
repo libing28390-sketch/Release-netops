@@ -1288,16 +1288,25 @@ def test_per_port_lldp_verbose_recovers_from_full_snapshot_failure_without_dupli
     from services.ip_locator_cli_service import LocatorCLIResult
 
     monkeypatch.setattr(ts.legacy, "_send_command", fake_send_command)
-    monkeypatch.setattr(
-        ts,
-        "_run_cli_with_device_lease",
-        lambda *args, **kwargs: LocatorCLIResult(
-            value=[],
-            collected_at="",
-            task_id="t-1",
+    persisted_ports = []
+    def fake_lease(device, operation, callback, **kwargs):
+        target = kwargs["task_context"]["target"]
+        if target.get("snapshot") == "port":
+            return LocatorCLIResult(
+                value=callback(), collected_at=ts._now_iso(),
+                task_id="port-" + target["port"], status={},
+            )
+        return LocatorCLIResult(
+            value=[], collected_at="", task_id="t-1",
             status={"status": "query_failed", "reason": "full_lldp_timeout"},
-        ),
-    )
+        )
+
+    def fake_persist(**kwargs):
+        persisted_ports.append(kwargs)
+        return {"observation_key": kwargs["bridge_domain"], "generation": 1}
+
+    monkeypatch.setattr(ts, "_run_cli_with_device_lease", fake_lease)
+    monkeypatch.setattr(ts, "_persist_observation", fake_persist)
 
     result = ts._initial_result("192.168.11.111", "default", {}, ts.TraceLimits())
     expanded, phys_names, resolved = ts._expand_lag_member_ports_live(
@@ -1337,7 +1346,11 @@ def test_per_port_lldp_verbose_recovers_from_full_snapshot_failure_without_dupli
         assert selected[0]["neighbor_ip"] == "10.16.40.4"
     assert status["coverage"] == ("targeted" if mode == "all_found" else "partial")
     assert len([c for c in sent_commands if "lldp neighbor-information interface" in c]) == 4
-    assert any(gap.startswith("neighbor_targeted_unversioned:") for gap in result["coverage_gaps"])
+    assert len(persisted_ports) == 4
+    assert len({entry["bridge_domain"] for entry in persisted_ports}) == 4
+    assert all(entry["bridge_domain"].startswith("lldp-port:") for entry in persisted_ports)
+    assert all(entry["target"]["snapshot"] == "port" for entry in persisted_ports)
+    assert sum(entry["coverage"] == "targeted" for entry in persisted_ports) == {"all_found": 4, "third_member_only": 1, "empty": 0}[mode]
     assert any(gap.startswith("neighbor_parse_incomplete:") for gap in result["coverage_gaps"]) == (mode != "all_found")
     # LAG expansion CLI must only have been sent ONCE, not duplicated inside _load_lldp_snapshot
     lag_cmds = [c for c in sent_commands if "link-aggregation verbose" in c]
