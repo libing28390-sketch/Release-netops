@@ -75,11 +75,40 @@ const statusMeta = (status: string, zh: boolean): { label: string; tone: StatusT
 
 interface BreakdownRow {
   provider_id: string;
+  provider_name: string;
   model_id: string;
+  model_name: string;
+  model_code: string;
   requests: number;
   input_tokens: number;
   output_tokens: number;
 }
+
+const isInternalId = (value?: string | null) => {
+  const s = String(value || '').trim();
+  if (!s) return false;
+  return /^(?:model|prov)_[0-9a-f]{8,}$/i.test(s) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+};
+
+const formatDisplayModel = (modelName?: string | null, modelCode?: string | null, modelId?: string | null, zh = true) => {
+  const name = String(modelName || '').trim();
+  const code = String(modelCode || '').trim();
+  if (name && !isInternalId(name)) {
+    return code && code !== name && !isInternalId(code) ? `${name} (${code})` : name;
+  }
+  if (code && !isInternalId(code)) return code;
+  const raw = String(modelId || '').trim();
+  if (!raw) return zh ? '未知模型' : 'Unknown model';
+  return isInternalId(raw) ? (zh ? '历史模型 (已删除)' : 'Archived model') : raw;
+};
+
+const formatDisplayProvider = (providerName?: string | null, providerId?: string | null, zh = true) => {
+  const name = String(providerName || '').trim();
+  if (name && !isInternalId(name)) return name;
+  const raw = String(providerId || '').trim();
+  if (!raw) return zh ? '未知供应商' : 'Unknown provider';
+  return isInternalId(raw) ? (zh ? '历史供应商 (已删除)' : 'Archived provider') : raw;
+};
 
 /**
  * The API returns ``provider_breakdown`` keyed by ``"<provider_id>:<model_id>"``
@@ -89,9 +118,14 @@ interface BreakdownRow {
 const normalizeBreakdown = (raw: unknown): BreakdownRow[] => {
   const toRow = (item: Record<string, unknown>, key?: string): BreakdownRow => {
     const [keyProvider, ...keyModel] = String(key || '').split(':');
+    const providerId = String(item.provider_id ?? keyProvider ?? '');
+    const modelId = String(item.model_id ?? keyModel.join(':') ?? '');
     return {
-      provider_id: String(item.provider_id ?? keyProvider ?? ''),
-      model_id: String(item.model_id ?? keyModel.join(':') ?? ''),
+      provider_id: providerId,
+      provider_name: String(item.provider_name ?? ''),
+      model_id: modelId,
+      model_name: String(item.model_name ?? ''),
+      model_code: String(item.model_code ?? ''),
       requests: Number(item.requests || 0),
       input_tokens: Number(item.input_tokens || 0),
       output_tokens: Number(item.output_tokens || 0),
@@ -182,7 +216,10 @@ export const UsageDashboardTab: React.FC = () => {
         log.request_id,
         getAuditActor(log.user_id, zh).label,
         formatScene(log.scene, zh),
-        [log.provider_id, log.model_id].filter(Boolean).join(' / ') || '—',
+        [
+          formatDisplayProvider(log.provider_name, log.provider_id, zh),
+          formatDisplayModel(log.model_name, log.model_code, log.model_id, zh),
+        ].filter(Boolean).join(' / ') || '—',
         log.input_tokens || 0,
         log.output_tokens || 0,
         formatLatency(log.latency_ms),
@@ -303,14 +340,18 @@ export const UsageDashboardTab: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
-                {breakdown.slice(0, 8).map((item, idx) => (
+                {breakdown.slice(0, 8).map((item, idx) => {
+                  const modelLabel = formatDisplayModel(item.model_name, item.model_code, item.model_id, zh);
+                  const providerLabel = formatDisplayProvider(item.provider_name, item.provider_id, zh);
+                  return (
                   <tr key={`${item.provider_id}-${item.model_id}-${idx}`} className="hover:bg-accent-subtle">
-                    <td className={cn(tdClass, 'max-w-[280px] truncate font-mono text-fg')} title={`${item.provider_id} / ${item.model_id}`}>{item.model_id || 'unknown-model'}</td>
-                    <td className={cn(tdClass, 'max-w-[220px] truncate font-mono text-xs text-fg-muted')} title={item.provider_id}>{item.provider_id || 'unknown-provider'}</td>
+                    <td className={cn(tdClass, 'max-w-[280px] truncate font-medium text-fg')} title={modelLabel}>{modelLabel}</td>
+                    <td className={cn(tdClass, 'max-w-[220px] truncate text-xs text-fg-muted')} title={providerLabel}>{providerLabel}</td>
                     <td className={cn(tdClass, 'text-right tabular-nums text-fg')}>{item.requests.toLocaleString()} {zh ? '次' : 'req'}</td>
                     <td className={cn(tdClass, 'text-right font-mono tabular-nums text-fg')}>{(item.input_tokens + item.output_tokens).toLocaleString()} tok</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -422,8 +463,8 @@ export const UsageDashboardTab: React.FC = () => {
                         </td>
                         <td className={tdClass}><StatusBadge>{formatScene(log.scene, zh)}</StatusBadge></td>
                         <td className={tdClass}>
-                          <span className="block font-mono text-xs font-medium text-fg">{log.model_id || '—'}</span>
-                          <span className="block font-mono text-xs text-fg-subtle">{log.provider_id || '—'}</span>
+                          <span className="block text-xs font-medium text-fg">{formatDisplayModel(log.model_name, log.model_code, log.model_id, zh)}</span>
+                          <span className="block text-xs text-fg-subtle">{formatDisplayProvider(log.provider_name, log.provider_id, zh)}</span>
                         </td>
                         <td className={cn(tdClass, 'text-right font-mono tabular-nums text-fg')}>{inputTokens.toLocaleString()}</td>
                         <td className={cn(tdClass, 'text-right font-mono tabular-nums text-fg')}>{outputTokens.toLocaleString()}</td>

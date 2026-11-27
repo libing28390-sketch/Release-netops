@@ -369,7 +369,7 @@ def model_health_summary(
     current_statuses: list[str] = []
     for row in visible_rows:
         model_type = str(row[5] or "chat").lower()
-        monitorable = bool(row[6]) and bool(row[7]) and model_type in {"chat", "reasoning"}
+        monitorable = bool(row[6]) and bool(row[7]) and model_type in {"chat", "reasoning", "embedding"}
         if not monitorable:
             health_status = "disabled" if not row[6] or not row[7] else "not_supported"
         else:
@@ -434,6 +434,16 @@ def model_health_summary(
         avg_latency_ms=int(round(weighted_latency / total_successes)) if total_successes else None,
         services=services,
     )
+
+
+@router.post("/health-check-all")
+async def model_health_check_all(user=Depends(require_ai_permission("ai.model.manage"))):
+    """Probe all enabled models (chat, reasoning, embedding) whose provider is enabled."""
+    from ai.services.model_health import run_scheduled_model_health_checks
+
+    del user
+    summary = await run_scheduled_model_health_checks()
+    return summary
 
 
 @router.post("/{model_id}/health-check", response_model=AIModelHealthCheckResponse)

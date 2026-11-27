@@ -12,7 +12,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { AIModelHealthService, AIModelHealthSummary, checkAIModelHealth, getAIModelHealthSummary } from '../../../api/ai';
+import { AIModelHealthService, AIModelHealthSummary, checkAIModelHealth, checkAllEnabledAIModelsHealth, getAIModelHealthSummary } from '../../../api/ai';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
 import { aiAdminText } from '../../../i18n/aiAdmin';
 import { EmptyState } from '../../../components/ui/EmptyState';
@@ -141,7 +141,7 @@ const ServiceStatusRow: React.FC<{
   language: 'zh' | 'en';
 }> = ({ service, windowDays, expanded, onToggle, onCheck, checking, tx, language }) => {
   const meta = statusMeta(service.health_status, tx);
-  const canCheck = service.enabled && ['chat', 'reasoning'].includes(service.model_type.toLowerCase());
+  const canCheck = service.enabled && ['chat', 'reasoning', 'embedding'].includes(service.model_type.toLowerCase());
   return (
     <article className="border-b border-line last:border-b-0">
       <div className="px-4 py-4 sm:px-5">
@@ -196,6 +196,7 @@ export const ModelHealthDashboardTab: React.FC = () => {
   const [error, setError] = useState('');
   const [expandedServices, setExpandedServices] = useState<Set<string>>(new Set());
   const [checkingModelId, setCheckingModelId] = useState<string | null>(null);
+  const [checkingAll, setCheckingAll] = useState(false);
 
   const fetchData = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true);
@@ -238,6 +239,22 @@ export const ModelHealthDashboardTab: React.FC = () => {
     }
   };
 
+  const handleCheckAll = async () => {
+    setCheckingAll(true);
+    try {
+      const res = await checkAllEnabledAIModelsHealth();
+      const msg = language === 'zh'
+        ? `已探测 ${res.checked} 个已启用模型：正常 ${res.healthy}，异常 ${res.unhealthy}`
+        : `Probed ${res.checked} enabled models: ${res.healthy} healthy, ${res.unhealthy} unhealthy`;
+      showToast(msg, res.unhealthy > 0 ? 'info' : 'success');
+      await fetchData(true);
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : tx('ai.model.health.toast.error'), 'error');
+    } finally {
+      setCheckingAll(false);
+    }
+  };
+
   const latestDate = summary?.generated_at;
   const rangeLabel = formatMonthRange(summary?.window_start, latestDate, language);
   const overallStatus = normalizeStatus(summary?.overall_status);
@@ -268,6 +285,15 @@ export const ModelHealthDashboardTab: React.FC = () => {
           infoLabel={copy.infoLabel}
           actions={(
             <>
+              <button
+                type="button"
+                onClick={() => void handleCheckAll()}
+                disabled={checkingAll || loading}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent px-3 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${checkingAll ? 'animate-spin' : ''}`} aria-hidden="true" />
+                {checkingAll ? (language === 'zh' ? '探测中...' : 'Probing...') : (language === 'zh' ? '探测全部启用模型' : 'Probe All Enabled')}
+              </button>
               <button type="button" onClick={() => navigate('/ai/models')} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-sm font-medium text-fg transition hover:border-accent hover:text-accent">{tx('ai.health.manageModels')}<ExternalLink className="h-3.5 w-3.5" aria-hidden="true" /></button>
               <button type="button" onClick={() => void fetchData()} disabled={loading || refreshing} aria-label={tx('ai.common.refresh')} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted transition hover:border-accent hover:text-accent disabled:cursor-wait disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading || refreshing ? 'animate-spin' : ''}`} aria-hidden="true" /></button>
             </>

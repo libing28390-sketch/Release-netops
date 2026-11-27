@@ -339,6 +339,12 @@ def extract_alert_filters(query: str) -> Dict[str, str]:
     return filters
 
 
+_ALERT_EXISTENCE_MARKERS = (
+    "有告警", "有没有告警", "有报警", "有没有报警", "是否告警", "是否有告警",
+    "有告警吗", "有告警没有", "告警没", "告警吗", "any alert", "any alarm", "has alert", "has alarm",
+)
+
+
 def is_alert_aggregation_query(query: str) -> bool:
     """Return whether an alert question asks for a local aggregate.
 
@@ -351,13 +357,17 @@ def is_alert_aggregation_query(query: str) -> bool:
     if not normalized or not any(marker in normalized for marker in _ALERT_MARKERS):
         return False
     # A count/summary, an explicit time window ("今天", "最近 3 小时"), a
-    # workflow status ("未处理", "未恢复") or a listing request is a scoped,
-    # read-only question Nexora answers from alert_events.  "查询最近的告警"
-    # has none of these and keeps the clarification path.
+    # workflow status ("未处理", "未恢复"), an explicit vendor/site scope
+    # ("华三的设备有告警没有"), an existence check ("有没有告警"), or a listing
+    # request is a scoped, read-only question Nexora answers from alert_events.
+    # Plain "查询最近的告警" has none of these and keeps the clarification path.
+    alert_filters = extract_alert_filters(normalized)
     return bool(
         any(marker in normalized for marker in _ALERT_AGGREGATION_MARKERS)
-        or extract_alert_time_range(normalized)
-        or extract_alert_status(normalized)
+        or any(marker in normalized for marker in _ALERT_EXISTENCE_MARKERS)
+        or alert_filters.get("time_range")
+        or alert_filters.get("status")
+        or alert_filters.get("vendor")
         or any(marker in normalized for marker in _ALERT_LIST_MARKERS)
     )
 

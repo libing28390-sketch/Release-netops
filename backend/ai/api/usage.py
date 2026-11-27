@@ -20,6 +20,57 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["AI Audit & Usage"])
 
 
+def _load_provider_model_names(conn: Any) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
+    """Load provider_id -> display name and model_id -> (name, model_code) maps."""
+    provider_names: dict[str, str] = {}
+    model_names: dict[str, tuple[str, str]] = {}
+    try:
+        for row in conn.execute("SELECT id, name, provider_type FROM ai_provider").fetchall():
+            pid = str(row[0] or "").strip()
+            if pid:
+                provider_names[pid] = str(row[1] or row[2] or pid).strip()
+    except Exception:
+        pass
+    try:
+        for row in conn.execute("SELECT id, name, model_code, display_name FROM ai_model").fetchall():
+            mid = str(row[0] or "").strip()
+            if mid:
+                display = str(row[3] or row[1] or row[2] or mid).strip()
+                code = str(row[2] or row[1] or mid).strip()
+                model_names[mid] = (display, code)
+    except Exception:
+        pass
+    return provider_names, model_names
+
+
+def _is_internal_hex_id(value: str, prefix: str) -> bool:
+    if value.startswith(prefix):
+        tail = value[len(prefix):]
+        if len(tail) >= 8 and all(ch in "0123456789abcdefABCDEF" for ch in tail):
+            return True
+    return len(value) == 36 and value.count("-") == 4
+
+
+def _resolve_provider_display(provider_id: Optional[str], provider_names: dict[str, str]) -> str:
+    pid = str(provider_id or "").strip()
+    if not pid:
+        return "未知供应商"
+    if pid in provider_names:
+        return provider_names[pid]
+    return "历史供应商 (已删除)" if _is_internal_hex_id(pid, "prov_") else pid
+
+
+def _resolve_model_display(model_id: Optional[str], model_names: dict[str, tuple[str, str]]) -> tuple[str, str]:
+    mid = str(model_id or "").strip()
+    if not mid:
+        return ("未知模型", "")
+    if mid in model_names:
+        return model_names[mid]
+    if _is_internal_hex_id(mid, "model_"):
+        return ("历史模型 (已删除)", "")
+    return (mid, mid)
+
+
 @router.get("/audit", response_model=List[Dict[str, Any]])
 def list_ai_audit_logs(
     limit: int = Query(50, ge=1, le=500),
@@ -32,6 +83,7 @@ def list_ai_audit_logs(
     (Administrator by default) rather than the broader ``ai.audit.view``.
     """
     with get_db_connection() as conn:
+        provider_names, model_names = _load_provider_model_names(conn)
         cursor = conn.cursor()
         query = """
             SELECT id, request_id, user_id, scene, provider_id, model_id, prompt_id,
@@ -49,13 +101,18 @@ def list_ai_audit_logs(
         rows = cursor.fetchall()
         result = []
         for r in rows:
+            m_name, m_code = _resolve_model_display(r[5], model_names)
+            p_name = _resolve_provider_display(r[4], provider_names)
             result.append({
                 "id": r[0],
                 "request_id": r[1],
                 "user_id": r[2],
                 "scene": r[3],
                 "provider_id": r[4],
+                "provider_name": p_name,
                 "model_id": r[5],
+                "model_name": m_name,
+                "model_code": m_code,
                 "prompt_id": r[6],
                 "input_tokens": r[7],
                 "output_tokens": r[8],
@@ -72,6 +129,7 @@ def list_ai_audit_logs(
 def get_usage_summary(user=Depends(require_ai_permission("ai.usage.view"))):
     """Get overall Token Usage & Request Aggregations."""
     with get_db_connection() as conn:
+        provider_names, model_names = _load_provider_model_names(conn)
         cursor = conn.cursor()
         
         # Overall totals
@@ -128,7 +186,14 @@ def get_usage_summary(user=Depends(require_ai_permission("ai.usage.view"))):
                 if item[7] is None and item[8] is None:
                     success_count = requests
                 estimated_cost += cost
+                p_name = _resolve_provider_display(item[0], provider_names)
+                m_name, m_code = _resolve_model_display(item[1], model_names)
                 provider_breakdown[f"{item[0]}:{item[1]}"] = {
+                    "provider_id": item[0],
+                    "provider_name": p_name,
+                    "model_id": item[1],
+                    "model_name": m_name,
+                    "model_code": m_code,
                     "requests": requests, "success": success_count, "errors": error_count,
                     "error_rate": round(error_count / requests, 4) if requests else 0,
                     "input_tokens": int(item[3] or 0),
