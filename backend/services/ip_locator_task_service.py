@@ -344,7 +344,8 @@ def _dependency_manifest_current_in_transaction(
             continue
         suffix = " FOR UPDATE" if lock else ""
         current = conn.execute(
-            """SELECT generation, action_version, parser_version, schema_version
+            """SELECT generation, action_version, parser_version, schema_version,
+                      fresh_until, source, records_json, device_id, tenant_id, vrf_name
                  FROM locator_observations WHERE observation_key = ?""" + suffix,
             (key,),
         ).fetchone()
@@ -353,6 +354,43 @@ def _dependency_manifest_current_in_transaction(
             or tuple(_non_empty(current[index]) for index in (1, 2, 3)) != expected_versions
         ):
             gaps.append(f"dependency_changed:observation:{key}")
+            continue
+        if _as_utc(current[4], fallback=_utc_now()) <= _utc_now():
+            gaps.append(f"dependency_expired:observation:{key}")
+            continue
+        if str(current[5] or "") == "snmp_targeted":
+            # The locator-only row can remain unchanged while the device's
+            # SNMP context is rebound to another address space. Fence it too.
+            records = _decode_json(current[6], {})
+            rows = records if isinstance(records, list) else [records]
+            if len(rows) != 1 or not isinstance(rows[0], Mapping):
+                gaps.append(f"dependency_changed:snmp_context:{key}")
+                continue
+            record = rows[0]
+            context_key = str(record.get("snmp_context_key") or "")
+            space_id = str(record.get("address_space_id") or "")
+            mappings = conn.execute(
+                """SELECT c.address_space_id, c.context_type, s.kind,
+                          s.security_tenant_id, s.status, s.vrf_id, v.vrf_name
+                     FROM ipam_device_routing_contexts c
+                     LEFT JOIN ipam_address_spaces s ON s.id = c.address_space_id
+                     LEFT JOIN vrfs v ON v.id = s.vrf_id
+                    WHERE c.device_id = ? AND c.context_source = 'snmp'
+                      AND c.status = 'active' AND c.local_context_key = ?""",
+                (str(current[7] or ""), context_key),
+            ).fetchall()
+            requested = str(current[9] or "default").lower()
+            global_scope = requested in {"", "default", "global"}
+            match = mappings[0] if len(mappings) == 1 else None
+            if (not space_id or not match or str(match[0] or "") != space_id
+                    or str(match[3] or "tenant-default") != str(current[8] or "tenant-default")
+                    or match[4] != "active"
+                    or (global_scope and not match[1] == match[2] == "global")
+                    or (not global_scope and not (
+                        match[1] == match[2] == "vrf"
+                        and requested in {str(match[5] or "").lower(), str(match[6] or "").lower()}
+                    ))):
+                gaps.append(f"dependency_changed:snmp_context:{key}")
     if any(not isinstance(item, Mapping) for item in observations):
         gaps.append("dependency_manifest_invalid_observation_entry")
 
