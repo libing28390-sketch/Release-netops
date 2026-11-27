@@ -310,13 +310,18 @@ def finish_current_fdb_collection(
     )
 
 
-def list_current_fdb_observations(conn, *, device_id: str | None = None) -> list[dict[str, Any]]:
+def list_current_fdb_observations(
+    conn, *, device_id: str | None = None, target_mac: str | None = None,
+) -> list[dict[str, Any]]:
     """Read latest successful FDB rows and exact active context mappings only."""
     params: list[Any] = []
     device_filter = ""
     if device_id:
         device_filter = " AND observation.source_device_id = ?"
         params.append(str(device_id))
+    if target_mac is not None:
+        device_filter += " AND observation.mac_address = ?"
+        params.append(_normalize_mac(target_mac))
     rows = conn.execute(
         f"""SELECT observation.source_device_id, observation.observation_source,
                    observation.context_source, observation.context_type,
