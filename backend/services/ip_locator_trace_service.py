@@ -294,6 +294,9 @@ def _pipeline_versions(
                 getattr(legacy, "_collect_lldp_from_device", None), _lldp_neighbors,
             ) if callable(function)
         )
+        if target.get("snapshot") == "port":
+            action_functions = (_lldp_interface_verbose_command, legacy._send_command)
+            parser_functions = (_parse_lldp_verbose_neighbors,)
         schema_kind = "neighbor"
     action_material = {
         "contract": "locator-cli-action-v2",
@@ -1058,6 +1061,7 @@ def _persist_observation(
     kind: str,
     target_ip: str = "",
     target_mac: str = "",
+    bridge_domain: str = "",
     vlan_id: Any = None,
     records: Any = None,
     coverage: str = "targeted",
@@ -1101,6 +1105,7 @@ def _persist_observation(
             observation_kind=kind,
             target_ip=target_ip,
             target_mac=target_mac,
+            bridge_domain=bridge_domain,
             vlan_id=vlan_id,
             records=records if records is not None else {},
             coverage=coverage,
@@ -2159,6 +2164,7 @@ def _load_lldp_snapshot(
         distinct_ports = list(dict.fromkeys(phys_ports))
         incomplete = len(distinct_ports) > member_budget
         by_neighbor = {}
+        member_timestamps: list[str] = []
         for phys_port in distinct_ports[:member_budget]:
             if time.monotonic() >= member_deadline or (callable(cancel_check) and cancel_check()):
                 incomplete = True
@@ -2169,8 +2175,42 @@ def _load_lldp_snapshot(
                 continue
             _log_trace_step(result, f"[{label}] 开始查询接口 {phys_port} 的 LLDP")
             try:
-                lldp_out = legacy._send_command(device, lldp_cmd, force_refresh=True)
+                port_identity = legacy.normalize_interface_name(phys_port).lower()
+                port_target = {"snapshot": "port", "port": port_identity,
+                               "platform": _normalise_platform(device), "command": lldp_cmd}
+                query = _run_cli_with_device_lease(
+                    device, "neighbor",
+                    lambda cmd=lldp_cmd: legacy._send_command(device, cmd, force_refresh=True),
+                    owner_id=f"{result.get('run_id')}:neighbor-port",
+                    task_context=_cli_task_context(
+                        device=device, scope=scope, scope_hash=scope_hash, target_ip="",
+                        operation="neighbor", force_refresh=force_refresh,
+                        durable_run_id=durable_run_id, run_owner_id=run_owner_id,
+                        bridge_domain=f"lldp-port:{port_identity}",
+                        target=port_target, cancel_check=cancel_check,
+                    ),
+                    wait_seconds=max(1, min(30, int(member_deadline - time.monotonic()))),
+                )
+                lldp_out, port_at, port_task_id, _ = _cli_result_parts(query)
                 parsed_neighbors = _parse_lldp_verbose_neighbors(str(lldp_out or ""), phys_port)
+                if not port_at:
+                    incomplete = True
+                    continue
+                persisted = _persist_observation(
+                    tenant_id=tenant_id, scope_hash=scope_hash,
+                    network_domain_id=network_domain_id, site_id=site_id, vrf=vrf,
+                    device_id=device_id, kind="neighbor", bridge_domain=f"lldp-port:{port_identity}",
+                    records=parsed_neighbors, coverage="targeted" if parsed_neighbors else "partial",
+                    collected_at=port_at, query_task_id=port_task_id,
+                    result=result, device=device, target=port_target,
+                )
+                if not persisted:
+                    incomplete = True
+                    result["coverage_gaps"].append(f"observation_persist_failed:{device_id}:neighbor:{port_identity}")
+                else:
+                    _include_evidence_timestamp(result, port_at)
+                if parsed_neighbors:
+                    member_timestamps.append(port_at)
                 if not parsed_neighbors:
                     incomplete = True
                     _log_trace_step(result, f"[{label}] `{lldp_cmd}` 未解析到 LLDP 邻居，结果未确认")
@@ -2189,16 +2229,16 @@ def _load_lldp_snapshot(
                 logger.debug("[IPLocatorV2] per-port LLDP verbose failed for %s/%s: %s", label, phys_port, exc)
         if by_neighbor:
             selected = list(by_neighbor.values())
-            collected_at = _now_iso()
+            collected_at = min(member_timestamps)
             snapshot_status = {"status": "found", "source": "per_port_lldp_verbose",
                                "coverage": "partial" if incomplete else "targeted"}
         elif incomplete:
             snapshot_status = {"status": "parse_incomplete", "source": "per_port_lldp_verbose",
                                "coverage": "partial"}
-        # Targeted output is not published as a complete topology snapshot.
-        # Until it has its own durable dependency contract, avoid caching a
-        # completed path based on this unversioned evidence.
-        result["coverage_gaps"].append(f"neighbor_targeted_unversioned:{device_id}")
+        # Per-port evidence is independently fenced in PostgreSQL. Never
+        # publish it under the full-device snapshot key.
+        if by_neighbor:
+            _set_cache_source(result, "topology", device, "cli", vrf=vrf, variant="port_neighbor")
         if incomplete:
             result["coverage_gaps"].append(f"neighbor_parse_incomplete:{device_id}")
     elif full_snapshot_failed and not selected:
@@ -3331,7 +3371,7 @@ def _trace_ip_uncached(
                         "negative_redis" if arp_negative else "redis",
                         vrf=vrf,
                     )
-            if arp is None and not arp_negative:
+            if arp is None and not arp_negative and not force_refresh and not _pending_fact_invalidation(scope_hash, target_ip):
                 observation = _find_fresh_observation(
                     tenant_id=tenant_id,
                     scope_hash=scope_hash,
@@ -4792,7 +4832,6 @@ def _trace_ip_uncached(
         "neighbor_query_failed:",
         "neighbor_unsupported:",
         "neighbor_parse_incomplete:",
-        "neighbor_targeted_unversioned:",
         "route_loop:",
         "next_hop_out_of_scope:",
         "device_budget_exceeded",
