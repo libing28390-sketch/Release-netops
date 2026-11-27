@@ -3127,7 +3127,7 @@ def _trace_ip_uncached(
                     route_port = str(row.get("interface") or "").strip()
                     discovered_neighbors = (
                         _topology_neighbors(conn, device_id, route_port)
-                        if route_port else []
+                        if route_port and not force_refresh else []
                     )
                     if not discovered_neighbors and route_port and operation_budget_available():
                         discovered_neighbors, _, _, neighbor_status = _load_lldp_snapshot(
@@ -4415,7 +4415,10 @@ def _trace_ip_uncached(
                         downstream = []
                         discovered_port = ""
                         for candidate_port in lookup_ports:
-                            downstream = _topology_neighbors(conn, current_id, candidate_port) if conn is not None else []
+                            downstream = (
+                                _topology_neighbors(conn, current_id, candidate_port)
+                                if conn is not None and not force_refresh else []
+                            )
                             if not downstream:
                                 downstream, _, _, neighbor_status = _load_lldp_snapshot(
                                     current,
@@ -4502,7 +4505,7 @@ def _trace_ip_uncached(
                     # If the ARP physical port has no downstream switch neighbor and CMDB confirms
                     # it is an Access port for this VLAN, treat it as a confirmed terminal port.
                     arp_port = str(arp.get("interface") or "").strip() if not path else ""
-                    if arp_port and conn is not None:
+                    if arp_port and conn is not None and not force_refresh:
                         arp_topology = _topology_neighbors(conn, current_id, arp_port)
                         arp_identity = _terminal_evidence(conn, current_id, arp_port, vlan_hint)
                         if not arp_topology and arp_identity.get("is_terminal"):
@@ -4526,8 +4529,11 @@ def _trace_ip_uncached(
                                 "mac": mac,
                                 "l3_path": l3_path,
                                 "l2_path": path + [arp_hop],
-                                "confidence": "high",
+                                "confidence": "low",
                             })
+                            result["coverage_gaps"].append(f"mac_not_found:{current_id}")
+                            if mac_status in {"query_failed", "parse_incomplete"}:
+                                result["coverage_gaps"].append(f"mac_{mac_status}:{current_id}")
                             continue
 
                     result["coverage_gaps"].append(f"mac_not_found:{current_id}")
@@ -4744,12 +4750,13 @@ def _trace_ip_uncached(
         result["completed_at"] = _now_iso()
         return result
 
-    unique_candidates: dict[tuple[str, str, str], dict[str, Any]] = {}
+    unique_candidates: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     for candidate in final_candidates:
         candidate_key = (
             str(candidate.get("device_id") or ""),
             str(candidate.get("port") or ""),
             str(candidate.get("vlan") or ""),
+            str(candidate.get("mac") or "").lower(),
         )
         unique_candidates.setdefault(candidate_key, candidate)
     final_candidates = list(unique_candidates.values())
@@ -4762,6 +4769,7 @@ def _trace_ip_uncached(
         "next_hop_unmanaged:",
         "next_hop_ambiguous:",
         "next_hop_candidate_budget_exceeded:",
+        "next_hop_neighbor_",
         "neighbor_ambiguous:",
         "neighbor_query_failed:",
         "neighbor_unsupported:",
