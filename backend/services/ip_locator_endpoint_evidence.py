@@ -300,8 +300,6 @@ def find_current_endpoint_evidence(
                    AND observation.source_device_id IN ({marks})
                    AND COALESCE(NULLIF(btrim(device.tenant_id), ''), 'tenant-default') = ?
                    AND (? = '' OR COALESCE(device.site_id, '') = ?)
-                   AND state.latest_attempt_generation = observation.generation
-                   AND state.latest_status IN ('complete', 'scope_unknown')
                  ORDER BY observation.source_device_id""",
             (normalized_ip, *allowed_ids, tenant, site, site),
         ).fetchall()
