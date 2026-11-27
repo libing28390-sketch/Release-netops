@@ -298,12 +298,17 @@ def _pipeline_versions(
             action_functions = (_lldp_interface_verbose_command, legacy._send_command)
             parser_functions = (_parse_lldp_verbose_neighbors,)
         schema_kind = "neighbor"
+    if target.get("transport") == "snmp_targeted":
+        from services import ip_locator_fact_access as fact_access
+        action_functions = (fact_access.TargetedFactReader.read, fact_access._scope_profile)
+        parser_functions = (fact_access._read_arp if operation == "arp" else fact_access._read_fdb,)
     action_material = {
         "contract": "locator-cli-action-v2",
         "operation": operation,
         "platform": platform,
         "profile": profile_fields,
         "target_mode": str(target.get("snapshot") or "targeted"),
+        "transport": str(target.get("transport") or "ssh_cli"),
         # Keep command material out of task metadata; the digest still fences
         # changes to exact route commands and vendor command selection.
         "command_digest": hashlib.sha256(str(target.get("command") or "").encode("utf-8")).hexdigest(),
@@ -329,6 +334,8 @@ def _trace_contract_version() -> str:
     from services.ip_locator_endpoint_evidence import (
         find_current_endpoint_evidence, _current_cross_device_fdb_path,
     )
+    from services import ip_locator_fact_access as fact_access
+    from core.config import settings
 
     all_functions = (
         _route_command, legacy.parse_routing_table, _parse_target_route_output, _route_row, _best_routes,
@@ -340,9 +347,12 @@ def _trace_contract_version() -> str:
         _load_lldp_snapshot, _record_topology_snapshot_dependency, lldp_snapshot_versions,
         _trace_ip_uncached, find_current_endpoint_evidence, _current_cross_device_fdb_path,
         _parse_lag_member_ports, _expand_lag_member_ports_live, _topology_neighbors,
+        fact_access.TargetedFactReader.read, fact_access._scope_profile,
+        fact_access._read_arp, fact_access._read_fdb,
     )
     material = {
         "functions": [_callable_fingerprint(function) for function in all_functions],
+        "targeted_snmp_enabled": bool(getattr(settings, "IP_LOCATOR_TARGETED_SNMP_ENABLED", False)),
         "schemas": {kind: _schema_version(kind) for kind in sorted(_OBSERVATION_SCHEMA_FIELDS)},
     }
     return hashlib.sha256(json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
@@ -1072,8 +1082,9 @@ def _persist_observation(
     result: dict[str, Any] | None = None,
     device: Mapping[str, Any] | None = None,
     target: Mapping[str, Any] | None = None,
+    source: str = "ssh_cli",
 ) -> dict[str, Any] | None:
-    """Persist a CLI observation in PostgreSQL before projecting it to Redis."""
+    """Persist a scoped locator observation before using it in a result."""
     try:
         from services.ip_locator_task_service import upsert_locator_observation
         from core.config import settings
@@ -1109,7 +1120,7 @@ def _persist_observation(
             vlan_id=vlan_id,
             records=records if records is not None else {},
             coverage=coverage,
-            source="ssh_cli",
+            source=source,
             collected_at=observed_at,
             action_version=action_version or versions["action_version"],
             parser_version=parser_version or versions["parser_version"],
@@ -2696,6 +2707,43 @@ def _trace_ip_uncached(
         authorized_device_ids=authorized_device_ids,
     )
     by_id = _device_map(devices)
+    from core.config import settings
+    from services.ip_locator_fact_access import TargetedFactReader
+
+    live_facts = TargetedFactReader(
+        tenant_id=tenant_id, vrf=vrf, allowed_ids=set(by_id),
+        deadline=deadline, enabled=bool(getattr(settings, "IP_LOCATOR_TARGETED_SNMP_ENABLED", False)),
+        cancel_check=cancel_check,
+    )
+
+    def read_live_fact(kind: str, device: dict[str, Any], **target_fields: Any):
+        if not operation_budget_available():
+            return None
+        fact = live_facts.read(kind, device, **target_fields)
+        if fact is None or not operation_budget_available():
+            return None
+        # Positive exact-instance reads are not full collection generations.
+        # Persist a separate, short-lived locator-only observation; never
+        # overwrite the scheduled current tables or the CLI snapshot key.
+        target = {"transport": fact.source, "platform": _normalise_platform(device)}
+        persisted = _persist_observation(
+            tenant_id=tenant_id, scope_hash=scope_hash,
+            network_domain_id=network_domain_id, site_id=site_id, vrf=vrf,
+            device_id=str(device["id"]), kind=kind,
+            target_ip=target_ip if kind == "arp" else "",
+            target_mac=str(fact.record.get("mac") or ""),
+            vlan_id=fact.record.get("vlan"),
+            bridge_domain="snmp-targeted",
+            records=fact.record if kind == "arp" else [fact.record],
+            coverage=fact.coverage, collected_at=fact.observed_at,
+            fresh_seconds=30, retain_seconds=30,
+            source=fact.source, result=result, device=device, target=target,
+        )
+        if not persisted:
+            return None
+        _set_cache_source(result, kind, device, fact.source, vrf=vrf)
+        _log_trace_step(result, f"[{_device_label(device)}] SNMP 定向 {kind.upper()} 证据命中")
+        return fact
 
     try:
         conn = get_db_connection()
@@ -3528,6 +3576,14 @@ def _trace_ip_uncached(
                     elif snapshot_source.startswith("snapshot_"):
                         arp_source = snapshot_source if arp_status == "found" else f"snapshot_negative_{snapshot_source.removeprefix('snapshot_')}"
             if arp is None and not arp_negative and arp_status != "ambiguous":
+                fact = read_live_fact("arp", device, target_ip=target_ip,
+                                      interface=str(route.get("interface") or ""))
+                if fact is not None:
+                    arp = dict(fact.record)
+                    arp_status = "found"
+                    arp_collected_at = fact.observed_at
+                    arp_source = fact.source
+            if arp is None and not arp_negative and arp_status != "ambiguous" and operation_budget_available():
                 cli_result = _run_cli_with_device_lease(
                     device,
                     "arp",
@@ -3861,6 +3917,7 @@ def _trace_ip_uncached(
             "collected_at": arp_collected_at or _now_iso(),
             "vrf": vrf,
             "route_prefix": route.get("destination") or "",
+            "source": arp_source or "cli",
         })
         if arp_item.get("is_proxy") or _is_virtual_gateway_mac(arp_item.get("mac")):
             reason = "arp_proxy_or_virtual_gateway"
@@ -4164,6 +4221,12 @@ def _trace_ip_uncached(
                             "source": "full_snapshot",
                         }
                     if not records and not mac_negative and not (status and status.get("status") in {"unsupported", "query_failed", "disabled"}):
+                        fact = read_live_fact("mac", current, mac=mac, vlan=vlan_hint)
+                        if fact is not None:
+                            records = [dict(fact.record)]
+                            mac_collected_at = fact.observed_at
+                            status = {"status": "found", "source": fact.source}
+                    if not records and not mac_negative and not (status and status.get("status") in {"unsupported", "query_failed", "disabled"}) and operation_budget_available():
                         mac_result = _run_cli_with_device_lease(
                             current,
                             "mac",
@@ -4616,7 +4679,7 @@ def _trace_ip_uncached(
                         "mac": mac,
                         "vlan": str(record.get("vlan") or arp.get("vlan") or ""),
                         "type": record.get("type") or "dynamic",
-                        "source": "cli",
+                        "source": "snmp_targeted" if status.get("source") == "snmp_targeted" else "cli",
                         "collected_at": mac_collected_at or _now_iso(),
                     }
                     result["l2_paths"].append({"l3_path": l3_path, "hops": path + [hop]})
