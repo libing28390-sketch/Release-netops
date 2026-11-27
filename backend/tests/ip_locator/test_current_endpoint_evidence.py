@@ -207,3 +207,25 @@ def test_current_endpoint_ignores_unauthorized_arp_source(isolated_db):
     _publish_current_arp(device_id=other_device, mac="02:11:22:33:44:55")
 
     assert _find(device_ids={DEVICE_ID}) is not None
+
+def test_targeted_current_projection_retains_same_target_conflicts(isolated_db):
+    _seed_access_device()
+    _publish_current_arp()
+    _publish_current_fdb()
+    with get_db_connection() as conn:
+        arp = discovery._current_endpoint_projection(
+            conn, device_id=DEVICE_ID, observation_source="arp",
+        )
+        assert discovery._current_endpoint_projection(
+            conn, device_id=DEVICE_ID, observation_source="arp", target_ip=TARGET_IP,
+        ) == arp
+        assert discovery._current_endpoint_projection(
+            conn, device_id=DEVICE_ID, observation_source="arp", target_ip="172.16.5.99",
+        ) == []
+        fdb = discovery._current_fdb_endpoint_projection(conn, device_id=DEVICE_ID)
+        assert discovery._current_fdb_endpoint_projection(
+            conn, device_id=DEVICE_ID, target_mac=TARGET_MAC,
+        ) == fdb
+        assert discovery._current_fdb_endpoint_projection(
+            conn, device_id=DEVICE_ID, target_mac="02:11:22:33:44:55",
+        ) == []
