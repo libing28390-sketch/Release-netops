@@ -323,7 +323,9 @@ def _pipeline_versions(
 
 def _trace_contract_version() -> str:
     from services.topology_lldp_snapshot_service import lldp_snapshot_versions
-    from services.ip_locator_endpoint_evidence import find_current_endpoint_evidence
+    from services.ip_locator_endpoint_evidence import (
+        find_current_endpoint_evidence, _current_cross_device_fdb_path,
+    )
 
     all_functions = (
         _route_command, legacy.parse_routing_table, _parse_target_route_output, _route_row, _best_routes,
@@ -333,7 +335,7 @@ def _trace_contract_version() -> str:
         getattr(legacy, "_parse_mac_output", None), getattr(legacy, "_parse_mac_table_line", None),
         getattr(legacy, "_collect_lldp_from_device", None), _lldp_neighbors,
         _load_lldp_snapshot, _record_topology_snapshot_dependency, lldp_snapshot_versions,
-        _trace_ip_uncached, find_current_endpoint_evidence,
+        _trace_ip_uncached, find_current_endpoint_evidence, _current_cross_device_fdb_path,
     )
     material = {
         "functions": [_callable_fingerprint(function) for function in all_functions],
@@ -4988,6 +4990,21 @@ def _try_snmp_endpoint(target_ip: str, **kwargs: Any) -> dict[str, Any] | None:
         },
         "cache": {"result": "current_arp_fdb_evidence", "arp": "postgres", "mac": "postgres"},
     })
+    if len(evidence["fdb_evidence"]) > 1:
+        result["evidence_source"] = "current_cross_device_arp_fdb_topology"
+        result["l2_paths"] = [{"l3_path": [], "hops": [
+            {
+                "device_id": hop["device_id"], "device": next(
+                    (_device_label(device) for device in devices if str(device.get("id") or "") == hop["device_id"]),
+                    hop["device_id"],
+                ),
+                "port": hop["interface"], "mac": hop["mac"], "vlan": hop["vlan"],
+                "source": "postgres", "collected_at": hop["observed_at"],
+                "is_uplink": bool(hop.get("transit")),
+            }
+            for hop in evidence["fdb_evidence"]
+        ]}]
+        result["cache"]["topology"] = "postgres"
     result["dependency_manifest"] = {
         "type": "current_endpoint",
         "version": 1,
