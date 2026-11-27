@@ -185,3 +185,25 @@ def test_current_endpoint_locator_fails_closed_on_ambiguous_or_inconsistent_curr
         _publish_current_fdb(device_id=other_device)
 
     assert _find() is None
+
+@pytest.mark.parametrize("other_mac", [TARGET_MAC, "02:11:22:33:44:55"])
+def test_current_endpoint_does_not_ignore_unresolved_arp_source(isolated_db, other_mac):
+    _seed_access_device()
+    _publish_current_arp()
+    _publish_current_fdb()
+    other_device = "current-locator-unresolved-arp"
+    _seed_access_device(device_id=other_device)
+    _publish_current_arp(device_id=other_device, mac=other_mac)
+
+    assert _find(device_ids={DEVICE_ID, other_device}) is None
+
+
+def test_current_endpoint_ignores_unauthorized_arp_source(isolated_db):
+    _seed_access_device()
+    _publish_current_arp()
+    _publish_current_fdb()
+    other_device = "current-locator-unauthorized-arp"
+    _seed_access_device(device_id=other_device)
+    _publish_current_arp(device_id=other_device, mac="02:11:22:33:44:55")
+
+    assert _find(device_ids={DEVICE_ID}) is not None
