@@ -1092,3 +1092,122 @@ def test_trace_requires_core_start_when_caller_did_not_select_one(monkeypatch):
 
     assert result["status"] == "needs_context"
     assert result["conclusion"] == "core_start_not_configured"
+
+
+def test_find_next_hop_device_candidates_matches_cidr_interface_ips():
+    import sqlite3
+    from services.ip_locator_trace_service import _find_next_hop_device_candidates
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE devices (id TEXT, hostname TEXT, role TEXT, platform TEXT, ip_address TEXT)")
+    conn.execute("CREATE TABLE interfaces (device_id TEXT, primary_ip TEXT, ip_address TEXT)")
+    conn.execute("CREATE TABLE ip_addresses (device_id TEXT, address TEXT)")
+    conn.execute("CREATE TABLE ip_inventory (device_id TEXT, ip TEXT)")
+    conn.execute("INSERT INTO devices VALUES ('dev-1', 'SW-CORE-1', 'core', 'hp_comware', '10.0.0.1')")
+    conn.execute("INSERT INTO interfaces VALUES ('dev-1', '', '10.255.18.25/30')")
+    conn.execute("INSERT INTO ip_addresses VALUES ('dev-2', '10.255.18.19/30')")
+    conn.execute("INSERT INTO devices VALUES ('dev-2', 'SW-CORE-2', 'core', 'hp_comware', '10.0.0.2')")
+    eligible = {
+        "dev-1": {"id": "dev-1", "hostname": "SW-CORE-1", "role": "core", "platform": "hp_comware", "ip_address": "10.0.0.1"},
+        "dev-2": {"id": "dev-2", "hostname": "SW-CORE-2", "role": "core", "platform": "hp_comware", "ip_address": "10.0.0.2"},
+    }
+    try:
+        m1 = _find_next_hop_device_candidates(conn, "10.255.18.25", eligible)
+        m2 = _find_next_hop_device_candidates(conn, "10.255.18.19", eligible)
+    finally:
+        conn.close()
+    assert [d["id"] for d in m1] == ["dev-1"]
+    assert [d["id"] for d in m2] == ["dev-2"]
+
+
+def test_confirmed_access_hides_unrelated_next_hop_unmanaged_errors():
+    result = add_legacy_compatibility({
+        "target_ip": "10.16.9.11",
+        "found": True,
+        "status": "completed",
+        "conclusion": "managed_access_confirmed",
+        "location": {"device_id": "sw-1", "device": "SW-1", "port": "BAGG1", "vlan": "9", "mac": "00505696c803"},
+        "coverage_gaps": ["next_hop_unmanaged:10.255.18.25", "route_failed:other-sw"],
+        "errors": ["WXTJY-1015-SW254 路由查询失败"],
+    })
+    assert result["trace_status"] == "terminal"
+    assert result["errors"] == []
+
+
+def test_topology_incomplete_surfaces_readable_l2_port_mode_hint():
+    result = add_legacy_compatibility({
+        "target_ip": "10.16.9.11",
+        "found": False,
+        "status": "partial",
+        "conclusion": "topology_incomplete",
+        "l2_paths": [{
+            "device_id": "sw-1",
+            "device": "SW-ACCESS-1",
+            "port": "GE1/0/5",
+            "terminal_evidence": {"is_access": False, "is_trunk": False, "is_aggregation": False},
+        }],
+        "coverage_gaps": ["topology_incomplete:sw-1:GE1/0/5", "next_hop_unmanaged:10.255.18.25"],
+        "errors": [],
+    })
+    assert result["trace_status"] == "incomplete"
+    assert any("SW-ACCESS-1:GE1/0/5" in e and "端口模式" in e for e in result["errors"])
+
+
+def test_fallback_direct_gateways_from_arp_recovers_core_switch():
+    import sqlite3
+    from services.ip_locator_trace_service import _brief_query_error, _fallback_direct_gateways_from_arp
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE ipam_current_arp_observations "
+        "(source_device_id TEXT, ip_address TEXT, interface_name TEXT, vlan_id TEXT, observed_at TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO ipam_current_arp_observations VALUES "
+        "('sw-254', '192.168.9.30', 'GE2/5/0/18', '9', '2026-11-27T16:00:00Z')"
+    )
+    eligible = {
+        "sw-254": {"id": "sw-254", "hostname": "WXTJY-1015-SW254", "role": "core", "platform": "hp_comware"},
+    }
+    try:
+        gateways = _fallback_direct_gateways_from_arp(conn, "192.168.9.30", eligible)
+    finally:
+        conn.close()
+    assert len(gateways) == 1
+    assert gateways[0][0]["id"] == "sw-254"
+    assert gateways[0][1]["source"] == "arp_fallback"
+    assert gateways[0][1]["interface"] == "GE2/5/0/18"
+    assert _brief_query_error(TimeoutError("timed out")) == "连接或命令超时"
+    assert _brief_query_error(ValueError("UNSUPPORTED_ACTION: get_route")) == "平台未配置路由查询动作"
+
+
+def test_dual_homed_server_lag_compatibility_exposes_both_ports_as_terminal():
+    result = add_legacy_compatibility({
+        "target_ip": "192.168.11.111",
+        "found": True,
+        "status": "completed",
+        "conclusion": "dual_homed_access_confirmed",
+        "location": {
+            "device_id": "sw-1", "device": "TOR-1", "port": "Bridge-Aggregation2",
+            "vlan": "11", "mac": "565a00015e6b", "endpoint_classification": "SERVER_LAG_ENDPOINT",
+        },
+        "terminal_candidates": [
+            {
+                "device_id": "sw-1", "device": "TOR-1", "port": "Bridge-Aggregation2",
+                "vlan": "11", "mac": "565a00015e6b", "endpoint_classification": "SERVER_LAG_ENDPOINT",
+            },
+            {
+                "device_id": "sw-2", "device": "TOR-2", "port": "Bridge-Aggregation2",
+                "vlan": "11", "mac": "565a00015e6b", "endpoint_classification": "SERVER_LAG_ENDPOINT",
+            },
+        ],
+        "coverage_gaps": ["next_hop_unmanaged:10.255.18.25"],
+        "errors": [],
+    })
+    assert result["trace_status"] == "terminal"
+    assert result["mac_lookup"]["status"] == "found"
+    assert len(result["locations"]) == 2
+    assert {loc["switch_name"] for loc in result["locations"]} == {"TOR-1", "TOR-2"}
+    assert result["errors"] == []

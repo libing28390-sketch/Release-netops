@@ -1129,10 +1129,11 @@ def _supersede_older_endpoint_context_observations(items: list[dict[str, Any]]) 
     ) -> bool:
         # Distinct explicit address spaces are separate routing domains and
         # must never fold into each other even when IP/MAC/VLAN match.
-        if old_space:
-            return bool(new_space) and old_space == new_space
-        # Unresolved observations are isolated by source device and may only
-        # be superseded by a newer observation from the same device.
+        if old_space and new_space:
+            return old_space == new_space
+        # When either observation is unresolved (scope_pending), isolate by
+        # source device so a newer sample from the exact same device supersedes
+        # its stale context row instead of displaying duplicate IP entries.
         return old_device == new_device
 
     superseded_indices: set[int] = set()
