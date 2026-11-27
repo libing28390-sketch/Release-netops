@@ -691,6 +691,15 @@ export async function checkAIModelHealth(id: string): Promise<AIModelHealthCheck
   return apiRequest<AIModelHealthCheckResponse>(`/api/ai/models/${id}/health-check`, { method: 'POST' });
 }
 
+export async function checkAllEnabledAIModelsHealth(): Promise<{
+  checked: number;
+  healthy: number;
+  unhealthy: number;
+  skipped: number;
+}> {
+  return apiRequest('/api/ai/models/health-check-all', { method: 'POST' });
+}
+
 export async function getAIModelHealthSummary(windowDays = 90): Promise<AIModelHealthSummary> {
   return apiRequest<AIModelHealthSummary>(`/api/ai/models/health-summary?window_days=${encodeURIComponent(windowDays)}`);
 }
@@ -887,7 +896,10 @@ export interface AIAuditLog {
   user_id?: string | null;
   scene: string;
   provider_id?: string | null;
+  provider_name?: string | null;
   model_id?: string | null;
+  model_name?: string | null;
+  model_code?: string | null;
   prompt_id?: string | null;
   input_tokens?: number | null;
   output_tokens?: number | null;
