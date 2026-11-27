@@ -1234,6 +1234,10 @@ def test_live_lag_member_and_per_port_lldp_verbose_parsers():
         "  XGE2/3/0/4(R)  S        32768    13  0x3  ABCDEF\n"
     )
     assert _parse_lag_member_ports(lag_out, "bridge-aggregation2") == ["XGE1/3/0/4", "XGE2/3/0/4"]
+    inactive_out = lag_out + "  XGE3/3/0/4     U     32768 14\n"
+    assert _parse_lag_member_ports(inactive_out, "bridge-aggregation2") == ["XGE1/3/0/4", "XGE2/3/0/4"]
+    assert _parse_lag_member_ports("Gi1/0/1(P) Gi1/0/2(D) Gi1/0/3(I)", "po2") == ["Gi1/0/1"]
+
 
     lldp_out = (
         "LLDP neighbor-information of port 10[Ten-GigabitEthernet1/3/0/4]:\n"
