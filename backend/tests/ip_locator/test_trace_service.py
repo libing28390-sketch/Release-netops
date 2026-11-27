@@ -1248,7 +1248,8 @@ def test_live_lag_member_and_per_port_lldp_verbose_parsers():
     assert neighbors[0]["neighbor_port"] == "Ten-GigabitEthernet1/0/49"
 
 
-def test_per_port_lldp_verbose_recovers_from_full_snapshot_failure_without_duplicate_lag_cli(monkeypatch):
+@pytest.mark.parametrize("mode", ["all_found", "third_member_only", "empty"])
+def test_per_port_lldp_verbose_recovers_from_full_snapshot_failure_without_duplicate_lag_cli(monkeypatch, mode):
     from services import ip_locator_trace_service as ts
 
     h3c_dev = {
@@ -1266,8 +1267,12 @@ def test_per_port_lldp_verbose_recovers_from_full_snapshot_failure_without_dupli
                 "Aggregate Interface: Bridge-Aggregation2\n"
                 "  XGE1/3/0/4     S        32768    12  0x3  ABCDEF\n"
                 "  XGE2/3/0/4(R)  S        32768    13  0x3  ABCDEF\n"
+                "  XGE3/3/0/4     S        32768    14  0x3  ABCDEF\n"
+                "  XGE4/3/0/4     S        32768    15  0x3  ABCDEF\n"
             )
         if "lldp neighbor-information interface" in command:
+            if mode == "empty" or (mode == "third_member_only" and "3/3/0/4" not in command):
+                return "unclassified response"
             return (
                 "LLDP neighbor-information of port 10[Ten-GigabitEthernet1/3/0/4]:\n"
                 "  System name             : WXTJY-1F-SW4\n"
@@ -1295,7 +1300,7 @@ def test_per_port_lldp_verbose_recovers_from_full_snapshot_failure_without_dupli
         None, h3c_dev, "BAGG2", result=result,
     )
     assert resolved is True
-    assert phys_names == ["XGE1/3/0/4", "XGE2/3/0/4"]
+    assert phys_names == ["XGE1/3/0/4", "XGE2/3/0/4", "XGE3/3/0/4", "XGE4/3/0/4"]
 
     selected, _, _, status = ts._load_lldp_snapshot(
         h3c_dev,
@@ -1317,12 +1322,21 @@ def test_per_port_lldp_verbose_recovers_from_full_snapshot_failure_without_dupli
         expanded_member_ports=expanded,
         physical_member_names=phys_names,
     )
-    assert status["status"] == "found"
     assert status["source"] == "per_port_lldp_verbose"
-    assert len(selected) == 1
-    assert selected[0]["neighbor_name"] == "WXTJY-1F-SW4"
-    assert selected[0]["neighbor_ip"] == "10.16.40.4"
+    if mode == "empty":
+        assert status["status"] == "parse_incomplete"
+        assert selected == []
+    else:
+        assert status["status"] == "found"
+        assert len(selected) == 1
+        assert selected[0]["neighbor_name"] == "WXTJY-1F-SW4"
+        assert selected[0]["neighbor_ip"] == "10.16.40.4"
+    assert status["coverage"] == ("targeted" if mode == "all_found" else "partial")
+    assert len([c for c in sent_commands if "lldp neighbor-information interface" in c]) == 4
+    assert any(gap.startswith("neighbor_targeted_unversioned:") for gap in result["coverage_gaps"])
+    assert any(gap.startswith("neighbor_parse_incomplete:") for gap in result["coverage_gaps"]) == (mode != "all_found")
     # LAG expansion CLI must only have been sent ONCE, not duplicated inside _load_lldp_snapshot
     lag_cmds = [c for c in sent_commands if "link-aggregation verbose" in c]
     assert len(lag_cmds) == 1
-    assert any("WXTJY-1F-SW4 (10.16.40.4)" in step for step in result["trace_steps"])
+    if mode != "empty":
+        assert any("WXTJY-1F-SW4 (10.16.40.4)" in step for step in result["trace_steps"])
