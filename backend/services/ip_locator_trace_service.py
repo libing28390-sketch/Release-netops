@@ -1404,6 +1404,222 @@ def _fallback_direct_gateways_from_arp(
     return [hits[dev_id] for dev_id in sorted(hits)]
 
 
+def _log_trace_step(result: dict[str, Any] | None, message: str) -> None:
+    """Append a human-readable step line to result['trace_steps'] for UI diagnostics."""
+    if not isinstance(result, dict):
+        return
+    text = str(message or "").strip()
+    if not text:
+        return
+    steps = result.setdefault("trace_steps", [])
+    if len(steps) >= 120:
+        return
+    if steps and steps[-1] == text:
+        return
+    steps.append(text)
+
+
+_PHYSICAL_MEMBER_TOKEN_RE = re.compile(
+    r"\b((?:Ten-?GigabitEthernet|FortyGigE|HundredGigE|TwentyFiveGigE|GigabitEthernet|FastEthernet|"
+    r"100GE|40GE|25GE|10GE|XGE|FGE|HGE|MGE|GE|Eth|Ethernet|Gi|Te|Fo|Hu|Fa)\d+(?:/\d+){1,3})\b",
+    re.IGNORECASE,
+)
+
+
+def _lag_member_command(device: dict[str, Any], port: str) -> str:
+    """Return a lightweight vendor CLI command to list physical member ports of a LAG."""
+    norm = re.sub(r"\s+", "", legacy.normalize_interface_name(port))
+    match = _LAG_NAME_RE.match(norm)
+    if not match:
+        return ""
+    lag_num = match.group(1)
+    plat = _normalise_platform(device)
+    if plat in {"hp_comware", "h3c_comware", "h3c"} or "comware" in plat or "h3c" in plat:
+        prefix = "Route-Aggregation" if norm.lower().startswith(("route-agg", "ragg")) else "Bridge-Aggregation"
+        return f"display link-aggregation verbose {prefix}{lag_num}"
+    if "huawei" in plat or "vrp" in plat:
+        return f"display eth-trunk {lag_num}"
+    if "cisco" in plat or "ruijie" in plat or "nxos" in plat:
+        return f"show etherchannel {lag_num} summary"
+    return ""
+
+
+def _parse_lag_member_ports(output: str, lag_norm: str = "") -> list[str]:
+    """Parse physical member interface names from LAG verbose/summary CLI output."""
+    if not output:
+        return []
+    found: list[str] = []
+    seen: set[str] = set()
+    for line in str(output).splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("Loadsharing", "Aggregate Interface", "Aggregation Mode", "System ID")):
+            continue
+        for match in _PHYSICAL_MEMBER_TOKEN_RE.finditer(stripped):
+            raw_port = match.group(1)
+            norm = legacy.normalize_interface_name(raw_port).lower()
+            if not norm or norm == lag_norm or _LAG_NAME_RE.match(re.sub(r"\s+", "", norm)):
+                continue
+            if norm not in seen:
+                seen.add(norm)
+                found.append(raw_port)
+    return found
+
+
+def _lldp_interface_verbose_command(device: dict[str, Any], port: str) -> str:
+    """Return a per-interface LLDP verbose/detail command for targeted neighbor lookup."""
+    clean_port = str(port or "").strip()
+    if not clean_port:
+        return ""
+    plat = _normalise_platform(device)
+    if plat in {"hp_comware", "h3c_comware", "h3c"} or "comware" in plat or "h3c" in plat:
+        # Expand common H3C abbreviations (XGE -> Ten-GigabitEthernet, GE -> GigabitEthernet)
+        expanded = re.sub(r"^XGE(?=\d)", "Ten-GigabitEthernet", clean_port, flags=re.IGNORECASE)
+        expanded = re.sub(r"^GE(?=\d)", "GigabitEthernet", expanded, flags=re.IGNORECASE)
+        return f"display lldp neighbor-information interface {expanded} verbose"
+    if "huawei" in plat or "vrp" in plat:
+        return f"display lldp neighbor interface {clean_port}"
+    if "cisco" in plat or "ruijie" in plat or "nxos" in plat:
+        return f"show lldp neighbors {clean_port} detail"
+    return ""
+
+
+def _parse_lldp_verbose_neighbors(output: str, local_port: str) -> list[dict[str, Any]]:
+    """Parse neighbor name, management IP, and remote port from per-interface LLDP verbose output."""
+    text = str(output or "")
+    if not text.strip():
+        return []
+    # Split multi-neighbor blocks if present
+    blocks = re.split(r"(?im)^\s*(?:LLDP neighbor-information of port|Neighbor index\s*:|Chassis ID\s*:)", text)
+    if len(blocks) <= 1:
+        blocks = [text]
+    neighbors: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for blk in blocks:
+        if not blk.strip():
+            continue
+        sys_m = re.search(r"(?im)^\s*System\s+name\s*[:=]\s*([^\r\n]+)", blk)
+        mgmt_m = re.search(
+            r"(?im)^\s*Management\s+address(?:\s+value)?\s*[:=]\s*(\d{1,3}(?:\.\d{1,3}){3})",
+            blk,
+        )
+        port_m = re.search(r"(?im)^\s*Port\s+ID\s*[:=]\s*([^\r\n]+)", blk)
+        sys_name = sys_m.group(1).strip() if sys_m else ""
+        mgmt_ip = mgmt_m.group(1).strip() if mgmt_m else ""
+        remote_port = port_m.group(1).strip() if port_m else ""
+        if not sys_name and not mgmt_ip:
+            continue
+        key = (sys_name.lower(), mgmt_ip)
+        if key in seen:
+            continue
+        seen.add(key)
+        neighbors.append({
+            "local_port": local_port,
+            "neighbor_name": sys_name or mgmt_ip,
+            "neighbor_ip": mgmt_ip,
+            "neighbor_port": remote_port,
+            "evidence": "lldp_interface_verbose",
+        })
+    return neighbors
+
+
+def _can_run_live_cli(device: Mapping[str, Any]) -> bool:
+    """Return True when live CLI commands can be executed for ``device`` without hanging on dead probes."""
+    send_fn = getattr(legacy, "_send_command", None)
+    if not callable(send_fn):
+        return False
+    # Allow monkeypatched / test stubs regardless of credential fields
+    if getattr(send_fn, "__module__", "") != "services.ip_locator_service":
+        return True
+    try:
+        from services.ip_locator_session_pool import get_active_locator_session
+
+        if get_active_locator_session(dict(device)) is not None:
+            return True
+    except Exception:
+        pass
+    has_primary = bool(
+        (device.get("_ssh_username") or device.get("username"))
+        and (device.get("_ssh_password") or device.get("password"))
+    )
+    has_fallback = any(all(pair) for pair in (device.get("_ssh_fallback_credentials") or []))
+    return has_primary or has_fallback
+
+
+def _expand_lag_member_ports_live(
+    conn: Any,
+    device: dict[str, Any],
+    port: str,
+    *,
+    result: dict[str, Any] | None = None,
+) -> tuple[set[str], list[str], bool]:
+    """Expand a LAG to physical members via DB first, then live CLI if DB has no members.
+
+    Returns ``(expanded_normalized_ports, physical_display_names, members_resolved)``.
+    """
+    device_id = str(device.get("id") or "")
+    label = _device_label(device)
+    normalized = legacy.normalize_interface_name(port).lower()
+    is_lag = bool(_LAG_NAME_RE.match(re.sub(r"\s+", "", normalized)))
+    expanded = _expand_lag_member_ports(conn, device_id, port)
+    physical_norms = sorted(p for p in expanded if p != normalized and not _LAG_NAME_RE.match(re.sub(r"\s+", "", p)))
+    if not is_lag:
+        return expanded, [port] if port else [], True
+
+    # Secondary DB fallback: inspect topology_links.members_json for this LAG name
+    if not physical_norms and conn is not None and device_id:
+        try:
+            rows = conn.execute(
+                """SELECT source_device_id, target_device_id, source_aggregation_name, target_aggregation_name, members_json
+                     FROM topology_links
+                    WHERE (source_device_id = ? OR target_device_id = ?)
+                      AND members_json IS NOT NULL""",
+                (device_id, device_id),
+            ).fetchall()
+            for raw in rows:
+                row = dict(raw)
+                for side in ("source", "target"):
+                    if str(row.get(f"{side}_device_id") or "") != device_id:
+                        continue
+                    agg_norm = legacy.normalize_interface_name(str(row.get(f"{side}_aggregation_name") or "")).lower()
+                    if agg_norm != normalized:
+                        continue
+                    raw_m = row.get("members_json")
+                    m_list = json.loads(raw_m) if isinstance(raw_m, str) else list(raw_m or [])
+                    for m in m_list:
+                        if not isinstance(m, Mapping):
+                            continue
+                        for mk in (f"{side}_port", f"{side}_port_normalized", f"{side}_interface"):
+                            mv = legacy.normalize_interface_name(str(m.get(mk) or "")).lower()
+                            if mv and mv != normalized:
+                                expanded.add(mv)
+        except Exception:
+            pass
+        physical_norms = sorted(p for p in expanded if p != normalized and not _LAG_NAME_RE.match(re.sub(r"\s+", "", p)))
+
+    if physical_norms:
+        _log_trace_step(result, f"[{label}] 聚合口 {port} 展开成员物理接口: {', '.join(physical_norms)}")
+        return expanded, physical_norms, True
+
+    # Live CLI fallback: run lightweight vendor LAG member command
+    cmd = _lag_member_command(device, port)
+    if cmd and _can_run_live_cli(device):
+        try:
+            output = legacy._send_command(device, cmd, force_refresh=True)
+            parsed_members = _parse_lag_member_ports(str(output or ""), lag_norm=normalized)
+            if parsed_members:
+                for mp in parsed_members:
+                    expanded.add(legacy.normalize_interface_name(mp).lower())
+                _log_trace_step(result, f"[{label}] 聚合成员查询 `{cmd}` 返回成员: {', '.join(parsed_members)}")
+                _log_trace_step(result, f"[{label}] 聚合接口 {port} 不执行 LLDP 查询，仅查询成员物理接口")
+                return expanded, parsed_members, True
+            _log_trace_step(result, f"[{label}] 聚合成员查询 `{cmd}` 未返回物理成员接口")
+        except Exception as exc:
+            _log_trace_step(result, f"[{label}] 聚合成员查询 `{cmd}` 失败（{_brief_query_error(exc)}）")
+            logger.debug("[IPLocatorV2] live LAG member query failed for %s/%s: %s", label, port, exc)
+
+    return expanded, [], False
+
+
 _LAG_NAME_RE = re.compile(
     r"^(?:eth-?trunk|port-?channel|po|bridge-?aggregation|bagg|route-?aggregation|ragg|ae|agg)(\d+)$",
     re.IGNORECASE,
@@ -1632,6 +1848,8 @@ def _load_lldp_snapshot(
     cancel_check: Any,
     result: dict[str, Any],
     wait_seconds: int,
+    expanded_member_ports: set[str] | None = None,
+    physical_member_names: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], str, str, dict[str, Any]]:
     """Reuse a complete topology snapshot before falling back to device CLI."""
     device_id = str(device.get("id") or "")
@@ -1821,78 +2039,132 @@ def _load_lldp_snapshot(
             }
         status_name = str(snapshot_status.get("status") or "").strip().lower()
         coverage = str(snapshot_status.get("coverage") or "").strip().lower()
-        if status_name not in {"found", "not_found"} or (coverage and coverage != "full"):
-            result["queried_devices"]["lldp"].append(_device_label(device))
-            return [], collected_at, task_id, snapshot_status
+        full_snapshot_failed = status_name not in {"found", "not_found"} or (bool(coverage) and coverage != "full")
         result["queried_devices"]["lldp"].append(_device_label(device))
-        collected_at = collected_at or _now_iso()
-        negative = status_name == "not_found" or not snapshot
-        persisted = _persist_observation(
-            tenant_id=tenant_id,
-            scope_hash=scope_hash,
-            network_domain_id=network_domain_id,
-            site_id=site_id,
-            vrf=vrf,
-            device_id=device_id,
-            kind="neighbor",
-            records=snapshot,
-            coverage="full",
-            collected_at=collected_at,
-            query_task_id=task_id,
-            fresh_seconds=15 if negative else None,
-            retain_seconds=15 if negative else None,
-            result=result,
-            device=device,
-            target=neighbor_target,
-        )
-        if not persisted:
-            result["coverage_gaps"].append(f"observation_persist_failed:{device_id}:neighbor")
-            return [], collected_at, task_id, {"status": "query_failed", "error_code": "OBSERVATION_PERSIST_FAILED"}
-        redis_write_attempted = _redis_write_configured(cache, key)
-        redis_write_ack = None
-        if cache is not None and key:
-            redis_write_ack = cache.set_json(
-                key,
-                _fenced_observation_payload(
-                    result,
-                    {"negative": negative, "neighbors": snapshot, "collected_at": collected_at},
-                    persisted,
-                ),
-                kind="negative" if negative else "topology",
+        if not full_snapshot_failed:
+            collected_at = collected_at or _now_iso()
+            negative = status_name == "not_found" or not snapshot
+            persisted = _persist_observation(
+                tenant_id=tenant_id,
+                scope_hash=scope_hash,
+                network_domain_id=network_domain_id,
+                site_id=site_id,
+                vrf=vrf,
+                device_id=device_id,
+                kind="neighbor",
+                records=snapshot,
+                coverage="full",
                 collected_at=collected_at,
+                query_task_id=task_id,
+                fresh_seconds=15 if negative else None,
                 retain_seconds=15 if negative else None,
-            ) is True
-        _set_cache_source(
-            result,
-            "topology",
-            device,
-            "negative_cli" if negative else "cli",
-            vrf=vrf,
-            variant="full_snapshot",
-            redis_write_attempted=redis_write_attempted,
-            redis_write_ack=redis_write_ack,
-        )
+                result=result,
+                device=device,
+                target=neighbor_target,
+            )
+            if not persisted:
+                result["coverage_gaps"].append(f"observation_persist_failed:{device_id}:neighbor")
+                return [], collected_at, task_id, {"status": "query_failed", "error_code": "OBSERVATION_PERSIST_FAILED"}
+            redis_write_attempted = _redis_write_configured(cache, key)
+            redis_write_ack = None
+            if cache is not None and key:
+                redis_write_ack = cache.set_json(
+                    key,
+                    _fenced_observation_payload(
+                        result,
+                        {"negative": negative, "neighbors": snapshot, "collected_at": collected_at},
+                        persisted,
+                    ),
+                    kind="negative" if negative else "topology",
+                    collected_at=collected_at,
+                    retain_seconds=15 if negative else None,
+                ) is True
+            _set_cache_source(
+                result,
+                "topology",
+                device,
+                "negative_cli" if negative else "cli",
+                vrf=vrf,
+                variant="full_snapshot",
+                redis_write_attempted=redis_write_attempted,
+                redis_write_ack=redis_write_ack,
+            )
+    else:
+        full_snapshot_failed = False
 
     if shared_selected and shared_dependency_marker:
         _record_topology_snapshot_dependency(result, shared_dependency_marker)
 
-    member_ports: set[str] | None = None
-    try:
-        lag_conn = get_db_connection()
+    member_ports: set[str] | None = set(expanded_member_ports) if expanded_member_ports is not None else None
+    phys_ports: list[str] = list(physical_member_names) if physical_member_names is not None else []
+    if member_ports is None or physical_member_names is None:
         try:
-            member_ports = _expand_lag_member_ports(lag_conn, device_id, port)
-        finally:
-            lag_conn.close()
-    except Exception:
-        member_ports = None
+            lag_conn = get_db_connection()
+            try:
+                member_ports, phys_ports, _ = _expand_lag_member_ports_live(
+                    lag_conn, device, port, result=result,
+                )
+            finally:
+                lag_conn.close()
+        except Exception:
+            if member_ports is None:
+                member_ports = None
+            if not phys_ports and port and not _LAG_NAME_RE.match(re.sub(r"\s+", "", legacy.normalize_interface_name(port).lower())):
+                phys_ports = [port]
 
-    selected = _lldp_neighbors(
-        device,
-        port,
-        records=snapshot,
-        source_status=snapshot_status,
-        member_ports=member_ports,
+    selected = (
+        []
+        if full_snapshot_failed
+        else _lldp_neighbors(
+            device,
+            port,
+            records=snapshot,
+            source_status=snapshot_status,
+            member_ports=member_ports,
+        )
     )
+    is_lag_target = bool(_LAG_NAME_RE.match(re.sub(r"\s+", "", legacy.normalize_interface_name(port).lower())))
+    should_try_per_port_lldp = (
+        not selected
+        and bool(phys_ports)
+        and _can_run_live_cli(device)
+        and (is_lag_target or full_snapshot_failed or (force_refresh and not snapshot))
+    )
+    if should_try_per_port_lldp:
+        # Targeted per-interface LLDP verbose fallback (up to 2 physical member ports)
+        # so LAG member uplinks, newly deployed devices, or devices whose full LLDP
+        # snapshot failed/lacked details still drill down cleanly without adding
+        # redundant SSH round-trips on already-verified terminal access ports.
+        label = _device_label(device)
+        per_port_clean_empty = False
+        for phys_port in phys_ports[:2]:
+            lldp_cmd = _lldp_interface_verbose_command(device, phys_port)
+            if not lldp_cmd:
+                continue
+            _log_trace_step(result, f"[{label}] 开始查询接口 {phys_port} 的 LLDP")
+            try:
+                lldp_out = legacy._send_command(device, lldp_cmd, force_refresh=True)
+                parsed_neighbors = _parse_lldp_verbose_neighbors(str(lldp_out or ""), phys_port)
+                if parsed_neighbors:
+                    summary_nb = ", ".join(
+                        f"{n.get('neighbor_name')} ({n.get('neighbor_ip')})" if n.get("neighbor_ip") else str(n.get("neighbor_name"))
+                        for n in parsed_neighbors
+                    )
+                    _log_trace_step(result, f"[{label}] `{lldp_cmd}` 返回 {len(parsed_neighbors)} 个邻居: {summary_nb}")
+                    selected = parsed_neighbors
+                    snapshot_status = {"status": "found", "source": "per_port_lldp_verbose"}
+                    collected_at = collected_at or _now_iso()
+                    break
+                per_port_clean_empty = True
+                _log_trace_step(result, f"[{label}] `{lldp_cmd}` 未发现 LLDP 邻居")
+            except Exception as exc:
+                _log_trace_step(result, f"[{label}] `{lldp_cmd}` 查询失败（{_brief_query_error(exc)}）")
+                logger.debug("[IPLocatorV2] per-port LLDP verbose failed for %s/%s: %s", label, phys_port, exc)
+        if not selected and full_snapshot_failed and per_port_clean_empty:
+            snapshot_status = {"status": "not_found", "source": "per_port_lldp_verbose"}
+            collected_at = collected_at or _now_iso()
+    elif full_snapshot_failed and not selected:
+        return [], collected_at, task_id, snapshot_status
     if collected_at:
         _include_evidence_timestamp(result, collected_at)
         age = _route_age_seconds(collected_at)
@@ -2171,6 +2443,7 @@ def _initial_result(
         "terminal_candidates": [],
         "queried_devices": {"route": [], "arp": [], "mac": [], "lldp": []},
         "coverage_gaps": [],
+        "trace_steps": [],
         "dependency_manifest": {
             "version": 1,
             "contract_version": _trace_contract_version(),
@@ -2941,6 +3214,10 @@ def _trace_ip_uncached(
                     "vrf": vrf,
                 })
                 result["coverage_gaps"].append(f"l3_route_fallback_to_arp:{fb_id}")
+                _log_trace_step(
+                    result,
+                    f"[{fb_label}] 三层路由未命中直连网关，已从 ARP 表恢复直连网关 ({fb_route.get('interface') or 'ARP'})",
+                )
     finally:
         conn.close()
 
@@ -3544,6 +3821,11 @@ def _trace_ip_uncached(
         if arp_age is not None:
             result["freshness"]["arp"] = max(int(result["freshness"]["arp"] or 0), arp_age)
         _include_evidence_timestamp(result, arp_item["collected_at"])
+        _log_trace_step(
+            result,
+            f"[{label}] ARP 命中: {target_ip} -> MAC {legacy._format_mac(str(arp_item.get('mac') or ''))}, "
+            f"VLAN {arp_item.get('vlan') or '-'}, 接口 {arp_item.get('interface') or '-'}",
+        )
         arp_hits.append((device, arp_item, l3_path))
 
     if cancelled:
@@ -4252,14 +4534,35 @@ def _trace_ip_uncached(
                         "collected_at": mac_collected_at or _now_iso(),
                     }
                     result["l2_paths"].append({"l3_path": l3_path, "hops": path + [hop]})
+                    _log_trace_step(result, f"[{label}] MAC {legacy._format_mac(mac)} 命中端口 {port} (VLAN {hop['vlan'] or '-'})")
                     hop_age = _route_age_seconds(mac_collected_at)
                     if hop_age is not None:
                         result["freshness"]["mac"] = max(int(result["freshness"]["mac"] or 0), hop_age)
                     _include_evidence_timestamp(result, mac_collected_at)
                     topology: list[dict[str, Any]] = []
                     topology_collected_at = ""
+                    port_norm_lower = legacy.normalize_interface_name(port).lower()
+                    is_lag_port = bool(_LAG_NAME_RE.match(re.sub(r"\s+", "", port_norm_lower)))
+                    expanded_member_ports: set[str] | None = None
+                    physical_member_names: list[str] | None = None
+                    lag_members_resolved = not is_lag_port
                     if conn is not None:
                         topology = _topology_neighbors(conn, current_id, port)
+                    if not topology and is_lag_port:
+                        expanded_member_ports, physical_member_names, lag_members_resolved = _expand_lag_member_ports_live(
+                            conn, current, port, result=result,
+                        )
+                        if conn is not None and lag_members_resolved and expanded_member_ports:
+                            # Re-check topology_links using freshly expanded physical member ports
+                            for phys_p in sorted(expanded_member_ports):
+                                if phys_p == port_norm_lower:
+                                    continue
+                                topology = _topology_neighbors(conn, current_id, phys_p)
+                                if topology:
+                                    break
+                    elif not is_lag_port:
+                        expanded_member_ports = {port_norm_lower} if port_norm_lower else set()
+                        physical_member_names = [port] if port else []
                     terminal_identity = (
                         _terminal_evidence(conn, current_id, port, vlan_hint)
                         if conn is not None else {"is_terminal": False}
@@ -4295,6 +4598,8 @@ def _trace_ip_uncached(
                             cancel_check=cancel_check,
                             result=result,
                             wait_seconds=max(1, min(30, int(deadline - time.monotonic()))),
+                            expanded_member_ports=expanded_member_ports,
+                            physical_member_names=physical_member_names,
                         )
                         if topology_status.get("status") in {"unsupported", "query_failed", "parse_incomplete"}:
                             status_name = str(topology_status.get("status") or "query_failed")
@@ -4338,6 +4643,10 @@ def _trace_ip_uncached(
                             for item in child_devices
                         ]
                         for child in child_devices:
+                            _log_trace_step(
+                                result,
+                                f"[{label}] 采用端口 {port} 下联邻居 {_device_label(child)} ({child.get('ip_address') or '-'}) 继续下钻",
+                            )
                             queue.append((child, path + [hop], visited))
                         continue
 
@@ -4348,11 +4657,12 @@ def _trace_ip_uncached(
                         and (_is_hypervisor_mac(mac) or bool(hypervisor_neighbors))
                         and (
                             (bool(identity.get("is_physical")) and bool(identity.get("is_trunk")) and not bool(identity.get("is_aggregation")))
-                            or bool(identity.get("is_aggregation"))
+                            or (bool(identity.get("is_aggregation")) and lag_members_resolved)
                         )
                     )
                     is_server_lag_port = (
                         bool(identity.get("is_aggregation"))
+                        and lag_members_resolved
                         and not unmanaged_neighbors_on_port
                         and not is_hypervisor_trunk
                     )
@@ -4396,8 +4706,16 @@ def _trace_ip_uncached(
                                     "message": f"该边缘端口下同时检测到 {active_mac_count} 个活跃 MAC，现场疑似私接非网管桌面小交换机/Hub",
                                 }
                         final_candidates.append(candidate_payload)
+                        _log_trace_step(
+                            result,
+                            f"[{label}] 端口 {port} 确认为终端口 ({candidate_payload['endpoint_classification']})",
+                        )
                     else:
                         result["coverage_gaps"].append(f"topology_incomplete:{current_id}:{port}")
+                        _log_trace_step(
+                            result,
+                            f"[{label}] 端口 {port} 未能确认终端口角色（无下联交换机或聚合口成员未展开）",
+                        )
                 if len(queried_device_ids) >= limits.max_devices and queue:
                     result["coverage_gaps"].append("device_budget_exceeded")
                     break
