@@ -2133,36 +2133,56 @@ def _load_lldp_snapshot(
         and (is_lag_target or full_snapshot_failed or (force_refresh and not snapshot))
     )
     if should_try_per_port_lldp:
-        # Targeted per-interface LLDP verbose fallback (up to 2 physical member ports)
-        # so LAG member uplinks, newly deployed devices, or devices whose full LLDP
-        # snapshot failed/lacked details still drill down cleanly without adding
-        # redundant SSH round-trips on already-verified terminal access ports.
+        # Bound CLI fan-out and preserve every positive neighbor. A truncated
+        # member scan or unclassified empty output is incomplete evidence.
         label = _device_label(device)
-        for phys_port in phys_ports[:2]:
+        member_budget = 16
+        member_deadline = time.monotonic() + max(1, wait_seconds)
+        distinct_ports = list(dict.fromkeys(phys_ports))
+        incomplete = len(distinct_ports) > member_budget
+        by_neighbor = {}
+        for phys_port in distinct_ports[:member_budget]:
+            if time.monotonic() >= member_deadline or (callable(cancel_check) and cancel_check()):
+                incomplete = True
+                break
             lldp_cmd = _lldp_interface_verbose_command(device, phys_port)
             if not lldp_cmd:
+                incomplete = True
                 continue
             _log_trace_step(result, f"[{label}] 开始查询接口 {phys_port} 的 LLDP")
             try:
                 lldp_out = legacy._send_command(device, lldp_cmd, force_refresh=True)
                 parsed_neighbors = _parse_lldp_verbose_neighbors(str(lldp_out or ""), phys_port)
-                if parsed_neighbors:
-                    summary_nb = ", ".join(
-                        f"{n.get('neighbor_name')} ({n.get('neighbor_ip')})" if n.get("neighbor_ip") else str(n.get("neighbor_name"))
-                        for n in parsed_neighbors
-                    )
-                    _log_trace_step(result, f"[{label}] `{lldp_cmd}` 返回 {len(parsed_neighbors)} 个邻居: {summary_nb}")
-                    selected = parsed_neighbors
-                    snapshot_status = {"status": "found", "source": "per_port_lldp_verbose"}
-                    collected_at = collected_at or _now_iso()
-                    break
-                # An empty parse does not prove a negative LLDP result.
-                # Preserve the full snapshot failure unless a parser has
-                # positively identified a complete, empty response.
-                _log_trace_step(result, f"[{label}] `{lldp_cmd}` 未解析到 LLDP 邻居，结果未确认")
+                if not parsed_neighbors:
+                    incomplete = True
+                    _log_trace_step(result, f"[{label}] `{lldp_cmd}` 未解析到 LLDP 邻居，结果未确认")
+                    continue
+                summary_nb = ", ".join(
+                    f"{n.get('neighbor_name')} ({n.get('neighbor_ip')})" if n.get("neighbor_ip") else str(n.get("neighbor_name"))
+                    for n in parsed_neighbors
+                )
+                _log_trace_step(result, f"[{label}] `{lldp_cmd}` 返回 {len(parsed_neighbors)} 个邻居: {summary_nb}")
+                for neighbor in parsed_neighbors:
+                    key = (neighbor.get("neighbor_name"), neighbor.get("neighbor_ip"), neighbor.get("neighbor_port"))
+                    by_neighbor.setdefault(key, neighbor)
             except Exception as exc:
+                incomplete = True
                 _log_trace_step(result, f"[{label}] `{lldp_cmd}` 查询失败（{_brief_query_error(exc)}）")
                 logger.debug("[IPLocatorV2] per-port LLDP verbose failed for %s/%s: %s", label, phys_port, exc)
+        if by_neighbor:
+            selected = list(by_neighbor.values())
+            collected_at = _now_iso()
+            snapshot_status = {"status": "found", "source": "per_port_lldp_verbose",
+                               "coverage": "partial" if incomplete else "targeted"}
+        elif incomplete:
+            snapshot_status = {"status": "parse_incomplete", "source": "per_port_lldp_verbose",
+                               "coverage": "partial"}
+        # Targeted output is not published as a complete topology snapshot.
+        # Until it has its own durable dependency contract, avoid caching a
+        # completed path based on this unversioned evidence.
+        result["coverage_gaps"].append(f"neighbor_targeted_unversioned:{device_id}")
+        if incomplete:
+            result["coverage_gaps"].append(f"neighbor_parse_incomplete:{device_id}")
     elif full_snapshot_failed and not selected:
         return [], collected_at, task_id, snapshot_status
     if collected_at:
@@ -4746,6 +4766,7 @@ def _trace_ip_uncached(
         "neighbor_query_failed:",
         "neighbor_unsupported:",
         "neighbor_parse_incomplete:",
+        "neighbor_targeted_unversioned:",
         "route_loop:",
         "next_hop_out_of_scope:",
         "device_budget_exceeded",
