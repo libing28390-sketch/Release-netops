@@ -388,6 +388,7 @@ def list_current_endpoint_observations(
     *,
     device_id: str | None = None,
     observation_source: str = "arp",
+    target_ip: str | None = None,
 ) -> list[dict[str, Any]]:
     """Read current ARP/ND rows and resolve only exact active context mappings."""
     normalized_source = _normalize_observation_source(observation_source)
@@ -396,6 +397,9 @@ def list_current_endpoint_observations(
     if device_id:
         device_filter = " AND observation.source_device_id = ?"
         params = (normalized_source, str(device_id))
+    if target_ip is not None:
+        device_filter += " AND host(observation.ip_address) = ?"
+        params += (str(ipaddress.ip_address(target_ip)),)
     rows = conn.execute(
         f"""SELECT observation.source_device_id, observation.observation_source,
                    observation.context_source, observation.context_type,
