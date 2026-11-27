@@ -159,7 +159,7 @@ def find_current_endpoint_evidence(
                 row for row in discovery._current_endpoint_projection(
                     db_conn,
                     device_id=source_device_id,
-                    observation_source="arp",
+                    observation_source="arp", target_ip=normalized_ip,
                 )
                 if discovery._normalized_ip(row.get("ip")) == normalized_ip
                 and _scope_matches(
@@ -206,7 +206,7 @@ def find_current_endpoint_evidence(
 
             fdb_rows = [
                 row for row in discovery._current_fdb_endpoint_projection(
-                    db_conn, device_id=source_device_id,
+                    db_conn, device_id=source_device_id, target_mac=mac,
                 )
                 if _id(row.get("source_device_id")) == source_device_id
                 and _id(row.get("tenant_id")) == tenant
