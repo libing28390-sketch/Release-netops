@@ -92,6 +92,159 @@ def _mac_status_is_proven(status: dict[str, Any]) -> bool:
     )
 
 
+def _current_cross_device_fdb_path(
+    conn, *, arp: dict[str, Any], first_fdb: dict[str, Any],
+    allowed: set[str], tenant: str, mac: str, vlan: str,
+) -> list[dict[str, Any]] | None:
+    """Follow a strictly scoped, fresh, physical tagged VLAN path.
+
+    Unknown routing contexts, aggregation, native VLAN translation, stale
+    interfaces, incomplete generations and multiple links all fail closed.
+    This deliberately handles only the subset for which current facts can
+    establish every hop; unsupported paths continue through the CLI engine.
+    """
+    from core.interface_utils import normalize_interface_name
+    from services.vlan_discovery_service import parse_vlan_values
+
+    site = _id(arp.get("site_id"))
+    space = _id(arp.get("address_space_id"))
+    if not site or not space or arp.get("scope_status") != "resolved":
+        return None
+    if arp.get("source_vrf_context_status") not in {"global", "vrf"}:
+        return None
+    target_vlan = int(vlan)
+    now = discovery._utc_now()
+    max_age = timedelta(seconds=300)
+
+    def fresh(value: Any) -> bool:
+        _, stamp = _iso_utc(value)
+        return stamp is not None and timedelta(0) <= now - stamp <= max_age
+
+    def port_key(value: Any) -> str:
+        return normalize_interface_name(_id(value)).strip().lower()
+
+    def interface(device_id: str, port: str) -> dict[str, Any] | None:
+        rows = [
+            dict(row) for row in conn.execute(
+                """SELECT id, interface_name, interface_type, switchport_mode,
+                          access_vlan, native_vlan, allowed_vlans, admin_status,
+                          oper_status, last_seen
+                     FROM interfaces WHERE device_id = ?""", (device_id,),
+            ).fetchall()
+            if port_key(row.get("interface_name")) == port_key(port)
+        ]
+        if len(rows) != 1:
+            return None
+        row = rows[0]
+        if (_id(row.get("interface_type")).lower() not in {"physical", "ethernet", "ethernet_port", "port", "access"}
+                or _id(row.get("oper_status")).lower() != "up"
+                or _id(row.get("admin_status")).lower() != "up"
+                or not fresh(row.get("last_seen"))):
+            return None
+        return row
+
+    def tagged(row: dict[str, Any] | None) -> bool:
+        return bool(row and _id(row.get("switchport_mode")).lower() == "trunk"
+                    and target_vlan in parse_vlan_values(row.get("allowed_vlans"))
+                    and row.get("native_vlan") is not None
+                    and str(row["native_vlan"]) != vlan)
+
+    def interface_proof(row: dict[str, Any]) -> dict[str, Any]:
+        return {key: _id(row.get(key)) for key in (
+            "id", "interface_name", "interface_type", "switchport_mode",
+            "access_vlan", "native_vlan", "allowed_vlans", "admin_status",
+            "oper_status", "last_seen",
+        )}
+
+    if not fresh(arp.get("observed_at")):
+        return None
+
+    visited: set[str] = set()
+    path: list[dict[str, Any]] = []
+    current = first_fdb
+    ingress = ""
+    for _ in range(16):
+        device = _id(current.get("source_device_id"))
+        port = _id(current.get("switch_port"))
+        if (not device or device in visited or device not in allowed
+                or not port or port_key(port) == port_key(ingress)
+                or _id(current.get("tenant_id")) != tenant
+                or _id(current.get("site_id")) != site
+                or _id(current.get("address_space_id")) != space
+                or current.get("scope_status") != "resolved"
+                or discovery._normalized_mac(current.get("mac")) != mac
+                or discovery._normalize_vlan_number(current.get("vlan")) != vlan
+                or _id(current.get("entry_type")).lower() != "dynamic"
+                or not current.get("coverage_complete")
+                or current.get("path_ambiguity") or current.get("virtual_gateway_mac")
+                or _id(current.get("evidence_status")) != "recent"
+                or not fresh(current.get("observed_at"))):
+            return None
+        visited.add(device)
+        row = interface(device, port)
+        if row is None:
+            return None
+        record = dict(current)
+        record["interface_proof"] = interface_proof(row)
+        path.append(record)
+        classification = _id(current.get("path_classification"))
+        if classification == "access_edge":
+            if (_id(row.get("switchport_mode")).lower() != "access"
+                    or discovery._normalize_vlan_number(row.get("access_vlan")) != vlan):
+                return None
+            return path if len(path) > 1 else None
+        if classification != "trunk_tagged_interface" or not tagged(row):
+            return None
+
+        # Do not treat missing LLDP as proof of a terminal, or traverse LAGs.
+        links = []
+        for raw in conn.execute(
+            """SELECT * FROM topology_links
+                WHERE source_device_id = ? OR target_device_id = ?""",
+            (device, device),
+        ).fetchall():
+            link = dict(raw)
+            for side, other in (("source", "target"), ("target", "source")):
+                if _id(link.get(f"{side}_device_id")) != device:
+                    continue
+                local = link.get(f"{side}_port_normalized") or link.get(f"{side}_port")
+                if port_key(local) != port_key(port):
+                    continue
+                if _id(link.get("status")).lower() != "up":
+                    continue
+                if (_id(link.get("link_kind")).lower() != "physical"
+                        or link.get("source_aggregation_name") or link.get("target_aggregation_name")
+                        or not fresh(link.get("last_seen"))):
+                    return None
+                links.append((link, other))
+        if len(links) != 1:
+            return None
+        link, other = links[0]
+        next_device = _id(link.get(f"{other}_device_id"))
+        ingress = _id(link.get(f"{other}_port_normalized") or link.get(f"{other}_port"))
+        if not next_device or next_device not in allowed or next_device in visited or not ingress:
+            return None
+        remote = interface(next_device, ingress)
+        if not tagged(remote):
+            return None
+        record["transit"] = {
+            "link_id": _id(link.get("id")), "last_seen": _id(link.get("last_seen")),
+            "next_device_id": next_device, "next_port": ingress,
+            "remote_interface": interface_proof(remote),
+        }
+        rows = [
+            candidate for candidate in discovery._current_fdb_endpoint_projection(
+                conn, device_id=next_device, target_mac=mac,
+            )
+            if discovery._normalized_mac(candidate.get("mac")) == mac
+            and discovery._normalize_vlan_number(candidate.get("vlan")) == vlan
+        ]
+        if len(rows) != 1:
+            return None
+        current = rows[0]
+    return None
+
+
 def find_current_endpoint_evidence(
     target_ip: str,
     *,
@@ -107,7 +260,8 @@ def find_current_endpoint_evidence(
 
     Unknown routing context is acceptable only for a unique same-device
     ARP MAC/VLAN -> FDB port match. The context remains unknown; this function
-    never infers Global or a VRF from a VLAN number.
+    never infers Global or a VRF from a VLAN number. Cross-device matches
+    require explicit scope and a fresh, proven physical tagged VLAN chain.
     """
     normalized_ip = discovery._normalized_ip(target_ip)
     tenant = _id(tenant_id)
@@ -220,6 +374,19 @@ def find_current_endpoint_evidence(
             if len(fdb_rows) != 1:
                 return None
             fdb = fdb_rows[0]
+            fdb_path = [fdb]
+            if _id(fdb.get("path_classification")).lower() != "access_edge":
+                if len(arp_sources) != 1:
+                    return None
+                cross_path = _current_cross_device_fdb_path(
+                    db_conn, arp=arp, first_fdb=fdb, allowed=allowed,
+                    tenant=tenant, mac=mac, vlan=vlan,
+                )
+                if not cross_path:
+                    return None
+                fdb_path = cross_path
+                fdb = cross_path[-1]
+            terminal_device_id = _id(fdb.get("source_device_id"))
             if (
                 not fdb.get("coverage_complete")
                 or _id(fdb.get("evidence_status")).lower() != "recent"
@@ -243,7 +410,7 @@ def find_current_endpoint_evidence(
                 for row in db_conn.execute(
                     """SELECT interface_name, interface_type, switchport_mode, access_vlan
                          FROM interfaces WHERE device_id = ?""",
-                    (source_device_id,),
+                    (terminal_device_id,),
                 ).fetchall()
                 if normalize_interface_name(_id(row.get("interface_name"))).strip().lower() == port_key
             ]
@@ -261,10 +428,19 @@ def find_current_endpoint_evidence(
             arp_observed_at, _ = _iso_utc(arp.get("observed_at"))
             fdb_observed_at, _ = _iso_utc(fdb.get("observed_at"))
             timestamps = [value for value in (arp_observed_at, fdb_observed_at) if value]
+            for hop in fdb_path:
+                for observed in (
+                    hop.get("observed_at"), (hop.get("interface_proof") or {}).get("last_seen"),
+                    (hop.get("transit") or {}).get("last_seen"),
+                    ((hop.get("transit") or {}).get("remote_interface") or {}).get("last_seen"),
+                ):
+                    stamp, _ = _iso_utc(observed)
+                    if stamp:
+                        timestamps.append(stamp)
             candidates.append({
                 "location": {
-                    "device_id": source_device_id,
-                    "device": _id(fdb.get("switch_name") or fdb.get("source_device_name") or source_device_id),
+                    "device_id": terminal_device_id,
+                    "device": _id(fdb.get("switch_name") or fdb.get("source_device_name") or terminal_device_id),
                     "port": _id(fdb.get("switch_port")),
                     "mac": mac,
                     "vlan": str(vlan),
@@ -285,20 +461,22 @@ def find_current_endpoint_evidence(
                     "observed_at": _id(arp.get("observed_at")),
                 }],
                 "fdb_evidence": [{
-                    "observation_id": _id(fdb.get("observation_id") or fdb.get("id")),
-                    "device_id": source_device_id,
-                    "interface": _id(fdb.get("switch_port")),
+                    "observation_id": _id(hop.get("observation_id") or hop.get("id")),
+                    "device_id": _id(hop.get("source_device_id")),
+                    "interface": _id(hop.get("switch_port")),
                     "mac": mac,
                     "vlan": str(vlan),
-                    "entry_type": _id(fdb.get("entry_type")),
-                    "path_classification": _id(fdb.get("path_classification")),
-                    "path_evidence": _id(fdb.get("path_evidence")),
-                    "generation": int(fdb.get("generation") or 0),
-                    "observed_at": _id(fdb.get("observed_at")),
-                }],
+                    "entry_type": _id(hop.get("entry_type")),
+                    "path_classification": _id(hop.get("path_classification")),
+                    "path_evidence": _id(hop.get("path_evidence")),
+                    "generation": int(hop.get("generation") or 0),
+                    "observed_at": _id(hop.get("observed_at")),
+                    **({"interface_proof": hop["interface_proof"]} if hop.get("interface_proof") else {}),
+                    **({"transit": hop["transit"]} if hop.get("transit") else {}),
+                } for hop in fdb_path],
                 "evidence_collected_at": min(timestamps) if timestamps else "",
                 "vrf_context_status": effective_context,
-                "source_device_ids": [source_device_id],
+                "source_device_ids": sorted({_id(hop.get("source_device_id")) for hop in fdb_path} | {source_device_id}),
                 "collection_source": _id(arp.get("context_source")),
             })
 
