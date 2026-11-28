@@ -222,3 +222,71 @@ def test_matches_full_replace_across_20_generations(kind):
         db.db.commit()
         ref.db.commit()
         assert read(db, kind) == read(ref, kind)
+
+def test_native_postgresql_fdb_50k_refresh(isolated_db):
+    """Opt-in benchmark on the real PostgreSQL driver and migrated schema."""
+    import os
+    import time
+    from database import get_db_connection
+    from services.ipam_current_fdb_observation_service import (
+        begin_current_fdb_collection, finish_current_fdb_collection,
+    )
+
+    if os.getenv("IP_LOCATOR_SCALE_LARGE") != "1":
+        pytest.skip("opt-in PostgreSQL 50k row test")
+
+    device = "native-pg-bulk-test"
+    with get_db_connection() as conn:
+        conn.execute("INSERT INTO tenants (id, name) VALUES ('tenant-default', 'Default') ON CONFLICT(id) DO NOTHING")
+        conn.execute("INSERT INTO devices (id, hostname, tenant_id) VALUES (?, ?, 'tenant-default')", (device, device))
+        conn.commit()
+
+    class CountedConnection:
+        def __init__(self, conn):
+            self.conn = conn
+            self.snapshot_statements = 0
+
+        def execute(self, sql, params=None):
+            if sql.lstrip().upper().startswith(("INSERT INTO IPAM_CURRENT_FDB_OBSERVATIONS",
+                                                "DELETE FROM IPAM_CURRENT_FDB_OBSERVATIONS")):
+                self.snapshot_statements += 1
+            return self.conn.execute(sql, params)
+
+    def publish(moved):
+        stamp = datetime.now(timezone.utc).isoformat()
+        records = [
+            {"mac": f"02{i:010x}", "interface": "GE1/0/2" if moved and i < 500 else "GE1/0/1",
+             "vlan": 7, "type": "dynamic"}
+            for i in range(50000)
+        ]
+        with get_db_connection() as conn:
+            generation = begin_current_fdb_collection(
+                conn, device_id=device, context_source="snmp", attempted_at=stamp,
+            )
+            conn.commit()
+            counted = CountedConnection(conn)
+            started = time.perf_counter()
+            count = finish_current_fdb_collection(
+                counted, device_id=device, context_source="snmp", generation=generation,
+                status="scope_unknown", attempted_at=stamp, completed_at=stamp, observations=records,
+            )
+            conn.commit()
+            elapsed = time.perf_counter() - started
+            assert count == 50000
+            assert counted.snapshot_statements == 101
+            return generation, elapsed
+
+    first, first_time = publish(False)
+    second, second_time = publish(True)
+    assert second == first + 1
+    with get_db_connection() as conn:
+        result = conn.execute(
+            """SELECT COUNT(*) AS total,
+                      COUNT(*) FILTER (WHERE generation=?) AS fresh,
+                      COUNT(*) FILTER (WHERE interface_name='GE1/0/2') AS moved
+                 FROM ipam_current_fdb_observations WHERE source_device_id=?""",
+            (second, device),
+        ).fetchone()
+        assert tuple(result) == (50000, 50000, 500)
+    print(f"native PostgreSQL 50000 FDB: initial={first_time:.3f}s refresh={second_time:.3f}s "
+          "snapshot SQL calls=101; includes finish and commit")
