@@ -1094,16 +1094,28 @@ def test_trace_requires_core_start_when_caller_did_not_select_one(monkeypatch):
     assert result["conclusion"] == "core_start_not_configured"
 
 
-def test_find_next_hop_device_candidates_matches_cidr_interface_ips():
-    import sqlite3
+@pytest.fixture
+def native_projection_conn(isolated_db):
+    import psycopg2
+    from database import core
+
+    conn = core._PgRawConnection(psycopg2.connect(core._DATABASE_URL))
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def test_find_next_hop_device_candidates_matches_cidr_interface_ips(native_projection_conn):
     from services.ip_locator_trace_service import _find_next_hop_device_candidates
 
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.execute("CREATE TABLE devices (id TEXT, hostname TEXT, role TEXT, platform TEXT, ip_address TEXT)")
-    conn.execute("CREATE TABLE interfaces (device_id TEXT, primary_ip TEXT, ip_address TEXT)")
-    conn.execute("CREATE TABLE ip_addresses (device_id TEXT, address TEXT)")
-    conn.execute("CREATE TABLE ip_inventory (device_id TEXT, ip TEXT)")
+    conn = native_projection_conn
+    conn.execute("CREATE TEMP TABLE devices (id TEXT, hostname TEXT, role TEXT, platform TEXT, ip_address TEXT)")
+    conn.execute("CREATE TEMP TABLE interfaces (device_id TEXT, primary_ip TEXT, ip_address TEXT)")
+    conn.execute("CREATE TEMP TABLE ip_addresses (device_id TEXT, address TEXT)")
+    conn.execute("CREATE TEMP TABLE ip_inventory (device_id TEXT, ip TEXT)")
+    conn.execute("CREATE TEMP TABLE cmdb_device_interface_address_observations (device_id TEXT, ip_address INET, generation BIGINT)")
+    conn.execute("CREATE TEMP TABLE cmdb_collection_snapshots (device_id TEXT, domain TEXT, successful_generation BIGINT)")
     conn.execute("INSERT INTO devices VALUES ('dev-1', 'SW-CORE-1', 'core', 'hp_comware', '10.0.0.1')")
     conn.execute("INSERT INTO interfaces VALUES ('dev-1', '', '10.255.18.25/30')")
     conn.execute("INSERT INTO ip_addresses VALUES ('dev-2', '10.255.18.19/30')")
@@ -1112,11 +1124,8 @@ def test_find_next_hop_device_candidates_matches_cidr_interface_ips():
         "dev-1": {"id": "dev-1", "hostname": "SW-CORE-1", "role": "core", "platform": "hp_comware", "ip_address": "10.0.0.1"},
         "dev-2": {"id": "dev-2", "hostname": "SW-CORE-2", "role": "core", "platform": "hp_comware", "ip_address": "10.0.0.2"},
     }
-    try:
-        m1 = _find_next_hop_device_candidates(conn, "10.255.18.25", eligible)
-        m2 = _find_next_hop_device_candidates(conn, "10.255.18.19", eligible)
-    finally:
-        conn.close()
+    m1 = _find_next_hop_device_candidates(conn, "10.255.18.25", eligible)
+    m2 = _find_next_hop_device_candidates(conn, "10.255.18.19", eligible)
     assert [d["id"] for d in m1] == ["dev-1"]
     assert [d["id"] for d in m2] == ["dev-2"]
 
@@ -1154,14 +1163,12 @@ def test_topology_incomplete_surfaces_readable_l2_port_mode_hint():
     assert any("SW-ACCESS-1:GE1/0/5" in e and "端口模式" in e for e in result["errors"])
 
 
-def test_fallback_direct_gateways_from_arp_recovers_core_switch():
-    import sqlite3
+def test_fallback_direct_gateways_from_arp_recovers_core_switch(native_projection_conn):
     from services.ip_locator_trace_service import _brief_query_error, _fallback_direct_gateways_from_arp
 
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    conn = native_projection_conn
     conn.execute(
-        "CREATE TABLE ipam_current_arp_observations "
+        "CREATE TEMP TABLE ipam_current_arp_observations "
         "(source_device_id TEXT, ip_address TEXT, interface_name TEXT, vlan_id TEXT, observed_at TEXT)"
     )
     conn.execute(
@@ -1171,10 +1178,7 @@ def test_fallback_direct_gateways_from_arp_recovers_core_switch():
     eligible = {
         "sw-254": {"id": "sw-254", "hostname": "WXTJY-1015-SW254", "role": "core", "platform": "hp_comware"},
     }
-    try:
-        gateways = _fallback_direct_gateways_from_arp(conn, "192.168.9.30", eligible)
-    finally:
-        conn.close()
+    gateways = _fallback_direct_gateways_from_arp(conn, "192.168.9.30", eligible)
     assert len(gateways) == 1
     assert gateways[0][0]["id"] == "sw-254"
     assert gateways[0][1]["source"] == "arp_fallback"
