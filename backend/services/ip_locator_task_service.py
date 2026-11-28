@@ -188,7 +188,7 @@ def _lock_current_collection_generations(conn, expected: Mapping[str, Any]) -> b
                  FROM ipam_endpoint_collection_states
                 WHERE device_id = ? AND observation_source = ?
                   AND context_source = ? AND context_type = ? AND local_context_key = ?
-                FOR SHARE""", key,
+                FOR SHARE NOWAIT""", key,
         ).fetchone()
         if (row is None or int(row["latest_attempt_generation"] or 0) != generation
                 or int(row["last_success_generation"] or 0) != generation
@@ -311,19 +311,30 @@ def _dependency_manifest_current_in_transaction(
                 or not isinstance(expected, Mapping)
                 or not isinstance(context.get("authorized_device_ids"), list)):
             return False, ["dependency_manifest_invalid_current_endpoint" if is_current_endpoint else "dependency_manifest_invalid_snmp_endpoint"]
+        savepoint = is_current_endpoint and lock
+        if savepoint:
+            conn.execute("SAVEPOINT locator_current_fence")
         try:
             if is_current_endpoint and lock and not _lock_current_collection_generations(conn, expected):
-                return False, ["dependency_changed:current_endpoint"]
-            finder = find_current_endpoint_evidence if is_current_endpoint else find_endpoint_evidence
-            current = finder(
-                _non_empty(manifest.get("target_ip")), conn=conn,
-                **{key: context.get(key) for key in (
-                    "tenant_id", "site_id", "vrf", "authorized_device_ids",
-                    "start_device_id", "network_domain_id",
-                )},
-            )
+                current = None
+            else:
+                finder = find_current_endpoint_evidence if is_current_endpoint else find_endpoint_evidence
+                current = finder(
+                    _non_empty(manifest.get("target_ip")), conn=conn,
+                    **{key: context.get(key) for key in (
+                        "tenant_id", "site_id", "vrf", "authorized_device_ids",
+                        "start_device_id", "network_domain_id",
+                    )},
+                )
         except Exception:
+            if savepoint:
+                # NOWAIT contention aborts a PostgreSQL statement, not the
+                # entire result publication transaction after this rollback.
+                conn.execute("ROLLBACK TO SAVEPOINT locator_current_fence")
             current = None
+        finally:
+            if savepoint:
+                conn.execute("RELEASE SAVEPOINT locator_current_fence")
         evidence_keys = (
             "location", "arp_evidence", "fdb_evidence",
             "evidence_collected_at", "vrf_context_status",
