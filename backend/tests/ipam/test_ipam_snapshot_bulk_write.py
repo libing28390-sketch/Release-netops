@@ -42,7 +42,7 @@ def row(i, g=1, sc=None, port="ge1/0/1", **kw):
     r = dict(zip(("source_device_id", "observation_source", "context_source", "context_type", "local_context_key"), sc))
     r.update(local_context_name="x", mac_address=f"{i:012x}", interface_name=port.upper(),
              normalized_interface_name=port, vlan_key=7, generation=g,
-             observed_at=f"2026-11-28T00:00:0{g}+00:00", run_id=str(g), metadata_json="{}")
+             observed_at=f"2026-11-28T00:00:{g:02d}+00:00", run_id=str(g), metadata_json="{}")
     if sc[1] == "fdb":
         r["entry_type"] = "dynamic"
     else:
@@ -195,3 +195,30 @@ def test_production_collection_multibatch_and_failed_attempt(isolated_db, kind):
     assert count == 0
     with get_db_connection() as conn:
         assert conn.execute(f"SELECT COUNT(*) FROM {table} WHERE source_device_id = ?", (device,)).fetchone()[0] == 0
+
+@pytest.mark.parametrize("kind", ["arp", "ndp", "fdb"])
+def test_matches_full_replace_across_20_generations(kind):
+    import random
+    rng = random.Random(42)
+    db, ref = DB(), DB()
+    sc, alt = scope(kind), scope(kind, key="other")
+    table = "ipam_current_fdb_observations" if kind == "fdb" else "ipam_current_endpoint_observations"
+    for g in range(1, 21):
+        for s in (sc, alt):
+            records = [
+                row(i, g, s, port=f"ge1/0/{rng.randint(1, 4)}", metadata_json='{"updated":true}')
+                for i in rng.sample(range(1, 101), rng.randint(0, 100))
+            ]
+            reconcile_current_snapshot(db, scope=s, generation=g, rows=records)
+            ref.db.execute(
+                f"DELETE FROM {table} WHERE source_device_id=? AND observation_source=? "
+                "AND context_source=? AND context_type=? AND local_context_key=?", s,
+            )
+            for r in records:
+                ref.db.execute(
+                    f"INSERT INTO {table} ({','.join(r)}) VALUES ({','.join('?' for _ in r)})",
+                    tuple(r.values()),
+                )
+        db.db.commit()
+        ref.db.commit()
+        assert read(db, kind) == read(ref, kind)
