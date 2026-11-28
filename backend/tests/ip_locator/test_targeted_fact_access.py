@@ -11,27 +11,34 @@ from services import ip_locator_fact_access as facts
 from services import snmp_service as snmp
 
 
-def test_targeted_arp_uses_only_exact_instances(monkeypatch):
+@pytest.mark.parametrize("mode", ["ok", "mac_move", "type_change", "if_rebind"])
+def test_targeted_arp_uses_only_exact_instances(monkeypatch, mode):
     calls = []
     suffix = "7.172.16.5.10"
 
     async def get(_client, oid):
         calls.append(oid)
+        repeat = calls.count(oid) > 1
         return {
-            snmp.IF_NAME + ".7": b"Vlan-interface7",
-            snmp.IP_NET_TO_MEDIA_TYPE + "." + suffix: 3,
-            snmp.IP_NET_TO_MEDIA_PHYS_ADDRESS + "." + suffix: bytes.fromhex("8e4757600706"),
+            snmp.IF_NAME + ".7": b"Vlan-interface8" if repeat and mode == "if_rebind" else b"Vlan-interface7",
+            snmp.IP_NET_TO_MEDIA_TYPE + "." + suffix: 4 if repeat and mode == "type_change" else 3,
+            snmp.IP_NET_TO_MEDIA_PHYS_ADDRESS + "." + suffix: bytes.fromhex(
+                "8e4757600708" if repeat and mode == "mac_move" else "8e4757600706"),
         }[oid]
 
     monkeypatch.setattr(facts, "_get", get)
     record = asyncio.run(facts._read_arp(object(), "172.16.5.10", 7, "Vlan-interface7", 7))
+    if mode != "ok":
+        assert record is None
+        return
     assert record["mac"] == "8e4757600706"
     assert record["vlan"] == "7"
-    assert len(calls) == 3
+    assert len(calls) == 6
     assert asyncio.run(facts._read_arp(object(), "172.16.5.10", 7, "Vlan-interface8", 8)) is None
 
 
-@pytest.mark.parametrize("mode", ["ok", "shared_fid", "moved", "invalid", "missing_vlan"])
+@pytest.mark.parametrize("mode", ["ok", "shared_fid", "moved", "invalid", "missing_vlan",
+                                  "bridge_rebind", "port_down", "if_rebind"])
 def test_targeted_fdb_requires_unique_vlan_fid_and_stable_learned_port(monkeypatch, mode):
     calls = []
     vlan = 7
@@ -52,9 +59,9 @@ def test_targeted_fdb_requires_unique_vlan_fid_and_stable_learned_port(monkeypat
             return 5 if mode == "moved" and calls.count(oid) > 1 else 4
         return {
             snmp.DOT1Q_TP_FDB_STATUS + "." + suffix: 2 if mode == "invalid" else 3,
-            snmp.DOT1D_BASE_PORT_IF_INDEX + ".4": 20,
-            snmp.IF_OPER_STATUS + ".20": 1,
-            snmp.IF_NAME + ".20": b"GigabitEthernet1/0/2",
+            snmp.DOT1D_BASE_PORT_IF_INDEX + ".4": 21 if mode == "bridge_rebind" and calls.count(oid) > 1 else 20,
+            snmp.IF_OPER_STATUS + ".20": 2 if mode == "port_down" and calls.count(oid) > 1 else 1,
+            snmp.IF_NAME + ".20": b"GigabitEthernet1/0/3" if mode == "if_rebind" and calls.count(oid) > 1 else b"GigabitEthernet1/0/2",
         }[oid]
 
     monkeypatch.setattr(facts, "_get", get)
