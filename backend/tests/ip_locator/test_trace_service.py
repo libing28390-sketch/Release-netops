@@ -1094,16 +1094,28 @@ def test_trace_requires_core_start_when_caller_did_not_select_one(monkeypatch):
     assert result["conclusion"] == "core_start_not_configured"
 
 
-def test_find_next_hop_device_candidates_matches_cidr_interface_ips():
-    import sqlite3
+@pytest.fixture
+def native_projection_conn(isolated_db):
+    import psycopg2
+    from database import core
+
+    conn = core._PgRawConnection(psycopg2.connect(core._DATABASE_URL))
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def test_find_next_hop_device_candidates_matches_cidr_interface_ips(native_projection_conn):
     from services.ip_locator_trace_service import _find_next_hop_device_candidates
 
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.execute("CREATE TABLE devices (id TEXT, hostname TEXT, role TEXT, platform TEXT, ip_address TEXT)")
-    conn.execute("CREATE TABLE interfaces (device_id TEXT, primary_ip TEXT, ip_address TEXT)")
-    conn.execute("CREATE TABLE ip_addresses (device_id TEXT, address TEXT)")
-    conn.execute("CREATE TABLE ip_inventory (device_id TEXT, ip TEXT)")
+    conn = native_projection_conn
+    conn.execute("CREATE TEMP TABLE devices (id TEXT, hostname TEXT, role TEXT, platform TEXT, ip_address TEXT)")
+    conn.execute("CREATE TEMP TABLE interfaces (device_id TEXT, primary_ip TEXT, ip_address TEXT)")
+    conn.execute("CREATE TEMP TABLE ip_addresses (device_id TEXT, address TEXT)")
+    conn.execute("CREATE TEMP TABLE ip_inventory (device_id TEXT, ip TEXT)")
+    conn.execute("CREATE TEMP TABLE cmdb_device_interface_address_observations (device_id TEXT, ip_address INET, generation BIGINT)")
+    conn.execute("CREATE TEMP TABLE cmdb_collection_snapshots (device_id TEXT, domain TEXT, successful_generation BIGINT)")
     conn.execute("INSERT INTO devices VALUES ('dev-1', 'SW-CORE-1', 'core', 'hp_comware', '10.0.0.1')")
     conn.execute("INSERT INTO interfaces VALUES ('dev-1', '', '10.255.18.25/30')")
     conn.execute("INSERT INTO ip_addresses VALUES ('dev-2', '10.255.18.19/30')")
@@ -1112,11 +1124,8 @@ def test_find_next_hop_device_candidates_matches_cidr_interface_ips():
         "dev-1": {"id": "dev-1", "hostname": "SW-CORE-1", "role": "core", "platform": "hp_comware", "ip_address": "10.0.0.1"},
         "dev-2": {"id": "dev-2", "hostname": "SW-CORE-2", "role": "core", "platform": "hp_comware", "ip_address": "10.0.0.2"},
     }
-    try:
-        m1 = _find_next_hop_device_candidates(conn, "10.255.18.25", eligible)
-        m2 = _find_next_hop_device_candidates(conn, "10.255.18.19", eligible)
-    finally:
-        conn.close()
+    m1 = _find_next_hop_device_candidates(conn, "10.255.18.25", eligible)
+    m2 = _find_next_hop_device_candidates(conn, "10.255.18.19", eligible)
     assert [d["id"] for d in m1] == ["dev-1"]
     assert [d["id"] for d in m2] == ["dev-2"]
 
@@ -1154,14 +1163,12 @@ def test_topology_incomplete_surfaces_readable_l2_port_mode_hint():
     assert any("SW-ACCESS-1:GE1/0/5" in e and "端口模式" in e for e in result["errors"])
 
 
-def test_fallback_direct_gateways_from_arp_recovers_core_switch():
-    import sqlite3
+def test_fallback_direct_gateways_from_arp_recovers_core_switch(native_projection_conn):
     from services.ip_locator_trace_service import _brief_query_error, _fallback_direct_gateways_from_arp
 
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    conn = native_projection_conn
     conn.execute(
-        "CREATE TABLE ipam_current_arp_observations "
+        "CREATE TEMP TABLE ipam_current_arp_observations "
         "(source_device_id TEXT, ip_address TEXT, interface_name TEXT, vlan_id TEXT, observed_at TEXT)"
     )
     conn.execute(
@@ -1171,10 +1178,7 @@ def test_fallback_direct_gateways_from_arp_recovers_core_switch():
     eligible = {
         "sw-254": {"id": "sw-254", "hostname": "WXTJY-1015-SW254", "role": "core", "platform": "hp_comware"},
     }
-    try:
-        gateways = _fallback_direct_gateways_from_arp(conn, "192.168.9.30", eligible)
-    finally:
-        conn.close()
+    gateways = _fallback_direct_gateways_from_arp(conn, "192.168.9.30", eligible)
     assert len(gateways) == 1
     assert gateways[0][0]["id"] == "sw-254"
     assert gateways[0][1]["source"] == "arp_fallback"
@@ -1234,6 +1238,10 @@ def test_live_lag_member_and_per_port_lldp_verbose_parsers():
         "  XGE2/3/0/4(R)  S        32768    13  0x3  ABCDEF\n"
     )
     assert _parse_lag_member_ports(lag_out, "bridge-aggregation2") == ["XGE1/3/0/4", "XGE2/3/0/4"]
+    inactive_out = lag_out + "  XGE3/3/0/4     U     32768 14\n"
+    assert _parse_lag_member_ports(inactive_out, "bridge-aggregation2") == ["XGE1/3/0/4", "XGE2/3/0/4"]
+    assert _parse_lag_member_ports("Gi1/0/1(P) Gi1/0/2(D) Gi1/0/3(I)", "po2") == ["Gi1/0/1"]
+
 
     lldp_out = (
         "LLDP neighbor-information of port 10[Ten-GigabitEthernet1/3/0/4]:\n"
@@ -1248,7 +1256,8 @@ def test_live_lag_member_and_per_port_lldp_verbose_parsers():
     assert neighbors[0]["neighbor_port"] == "Ten-GigabitEthernet1/0/49"
 
 
-def test_per_port_lldp_verbose_recovers_from_full_snapshot_failure_without_duplicate_lag_cli(monkeypatch):
+@pytest.mark.parametrize("mode", ["all_found", "third_member_only", "empty"])
+def test_per_port_lldp_verbose_recovers_from_full_snapshot_failure_without_duplicate_lag_cli(monkeypatch, mode):
     from services import ip_locator_trace_service as ts
 
     h3c_dev = {
@@ -1266,8 +1275,12 @@ def test_per_port_lldp_verbose_recovers_from_full_snapshot_failure_without_dupli
                 "Aggregate Interface: Bridge-Aggregation2\n"
                 "  XGE1/3/0/4     S        32768    12  0x3  ABCDEF\n"
                 "  XGE2/3/0/4(R)  S        32768    13  0x3  ABCDEF\n"
+                "  XGE3/3/0/4     S        32768    14  0x3  ABCDEF\n"
+                "  XGE4/3/0/4     S        32768    15  0x3  ABCDEF\n"
             )
         if "lldp neighbor-information interface" in command:
+            if mode == "empty" or (mode == "third_member_only" and "3/3/0/4" not in command):
+                return "unclassified response"
             return (
                 "LLDP neighbor-information of port 10[Ten-GigabitEthernet1/3/0/4]:\n"
                 "  System name             : WXTJY-1F-SW4\n"
@@ -1279,23 +1292,33 @@ def test_per_port_lldp_verbose_recovers_from_full_snapshot_failure_without_dupli
     from services.ip_locator_cli_service import LocatorCLIResult
 
     monkeypatch.setattr(ts.legacy, "_send_command", fake_send_command)
-    monkeypatch.setattr(
-        ts,
-        "_run_cli_with_device_lease",
-        lambda *args, **kwargs: LocatorCLIResult(
-            value=[],
-            collected_at="",
-            task_id="t-1",
+    persisted_ports = []
+    def fake_lease(device, operation, callback, **kwargs):
+        target = kwargs["task_context"]["target"]
+        if target.get("snapshot") == "port":
+            return LocatorCLIResult(
+                value=callback(), collected_at=ts._now_iso(),
+                task_id="port-" + target["port"], status={},
+            )
+        return LocatorCLIResult(
+            value=[], collected_at="", task_id="t-1",
             status={"status": "query_failed", "reason": "full_lldp_timeout"},
-        ),
-    )
+        )
+
+    def fake_persist(**kwargs):
+        persisted_ports.append(kwargs)
+        return {"observation_key": kwargs["bridge_domain"], "generation": 1}
+
+    monkeypatch.setattr(ts, "_run_cli_with_device_lease", fake_lease)
+    monkeypatch.setattr(ts, "_persist_observation", fake_persist)
 
     result = ts._initial_result("192.168.11.111", "default", {}, ts.TraceLimits())
     expanded, phys_names, resolved = ts._expand_lag_member_ports_live(
         None, h3c_dev, "BAGG2", result=result,
+        live_query=lambda command: fake_send_command(h3c_dev, command, force_refresh=True),
     )
     assert resolved is True
-    assert phys_names == ["XGE1/3/0/4", "XGE2/3/0/4"]
+    assert phys_names == ["XGE1/3/0/4", "XGE2/3/0/4", "XGE3/3/0/4", "XGE4/3/0/4"]
 
     selected, _, _, status = ts._load_lldp_snapshot(
         h3c_dev,
@@ -1317,12 +1340,81 @@ def test_per_port_lldp_verbose_recovers_from_full_snapshot_failure_without_dupli
         expanded_member_ports=expanded,
         physical_member_names=phys_names,
     )
-    assert status["status"] == "found"
     assert status["source"] == "per_port_lldp_verbose"
-    assert len(selected) == 1
-    assert selected[0]["neighbor_name"] == "WXTJY-1F-SW4"
-    assert selected[0]["neighbor_ip"] == "10.16.40.4"
+    if mode == "empty":
+        assert status["status"] == "parse_incomplete"
+        assert selected == []
+    else:
+        assert status["status"] == "found"
+        assert len(selected) == 1
+        assert selected[0]["neighbor_name"] == "WXTJY-1F-SW4"
+        assert selected[0]["neighbor_ip"] == "10.16.40.4"
+    assert status["coverage"] == ("targeted" if mode == "all_found" else "partial")
+    assert len([c for c in sent_commands if "lldp neighbor-information interface" in c]) == 4
+    assert len(persisted_ports) == 4
+    assert len({entry["bridge_domain"] for entry in persisted_ports}) == 4
+    assert all(entry["bridge_domain"].startswith("lldp-port:") for entry in persisted_ports)
+    assert all(entry["target"]["snapshot"] == "port" for entry in persisted_ports)
+    assert sum(entry["coverage"] == "targeted" for entry in persisted_ports) == {"all_found": 4, "third_member_only": 1, "empty": 0}[mode]
+    assert any(gap.startswith("neighbor_parse_incomplete:") for gap in result["coverage_gaps"]) == (mode != "all_found")
     # LAG expansion CLI must only have been sent ONCE, not duplicated inside _load_lldp_snapshot
     lag_cmds = [c for c in sent_commands if "link-aggregation verbose" in c]
     assert len(lag_cmds) == 1
-    assert any("WXTJY-1F-SW4 (10.16.40.4)" in step for step in result["trace_steps"])
+    if mode != "empty":
+        assert any("WXTJY-1F-SW4 (10.16.40.4)" in step for step in result["trace_steps"])
+
+def test_lag_member_query_requires_coordinated_callback(monkeypatch):
+    from services import ip_locator_trace_service as ts
+    device = {"id": "sw", "platform": "hp_comware", "hostname": "sw"}
+    monkeypatch.setattr(ts.legacy, "_send_command", lambda *a, **kw: pytest.fail("unleased SSH"))
+    result = ts._initial_result("192.0.2.5", "default", {}, ts.TraceLimits())
+    _, members, resolved = ts._expand_lag_member_ports_live(None, device, "BAGG2", result=result)
+    assert members == []
+    assert not resolved
+    assert "neighbor_parse_incomplete:sw:lag_members" in result["coverage_gaps"]
+
+@pytest.mark.parametrize("output, selected, unresolved", [
+    ("GE1/0/1 S\nGE1/0/2 U\nGE1/0/3 Unknown", ["GE1/0/1"], ["GE1/0/3"]),
+    ("GE1/0/1 Selected\nGE1/0/2 Unselected\nGE1/0/3 Up", ["GE1/0/1", "GE1/0/3"], []),
+    ("Gi1/0/1(P) Gi1/0/2(D) Gi1/0/3(I) Gi1/0/4(Z)", ["Gi1/0/1"], ["Gi1/0/4"]),
+    ("GE1/0/1 S\nGE1/0/1 U", [], ["GE1/0/1"]),
+    ("GE1/0/1 S\nGigabitEthernet1/0/1 Unknown", [], ["GE1/0/1"]),
+    ("GE1/0/1", [], ["GE1/0/1"]),
+])
+def test_lag_state_parser_only_accepts_positive_members(output, selected, unresolved):
+    assert trace_service._parse_lag_member_states(output) == (selected, unresolved)
+
+
+@pytest.mark.parametrize("force_refresh, pending, expected", [
+    (True, False, False), (True, True, False),
+    (False, True, False), (False, False, True),
+])
+def test_fact_reuse_policy_is_shared_by_cache_tiers(monkeypatch, force_refresh, pending, expected):
+    monkeypatch.setattr(trace_service, "_pending_fact_invalidation", lambda *args: pending)
+    assert trace_service._may_reuse_locator_facts(force_refresh, "scope", "192.0.2.5") is expected
+
+
+def test_historical_lookup_fails_closed_without_authorized_device(monkeypatch):
+    class Conn:
+        def execute(self, *args):
+            pytest.fail("empty authorized scope must not read history")
+    assert trace_service._lookup_historical_last_seen(
+        Conn(), "192.0.2.5", tenant_id="tenant-default", authorized_device_ids=[],
+    ) is None
+
+
+def test_historical_lookup_applies_scope_before_limit():
+    class Conn:
+        def execute(self, sql, params):
+            assert "JOIN devices d ON d.id = o.source_device_id" in sql
+            assert "o.tenant_id = ?" in sql and "d.tenant_id = ?" in sql
+            assert "o.source_device_id IN (?)" in sql
+            assert "LOWER(o.site_id)" in sql and "LOWER(d.site_id)" in sql
+            assert params == ("192.0.2.5", "tenant-default", "tenant-default", "site1", "site1", "sw1")
+            return self
+        def fetchone(self):
+            return None
+    assert trace_service._lookup_historical_last_seen(
+        Conn(), "192.0.2.5", tenant_id="tenant-default",
+        site_id="site1", authorized_device_ids=["sw1"],
+    ) is None

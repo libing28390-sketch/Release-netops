@@ -50,7 +50,14 @@ def test_ai_role_checks_preserve_admin_and_deny_viewer(make_user):
     with get_db_connection() as conn:
         conn.execute("UPDATE users SET role = 'Administrator' WHERE username = 'security_actor'")
         conn.commit()
+    # Direct SQL bypasses update_user's normal session-cache invalidation.
+    users.invalidate_session_cache(username='security_actor')
     assert client.get('/protected', headers=headers).status_code == 200
+    with get_db_connection() as conn:
+        conn.execute("UPDATE users SET role = 'Viewer' WHERE username = 'security_actor'")
+        conn.commit()
+    users.invalidate_session_cache(username='security_actor')
+    assert client.get('/protected', headers=headers).status_code == 403
 
 
 def test_prompt_template_cannot_execute_python(monkeypatch):

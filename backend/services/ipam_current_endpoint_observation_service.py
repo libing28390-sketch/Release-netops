@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core.interface_utils import normalize_interface_name
+from services.ipam_snapshot_write_service import reconcile_current_snapshot
 
 
 _ADDRESS_OBSERVATION_SOURCES = {"arp", "ndp"}
@@ -334,31 +335,10 @@ def finish_current_endpoint_collection(
         raise ValueError("collection_generation_superseded")
 
     if normalized_status in _REPLACE_STATUSES:
-        conn.execute(
-            """DELETE FROM ipam_current_endpoint_observations
-                WHERE source_device_id = ? AND observation_source = ?
-                  AND context_source = ? AND context_type = ? AND local_context_key = ?""",
-            (normalized_device_id, normalized_source, *normalized_context),
+        reconcile_current_snapshot(
+            conn, scope=(normalized_device_id, normalized_source, *normalized_context),
+            generation=normalized_generation, rows=normalized_rows,
         )
-        for row in normalized_rows:
-            conn.execute(
-                """INSERT INTO ipam_current_endpoint_observations (
-                       source_device_id, observation_source, context_source,
-                       context_type, local_context_key, local_context_name,
-                       ip_address, mac_address, interface_name,
-                       normalized_interface_name, vlan_key, generation,
-                       observed_at, run_id, metadata_json
-                   ) VALUES (
-                       ?, ?, ?, ?, ?, ?, ?::inet, ?, ?, ?, ?, ?, ?, ?, ?::jsonb
-                   )""",
-                (
-                    row["source_device_id"], row["observation_source"], row["context_source"],
-                    row["context_type"], row["local_context_key"], row["local_context_name"],
-                    row["ip_address"], row["mac_address"], row["interface_name"],
-                    row["normalized_interface_name"], row["vlan_key"], row["generation"],
-                    row["observed_at"], row["run_id"], row["metadata_json"],
-                ),
-            )
 
     conn.execute(
         """UPDATE ipam_endpoint_collection_states
@@ -388,6 +368,7 @@ def list_current_endpoint_observations(
     *,
     device_id: str | None = None,
     observation_source: str = "arp",
+    target_ip: str | None = None,
 ) -> list[dict[str, Any]]:
     """Read current ARP/ND rows and resolve only exact active context mappings."""
     normalized_source = _normalize_observation_source(observation_source)
@@ -396,6 +377,9 @@ def list_current_endpoint_observations(
     if device_id:
         device_filter = " AND observation.source_device_id = ?"
         params = (normalized_source, str(device_id))
+    if target_ip is not None:
+        device_filter += " AND host(observation.ip_address) = ?"
+        params += (str(ipaddress.ip_address(target_ip)),)
     rows = conn.execute(
         f"""SELECT observation.source_device_id, observation.observation_source,
                    observation.context_source, observation.context_type,

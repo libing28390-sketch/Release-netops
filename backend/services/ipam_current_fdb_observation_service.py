@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core.interface_utils import normalize_interface_name
+from services.ipam_snapshot_write_service import reconcile_current_snapshot
 
 
 _OBSERVATION_SOURCE = "fdb"
@@ -264,28 +265,10 @@ def finish_current_fdb_collection(
         raise ValueError("collection_generation_superseded")
 
     if normalized_status in _REPLACE_STATUSES:
-        conn.execute(
-            """DELETE FROM ipam_current_fdb_observations
-                WHERE source_device_id = ? AND observation_source = 'fdb'
-                  AND context_source = ? AND context_type = ? AND local_context_key = ?""",
-            (normalized_device_id, *context),
+        reconcile_current_snapshot(
+            conn, scope=(normalized_device_id, _OBSERVATION_SOURCE, *context),
+            generation=normalized_generation, rows=normalized_rows,
         )
-        for row in normalized_rows:
-            conn.execute(
-                """INSERT INTO ipam_current_fdb_observations (
-                       source_device_id, observation_source, context_source,
-                       context_type, local_context_key, local_context_name,
-                       mac_address, interface_name, normalized_interface_name,
-                       vlan_key, entry_type, generation, observed_at, run_id, metadata_json
-                   ) VALUES (?, 'fdb', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)""",
-                (
-                    row["source_device_id"], row["context_source"], row["context_type"],
-                    row["local_context_key"], row["local_context_name"], row["mac_address"],
-                    row["interface_name"], row["normalized_interface_name"], row["vlan_key"],
-                    row["entry_type"], row["generation"], row["observed_at"], row["run_id"],
-                    row["metadata_json"],
-                ),
-            )
 
     conn.execute(
         """UPDATE ipam_endpoint_collection_states
@@ -310,13 +293,18 @@ def finish_current_fdb_collection(
     )
 
 
-def list_current_fdb_observations(conn, *, device_id: str | None = None) -> list[dict[str, Any]]:
+def list_current_fdb_observations(
+    conn, *, device_id: str | None = None, target_mac: str | None = None,
+) -> list[dict[str, Any]]:
     """Read latest successful FDB rows and exact active context mappings only."""
     params: list[Any] = []
     device_filter = ""
     if device_id:
         device_filter = " AND observation.source_device_id = ?"
         params.append(str(device_id))
+    if target_mac is not None:
+        device_filter += " AND observation.mac_address = ?"
+        params.append(_normalize_mac(target_mac))
     rows = conn.execute(
         f"""SELECT observation.source_device_id, observation.observation_source,
                    observation.context_source, observation.context_type,

@@ -47,8 +47,8 @@ def _seed_access_device(*, device_id: str = DEVICE_ID, ports: tuple[str, ...] = 
             conn.execute(
                 """INSERT INTO interfaces
                        (id, device_id, interface_name, interface_type, description,
-                        switchport_mode, access_vlan)
-                   VALUES (?, ?, ?, 'physical', ?, 'access', 7)""",
+                        switchport_mode, access_vlan, admin_status, oper_status)
+                   VALUES (?, ?, ?, 'physical', ?, 'access', 7, 'up', 'up')""",
                 (f"{device_id}-interface-{index}", device_id, port, "TO-PC-7" if index == 0 else "duplicate path"),
             )
         conn.commit()
@@ -153,7 +153,7 @@ def test_current_unknown_context_arp_links_to_unique_same_device_vlan_access_por
     assert result["fdb_evidence"][0]["path_classification"] == "access_edge"
 
 
-@pytest.mark.parametrize("failure", ["multiple_ports", "latest_arp_attempt_failed", "other_device_only", "interface_vlan_mismatch"])
+@pytest.mark.parametrize("failure", ["multiple_ports", "latest_arp_attempt_failed", "other_device_only", "interface_vlan_mismatch", "interface_down"])
 def test_current_endpoint_locator_fails_closed_on_ambiguous_or_inconsistent_current_facts(isolated_db, failure):
     _seed_access_device(ports=("GigabitEthernet1/0/2", "GigabitEthernet1/0/3"))
     _publish_current_arp()
@@ -174,6 +174,11 @@ def test_current_endpoint_locator_fails_closed_on_ambiguous_or_inconsistent_curr
                 run_id="arp-latest-failed",
             )
             conn.commit()
+    elif failure == "interface_down":
+        _publish_current_fdb()
+        with get_db_connection() as conn:
+            conn.execute("UPDATE interfaces SET oper_status = 'down' WHERE device_id = ?", (DEVICE_ID,))
+            conn.commit()
     elif failure == "interface_vlan_mismatch":
         _publish_current_fdb()
         with get_db_connection() as conn:
@@ -185,3 +190,148 @@ def test_current_endpoint_locator_fails_closed_on_ambiguous_or_inconsistent_curr
         _publish_current_fdb(device_id=other_device)
 
     assert _find() is None
+
+@pytest.mark.parametrize("other_mac", [TARGET_MAC, "02:11:22:33:44:55"])
+def test_current_endpoint_does_not_ignore_unresolved_arp_source(isolated_db, other_mac):
+    _seed_access_device()
+    _publish_current_arp()
+    _publish_current_fdb()
+    other_device = "current-locator-unresolved-arp"
+    _seed_access_device(device_id=other_device)
+    _publish_current_arp(device_id=other_device, mac=other_mac)
+
+    assert _find(device_ids={DEVICE_ID, other_device}) is None
+
+
+def test_current_endpoint_ignores_unauthorized_arp_source(isolated_db):
+    _seed_access_device()
+    _publish_current_arp()
+    _publish_current_fdb()
+    other_device = "current-locator-unauthorized-arp"
+    _seed_access_device(device_id=other_device)
+    _publish_current_arp(device_id=other_device, mac="02:11:22:33:44:55")
+
+    assert _find(device_ids={DEVICE_ID}) is not None
+
+def test_targeted_current_projection_retains_same_target_conflicts(isolated_db):
+    _seed_access_device()
+    _publish_current_arp()
+    _publish_current_fdb()
+    with get_db_connection() as conn:
+        arp = discovery._current_endpoint_projection(
+            conn, device_id=DEVICE_ID, observation_source="arp",
+        )
+        assert discovery._current_endpoint_projection(
+            conn, device_id=DEVICE_ID, observation_source="arp", target_ip=TARGET_IP,
+        ) == arp
+        assert discovery._current_endpoint_projection(
+            conn, device_id=DEVICE_ID, observation_source="arp", target_ip="172.16.5.99",
+        ) == []
+        fdb = discovery._current_fdb_endpoint_projection(conn, device_id=DEVICE_ID)
+        assert discovery._current_fdb_endpoint_projection(
+            conn, device_id=DEVICE_ID, target_mac=TARGET_MAC,
+        ) == fdb
+        assert discovery._current_fdb_endpoint_projection(
+            conn, device_id=DEVICE_ID, target_mac="02:11:22:33:44:55",
+        ) == []
+
+@pytest.mark.parametrize("failure", [
+    "", "unknown_scope", "wrong_space", "unauthorized", "wrong_vlan",
+    "stale_link", "stale_interface", "ambiguous_fdb", "inferred_link",
+    "edge_has_neighbor", "wrong_native", "degraded_second_link", "root_mismatch",
+])
+def test_cross_device_current_fdb_requires_positive_tagged_path(monkeypatch, failure):
+    from services.ip_locator_endpoint_evidence import _current_cross_device_fdb_path
+
+    stamp = _now()
+    gateway = "gw"
+    access = "sw"
+    mac = TARGET_MAC
+    vlan = "7"
+    common = {
+        "tenant_id": "tenant-default", "site_id": SITE_ID,
+        "address_space_id": "global-space", "scope_status": "resolved",
+        "mac": mac, "vlan": vlan, "entry_type": "dynamic",
+        "coverage_complete": True, "evidence_status": "recent",
+        "timestamp_status": "valid", "observed_at": stamp,
+    }
+    root = dict(common, source_device_id=gateway, switch_port="GE1/0/1",
+                path_classification="trunk_tagged_interface")
+    edge = dict(common, source_device_id=access, switch_port="GE1/0/2",
+                path_classification="access_edge")
+    arp = dict(common, source_device_id=gateway, source_vrf_context_status="global")
+    def port(name, mode):
+        return {
+            "id": name, "interface_name": name, "interface_type": "physical",
+            "switchport_mode": mode, "access_vlan": 7, "native_vlan": 1,
+            "allowed_vlans": "7", "admin_status": "up", "oper_status": "up",
+            "last_seen": stamp,
+        }
+
+    interfaces = {
+        gateway: [port("GE1/0/1", "trunk")],
+        access: [port("GE1/0/1", "trunk"), port("GE1/0/2", "access")],
+    }
+    link = {
+        "id": "link-1", "source_device_id": gateway, "target_device_id": access,
+        "source_port": "GE1/0/1", "target_port": "GE1/0/1", "status": "up",
+        "link_kind": "physical", "discovery_source": "lldp", "last_seen": stamp,
+    }
+    links = [link]
+    allowed = {gateway, access}
+    rows = [edge]
+    if failure == "unknown_scope":
+        arp["source_vrf_context_status"] = "unknown"
+    elif failure == "wrong_space":
+        edge["address_space_id"] = "other-space"
+    elif failure == "unauthorized":
+        allowed.remove(access)
+    elif failure == "wrong_vlan":
+        interfaces[access][0]["allowed_vlans"] = "8"
+    elif failure == "stale_link":
+        link["last_seen"] = "2000-01-01T00:00:00+00:00"
+    elif failure == "stale_interface":
+        interfaces[access][0]["last_seen"] = "2000-01-01T00:00:00+00:00"
+    elif failure == "ambiguous_fdb":
+        rows.append(dict(edge, switch_port="GE1/0/3"))
+    elif failure == "inferred_link":
+        link["is_inferred"] = True
+    elif failure == "edge_has_neighbor":
+        links.append(dict(link, id="link-2", source_device_id=access,
+                          source_port="GE1/0/2", target_device_id="third"))
+    elif failure == "wrong_native":
+        interfaces[access][0]["native_vlan"] = 0
+    elif failure == "degraded_second_link":
+        links.append(dict(link, id="link-2", status="degraded", target_device_id="third"))
+    elif failure == "root_mismatch":
+        arp["source_device_id"] = "third"
+
+    class Rows:
+        def __init__(self, rows):
+            self.rows = rows
+        def fetchall(self):
+            return self.rows
+
+    class Connection:
+        def execute(self, sql, params):
+            if "FROM interfaces" in sql:
+                return Rows(interfaces[params[0]])
+            if "FROM topology_links" in sql:
+                return Rows([item for item in links
+                             if params[0] in {item["source_device_id"], item["target_device_id"]}])
+            raise AssertionError(sql)
+
+    monkeypatch.setattr(
+        discovery, "_current_fdb_endpoint_projection",
+        lambda conn, **kwargs: rows if kwargs["device_id"] == access else [],
+    )
+    result = _current_cross_device_fdb_path(
+        Connection(), arp=arp, first_fdb=root, allowed=allowed,
+        tenant="tenant-default", mac=mac, vlan=vlan,
+    )
+    if failure:
+        assert result is None
+    else:
+        assert [item["source_device_id"] for item in result] == [gateway, access]
+        assert result[0]["transit"]["link_id"] == "link-1"
+        assert result[-1]["switch_port"] == "GE1/0/2"

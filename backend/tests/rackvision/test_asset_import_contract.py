@@ -7,8 +7,8 @@ from api import assets
 from database import get_db_connection
 
 
-def _asset(hostname: str) -> assets.AssetCreate:
-    return assets.AssetCreate(
+def _asset(hostname: str) -> assets.AssetImportCreate:
+    return assets.AssetImportCreate(
         asset_type="server",
         hostname=hostname,
         asset_tag=f"tag-{hostname}",
@@ -72,7 +72,7 @@ def test_asset_import_detailed_row_failure_and_atomic_rollback(isolated_db, monk
 def test_asset_import_queues_snmp_enrichment_after_committing_asset(isolated_db):
     background_tasks = BackgroundTasks()
     result = assets.import_assets(
-        [assets.AssetCreate(
+        [assets.AssetImportCreate(
             asset_type="network_device",
             hostname="edge-import-pending",
             asset_tag="tag-edge-import-pending",
@@ -108,7 +108,7 @@ def test_asset_import_can_disable_snmp_and_skips_enrichment(isolated_db, monkeyp
     monkeypatch.setattr(collector_sync_service, "trigger_async_monitoring_sync", lambda: None)
     background_tasks = BackgroundTasks()
     result = assets.import_assets(
-        [assets.AssetCreate(
+        [assets.AssetImportCreate(
             asset_type="network_device",
             hostname="edge-import-snmp-disabled",
             asset_tag="tag-edge-import-snmp-disabled",
@@ -153,7 +153,7 @@ def test_asset_import_reserved_site_error_is_actionable(isolated_db):
 
     with pytest.raises(HTTPException) as exc_info:
         assets.import_assets([
-            assets.AssetCreate(
+            assets.AssetImportCreate(
                 asset_type="server",
                 hostname="edge-03",
                 asset_tag="tag-edge-03",
@@ -182,7 +182,7 @@ def test_batch_asset_delete_uses_one_monitor_sync_and_reports_item_failures(isol
         "tenant_id": "tenant-default",
     }
     created = assets.create_asset(
-        assets.AssetCreate(
+        assets.AssetImportCreate(
             asset_type="server",
             hostname="batch-delete-server",
             asset_tag="batch-delete-server",
@@ -218,7 +218,7 @@ def test_batch_asset_delete_preserves_assets_denied_by_scope(isolated_db, monkey
         "tenant_id": "tenant-default",
     }
     created = assets.create_asset(
-        assets.AssetCreate(
+        assets.AssetImportCreate(
             asset_type="server",
             hostname="batch-delete-denied-server",
             asset_tag="batch-delete-denied-server",

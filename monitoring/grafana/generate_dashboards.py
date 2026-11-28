@@ -4577,11 +4577,11 @@ NOC_V3_DASHBOARD_DESCRIPTIONS = {
 
 NOC_V3_PANEL_DESCRIPTIONS = {
     # 01 网络总览
-    ("nexora-network-overview", 6): "统计近 24 小时内发生过链路变动且当前仍处于 Down 状态的已启用端口，帮你快速聚焦新发故障。",
+    ("nexora-network-overview", 6): "统计24小时内状态有变化且当前 Down 的已启用端口，帮助快速聚焦新发故障。",
     ("nexora-network-overview", 10): "已成功采集到内存指标的设备数；未覆盖设备可能是暂不支持对应采集规则。",
     ("nexora-network-overview", 11): "已成功采集到温度传感器的设备数；不同机型安全温度区间存在差异，可下钻设备详情核查。",
     ("nexora-network-overview", 12): "按近 5 分钟收发总吞吐速率排序，快速识别全网流量最繁忙的骨干设备。",
-    ("nexora-network-overview", 14): "仅列出近 24 小时内状态变动且当前仍 Down 的启用接口，自动过滤长期闲置端口；点击接口可直接下钻。",
+    ("nexora-network-overview", 14): "仅列出近 24 小时内状态变动且当前仍 Down 的启用接口，长期稳定 Down 的接口不在此列；点击接口可直接下钻。",
     ("nexora-network-overview", 15): "展示各设备最高核心 CPU 利用率 Top10，点击设备名可一键下钻单设备硬件详情。",
     # 02 设备详情
     ("nexora-network-device", 1): "展示当前选中设备的基础身份信息与 SNMP 连通状态，便于快速确认设备可达性。",
@@ -4609,7 +4609,7 @@ NOC_V3_PANEL_DESCRIPTIONS = {
     # 04 接口全景
     ("nexora-network-interface", 14): "展示端口管理状态与运行状态；默认聚焦已启用但运行 Down 的异常端口，可通过顶部筛选查看停用端口。",
     # 09 接口详情
-    ("nexora-interface-detail", 18): "展示当前端口光模块实测接收/发送光功率（dBm）；不同型号模块收光灵敏度存在差异，过低时请排查光纤衰耗。",
+    ("nexora-interface-detail", 18): "展示端口实测光功率（接收/发送，dBm）；阈值因模块而异，过低时请排查光纤衰耗。",
     # 10 监控平台健康
     ("nexora-platform-health", 1): "当前正常响应指标抓取的监控服务端点总数。",
     ("nexora-platform-health", 2): "当前采集失败的平台端点数量；0 表示全部正常，无样本时仍显示暂无数据。",
@@ -4640,7 +4640,7 @@ NOC_V3_PANEL_DESCRIPTIONS = {
     ("nexora-postgres-performance", 4): "单位时间内消耗的 SQL 累计执行秒数；高并发场景下该值可能大于 1。",
     ("nexora-postgres-performance", 5): "单次 SQL 执行的加权平均耗时（毫秒），突增通常意味着出现锁等待或慢查询。",
     ("nexora-postgres-performance", 6): "每秒 SQL 返回或影响的记录行数，用于衡量批量读写压力。",
-    ("nexora-postgres-performance", 7): "数据库级 Shared Buffer 内存缓存命中率（通常建议 >95%）；该指标反映库级整体缓存效率，不属于单条 SQL。",
+    ("nexora-postgres-performance", 7): "数据库 Shared Buffer 缓存命中率（通常建议 >95%），反映整体缓存效率，非单条 SQL 指标。",
     ("nexora-postgres-performance", 10): "按累计耗时速率排名的 Top10 热点 Query ID（已脱敏，不展示原始 SQL 文本）。",
     ("nexora-postgres-performance", 11): "按平均单次执行耗时排名的 Top10 最慢 Query ID，建议优先针对性优化索引。",
 }

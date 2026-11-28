@@ -157,6 +157,46 @@ def _non_empty(value: Any, default: str = "") -> str:
     return text or default
 
 
+def _lock_current_collection_generations(conn, expected: Mapping[str, Any]) -> bool:
+    """Fence participating collection state rows until publication commits.
+
+    Ordered shared locks block a new begin/finish for these exact contexts.
+    This does not lock unrelated devices or prevent entirely new sources.
+    """
+    keys: dict[tuple[str, str, str, str, str], int] = {}
+    for kind in ("arp", "fdb"):
+        rows = expected.get(f"{kind}_evidence")
+        if not isinstance(rows, list) or not rows:
+            return False
+        for row in rows:
+            if not isinstance(row, Mapping):
+                return False
+            key = (
+                _non_empty(row.get("device_id")), kind,
+                _non_empty(row.get("context_source")), _non_empty(row.get("context_type")),
+                _non_empty(row.get("local_context_key")),
+            )
+            generation = row.get("generation")
+            if not all(key[:4]) or "local_context_key" not in row or type(generation) is not int or generation < 1:
+                return False
+            if key in keys and keys[key] != generation:
+                return False
+            keys[key] = generation
+    for key, generation in sorted(keys.items()):
+        row = conn.execute(
+            """SELECT latest_attempt_generation, last_success_generation, latest_status
+                 FROM ipam_endpoint_collection_states
+                WHERE device_id = ? AND observation_source = ?
+                  AND context_source = ? AND context_type = ? AND local_context_key = ?
+                FOR SHARE NOWAIT""", key,
+        ).fetchone()
+        if (row is None or int(row["latest_attempt_generation"] or 0) != generation
+                or int(row["last_success_generation"] or 0) != generation
+                or row["latest_status"] not in {"complete", "scope_unknown"}):
+            return False
+    return True
+
+
 def _dependency_manifest_current_in_transaction(
     conn,
     manifest: Mapping[str, Any],
@@ -271,17 +311,30 @@ def _dependency_manifest_current_in_transaction(
                 or not isinstance(expected, Mapping)
                 or not isinstance(context.get("authorized_device_ids"), list)):
             return False, ["dependency_manifest_invalid_current_endpoint" if is_current_endpoint else "dependency_manifest_invalid_snmp_endpoint"]
+        savepoint = is_current_endpoint and lock
+        if savepoint:
+            conn.execute("SAVEPOINT locator_current_fence")
         try:
-            finder = find_current_endpoint_evidence if is_current_endpoint else find_endpoint_evidence
-            current = finder(
-                _non_empty(manifest.get("target_ip")), conn=conn,
-                **{key: context.get(key) for key in (
-                    "tenant_id", "site_id", "vrf", "authorized_device_ids",
-                    "start_device_id", "network_domain_id",
-                )},
-            )
+            if is_current_endpoint and lock and not _lock_current_collection_generations(conn, expected):
+                current = None
+            else:
+                finder = find_current_endpoint_evidence if is_current_endpoint else find_endpoint_evidence
+                current = finder(
+                    _non_empty(manifest.get("target_ip")), conn=conn,
+                    **{key: context.get(key) for key in (
+                        "tenant_id", "site_id", "vrf", "authorized_device_ids",
+                        "start_device_id", "network_domain_id",
+                    )},
+                )
         except Exception:
+            if savepoint:
+                # NOWAIT contention aborts a PostgreSQL statement, not the
+                # entire result publication transaction after this rollback.
+                conn.execute("ROLLBACK TO SAVEPOINT locator_current_fence")
             current = None
+        finally:
+            if savepoint:
+                conn.execute("RELEASE SAVEPOINT locator_current_fence")
         evidence_keys = (
             "location", "arp_evidence", "fdb_evidence",
             "evidence_collected_at", "vrf_context_status",
@@ -344,7 +397,8 @@ def _dependency_manifest_current_in_transaction(
             continue
         suffix = " FOR UPDATE" if lock else ""
         current = conn.execute(
-            """SELECT generation, action_version, parser_version, schema_version
+            """SELECT generation, action_version, parser_version, schema_version,
+                      fresh_until, source, records_json, device_id, tenant_id, vrf_name
                  FROM locator_observations WHERE observation_key = ?""" + suffix,
             (key,),
         ).fetchone()
@@ -353,6 +407,43 @@ def _dependency_manifest_current_in_transaction(
             or tuple(_non_empty(current[index]) for index in (1, 2, 3)) != expected_versions
         ):
             gaps.append(f"dependency_changed:observation:{key}")
+            continue
+        if _as_utc(current[4], fallback=_utc_now()) <= _utc_now():
+            gaps.append(f"dependency_expired:observation:{key}")
+            continue
+        if str(current[5] or "") == "snmp_targeted":
+            # The locator-only row can remain unchanged while the device's
+            # SNMP context is rebound to another address space. Fence it too.
+            records = _decode_json(current[6], {})
+            rows = records if isinstance(records, list) else [records]
+            if len(rows) != 1 or not isinstance(rows[0], Mapping):
+                gaps.append(f"dependency_changed:snmp_context:{key}")
+                continue
+            record = rows[0]
+            context_key = str(record.get("snmp_context_key") or "")
+            space_id = str(record.get("address_space_id") or "")
+            mappings = conn.execute(
+                """SELECT c.address_space_id, c.context_type, s.kind,
+                          s.security_tenant_id, s.status, s.vrf_id, v.vrf_name
+                     FROM ipam_device_routing_contexts c
+                     LEFT JOIN ipam_address_spaces s ON s.id = c.address_space_id
+                     LEFT JOIN vrfs v ON v.id = s.vrf_id
+                    WHERE c.device_id = ? AND c.context_source = 'snmp'
+                      AND c.status = 'active' AND c.local_context_key = ?""",
+                (str(current[7] or ""), context_key),
+            ).fetchall()
+            requested = str(current[9] or "default").lower()
+            global_scope = requested in {"", "default", "global"}
+            match = mappings[0] if len(mappings) == 1 else None
+            if (not space_id or not match or str(match[0] or "") != space_id
+                    or str(match[3] or "tenant-default") != str(current[8] or "tenant-default")
+                    or match[4] != "active"
+                    or (global_scope and not match[1] == match[2] == "global")
+                    or (not global_scope and not (
+                        match[1] == match[2] == "vrf"
+                        and requested in {str(match[5] or "").lower(), str(match[6] or "").lower()}
+                    ))):
+                gaps.append(f"dependency_changed:snmp_context:{key}")
     if any(not isinstance(item, Mapping) for item in observations):
         gaps.append("dependency_manifest_invalid_observation_entry")
 
@@ -1663,6 +1754,29 @@ def cleanup_locator_tasks(
         }
 
 
+def _downgrade_stale_locator_result(result: dict[str, Any], gaps: list[str]) -> None:
+    """Do not publish an obsolete attachment as a confirmed live location."""
+    existing = result.get("coverage_gaps")
+    result["coverage_gaps"] = list(dict.fromkeys(
+        [str(gap) for gap in existing] + gaps if isinstance(existing, list) else gaps
+    ))
+    result["dependency_fence"] = {
+        "status": "changed" if any(gap.startswith("dependency_changed:") for gap in gaps) else "incomplete",
+        "scope": "global",
+    }
+    result["status"] = "partial"
+    result["conclusion"] = "dependency_changed"
+    result["found"] = False
+    result["trace_status"] = "incomplete"
+    # Preserve raw observations for diagnostics, but remove live-location
+    # aliases consumed by both the new and legacy locator UI.
+    for key in ("location", "mac", "mac_display", "arp_source"):
+        result.pop(key, None)
+    result["locations"] = []
+    result["terminal_candidates"] = []
+    result["mac_lookup"] = {"status": "not_attempted"}
+
+
 def save_locator_run_result(
     run_id: str,
     *,
@@ -1722,21 +1836,10 @@ def save_locator_run_result(
                     lock=True,
                 )
             if dependency_gaps:
-                gaps = result_payload.get("coverage_gaps")
-                if not isinstance(gaps, list):
-                    gaps = []
-                    result_payload["coverage_gaps"] = gaps
-                for gap in dependency_gaps:
-                    if gap not in gaps:
-                        gaps.append(gap)
-                result_payload["dependency_fence"] = {
-                    "status": "changed" if any(gap.startswith("dependency_changed:") for gap in dependency_gaps) else "incomplete",
-                    "scope": "global",
-                }
-                if selected_status == "completed":
-                    selected_status = "partial"
-                    error_code = "DEPENDENCY_CHANGED"
-                    error_message = "定位依赖在执行期间发生变化，请重试"
+                _downgrade_stale_locator_result(result_payload, dependency_gaps)
+                selected_status = "partial"
+                error_code = "DEPENDENCY_CHANGED"
+                error_message = "定位依赖在执行期间发生变化，请重试"
             elif isinstance(dependency_manifest, Mapping):
                 result_payload["dependency_fence"] = {"status": "current", "scope": "global"}
         # Authorization inputs captured when a run was created are immutable.

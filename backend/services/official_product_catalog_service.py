@@ -18,6 +18,40 @@ from database import get_db_connection
 
 MODEL_CATALOG: dict[str, tuple[dict[str, str], ...]] = {
     "Huawei": (
+        {"model": "CloudEngine S5735-S24ST4XE-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?keyword=S5735-S24ST4XE-V2%2898012231-001%29", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S24T4XE-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?keyword=S5735-S24ST4XE-V2%2898012231-001%29", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S24T4XE-C-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?keyword=S5735-S24ST4XE-V2%2898012231-001%29", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S24T4XE-Q-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?keyword=S5735-S24ST4XE-V2%2898012231-001%29", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S24U4XE-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?keyword=S5735-S24ST4XE-V2%2898012231-001%29", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S24HS4XE-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?keyword=S5735-S24ST4XE-V2%2898012231-001%29", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S48T4XE-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?keyword=S5735-S24ST4XE-V2%2898012231-001%29", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S48T4XE-C-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?keyword=S5735-S24ST4XE-V2%2898012231-001%29", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S48P4XE-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?keyword=S5735-S24ST4XE-V2%2898012231-001%29", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S48U4XE-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?keyword=S5735-S24ST4XE-V2%2898012231-001%29", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S48S4XE-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?keyword=S5735-S24ST4XE-V2%2898012231-001%29", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S48HS4XE-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?keyword=S5735-S24ST4XE-V2%2898012231-001%29", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S24T8J4XE-XA-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?keyword=S5735-S24ST4XE-V2%2898012231-001%29", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S48T4XE-XA-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?keyword=S5735-S24ST4XE-V2%2898012231-001%29", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S24T4XEZ-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?keyword=S5735-S24ST4XE-V2%2898012231-001%29", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S24T8J4XEZ-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?keyword=S5735-S24ST4XE-V2%2898012231-001%29", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S24P4XEZ-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?keyword=S5735-S24ST4XE-V2%2898012231-001%29", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S24J4XE-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?area=recommend&keyword=S5735-S48S4XE-V2%2898012232%29+supported+Optical+Module", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S48J4XE-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?area=recommend&keyword=S5735-S48S4XE-V2%2898012232%29+supported+Optical+Module", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S24HJ4XE-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?area=recommend&keyword=S5735-S48S4XE-V2%2898012232%29+supported+Optical+Module", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S48HJ4XE-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?area=recommend&keyword=S5735-S48S4XE-V2%2898012232%29+supported+Optical+Module", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S48T4XEZ-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?area=recommend&keyword=S5735-S48S4XE-V2%2898012232%29+supported+Optical+Module", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S48P4XEZ-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?area=recommend&keyword=S5735-S48S4XE-V2%2898012232%29+supported+Optical+Module", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5735-S24P8J4XEZ-V2", "series": "S5735-S-V2", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?area=recommend&keyword=S5735-S48P4XE-V2+supported+Power+Module", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5731-H24T4XC", "series": "S5731-H", "scope": "campus", "platform": "huawei_vrp_v200", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?area=recommend&keyword=S5731-H24T4XC%2802352QPP-001%29+supported+Flexible+card", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5731-H48P4XC", "series": "S5731-H", "scope": "campus", "platform": "huawei_vrp_v200", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?area=recommend&keyword=S5731-H24T4XC%2802352QPP-001%29+supported+Flexible+card", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5731-H48T4XC", "series": "S5731-H", "scope": "campus", "platform": "huawei_vrp_v200", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?area=recommend&keyword=S5731-H24T4XC%2802352QPP-001%29+supported+Flexible+card", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5732-H24S6Q", "series": "S5732-H", "scope": "campus", "platform": "huawei_vrp_v200", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?area=recommend&keyword=S6730S-S24X6Q-A%2802353AJX-001%29+supported+Cable", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S6730-S24X6Q", "series": "S6730-S", "scope": "campus", "platform": "huawei_vrp_v200", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?area=recommend&keyword=S6730S-S24X6Q-A%2802353AJX-001%29+supported+Cable", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S6750-S16X10Y2CZ", "series": "S6750-S", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/zh/enterprise/openSearch?keyword=S5735-L48LP4XE-A-V2%2898012052%29", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5755-H24UM4Y2CZ", "series": "S5755-H", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?area=recommend&keyword=S5735-S48S4XE-V2%2898012232%29+supported+Optical+Module", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5755-H48UM4Y2CZ", "series": "S5755-H", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?area=recommend&keyword=S5735-S48S4XE-V2%2898012232%29+supported+Optical+Module", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5755-H24UM4Y2CZ-T", "series": "S5755-H", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?area=recommend&keyword=S5735-S48S4XE-V2%2898012232%29+supported+Optical+Module", "source_checked_at": "2026-11-28"},
+        {"model": "CloudEngine S5755-H48UM4Y2CZ-T", "series": "S5755-H", "scope": "campus", "platform": "huawei_vrp_v600", "official_url": "https://info.support.huawei.com/info-finder/vue/en/enterprise/openSearch?area=recommend&keyword=S5735-S48S4XE-V2%2898012232%29+supported+Optical+Module", "source_checked_at": "2026-11-28"},
         {"model": "CloudEngine S5731-H24P4XC", "series": "S5731-H", "scope": "campus", "platform": "huawei_vrp_v200"},
         {"model": "CloudEngine S5731-H48T4XC-B", "series": "S5731-H", "scope": "campus", "platform": "huawei_vrp_v200"},
         {"model": "CloudEngine S5731-S48T4X", "series": "S5731-S", "scope": "campus", "platform": "huawei_vrp_v200"},
@@ -39,6 +73,42 @@ MODEL_CATALOG: dict[str, tuple[dict[str, str], ...]] = {
         {"model": "HiSecEngine USG6565E", "series": "USG6000E", "scope": "security", "platform": "huawei_vrp_v600"},
     ),
     "H3C": (
+        {"model": "S5135S-8FP4S-EI-Q", "series": "S5135S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/d_202606/2854361_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5135S-8FP4XS-EI-Q", "series": "S5135S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/d_202606/2854361_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5135S-8T4XS-EI-Q", "series": "S5135S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/d_202606/2854361_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5135S-8T4S-EI-Q", "series": "S5135S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/d_202606/2854361_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5135S-10T2S2X-EI-Q", "series": "S5135S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/d_202606/2854361_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5135S-16T4S-EI-Q", "series": "S5135S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/d_202606/2854361_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5135S-24T4S-EI-Q", "series": "S5135S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/d_202606/2854361_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5135S-48T4S-EI-Q", "series": "S5135S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/d_202606/2854361_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5135S-16FP4S-EI", "series": "S5135S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/d_202606/2854361_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5135S-24FP4S4X-EI", "series": "S5135S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/d_202606/2854361_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5135S-24FP4T4S-EI", "series": "S5135S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/d_202606/2854361_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5135S-24P4S-EI", "series": "S5135S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/d_202606/2854361_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5135S-24S8T4X-EI", "series": "S5135S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/d_202606/2854361_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5135S-48FP4S-EI", "series": "S5135S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/d_202606/2854361_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5135S-48P4S-EI", "series": "S5135S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/d_202606/2854361_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5135S-48S2T4X-EI", "series": "S5135S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/d_202606/2854361_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5135S-48ST4X-EI", "series": "S5135S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/d_202606/2854361_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5130S-10P-EI", "series": "S5130S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/Support/Resource_Center/EN/Switches/Catalog/S5130S/S5130S-EI/Technical_Documents/Product_Literature/Hardware_Information___Specifications/H3C_S5130S-EI_IG/202306/1867335_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5130S-20P-EI", "series": "S5130S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/Support/Resource_Center/EN/Switches/Catalog/S5130S/S5130S-EI/Technical_Documents/Product_Literature/Hardware_Information___Specifications/H3C_S5130S-EI_IG/202306/1867335_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5130S-28P-EI-M", "series": "S5130S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/Support/Resource_Center/EN/Switches/Catalog/S5130S/S5130S-EI/Technical_Documents/Product_Literature/Hardware_Information___Specifications/H3C_S5130S-EI_IG/202306/1867335_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5130S-28MP-EI", "series": "S5130S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/Support/Resource_Center/EN/Switches/Catalog/S5130S/S5130S-EI/Technical_Documents/Product_Literature/Hardware_Information___Specifications/H3C_S5130S-EI_IG/202306/1867335_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5130S-52MP-EI", "series": "S5130S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/Support/Resource_Center/EN/Switches/Catalog/S5130S/S5130S-EI/Technical_Documents/Product_Literature/Hardware_Information___Specifications/H3C_S5130S-EI_IG/202306/1867335_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5130S-10P-HPWR-EI", "series": "S5130S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/Support/Resource_Center/EN/Switches/Catalog/S5130S/S5130S-EI/Technical_Documents/Product_Literature/Hardware_Information___Specifications/H3C_S5130S-EI_IG/202306/1867335_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5130S-28MP-HPWR-EI", "series": "S5130S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/Support/Resource_Center/EN/Switches/Catalog/S5130S/S5130S-EI/Technical_Documents/Product_Literature/Hardware_Information___Specifications/H3C_S5130S-EI_IG/202306/1867335_294551_0.htm", "source_checked_at": "2026-11-28"},
+        {"model": "S5130S-28PS-EI", "series": "S5130S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Campus_Network/Access/S5130/H3C_S5130S_EI/", "source_checked_at": "2026-11-28"},
+        {"model": "S5130S-12TP-EI", "series": "S5130S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Campus_Network/Access/S5130/H3C_S5130S_EI/", "source_checked_at": "2026-11-28"},
+        {"model": "S5130S-28TP-EI", "series": "S5130S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Campus_Network/Access/S5130/H3C_S5130S_EI/", "source_checked_at": "2026-11-28"},
+        {"model": "S5130S-52TP-EI", "series": "S5130S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Campus_Network/Access/S5130/H3C_S5130S_EI/", "source_checked_at": "2026-11-28"},
+        {"model": "S5130S-12TP-HPWR-EI", "series": "S5130S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Campus_Network/Access/S5130/H3C_S5130S_EI/", "source_checked_at": "2026-11-28"},
+        {"model": "S5130S-10MS-UPWR-EI", "series": "S5130S", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Campus_Network/Access/S5130/H3C_S5130S_EI/", "source_checked_at": "2026-11-28"},
+        {"model": "S5560X-54F-EI", "series": "S5560X", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Campus_Network/Aggregation/S5500/H3C_S5560X-EI/", "source_checked_at": "2026-11-28"},
+        {"model": "S5560X-30F-EIF", "series": "S5560X", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Campus_Network/Aggregation/S5500/H3C_S5560X-EI/", "source_checked_at": "2026-11-28"},
+        {"model": "S5560X-30C-PWR-EI", "series": "S5560X", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Campus_Network/Aggregation/S5500/H3C_S5560X-EI/", "source_checked_at": "2026-11-28"},
+        {"model": "S5560X-54C-PWR-EI", "series": "S5560X", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Campus_Network/Aggregation/S5500/H3C_S5560X-EI/", "source_checked_at": "2026-11-28"},
+        {"model": "S5560X-34S-EI", "series": "S5560X", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Campus_Network/Aggregation/S5500/H3C_S5560X-EI/", "source_checked_at": "2026-11-28"},
+        {"model": "S5560X-54S-EI", "series": "S5560X", "scope": "campus", "platform": "h3c_comware", "official_url": "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Campus_Network/Aggregation/S5500/H3C_S5560X-EI/", "source_checked_at": "2026-11-28"},
         {"model": "S5130S-28P-EI", "series": "S5130S", "scope": "campus", "platform": "h3c_comware"},
         {"model": "S5130S-52P-EI", "series": "S5130S", "scope": "campus", "platform": "h3c_comware"},
         {"model": "S5560X-30C-EI", "series": "S5560X", "scope": "campus", "platform": "h3c_comware"},
@@ -171,6 +241,31 @@ _OFFICIAL_MODEL_URL_OVERRIDES: dict[tuple[str, str], str] = {
 }
 
 
+# Reviewed WAN/security references must not fall back to switch catalogs.
+_REVIEWED_WAN_SECURITY_MODELS = frozenset({
+    ("Huawei", "NetEngine AR6280"),
+    ("Huawei", "HiSecEngine USG6565E"),
+    ("H3C", "MSR3620-DP"),
+    ("H3C", "SecPath F1000-AK115"),
+    ("Cisco", "ISR4331/K9"),
+    ("Cisco", "FPR1120-NGFW-K9"),
+    ("Ruijie", "RG-WALL 1600-Z3200-S"),
+    ("Juniper", "MX204"),
+    ("Juniper", "SRX345"),
+})
+_OFFICIAL_MODEL_URL_OVERRIDES.update({
+    ("Huawei", "NetEngine AR6280"): "https://info.support.huawei.com/info-finder/vue/search-center/en/enterprise/security/ar6280-pid-23924290",
+    ("Huawei", "HiSecEngine USG6565E"): "https://info.support.huawei.com/info-finder/search-center/en/enterprise/security/usg6565e-pid-250510955/hardwarecenter",
+    ("H3C", "MSR3620-DP"): "https://www.h3c.com/en/Support/Resource_Center/EN/Home/Routers/00-Public/Configure___Deploy/Configuration_Guides/H3C_MSR810%5B2600%5D%5B3600%5D_CG%28V7%29-R0809-6W400/22/202009/1328555_294551_0.htm",
+    ("H3C", "SecPath F1000-AK115"): "https://www.h3c.com/cn/Service/Document_Software/Document_Center/IP_Security/FW_VPN/F1000-AK/Learn_Products/Hardware_Information/H3C_SecPath_F1000_AK-16723/",
+    ("Cisco", "ISR4331/K9"): "https://www.cisco.com/c/en/us/products/collateral/routers/4000-series-integrated-services-routers-isr/data_sheet-c78-732542.html",
+    ("Cisco", "FPR1120-NGFW-K9"): "https://www.cisco.com/c/en/us/td/docs/security/firepower/1100/hw/guide/hw-install-11001/overview.html",
+    ("Ruijie", "RG-WALL 1600-Z3200-S"): "https://www.ruijie.com/en-global/products/security/next-generation-firewall/rg-wall-1600-z3200-s",
+    ("Juniper", "MX204"): "https://www.juniper.net/us/en/products/routers/mx-series/mx204-universal-routing-platform/specs.html",
+    ("Juniper", "SRX345"): "https://www.juniper.net/documentation/us/en/hardware/srx345/",
+})
+
+
 def _official_model_url(vendor: str, item: dict[str, str]) -> str:
     return _OFFICIAL_MODEL_URL_OVERRIDES.get((vendor, item["model"]), OFFICIAL_MODEL_REFERENCE[vendor])
 
@@ -179,7 +274,7 @@ for _vendor, _rows in MODEL_CATALOG.items():
     for _row in _rows:
         _row.setdefault("official_url", _official_model_url(_vendor, _row))
         _row.setdefault("verification_level", "official_model_or_series_catalog")
-        _row.setdefault("source_checked_at", OFFICIAL_MODEL_CHECKED_AT)
+        _row.setdefault("source_checked_at", "2026-11-28" if (_vendor, _row["model"]) in _REVIEWED_WAN_SECURITY_MODELS else OFFICIAL_MODEL_CHECKED_AT)
 
 
 def vendor_models(vendor: str, *, scope: str | None = None) -> list[dict[str, str]]:
@@ -378,7 +473,7 @@ def ensure_official_product_registry_documents(
                     "scope": item["scope"],
                     "official_reference": reference,
                     "canonical_url": reference,
-                    "source_checked_at": OFFICIAL_MODEL_CHECKED_AT,
+                    "source_checked_at": item.get("source_checked_at", OFFICIAL_MODEL_CHECKED_AT),
                     "verification_level": item.get("verification_level") or "official_model_or_series_catalog",
                     "official_source_kind": "vendor_model_or_series_page",
                     "official_source_locator": model,
@@ -421,7 +516,7 @@ def ensure_official_product_registry_documents(
                 "official_reference": reference,
                 "canonical_url": reference,
                 "catalog_identity": identity,
-                "source_checked_at": OFFICIAL_MODEL_CHECKED_AT,
+                "source_checked_at": item.get("source_checked_at", OFFICIAL_MODEL_CHECKED_AT),
                 "official_source_kind": "vendor_model_or_series_page",
                 "official_source_locator": model,
                 "model_aliases_are_not_skus": True,
@@ -432,7 +527,7 @@ def ensure_official_product_registry_documents(
                 f"网络范围：{'园区网' if item['scope'] == 'campus' else '数据中心'}\n"
                 f"CLI 平台：{item['platform']}\n"
                 f"官方产品目录：{reference}\n"
-                f"核验日期：{OFFICIAL_MODEL_CHECKED_AT}（仅采用厂商官网列出的系列/型号）\n"
+                f"核验日期：{item.get('source_checked_at', OFFICIAL_MODEL_CHECKED_AT)}（仅采用厂商官网列出的系列/型号）\n"
                 f"官方来源类型：{metadata['official_source_kind']}；来源定位型号：{model}"
             )
             result = knowledge_service.add_document_and_chunk(

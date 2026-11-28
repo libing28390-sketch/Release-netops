@@ -294,13 +294,24 @@ def _pipeline_versions(
                 getattr(legacy, "_collect_lldp_from_device", None), _lldp_neighbors,
             ) if callable(function)
         )
+        if target.get("snapshot") == "port":
+            action_functions = (_lldp_interface_verbose_command, legacy._send_command)
+            parser_functions = (_parse_lldp_verbose_neighbors,)
+        elif target.get("snapshot") == "lag_members":
+            action_functions = (_lag_member_command, legacy._send_command)
+            parser_functions = (_parse_lag_member_ports, _parse_lag_member_states)
         schema_kind = "neighbor"
+    if target.get("transport") == "snmp_targeted":
+        from services import ip_locator_fact_access as fact_access
+        action_functions = (fact_access.TargetedFactReader.read, fact_access._scope_profile)
+        parser_functions = (fact_access._read_arp if operation == "arp" else fact_access._read_fdb,)
     action_material = {
         "contract": "locator-cli-action-v2",
         "operation": operation,
         "platform": platform,
         "profile": profile_fields,
         "target_mode": str(target.get("snapshot") or "targeted"),
+        "transport": str(target.get("transport") or "ssh_cli"),
         # Keep command material out of task metadata; the digest still fences
         # changes to exact route commands and vendor command selection.
         "command_digest": hashlib.sha256(str(target.get("command") or "").encode("utf-8")).hexdigest(),
@@ -323,6 +334,13 @@ def _pipeline_versions(
 
 def _trace_contract_version() -> str:
     from services.topology_lldp_snapshot_service import lldp_snapshot_versions
+    from services.ip_locator_endpoint_evidence import (
+        find_current_endpoint_evidence, _current_cross_device_fdb_path,
+        _resolve_current_vrf_id, _select_current_arp_scope,
+        _current_facts_are_compatible, _current_fact_is_fresh,
+    )
+    from services import ip_locator_fact_access as fact_access
+    from core.config import settings
 
     all_functions = (
         _route_command, legacy.parse_routing_table, _parse_target_route_output, _route_row, _best_routes,
@@ -332,9 +350,16 @@ def _trace_contract_version() -> str:
         getattr(legacy, "_parse_mac_output", None), getattr(legacy, "_parse_mac_table_line", None),
         getattr(legacy, "_collect_lldp_from_device", None), _lldp_neighbors,
         _load_lldp_snapshot, _record_topology_snapshot_dependency, lldp_snapshot_versions,
+        _trace_ip_uncached, _may_reuse_locator_facts, _request_budget_status, find_current_endpoint_evidence, _current_cross_device_fdb_path,
+        _resolve_current_vrf_id, _select_current_arp_scope,
+        _current_facts_are_compatible, _current_fact_is_fresh,
+        _parse_lag_member_ports, _parse_lag_member_states, _expand_lag_member_ports_live, _leased_lag_member_query, _topology_neighbors,
+        fact_access.TargetedFactReader.read, fact_access._scope_profile,
+        fact_access._read_arp, fact_access._read_fdb,
     )
     material = {
         "functions": [_callable_fingerprint(function) for function in all_functions],
+        "targeted_snmp_enabled": bool(getattr(settings, "IP_LOCATOR_TARGETED_SNMP_ENABLED", False)),
         "schemas": {kind: _schema_version(kind) for kind in sorted(_OBSERVATION_SCHEMA_FIELDS)},
     }
     return hashlib.sha256(json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
@@ -468,6 +493,11 @@ def _pending_fact_invalidation(scope_hash: str, target_ip: str) -> bool:
         # dependency-invalidation state.
         logger.debug("[IPLocatorV2] invalidation state unavailable (%s)", type(exc).__name__)
         return True
+
+
+def _may_reuse_locator_facts(force_refresh: bool, scope_hash: str, target_ip: str) -> bool:
+    """One freshness/invalidation policy for Redis and PostgreSQL lookup tiers."""
+    return not force_refresh and not _pending_fact_invalidation(scope_hash, target_ip)
 
 
 def _authorization_scope_hash(device_ids: Iterable[str] | None) -> str:
@@ -800,6 +830,7 @@ def _load_devices(
     start_device_id: str = "",
     site_id: str = "",
     authorized_device_ids: Iterable[str] | None = None,
+    allow_snmp_only: bool = False,
 ) -> list[dict[str, Any]]:
     try:
         devices = [
@@ -808,6 +839,7 @@ def _load_devices(
                 tenant_id=str(tenant_id or "tenant-default"),
                 site_id=str(site_id) if site_id else None,
                 device_ids=authorized_device_ids,
+                **({"allow_snmp_only": True} if allow_snmp_only else {}),
             )
         ]
     except Exception as exc:
@@ -1053,6 +1085,7 @@ def _persist_observation(
     kind: str,
     target_ip: str = "",
     target_mac: str = "",
+    bridge_domain: str = "",
     vlan_id: Any = None,
     records: Any = None,
     coverage: str = "targeted",
@@ -1063,8 +1096,9 @@ def _persist_observation(
     result: dict[str, Any] | None = None,
     device: Mapping[str, Any] | None = None,
     target: Mapping[str, Any] | None = None,
+    source: str = "ssh_cli",
 ) -> dict[str, Any] | None:
-    """Persist a CLI observation in PostgreSQL before projecting it to Redis."""
+    """Persist a scoped locator observation before using it in a result."""
     try:
         from services.ip_locator_task_service import upsert_locator_observation
         from core.config import settings
@@ -1096,10 +1130,11 @@ def _persist_observation(
             observation_kind=kind,
             target_ip=target_ip,
             target_mac=target_mac,
+            bridge_domain=bridge_domain,
             vlan_id=vlan_id,
             records=records if records is not None else {},
             coverage=coverage,
-            source="ssh_cli",
+            source=source,
             collected_at=observed_at,
             action_version=action_version or versions["action_version"],
             parser_version=parser_version or versions["parser_version"],
@@ -1444,13 +1479,16 @@ def _lag_member_command(device: dict[str, Any], port: str) -> str:
     return ""
 
 
-def _parse_lag_member_ports(output: str, lag_norm: str = "") -> list[str]:
-    """Parse physical member interface names from LAG verbose/summary CLI output."""
-    if not output:
-        return []
-    found: list[str] = []
-    seen: set[str] = set()
-    for line in str(output).splitlines():
+def _parse_lag_member_states(output: str, lag_norm: str = "") -> tuple[list[str], list[str]]:
+    """Return positively selected members and unresolved member-state hints.
+
+    Recognize Comware S/U, VRP Selected/Unselected or Up/Down, and IOS
+    bundled (P) / nonforwarding flags. A bare interface token is not proof.
+    """
+    selected: dict[str, str] = {}
+    unresolved: dict[str, str] = {}
+    inactive: set[str] = set()
+    for line in str(output or "").splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith(("Loadsharing", "Aggregate Interface", "Aggregation Mode", "System ID")):
             continue
@@ -1459,10 +1497,37 @@ def _parse_lag_member_ports(output: str, lag_norm: str = "") -> list[str]:
             norm = legacy.normalize_interface_name(raw_port).lower()
             if not norm or norm == lag_norm or _LAG_NAME_RE.match(re.sub(r"\s+", "", norm)):
                 continue
-            if norm not in seen:
-                seen.add(norm)
-                found.append(raw_port)
-    return found
+            tail = stripped[match.end():]
+            # Comware marks the reference port (R), followed by S/U/I.
+            tail = re.sub(r"^\s*\(R\)\s+", " ", tail)
+            flag = re.match(r"^\s*\(([A-Za-z]+)\)", tail)
+            word = re.match(r"^\s+([A-Za-z]+)\b", tail)
+            marker = word.group(1).lower() if word else ""
+            if flag:
+                marker = flag.group(1)
+                state = ("selected" if marker == "P" else
+                         "inactive" if marker in {"D", "I", "s", "H", "w", "u", "f", "M"} else "unknown")
+            else:
+                state = ("selected" if marker in {"s", "selected", "up"} else
+                         "inactive" if marker in {"u", "i", "unselected", "unselect", "down", "individual", "standby"}
+                         else "unknown")
+            if state == "selected":
+                selected.setdefault(norm, raw_port)
+            elif state == "inactive":
+                inactive.add(norm)
+            else:
+                unresolved.setdefault(norm, raw_port)
+    # Conflicting or unknown observations of the same port are not positive evidence.
+    for norm in selected.keys() & (inactive | unresolved.keys()):
+        unresolved[norm] = selected[norm]
+    return (
+        [name for norm, name in selected.items() if norm not in inactive and norm not in unresolved],
+        list(unresolved.values()),
+    )
+
+
+def _parse_lag_member_ports(output: str, lag_norm: str = "") -> list[str]:
+    return _parse_lag_member_states(output, lag_norm)[0]
 
 
 def _lldp_interface_verbose_command(device: dict[str, Any], port: str) -> str:
@@ -1551,6 +1616,8 @@ def _expand_lag_member_ports_live(
     port: str,
     *,
     result: dict[str, Any] | None = None,
+    force_refresh: bool = False,
+    live_query: Any = None,
 ) -> tuple[set[str], list[str], bool]:
     """Expand a LAG to physical members via DB first, then live CLI if DB has no members.
 
@@ -1596,17 +1663,19 @@ def _expand_lag_member_ports_live(
             pass
         physical_norms = sorted(p for p in expanded if p != normalized and not _LAG_NAME_RE.match(re.sub(r"\s+", "", p)))
 
-    if physical_norms:
+    if physical_norms and not force_refresh:
         _log_trace_step(result, f"[{label}] 聚合口 {port} 展开成员物理接口: {', '.join(physical_norms)}")
         return expanded, physical_norms, True
 
     # Live CLI fallback: run lightweight vendor LAG member command
     cmd = _lag_member_command(device, port)
-    if cmd and _can_run_live_cli(device):
+    if cmd and _can_run_live_cli(device) and callable(live_query):
         try:
-            output = legacy._send_command(device, cmd, force_refresh=True)
+            output = live_query(cmd)
             parsed_members = _parse_lag_member_ports(str(output or ""), lag_norm=normalized)
             if parsed_members:
+                if force_refresh:
+                    expanded = {normalized}
                 for mp in parsed_members:
                     expanded.add(legacy.normalize_interface_name(mp).lower())
                 _log_trace_step(result, f"[{label}] 聚合成员查询 `{cmd}` 返回成员: {', '.join(parsed_members)}")
@@ -1617,6 +1686,11 @@ def _expand_lag_member_ports_live(
             _log_trace_step(result, f"[{label}] 聚合成员查询 `{cmd}` 失败（{_brief_query_error(exc)}）")
             logger.debug("[IPLocatorV2] live LAG member query failed for %s/%s: %s", label, port, exc)
 
+    if isinstance(result, dict):
+        result.setdefault("coverage_gaps", []).append(f"neighbor_parse_incomplete:{device_id}:lag_members")
+    if physical_norms and force_refresh:
+        # Stale members are hints only. Do not query them as current evidence.
+        return {normalized}, [], False
     return expanded, [], False
 
 
@@ -1830,6 +1904,53 @@ def _record_topology_snapshot_dependency(result: dict[str, Any], marker: Mapping
         dependencies.append(dependency)
 
 
+def _leased_lag_member_query(
+    device: dict[str, Any], command: str, *, port: str,
+    scope: dict[str, Any], scope_hash: str, target_ip: str,
+    force_refresh: bool, durable_run_id: str, run_owner_id: str,
+    cancel_check: Any, result: dict[str, Any], deadline: float,
+) -> str:
+    """Share the same durable task and exclusive SSH lease as other CLI reads."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0 or (callable(cancel_check) and cancel_check()):
+        raise TimeoutError("locator aggregation query budget exhausted")
+    target = {"snapshot": "lag_members", "port": legacy.normalize_interface_name(port).lower(),
+              "command": command, "platform": _normalise_platform(device)}
+    raw = _run_cli_with_device_lease(
+        device, "interface", lambda: legacy._send_command(device, command, force_refresh=True),
+        owner_id=f"{result.get('run_id')}:lag-members",
+        task_context=_cli_task_context(
+            device=device, scope=scope, scope_hash=scope_hash, target_ip="",
+            operation="interface", force_refresh=force_refresh,
+            durable_run_id=durable_run_id, run_owner_id=run_owner_id,
+            bridge_domain=f"lag-members:{target['port']}", target=target, cancel_check=cancel_check,
+        ),
+        wait_seconds=max(1, min(30, int(remaining))),
+    )
+    value, collected_at, task_id, _ = _cli_result_parts(raw)
+    if not collected_at or time.monotonic() >= deadline:
+        raise TimeoutError("locator aggregation query has no valid timestamp or exceeded deadline")
+    members, unresolved = _parse_lag_member_states(str(value or ""), target["port"])
+    if unresolved:
+        result["coverage_gaps"].append(f"lag_member_state_unverified:{device['id']}:{target['port']}")
+    if not members:
+        return ""
+    observation = _persist_observation(
+        tenant_id=str(scope.get("tenant_id") or "tenant-default"), scope_hash=scope_hash,
+        network_domain_id=str(scope.get("network_domain_id") or ""),
+        site_id=str(scope.get("site_id") or ""), vrf=str(scope.get("vrf") or "default"),
+        device_id=str(device["id"]), kind="interface",
+        bridge_domain=f"lag-members:{target['port']}", records={"members": members, "unresolved_members": unresolved},
+        collected_at=collected_at, query_task_id=task_id, result=result,
+        device=device, target=target, fresh_seconds=120, retain_seconds=120,
+    )
+    if not observation:
+        result["coverage_gaps"].append(f"observation_persist_failed:{device['id']}:lag_members")
+        return ""
+    _include_evidence_timestamp(result, collected_at)
+    return str(value or "")
+
+
 def _load_lldp_snapshot(
     device: dict[str, Any],
     port: str,
@@ -1853,6 +1974,7 @@ def _load_lldp_snapshot(
 ) -> tuple[list[dict[str, Any]], str, str, dict[str, Any]]:
     """Reuse a complete topology snapshot before falling back to device CLI."""
     device_id = str(device.get("id") or "")
+    snapshot_deadline = time.monotonic() + max(1, wait_seconds)
     key = _cache_key(cache, "topology", scope_hash, device_id, "full")
     neighbor_target = {
         "snapshot": "full",
@@ -2102,7 +2224,13 @@ def _load_lldp_snapshot(
             lag_conn = get_db_connection()
             try:
                 member_ports, phys_ports, _ = _expand_lag_member_ports_live(
-                    lag_conn, device, port, result=result,
+                    lag_conn, device, port, result=result, force_refresh=force_refresh,
+                    live_query=lambda command: _leased_lag_member_query(
+                        device, command, port=port, scope=scope, scope_hash=scope_hash,
+                        target_ip=target_ip, force_refresh=force_refresh,
+                        durable_run_id=durable_run_id, run_owner_id=run_owner_id,
+                        cancel_check=cancel_check, result=result, deadline=snapshot_deadline,
+                    ),
                 )
             finally:
                 lag_conn.close()
@@ -2131,38 +2259,91 @@ def _load_lldp_snapshot(
         and (is_lag_target or full_snapshot_failed or (force_refresh and not snapshot))
     )
     if should_try_per_port_lldp:
-        # Targeted per-interface LLDP verbose fallback (up to 2 physical member ports)
-        # so LAG member uplinks, newly deployed devices, or devices whose full LLDP
-        # snapshot failed/lacked details still drill down cleanly without adding
-        # redundant SSH round-trips on already-verified terminal access ports.
+        # Bound CLI fan-out and preserve every positive neighbor. A truncated
+        # member scan or unclassified empty output is incomplete evidence.
         label = _device_label(device)
-        per_port_clean_empty = False
-        for phys_port in phys_ports[:2]:
+        member_budget = 16
+        member_deadline = snapshot_deadline
+        distinct_ports = list(dict.fromkeys(phys_ports))
+        incomplete = len(distinct_ports) > member_budget
+        by_neighbor = {}
+        member_timestamps: list[str] = []
+        for phys_port in distinct_ports[:member_budget]:
+            if time.monotonic() >= member_deadline or (callable(cancel_check) and cancel_check()):
+                incomplete = True
+                break
             lldp_cmd = _lldp_interface_verbose_command(device, phys_port)
             if not lldp_cmd:
+                incomplete = True
                 continue
             _log_trace_step(result, f"[{label}] 开始查询接口 {phys_port} 的 LLDP")
             try:
-                lldp_out = legacy._send_command(device, lldp_cmd, force_refresh=True)
+                port_identity = legacy.normalize_interface_name(phys_port).lower()
+                port_target = {"snapshot": "port", "port": port_identity,
+                               "platform": _normalise_platform(device), "command": lldp_cmd}
+                query = _run_cli_with_device_lease(
+                    device, "neighbor",
+                    lambda cmd=lldp_cmd: legacy._send_command(device, cmd, force_refresh=True),
+                    owner_id=f"{result.get('run_id')}:neighbor-port",
+                    task_context=_cli_task_context(
+                        device=device, scope=scope, scope_hash=scope_hash, target_ip="",
+                        operation="neighbor", force_refresh=force_refresh,
+                        durable_run_id=durable_run_id, run_owner_id=run_owner_id,
+                        bridge_domain=f"lldp-port:{port_identity}",
+                        target=port_target, cancel_check=cancel_check,
+                    ),
+                    wait_seconds=max(1, min(30, int(member_deadline - time.monotonic()))),
+                )
+                lldp_out, port_at, port_task_id, _ = _cli_result_parts(query)
                 parsed_neighbors = _parse_lldp_verbose_neighbors(str(lldp_out or ""), phys_port)
+                if not port_at:
+                    incomplete = True
+                    continue
+                persisted = _persist_observation(
+                    tenant_id=tenant_id, scope_hash=scope_hash,
+                    network_domain_id=network_domain_id, site_id=site_id, vrf=vrf,
+                    device_id=device_id, kind="neighbor", bridge_domain=f"lldp-port:{port_identity}",
+                    records=parsed_neighbors, coverage="targeted" if parsed_neighbors else "partial",
+                    collected_at=port_at, query_task_id=port_task_id,
+                    result=result, device=device, target=port_target,
+                )
+                if not persisted:
+                    incomplete = True
+                    result["coverage_gaps"].append(f"observation_persist_failed:{device_id}:neighbor:{port_identity}")
+                else:
+                    _include_evidence_timestamp(result, port_at)
                 if parsed_neighbors:
-                    summary_nb = ", ".join(
-                        f"{n.get('neighbor_name')} ({n.get('neighbor_ip')})" if n.get("neighbor_ip") else str(n.get("neighbor_name"))
-                        for n in parsed_neighbors
-                    )
-                    _log_trace_step(result, f"[{label}] `{lldp_cmd}` 返回 {len(parsed_neighbors)} 个邻居: {summary_nb}")
-                    selected = parsed_neighbors
-                    snapshot_status = {"status": "found", "source": "per_port_lldp_verbose"}
-                    collected_at = collected_at or _now_iso()
-                    break
-                per_port_clean_empty = True
-                _log_trace_step(result, f"[{label}] `{lldp_cmd}` 未发现 LLDP 邻居")
+                    member_timestamps.append(port_at)
+                if not parsed_neighbors:
+                    incomplete = True
+                    _log_trace_step(result, f"[{label}] `{lldp_cmd}` 未解析到 LLDP 邻居，结果未确认")
+                    continue
+                summary_nb = ", ".join(
+                    f"{n.get('neighbor_name')} ({n.get('neighbor_ip')})" if n.get("neighbor_ip") else str(n.get("neighbor_name"))
+                    for n in parsed_neighbors
+                )
+                _log_trace_step(result, f"[{label}] `{lldp_cmd}` 返回 {len(parsed_neighbors)} 个邻居: {summary_nb}")
+                for neighbor in parsed_neighbors:
+                    key = (neighbor.get("neighbor_name"), neighbor.get("neighbor_ip"), neighbor.get("neighbor_port"))
+                    by_neighbor.setdefault(key, neighbor)
             except Exception as exc:
+                incomplete = True
                 _log_trace_step(result, f"[{label}] `{lldp_cmd}` 查询失败（{_brief_query_error(exc)}）")
                 logger.debug("[IPLocatorV2] per-port LLDP verbose failed for %s/%s: %s", label, phys_port, exc)
-        if not selected and full_snapshot_failed and per_port_clean_empty:
-            snapshot_status = {"status": "not_found", "source": "per_port_lldp_verbose"}
-            collected_at = collected_at or _now_iso()
+        if by_neighbor:
+            selected = list(by_neighbor.values())
+            collected_at = min(member_timestamps)
+            snapshot_status = {"status": "found", "source": "per_port_lldp_verbose",
+                               "coverage": "partial" if incomplete else "targeted"}
+        elif incomplete:
+            snapshot_status = {"status": "parse_incomplete", "source": "per_port_lldp_verbose",
+                               "coverage": "partial"}
+        # Per-port evidence is independently fenced in PostgreSQL. Never
+        # publish it under the full-device snapshot key.
+        if by_neighbor:
+            _set_cache_source(result, "topology", device, "cli", vrf=vrf, variant="port_neighbor")
+        if incomplete:
+            result["coverage_gaps"].append(f"neighbor_parse_incomplete:{device_id}")
     elif full_snapshot_failed and not selected:
         return [], collected_at, task_id, snapshot_status
     if collected_at:
@@ -2287,71 +2468,48 @@ def _lookup_historical_last_seen(
     site_id: str = "",
     authorized_device_ids: Iterable[str] | None = None,
 ) -> dict[str, Any] | None:
-    """Return the latest historical observation when live ARP is absent (offline host)."""
-    if conn is None or not target_ip:
+    """Return scoped last-seen evidence, never a confirmed current location."""
+    if conn is None or not target_ip or not tenant_id:
         return None
-    allowed = {str(d) for d in authorized_device_ids if str(d)} if authorized_device_ids is not None else None
+    allowed = sorted({str(d) for d in authorized_device_ids if str(d)}) if authorized_device_ids is not None else None
+    if allowed == []:
+        return None
+    # Apply authorization and tenant filters before LIMIT, including the
+    # current owner of the historical source device.
+    conditions = ["o.ip = ?", "o.source_observed_at IS NOT NULL",
+                  "o.tenant_id = ?", "d.tenant_id = ?"]
+    params = [target_ip, tenant_id, tenant_id]
+    if site_id:
+        conditions += ["LOWER(o.site_id) = LOWER(?)", "LOWER(d.site_id) = LOWER(?)"]
+        params += [site_id, site_id]
+    if allowed is not None:
+        conditions.append("o.source_device_id IN (" + ",".join("?" for _ in allowed) + ")")
+        params += allowed
     try:
-        rows = conn.execute(
+        row = conn.execute(
             """SELECT o.source_device_id, o.source_device_name, o.mac, o.interface_name,
-                      o.vlan, o.source_observed_at, o.site_id, o.tenant_id
+                      o.vlan, o.source_observed_at
                  FROM ipam_discovery_observations o
-                WHERE o.ip = ?
-                  AND o.source_observed_at IS NOT NULL
-                ORDER BY o.source_observed_at DESC
-                LIMIT 10""",
-            (target_ip,),
-        ).fetchall()
-        for raw in rows:
-            item = dict(raw) if isinstance(raw, Mapping) or hasattr(raw, "keys") else {}
+                 JOIN devices d ON d.id = o.source_device_id
+                WHERE """ + " AND ".join(conditions) +
+            " ORDER BY o.source_observed_at DESC LIMIT 1", tuple(params),
+        ).fetchone()
+        if row:
+            item = dict(row)
             dev_id = str(item.get("source_device_id") or "")
-            if allowed is not None and dev_id and dev_id not in allowed:
-                continue
-            if tenant_id and item.get("tenant_id") and str(item.get("tenant_id")) != tenant_id:
-                continue
-            if site_id and item.get("site_id") and str(item.get("site_id")).lower() != site_id.lower():
-                continue
             return {
                 "status": "offline_historical_snapshot",
-                "ip": target_ip,
-                "mac": str(item.get("mac") or ""),
-                "device_id": dev_id,
-                "device": str(item.get("source_device_name") or dev_id),
+                "ip": target_ip, "mac": str(item.get("mac") or ""),
+                "device_id": dev_id, "device": str(item.get("source_device_name") or dev_id),
                 "port": str(item.get("interface_name") or ""),
                 "vlan": str(item.get("vlan") or ""),
                 "last_seen": str(item.get("source_observed_at") or ""),
                 "source": "ipam_discovery_observations",
+                "scope_status": "historical_unverified",
             }
     except Exception:
-        pass
-    try:
-        row = conn.execute(
-            """SELECT e.ip, e.mac, e.switch_id, COALESCE(d.hostname, e.switch_id) AS switch_name,
-                      e.switch_port, e.vlan, e.last_seen, e.site
-                 FROM network_endpoints e
-                 LEFT JOIN devices d ON d.id = e.switch_id
-                WHERE e.ip = ?
-                ORDER BY e.last_seen DESC
-                LIMIT 1""",
-            (target_ip,),
-        ).fetchone()
-        if row:
-            item = dict(row) if isinstance(row, Mapping) or hasattr(row, "keys") else {}
-            dev_id = str(item.get("switch_id") or "")
-            if allowed is None or not dev_id or dev_id in allowed:
-                return {
-                    "status": "offline_historical_snapshot",
-                    "ip": target_ip,
-                    "mac": str(item.get("mac") or ""),
-                    "device_id": dev_id,
-                    "device": str(item.get("switch_name") or dev_id),
-                    "port": str(item.get("switch_port") or ""),
-                    "vlan": str(item.get("vlan") or ""),
-                    "last_seen": str(item.get("last_seen") or ""),
-                    "source": "network_endpoints",
-                }
-    except Exception:
-        pass
+        # Do not fall back to an unscoped legacy table on a failed read.
+        return None
     return None
 
 
@@ -2481,7 +2639,7 @@ def _trace_ip_uncached(
     enable_ping: bool = False,
     limits: TraceLimits | None = None,
     route_fresh_seconds: int = 300,
-    deadline_seconds: int = 180,
+    deadline_seconds: float = 180,
 ) -> dict[str, Any]:
     """Execute the four-stage CLI-only trace with bounded branching."""
     try:
@@ -2507,7 +2665,7 @@ def _trace_ip_uncached(
             "errors": ["当前四阶段定位仅支持 IPv4；IPv6 需要 NDP 专项适配"],
         }
     limits = limits or TraceLimits()
-    deadline = time.monotonic() + max(1, int(deadline_seconds or 180))
+    deadline = time.monotonic() + max(0.001, float(deadline_seconds or 180))
     deadline_exceeded = False
     cancelled = False
     storage_failed = False
@@ -2618,6 +2776,46 @@ def _trace_ip_uncached(
         authorized_device_ids=authorized_device_ids,
     )
     by_id = _device_map(devices)
+    from core.config import settings
+    from services.ip_locator_fact_access import TargetedFactReader
+
+    live_facts = TargetedFactReader(
+        tenant_id=tenant_id, vrf=vrf, allowed_ids=set(by_id),
+        deadline=deadline, enabled=bool(getattr(settings, "IP_LOCATOR_TARGETED_SNMP_ENABLED", False)),
+        cancel_check=cancel_check,
+    )
+
+    def read_live_fact(kind: str, device: dict[str, Any], *,
+                       expected_space: str = "", **target_fields: Any):
+        if not operation_budget_available():
+            return None
+        fact = live_facts.read(kind, device, **target_fields)
+        if fact is None or not operation_budget_available():
+            return None
+        if expected_space and fact.record.get("address_space_id") != expected_space:
+            return None
+        # Positive exact-instance reads are not full collection generations.
+        # Persist a separate, short-lived locator-only observation; never
+        # overwrite the scheduled current tables or the CLI snapshot key.
+        target = {"transport": fact.source, "platform": _normalise_platform(device)}
+        persisted = _persist_observation(
+            tenant_id=tenant_id, scope_hash=scope_hash,
+            network_domain_id=network_domain_id, site_id=site_id, vrf=vrf,
+            device_id=str(device["id"]), kind=kind,
+            target_ip=target_ip if kind == "arp" else "",
+            target_mac=str(fact.record.get("mac") or ""),
+            vlan_id=fact.record.get("vlan"),
+            bridge_domain="snmp-targeted",
+            records=fact.record if kind == "arp" else [fact.record],
+            coverage=fact.coverage, collected_at=fact.observed_at,
+            fresh_seconds=30, retain_seconds=30,
+            source=fact.source, result=result, device=device, target=target,
+        )
+        if not persisted:
+            return None
+        _set_cache_source(result, kind, device, fact.source, vrf=vrf)
+        _log_trace_step(result, f"[{_device_label(device)}] SNMP 定向 {kind.upper()} 证据命中")
+        return fact
 
     try:
         conn = get_db_connection()
@@ -2647,7 +2845,7 @@ def _trace_ip_uncached(
                 target_ip,
                 tenant_id=tenant_id or None,
                 site_id=site_id or None,
-                vrf=vrf if vrf and vrf.lower() not in {"default", "global"} else None,
+                vrf=vrf,
                 authorized_device_ids=exact_scope_ids,
             )
             if exact_matches:
@@ -2677,10 +2875,12 @@ def _trace_ip_uncached(
                         "peer_ip": peer.ip,
                         "peer_oper_status": peer.oper_status,
                     }
-                result["status"] = "completed"
-                result["conclusion"] = "device_interface"
-                result["found"] = True
-                result["location"] = local_location
+                unique_match = len(exact_matches) == 1
+                result["status"] = "completed" if unique_match else "partial"
+                result["conclusion"] = "device_interface" if unique_match else "ambiguous_terminal_candidates"
+                result["found"] = unique_match
+                if unique_match:
+                    result["location"] = local_location
                 result["terminal_candidates"] = [
                     {
                         "device_id": m.device_id,
@@ -2706,7 +2906,7 @@ def _trace_ip_uncached(
                 target_ip,
                 tenant_id=tenant_id or None,
                 site_id=site_id or None,
-                vrf=vrf if vrf and vrf.lower() not in {"default", "global"} else None,
+                vrf=vrf,
                 authorized_device_ids=by_id.keys(),
             )
             seen_gw_ids: set[str] = set()
@@ -2826,10 +3026,9 @@ def _trace_ip_uncached(
             route_collected_at = ""
             route_task_id = ""
             if (
-                not force_refresh
-                and cache is not None
+                cache is not None
                 and route_key
-                and not _pending_fact_invalidation(scope_hash, target_ip)
+                and _may_reuse_locator_facts(force_refresh, scope_hash, target_ip)
             ):
                 cached_route = cache.get_json(route_key)
                 cached_route = _cached_observation_is_current(
@@ -2847,7 +3046,7 @@ def _trace_ip_uncached(
                     rows = list(cached_route.get("records") or [])
                     route_collected_at = str(cached_route.get("collected_at") or "")
                     _set_cache_source(result, "route", device, "redis", vrf=branch["vrf"])
-            if not force_refresh and not rows and not route_collected_at:
+            if not rows and not route_collected_at and _may_reuse_locator_facts(force_refresh, scope_hash, target_ip):
                 observation = _find_fresh_observation(
                     tenant_id=tenant_id,
                     scope_hash=scope_hash,
@@ -3105,7 +3304,7 @@ def _trace_ip_uncached(
                     route_port = str(row.get("interface") or "").strip()
                     discovered_neighbors = (
                         _topology_neighbors(conn, device_id, route_port)
-                        if route_port else []
+                        if route_port and not force_refresh else []
                     )
                     if not discovered_neighbors and route_port and operation_budget_available():
                         discovered_neighbors, _, _, neighbor_status = _load_lldp_snapshot(
@@ -3248,6 +3447,7 @@ def _trace_ip_uncached(
     for item in direct_devices:
         unique_gateways.setdefault(str(item[0].get("id") or ""), item)
     arp_hits: list[tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]] = []
+    local_candidates: list[dict[str, Any]] = []
     for device, route, l3_path in unique_gateways.values():
         if not operation_budget_available():
             break
@@ -3269,7 +3469,7 @@ def _trace_ip_uncached(
             snapshot_source = ""
             redis_write_attempted = False
             redis_write_ack = None
-            if cache is not None and arp_key and not force_refresh and not _pending_fact_invalidation(scope_hash, target_ip):
+            if cache is not None and arp_key and _may_reuse_locator_facts(force_refresh, scope_hash, target_ip):
                 cached_arp = cache.get_json(arp_key)
                 cached_arp = _cached_observation_is_current(
                     cached_arp,
@@ -3291,7 +3491,7 @@ def _trace_ip_uncached(
                         "negative_redis" if arp_negative else "redis",
                         vrf=vrf,
                     )
-            if arp is None and not arp_negative:
+            if arp is None and not arp_negative and _may_reuse_locator_facts(force_refresh, scope_hash, target_ip):
                 observation = _find_fresh_observation(
                     tenant_id=tenant_id,
                     scope_hash=scope_hash,
@@ -3336,7 +3536,7 @@ def _trace_ip_uncached(
             full_snapshot = None
             full_snapshot_at = ""
             full_snapshot_task_id = ""
-            if not force_refresh and not _pending_fact_invalidation(scope_hash, target_ip):
+            if _may_reuse_locator_facts(force_refresh, scope_hash, target_ip):
                 if cache is not None and arp_snapshot_key:
                     cached_snapshot = cache.get_json(arp_snapshot_key)
                     cached_snapshot = _cached_observation_is_current(
@@ -3448,6 +3648,14 @@ def _trace_ip_uncached(
                     elif snapshot_source.startswith("snapshot_"):
                         arp_source = snapshot_source if arp_status == "found" else f"snapshot_negative_{snapshot_source.removeprefix('snapshot_')}"
             if arp is None and not arp_negative and arp_status != "ambiguous":
+                fact = read_live_fact("arp", device, target_ip=target_ip,
+                                      interface=str(route.get("interface") or ""))
+                if fact is not None:
+                    arp = dict(fact.record)
+                    arp_status = "found"
+                    arp_collected_at = fact.observed_at
+                    arp_source = fact.source
+            if arp is None and not arp_negative and arp_status != "ambiguous" and operation_budget_available():
                 cli_result = _run_cli_with_device_lease(
                     device,
                     "arp",
@@ -3781,6 +3989,7 @@ def _trace_ip_uncached(
             "collected_at": arp_collected_at or _now_iso(),
             "vrf": vrf,
             "route_prefix": route.get("destination") or "",
+            "source": arp_source or "cli",
         })
         if arp_item.get("is_proxy") or _is_virtual_gateway_mac(arp_item.get("mac")):
             reason = "arp_proxy_or_virtual_gateway"
@@ -3808,13 +4017,8 @@ def _trace_ip_uncached(
                 "mac": arp_item.get("mac") or "",
                 "confidence": "device_interface",
             }
-            result["status"] = "completed"
-            result["conclusion"] = "device_interface"
-            result["found"] = True
-            result["location"] = local_location
-            result["terminal_candidates"].append(local_location)
-            result["completed_at"] = _now_iso()
-            return add_legacy_compatibility(result)
+            local_candidates.append(local_location)
+            continue
         result["arp_evidence"].append(arp_item)
         _include_evidence_timestamp(result, arp_item["collected_at"])
         arp_age = _route_age_seconds(arp_item["collected_at"])
@@ -3833,14 +4037,52 @@ def _trace_ip_uncached(
         result["conclusion"] = "cancelled"
         result["completed_at"] = _now_iso()
         return result
-    if not arp_hits:
-        historical = _lookup_historical_last_seen(
-            conn,
-            target_ip,
-            tenant_id=tenant_id,
-            site_id=site_id,
-            authorized_device_ids=authorized_device_ids,
+    # Compare all observed ARP identities before choosing a terminal. A
+    # local-interface hit or a successful downstream FDB must not erase a
+    # competing IP/MAC mapping from another gateway.
+    observed_macs = {
+        legacy._normalize_mac(str(item.get("mac") or ""))
+        for item in result["arp_evidence"]
+        if not item.get("is_proxy") and not _is_virtual_gateway_mac(item.get("mac"))
+    } - {""}
+    if (len(observed_macs) > 1 or len(local_candidates) > 1
+            or (local_candidates and arp_hits)):
+        result["status"] = "partial"
+        result["conclusion"] = "ambiguous_arp_source"
+        result["coverage_gaps"].append("arp_ambiguous:competing_gateway_evidence")
+        result["terminal_candidates"] = local_candidates
+        result["completed_at"] = _now_iso()
+        return result
+    if local_candidates:
+        incomplete = deadline_exceeded or any(
+            str(gap).startswith(("arp_failed:", "arp_query_failed:", "arp_parse_incomplete:",
+                                 "arp_ambiguous:", "arp_unsupported:", "observation_persist_failed:",
+                                 "route_failed:", "task_deadline_exceeded"))
+            for gap in result["coverage_gaps"]
         )
+        result["status"] = "partial" if incomplete else "completed"
+        result["conclusion"] = "path_has_unverified_branch" if incomplete else "device_interface"
+        result["found"] = not incomplete
+        result["location"] = local_candidates[0]
+        result["terminal_candidates"] = local_candidates
+        result["completed_at"] = _now_iso()
+        return add_legacy_compatibility(result)
+    if not arp_hits:
+        historical = None
+        # The L3 connection is already closed; open a short, separate read.
+        # Legacy history has no proven named-VRF binding.
+        if vrf.lower() in {"default", "global"}:
+            try:
+                history_conn = get_db_connection()
+                try:
+                    historical = _lookup_historical_last_seen(
+                        history_conn, target_ip, tenant_id=tenant_id, site_id=site_id,
+                        authorized_device_ids=authorized_device_ids,
+                    )
+                finally:
+                    history_conn.close()
+            except Exception:
+                logger.debug("[IPLocatorV2] historical lookup unavailable")
         if historical is not None:
             result["historical_last_seen"] = historical
         result["status"] = "partial" if deadline_exceeded or result["coverage_gaps"] else "failed"
@@ -3871,7 +4113,7 @@ def _trace_ip_uncached(
     # MAC recursion starts at each ARP hit, then follows only known topology
     # neighbours.  All SQL reads are finished before a CLI call is made.
     final_candidates: list[dict[str, Any]] = []
-    visited_l2: set[tuple[str, str]] = set()
+    visited_l2: set[tuple[str, str, str]] = set()
     try:
         conn = get_db_connection()
     except Exception:
@@ -3892,7 +4134,7 @@ def _trace_ip_uncached(
                         result["coverage_gaps"].append("L2 路径超过最大跳数")
                     continue
                 visited = set(visited) | {current_id}
-                pair = (current_id, mac)
+                pair = (current_id, mac, str(arp.get("vlan") or ""))
                 if pair in visited_l2:
                     continue
                 if current_id not in queried_device_ids and len(queried_device_ids) >= limits.max_devices:
@@ -3921,7 +4163,7 @@ def _trace_ip_uncached(
                     mac_collected_at = ""
                     mac_task_id = ""
                     mac_negative = False
-                    if cache is not None and mac_key and not force_refresh and not _pending_fact_invalidation(scope_hash, target_ip):
+                    if cache is not None and mac_key and _may_reuse_locator_facts(force_refresh, scope_hash, target_ip):
                         cached_mac = cache.get_json(mac_key)
                         cached_mac = _cached_observation_is_current(
                             cached_mac,
@@ -3944,7 +4186,7 @@ def _trace_ip_uncached(
                                     "negative_redis" if mac_negative else "redis",
                                     vrf=vrf,
                                 )
-                    if not records and not mac_negative and not force_refresh:
+                    if not records and not mac_negative and _may_reuse_locator_facts(force_refresh, scope_hash, target_ip):
                         observation = _find_fresh_observation(
                             tenant_id=tenant_id,
                             scope_hash=scope_hash,
@@ -3999,7 +4241,7 @@ def _trace_ip_uncached(
                             )
                     full_snapshot_records = None
                     full_snapshot_at = ""
-                    if not force_refresh and not _pending_fact_invalidation(scope_hash, target_ip):
+                    if _may_reuse_locator_facts(force_refresh, scope_hash, target_ip):
                         if cache is not None and mac_snapshot_key:
                             cached_snapshot = cache.get_json(mac_snapshot_key)
                             cached_snapshot = _cached_observation_is_current(
@@ -4084,6 +4326,20 @@ def _trace_ip_uncached(
                             "source": "full_snapshot",
                         }
                     if not records and not mac_negative and not (status and status.get("status") in {"unsupported", "query_failed", "disabled"}):
+                        # A CLI ARP fact may not carry an address-space ID.
+                        # Do not use cross-device SNMP context by VRF name alone.
+                        expected_space = str(arp.get("address_space_id") or "")
+                        source_id = str(arp.get("device_id") or "")
+                        fact = (
+                            read_live_fact("mac", current, mac=mac, vlan=vlan_hint,
+                                           expected_space=expected_space)
+                            if expected_space or source_id == current_id else None
+                        )
+                        if fact is not None:
+                            records = [dict(fact.record)]
+                            mac_collected_at = fact.observed_at
+                            status = {"status": "found", "source": fact.source}
+                    if not records and not mac_negative and not (status and status.get("status") in {"unsupported", "query_failed", "disabled"}) and operation_budget_available():
                         mac_result = _run_cli_with_device_lease(
                             current,
                             "mac",
@@ -4368,6 +4624,8 @@ def _trace_ip_uncached(
                         result.setdefault("warnings", []).append(
                             f"mac_vlan_translated:{current_id}:{vlan_hint}->{','.join(translated_vlans)}"
                         )
+                        # A VLAN change is a hint, not proof of QinQ/translation.
+                        result["coverage_gaps"].append(f"mac_vlan_translation_unverified:{current_id}")
                 if not records:
                     if isinstance(status, dict) and status.get("status") == "vlan_unknown":
                         result["errors"].append(f"{label} 的 MAC 记录缺少 VLAN，不能确认二层域")
@@ -4393,7 +4651,10 @@ def _trace_ip_uncached(
                         downstream = []
                         discovered_port = ""
                         for candidate_port in lookup_ports:
-                            downstream = _topology_neighbors(conn, current_id, candidate_port) if conn is not None else []
+                            downstream = (
+                                _topology_neighbors(conn, current_id, candidate_port)
+                                if conn is not None and not force_refresh else []
+                            )
                             if not downstream:
                                 downstream, _, _, neighbor_status = _load_lldp_snapshot(
                                     current,
@@ -4480,7 +4741,7 @@ def _trace_ip_uncached(
                     # If the ARP physical port has no downstream switch neighbor and CMDB confirms
                     # it is an Access port for this VLAN, treat it as a confirmed terminal port.
                     arp_port = str(arp.get("interface") or "").strip() if not path else ""
-                    if arp_port and conn is not None:
+                    if arp_port and conn is not None and not force_refresh:
                         arp_topology = _topology_neighbors(conn, current_id, arp_port)
                         arp_identity = _terminal_evidence(conn, current_id, arp_port, vlan_hint)
                         if not arp_topology and arp_identity.get("is_terminal"):
@@ -4504,8 +4765,11 @@ def _trace_ip_uncached(
                                 "mac": mac,
                                 "l3_path": l3_path,
                                 "l2_path": path + [arp_hop],
-                                "confidence": "high",
+                                "confidence": "low",
                             })
+                            result["coverage_gaps"].append(f"mac_not_found:{current_id}")
+                            if mac_status in {"query_failed", "parse_incomplete"}:
+                                result["coverage_gaps"].append(f"mac_{mac_status}:{current_id}")
                             continue
 
                     result["coverage_gaps"].append(f"mac_not_found:{current_id}")
@@ -4530,7 +4794,7 @@ def _trace_ip_uncached(
                         "mac": mac,
                         "vlan": str(record.get("vlan") or arp.get("vlan") or ""),
                         "type": record.get("type") or "dynamic",
-                        "source": "cli",
+                        "source": "snmp_targeted" if status.get("source") == "snmp_targeted" else "cli",
                         "collected_at": mac_collected_at or _now_iso(),
                     }
                     result["l2_paths"].append({"l3_path": l3_path, "hops": path + [hop]})
@@ -4546,20 +4810,28 @@ def _trace_ip_uncached(
                     expanded_member_ports: set[str] | None = None
                     physical_member_names: list[str] | None = None
                     lag_members_resolved = not is_lag_port
-                    if conn is not None:
+                    if conn is not None and not force_refresh:
                         topology = _topology_neighbors(conn, current_id, port)
                     if not topology and is_lag_port:
                         expanded_member_ports, physical_member_names, lag_members_resolved = _expand_lag_member_ports_live(
-                            conn, current, port, result=result,
+                            conn, current, port, result=result, force_refresh=force_refresh,
+                            live_query=lambda command: _leased_lag_member_query(
+                                current, command, port=port, scope=scope, scope_hash=scope_hash,
+                                target_ip=target_ip, force_refresh=force_refresh,
+                                durable_run_id=durable_run_id, run_owner_id=run_owner_id,
+                                cancel_check=cancel_check, result=result, deadline=deadline,
+                            ),
                         )
-                        if conn is not None and lag_members_resolved and expanded_member_ports:
-                            # Re-check topology_links using freshly expanded physical member ports
+                        if conn is not None and not force_refresh and lag_members_resolved and expanded_member_ports:
+                            # Preserve all distinct neighbors across member interfaces.
+                            by_neighbor = {}
                             for phys_p in sorted(expanded_member_ports):
                                 if phys_p == port_norm_lower:
                                     continue
-                                topology = _topology_neighbors(conn, current_id, phys_p)
-                                if topology:
-                                    break
+                                for neighbor in _topology_neighbors(conn, current_id, phys_p):
+                                    key = (neighbor.get("neighbor_id"), neighbor.get("neighbor_port"))
+                                    by_neighbor.setdefault(key, neighbor)
+                            topology = list(by_neighbor.values())
                     elif not is_lag_port:
                         expanded_member_ports = {port_norm_lower} if port_norm_lower else set()
                         physical_member_names = [port] if port else []
@@ -4580,6 +4852,12 @@ def _trace_ip_uncached(
                             vrf=vrf,
                             variant="topology_links",
                         )
+                        _include_evidence_timestamp(result, topology_collected_at)
+                        topology_age = _route_age_seconds(topology_collected_at)
+                        if topology_age is not None:
+                            result["freshness"]["topology"] = max(
+                                int(result["freshness"].get("topology") or 0), topology_age,
+                            )
                     elif not terminal_identity.get("is_terminal") or force_refresh:
                         topology, topology_collected_at, _, topology_status = _load_lldp_snapshot(
                             current,
@@ -4625,8 +4903,13 @@ def _trace_ip_uncached(
                             )
                         neighbor_device = neighbor_candidates[0] if len(neighbor_candidates) == 1 else None
                         neighbor_id = str((neighbor_device or {}).get("id") or neighbor.get("neighbor_id") or "")
-                        if neighbor_device and neighbor_id not in visited:
-                            child_devices.append(neighbor_device)
+                        if neighbor_device:
+                            if neighbor_id not in visited:
+                                if not any(str(child.get("id") or "") == neighbor_id for child in child_devices):
+                                    child_devices.append(neighbor_device)
+                            else:
+                                result["coverage_gaps"].append(f"topology_incomplete:{current_id}:{port}")
+                                unmanaged_neighbors_on_port.append(neighbor_id)
                         elif neighbor.get("neighbor_name") or neighbor_id:
                             if _is_fit_ap_neighbor(neighbor):
                                 fit_ap_neighbors.append(neighbor)
@@ -4652,29 +4935,17 @@ def _trace_ip_uncached(
 
                     identity = terminal_identity
                     hop["terminal_evidence"] = identity
-                    is_hypervisor_trunk = (
-                        not unmanaged_neighbors_on_port
-                        and (_is_hypervisor_mac(mac) or bool(hypervisor_neighbors))
-                        and (
-                            (bool(identity.get("is_physical")) and bool(identity.get("is_trunk")) and not bool(identity.get("is_aggregation")))
-                            or (bool(identity.get("is_aggregation")) and lag_members_resolved)
-                        )
-                    )
-                    is_server_lag_port = (
-                        bool(identity.get("is_aggregation"))
-                        and lag_members_resolved
-                        and not unmanaged_neighbors_on_port
-                        and not is_hypervisor_trunk
-                    )
-                    is_server_trunk_port = (
-                        bool(identity.get("is_physical"))
-                        and bool(identity.get("is_trunk"))
-                        and not bool(identity.get("is_aggregation"))
-                        and not unmanaged_neighbors_on_port
-                        and not is_hypervisor_trunk
-                    )
-                    is_fit_ap_port = bool(fit_ap_neighbors) and bool(identity.get("is_physical")) and not bool(identity.get("is_aggregation"))
-                    if identity.get("is_terminal") or is_hypervisor_trunk or is_server_lag_port or is_server_trunk_port or is_fit_ap_port:
+                    # A forwarding MAC on a trunk or LAG proves a direction,
+                    # not a directly attached server. LLDP names and OUIs alone
+                    # are hints, not proof of the endpoint or of dual-homing.
+                    if (identity.get("is_trunk") or identity.get("is_aggregation")
+                            or fit_ap_neighbors or hypervisor_neighbors):
+                        hop["is_uplink"] = True
+                        hop["endpoint_classification"] = "LAST_VISIBLE_PORT"
+                        result["coverage_gaps"].append(f"topology_incomplete:{current_id}:{port}")
+                        _log_trace_step(result, f"[{label}] 端口 {port} 为最后可见方向，未确认终端直连")
+                        continue
+                    if identity.get("is_terminal") and not unmanaged_neighbors_on_port:
                         candidate_payload: dict[str, Any] = {
                             "device_id": current_id,
                             "device": label,
@@ -4685,26 +4956,16 @@ def _trace_ip_uncached(
                             "l2_path": path + [hop],
                             "confidence": "high",
                         }
-                        if is_fit_ap_port:
-                            candidate_payload["endpoint_classification"] = "WIRELESS_AP_UPLINK"
-                            candidate_payload["ap_neighbor"] = fit_ap_neighbors[0].get("neighbor_name") or ""
-                        elif is_hypervisor_trunk:
-                            candidate_payload["endpoint_classification"] = "VIRTUAL_MACHINE_HOST"
-                            if hypervisor_neighbors:
-                                candidate_payload["hypervisor_host"] = hypervisor_neighbors[0].get("neighbor_name") or ""
-                        elif is_server_lag_port:
-                            candidate_payload["endpoint_classification"] = "SERVER_LAG_ENDPOINT"
-                        elif is_server_trunk_port:
-                            candidate_payload["endpoint_classification"] = "SERVER_TRUNK_ENDPOINT"
-                        else:
-                            candidate_payload["endpoint_classification"] = "WIRED_ACCESS_ENDPOINT"
-                            active_mac_count = _count_edge_port_active_macs(conn, current_id, port)
-                            if active_mac_count >= 3 and not _is_hypervisor_mac(mac):
-                                candidate_payload["edge_port_warning"] = {
-                                    "code": "suspected_unmanaged_switch",
-                                    "active_mac_count": active_mac_count,
-                                    "message": f"该边缘端口下同时检测到 {active_mac_count} 个活跃 MAC，现场疑似私接非网管桌面小交换机/Hub",
-                                }
+                        candidate_payload["endpoint_classification"] = "WIRED_ACCESS_ENDPOINT"
+                        active_mac_count = _count_edge_port_active_macs(conn, current_id, port)
+                        if active_mac_count >= 3 and not _is_hypervisor_mac(mac):
+                            candidate_payload["edge_port_warning"] = {
+                                "code": "suspected_unmanaged_switch",
+                                "active_mac_count": active_mac_count,
+                                "message": f"该边缘端口下同时检测到 {active_mac_count} 个活跃 MAC，现场疑似私接非网管桌面小交换机/Hub",
+                            }
+                            candidate_payload["confidence"] = "low"
+                            result["coverage_gaps"].append(f"topology_incomplete:{current_id}:{port}")
                         final_candidates.append(candidate_payload)
                         _log_trace_step(
                             result,
@@ -4731,12 +4992,13 @@ def _trace_ip_uncached(
         result["completed_at"] = _now_iso()
         return result
 
-    unique_candidates: dict[tuple[str, str, str], dict[str, Any]] = {}
+    unique_candidates: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     for candidate in final_candidates:
         candidate_key = (
             str(candidate.get("device_id") or ""),
             str(candidate.get("port") or ""),
             str(candidate.get("vlan") or ""),
+            str(candidate.get("mac") or "").lower(),
         )
         unique_candidates.setdefault(candidate_key, candidate)
     final_candidates = list(unique_candidates.values())
@@ -4749,7 +5011,12 @@ def _trace_ip_uncached(
         "next_hop_unmanaged:",
         "next_hop_ambiguous:",
         "next_hop_candidate_budget_exceeded:",
+        "next_hop_neighbor_",
         "neighbor_ambiguous:",
+        "neighbor_query_failed:",
+        "neighbor_unsupported:",
+        "neighbor_parse_incomplete:",
+        "lag_member_state_unverified:",
         "route_loop:",
         "next_hop_out_of_scope:",
         "device_budget_exceeded",
@@ -4768,6 +5035,8 @@ def _trace_ip_uncached(
         "mac_parse_incomplete:",
         "mac_not_found:",
         "mac_vlan_evidence_missing:",
+        "mac_vlan_translation_unverified:",
+        "mac_port_missing:",
         "arp_failed:",
         "arp_query_failed:",
         "arp_unsupported:",
@@ -4828,25 +5097,8 @@ def _trace_ip_uncached(
             collected_at=str(result.get("evidence_collected_at") or _now_iso()),
             result=result,
         )
-    elif len(final_candidates) == 2 and not has_unverified_branch and not deadline_exceeded and (
-        len({str(c.get("device_id") or "") for c in final_candidates}) == 2
-        and len({str(c.get("mac") or "").lower() for c in final_candidates if c.get("mac")}) == 1
-        and all(
-            c.get("endpoint_classification") in {
-                "SERVER_LAG_ENDPOINT",
-                "SERVER_TRUNK_ENDPOINT",
-                "VIRTUAL_MACHINE_HOST",
-                "WIRED_ACCESS_ENDPOINT",
-            }
-            for c in final_candidates
-        )
-    ):
-        # Data-center dual-homed / M-LAG / vPC / IRF server attachment across
-        # two distinct switches for the same MAC with no downstream switches.
-        result["found"] = True
-        result["status"] = "completed"
-        result["conclusion"] = "dual_homed_access_confirmed"
-        result["location"] = final_candidates[0]
+    # A shared MAC alone cannot establish dual-homing: mobility, loops and
+    # overlapping broadcast domains can produce the same observations.
     elif len(final_candidates) > 1:
         result["found"] = False
         result["status"] = "partial"
@@ -4940,6 +5192,7 @@ def _try_snmp_endpoint(target_ip: str, **kwargs: Any) -> dict[str, Any] | None:
         tenant_id=str(kwargs.get("tenant_id") or "tenant-default"),
         site_id=str(kwargs.get("site_id") or ""),
         authorized_device_ids=kwargs.get("authorized_device_ids"),
+        allow_snmp_only=True,
     )
     allowed_ids = {str(device["id"]) for device in devices if device.get("id")}
     if not allowed_ids:
@@ -4980,6 +5233,21 @@ def _try_snmp_endpoint(target_ip: str, **kwargs: Any) -> dict[str, Any] | None:
         },
         "cache": {"result": "current_arp_fdb_evidence", "arp": "postgres", "mac": "postgres"},
     })
+    if len(evidence["fdb_evidence"]) > 1:
+        result["evidence_source"] = "current_cross_device_arp_fdb_topology"
+        result["l2_paths"] = [{"l3_path": [], "hops": [
+            {
+                "device_id": hop["device_id"], "device": next(
+                    (_device_label(device) for device in devices if str(device.get("id") or "") == hop["device_id"]),
+                    hop["device_id"],
+                ),
+                "port": hop["interface"], "mac": hop["mac"], "vlan": hop["vlan"],
+                "source": "postgres", "collected_at": hop["observed_at"],
+                "is_uplink": bool(hop.get("transit")),
+            }
+            for hop in evidence["fdb_evidence"]
+        ]}]
+        result["cache"]["topology"] = "postgres"
     result["dependency_manifest"] = {
         "type": "current_endpoint",
         "version": 1,
@@ -5302,12 +5570,68 @@ def _registered_ipam_vip_result(target_ip: str, **kwargs: Any) -> dict[str, Any]
     return result
 
 
+def _request_budget_status(cancel_check: Any, deadline: float, now: float) -> str:
+    """Treat cancellation-check failure as cancellation; never extend a request."""
+    if callable(cancel_check):
+        try:
+            if cancel_check():
+                return "cancelled"
+        except Exception:
+            return "cancelled"
+    return "deadline_exceeded" if now >= deadline else ""
+
+
 def trace_ip(target_ip: str, **kwargs: Any) -> dict[str, Any]:
     """Prefer registered VIPs and SNMP evidence, then bounded CLI tracing."""
+    # One wall-clock budget covers fast evidence, shared-result waits and
+    # the remaining CLI trace. Blocking driver calls are still cooperative.
+    task_deadline = max(1, int(kwargs.get("deadline_seconds") or 180))
+    wait_until = time.monotonic() + task_deadline
+    durable_run_id = str(kwargs.get("durable_run_id") or "")
+    cancel_check = kwargs.get("cancel_check")
+    try:
+        target_ip = str(ipaddress.ip_address(str(target_ip).strip()))
+    except ValueError:
+        return _trace_ip_uncached(target_ip, **kwargs)
+
+    def interruption():
+        reason = _request_budget_status(cancel_check, wait_until, time.monotonic())
+        if not reason:
+            return None
+        return {
+            "run_id": durable_run_id or str(uuid.uuid4()),
+            "target_ip": target_ip,
+            "status": "cancelled" if reason == "cancelled" else "partial",
+            "conclusion": reason, "found": False,
+            "coverage_gaps": ["task_cancelled" if reason == "cancelled" else "task_deadline_exceeded"],
+            "errors": [], "timestamp": _now_iso(),
+        }
+
+    def run_remaining_trace():
+        stopped = interruption()
+        if stopped is not None:
+            return stopped
+        # Preserve the fractional remaining budget, including short requests.
+        remaining = wait_until - time.monotonic()
+        if remaining < 0.001:
+            return {
+                "run_id": durable_run_id or str(uuid.uuid4()), "target_ip": target_ip,
+                "status": "partial", "conclusion": "deadline_exceeded", "found": False,
+                "coverage_gaps": ["task_deadline_exceeded"], "errors": [], "timestamp": _now_iso(),
+            }
+        result = _trace_ip_uncached(target_ip, **{**kwargs, "deadline_seconds": remaining})
+        return interruption() or result
+
+    stopped = interruption()
+    if stopped is not None:
+        return stopped
     # Materialize generators before they are used by both evidence and fallback.
     if kwargs.get("authorized_device_ids") is not None:
         kwargs["authorized_device_ids"] = tuple(kwargs["authorized_device_ids"])
     vip_result = _registered_ipam_vip_result(target_ip, **kwargs)
+    stopped = interruption()
+    if stopped is not None:
+        return stopped
     if vip_result is not None:
         return vip_result
     try:
@@ -5315,9 +5639,11 @@ def trace_ip(target_ip: str, **kwargs: Any) -> dict[str, Any]:
     except Exception as exc:
         logger.warning("[IPLocator] SNMP evidence lookup unavailable (%s); continuing bounded trace", type(exc).__name__)
         endpoint_result = None
+    stopped = interruption()
+    if stopped is not None:
+        return stopped
     if endpoint_result is not None:
         return endpoint_result
-    durable_run_id = str(kwargs.get("durable_run_id") or "")
     force_refresh = bool(kwargs.get("force_refresh", False))
     tenant_id = str(kwargs.get("tenant_id") or "tenant-default")
     site_id = str(kwargs.get("site_id") or "")
@@ -5337,69 +5663,63 @@ def trace_ip(target_ip: str, **kwargs: Any) -> dict[str, Any]:
     result_key = _cache_key(cache, "result", scope_hash, target_ip, vrf, start_device_id or "auto")
     lock_key = _cache_key(cache, "lock", scope_hash, target_ip, vrf, start_device_id or "auto")
     if cache is None or not lock_key or force_refresh:
-        return _trace_ip_uncached(target_ip, **kwargs)
+        return run_remaining_trace()
 
-    # A completed result may have been written by another request before this
-    # call acquired the lock.  The uncached function performs the authoritative
-    # freshness check as well, so this is only a fast path.
-    cached = cache.get_json(result_key)
-    if isinstance(cached, dict) and cache.is_fresh(
-        "result",
-        cached.get("evidence_collected_at") or cached.get("completed_at") or cached.get("created_at"),
-    ) and _manifest_is_current_for_code(cached.get("dependency_manifest")) and not _pending_fact_invalidation(scope_hash, target_ip):
+    def shared_result():
+        cached = cache.get_json(result_key)
+        if not (
+            isinstance(cached, dict)
+            and cache.is_fresh("result", cached.get("evidence_collected_at") or cached.get("completed_at") or cached.get("created_at"))
+            and _manifest_is_current_for_code(cached.get("dependency_manifest"))
+            and not _pending_fact_invalidation(scope_hash, target_ip)
+        ):
+            return None
         cached = _copy_cached_result_for_request(cached)
         if durable_run_id:
             cached["run_id"] = durable_run_id
-        _set_cache_source(
-            cached,
-            "result",
-            {"hostname": "whole-result"},
-            "redis",
-            vrf=vrf,
-            variant="whole_result",
-        )
+        _set_cache_source(cached, "result", {"hostname": "whole-result"}, "redis",
+                          vrf=vrf, variant="whole_result")
         cached["cache"] = {**dict(cached.get("cache") or {}), "result": "hit"}
+        return interruption() or cached
+
+    cached = shared_result()
+    if cached is not None:
         return cached
 
-    task_deadline = max(1, int(kwargs.get("deadline_seconds") or 180))
+    stopped = interruption()
+    if stopped is not None:
+        return stopped
     lock_ttl = max(30, task_deadline)
     token = cache.acquire_lock(lock_key, ttl=lock_ttl)
     if token is None and cache.ping() is not True:
         # Redis failure degrades to scoped PostgreSQL observations plus the
         # deployment-wide/device PostgreSQL leases. Never treat cache failure
         # as permission to open unbudgeted CLI sessions.
-        return _trace_ip_uncached(target_ip, **kwargs)
+        return run_remaining_trace()
     if token is None:
         # Another worker owns the single-flight query. Wait for its result or
         # for its bounded lease to expire, then compete for the lock again.
         # Do not start a duplicate path merely because the first CLI hop is slow.
-        wait_until = time.monotonic() + task_deadline
         while time.monotonic() < wait_until:
-            cached = cache.get_json(result_key)
-            if isinstance(cached, dict) and cache.is_fresh(
-                "result",
-                cached.get("evidence_collected_at") or cached.get("completed_at") or cached.get("created_at"),
-            ) and _manifest_is_current_for_code(cached.get("dependency_manifest")) and not _pending_fact_invalidation(scope_hash, target_ip):
-                cached = _copy_cached_result_for_request(cached)
-                if durable_run_id:
-                    cached["run_id"] = durable_run_id
-                _set_cache_source(
-                    cached,
-                    "result",
-                    {"hostname": "whole-result"},
-                    "redis",
-                    vrf=vrf,
-                    variant="whole_result",
-                )
-                cached["cache"] = {**dict(cached.get("cache") or {}), "result": "hit"}
+            stopped = interruption()
+            if stopped is not None:
+                return stopped
+            cached = shared_result()
+            if cached is not None:
                 return cached
+            stopped = interruption()
+            if stopped is not None:
+                return stopped
             token = cache.acquire_lock(lock_key, ttl=lock_ttl)
             if token is not None:
                 break
             if cache.ping() is not True:
-                return _trace_ip_uncached(target_ip, **kwargs)
-            time.sleep(0.2)
+                return run_remaining_trace()
+            time.sleep(min(0.2, max(0.0, wait_until - time.monotonic())))
         if token is None:
+            stopped = interruption()
+            if stopped is not None and stopped["status"] == "cancelled":
+                return stopped
             return {
                 "run_id": durable_run_id or str(uuid.uuid4()),
                 "target_ip": target_ip,
@@ -5412,9 +5732,14 @@ def trace_ip(target_ip: str, **kwargs: Any) -> dict[str, Any]:
                 "timestamp": _now_iso(),
             }
     try:
-        # The second freshness check is required after waiting to acquire the
-        # lock; another worker may have completed just before us.
-        return _trace_ip_uncached(target_ip, **kwargs)
+        # Close the race between observing a cache miss and acquiring a lock.
+        # Do not enter the full trace (and its PG setup) if the prior owner
+        # published an authoritative result in that interval.
+        stopped = interruption()
+        if stopped is not None:
+            return stopped
+        cached = shared_result()
+        return cached if cached is not None else run_remaining_trace()
     finally:
         cache.release_lock(lock_key, token)
 
@@ -5438,6 +5763,7 @@ def add_legacy_compatibility(result: dict[str, Any]) -> dict[str, Any]:
             conclusion in {"path_has_unverified_branch", "deadline_exceeded_with_candidate"}
             and bool(enriched.get("found"))
         )
+        uncertain_location = partial_known_location and location.get("confidence") == "low"
         location_type = (
             "SNMP_ENDPOINT"
             if conclusion == "endpoint_evidence_confirmed" and enriched.get("source") == "snmp"
@@ -5473,9 +5799,11 @@ def add_legacy_compatibility(result: dict[str, Any]) -> dict[str, Any]:
                 "port": location.get("port") or "",
                 "vlan": location.get("vlan") or "",
                 "type": location_type,
-                "is_uplink": location_type in {"TRACE_INCOMPLETE", "ARP_DIRECT"},
+                "is_uplink": uncertain_location or location_type in {"TRACE_INCOMPLETE", "ARP_DIRECT"},
                 "note": (
-                    "物理接入口已确认；部分路径证据仍待核验"
+                    "最后可见端口；终端直连尚未确认"
+                    if uncertain_location
+                    else "物理接入口已确认；部分路径证据仍待核验"
                     if partial_known_location
                     else "SNMP ARP/FDB 接入口证据"
                     if conclusion == "endpoint_evidence_confirmed" and enriched.get("source") == "snmp"

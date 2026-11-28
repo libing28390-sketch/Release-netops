@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     IP_LOCATOR_CLI_PER_DEVICE_CONCURRENCY: int = 1
     IP_LOCATOR_CLI_IDLE_SECONDS: int = 15
     IP_LOCATOR_TASK_DEADLINE_SECONDS: int = 180
+    # Opt in after lab validation; the existing CLI fallback remains default.
+    IP_LOCATOR_TARGETED_SNMP_ENABLED: bool = False
     SECRET_KEY: str = "supersecret"
     CREDENTIAL_ENCRYPTION_KEY: str = "change-me-to-a-random-secret"
     # AI provider key encryption (M14).  "kid:secret[,kid:secret]"; empty means

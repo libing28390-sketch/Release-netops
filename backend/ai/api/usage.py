@@ -24,13 +24,18 @@ def _load_provider_model_names(conn: Any) -> tuple[dict[str, str], dict[str, tup
     """Load provider_id -> display name and model_id -> (name, model_code) maps."""
     provider_names: dict[str, str] = {}
     model_names: dict[str, tuple[str, str]] = {}
+    conn.execute("SAVEPOINT ai_usage_provider_names")
     try:
         for row in conn.execute("SELECT id, name, provider_type FROM ai_provider").fetchall():
             pid = str(row[0] or "").strip()
             if pid:
                 provider_names[pid] = str(row[1] or row[2] or pid).strip()
-    except Exception:
-        pass
+    except Exception as exc:
+        conn.execute("ROLLBACK TO SAVEPOINT ai_usage_provider_names")
+        logger.debug("Provider display names unavailable: %s", type(exc).__name__)
+    finally:
+        conn.execute("RELEASE SAVEPOINT ai_usage_provider_names")
+    conn.execute("SAVEPOINT ai_usage_model_names")
     try:
         for row in conn.execute("SELECT id, name, model_code, display_name FROM ai_model").fetchall():
             mid = str(row[0] or "").strip()
@@ -38,8 +43,11 @@ def _load_provider_model_names(conn: Any) -> tuple[dict[str, str], dict[str, tup
                 display = str(row[3] or row[1] or row[2] or mid).strip()
                 code = str(row[2] or row[1] or mid).strip()
                 model_names[mid] = (display, code)
-    except Exception:
-        pass
+    except Exception as exc:
+        conn.execute("ROLLBACK TO SAVEPOINT ai_usage_model_names")
+        logger.debug("Model display names unavailable: %s", type(exc).__name__)
+    finally:
+        conn.execute("RELEASE SAVEPOINT ai_usage_model_names")
     return provider_names, model_names
 
 

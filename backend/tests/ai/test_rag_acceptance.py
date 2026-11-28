@@ -336,6 +336,8 @@ def test_grounded_fallback_does_not_render_unrelated_chunk_from_broad_official_d
 
 
 def test_chat_stream_parses_intent_before_knowledge_retrieval(monkeypatch):
+    # This contract mocks the intent-parser/legacy synthesis path explicitly.
+    monkeypatch.setattr(assistant_module.settings, "AI_COPILOT_AGENTIC_CHAT_ENABLED", False)
     """Knowledge streaming must not access intent locals before parsing them."""
 
     llm_calls = []
@@ -378,6 +380,8 @@ def test_chat_stream_parses_intent_before_knowledge_retrieval(monkeypatch):
 
 
 def test_grounded_knowledge_stream_is_marked_not_external(monkeypatch):
+    # This contract mocks the intent-parser/legacy synthesis path explicitly.
+    monkeypatch.setattr(assistant_module.settings, "AI_COPILOT_AGENTIC_CHAT_ENABLED", False)
     async def fake_parse_intent(message, user_id=None):
         return {"intent": "knowledge", "filters": {}, "knowledge_intent": {}}
 
@@ -417,6 +421,8 @@ def test_grounded_knowledge_stream_is_marked_not_external(monkeypatch):
 
 
 def test_grounded_knowledge_chat_uses_local_template_fallback_after_scope_repair(monkeypatch):
+    # This contract mocks the intent-parser/legacy synthesis path explicitly.
+    monkeypatch.setattr(assistant_module.settings, "AI_COPILOT_AGENTIC_CHAT_ENABLED", False)
     async def fake_parse_intent(message, user_id=None):
         return {"intent": "knowledge", "filters": {}, "knowledge_intent": {}}
 
@@ -498,6 +504,8 @@ def test_vendor_follow_up_inherits_feature_without_copying_previous_vendor_scope
 
 
 def test_vendor_follow_up_scope_reaches_chat_and_stream_retrieval(monkeypatch):
+    # This contract mocks the intent-parser/legacy synthesis path explicitly.
+    monkeypatch.setattr(assistant_module.settings, "AI_COPILOT_AGENTIC_CHAT_ENABLED", False)
     async def fake_parse_intent(message, user_id=None):
         metadata = intent_parser.parse_knowledge_metadata(message)
         return {
@@ -574,6 +582,8 @@ def test_vendor_follow_up_scope_reaches_chat_and_stream_retrieval(monkeypatch):
 
 
 def test_configuration_clarification_stops_chat_and_stream_before_provider(monkeypatch):
+    # This contract mocks the intent-parser/legacy synthesis path explicitly.
+    monkeypatch.setattr(assistant_module.settings, "AI_COPILOT_AGENTIC_CHAT_ENABLED", False)
     async def fake_parse_intent(message, user_id=None):
         return {
             "intent": "knowledge",
@@ -648,6 +658,8 @@ def test_configuration_clarification_stops_chat_and_stream_before_provider(monke
 
 
 def test_chat_no_match_uses_bounded_cloud_general_reference(monkeypatch):
+    # This contract mocks the intent-parser/legacy synthesis path explicitly.
+    monkeypatch.setattr(assistant_module.settings, "AI_COPILOT_AGENTIC_CHAT_ENABLED", False)
     async def fake_parse_intent(message, user_id=None):
         return {"intent": "knowledge", "filters": {}, "knowledge_intent": {}}
 

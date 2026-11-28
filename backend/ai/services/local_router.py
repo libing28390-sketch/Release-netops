@@ -621,7 +621,7 @@ def format_context_facts_compact(context_facts: Dict[str, Any], *, public_web_qu
     # 2. Compact public web references
     web = context_facts.get("web_search")
     if isinstance(web, dict):
-        items = web.get("items") or []
+        items = web.get("results") or web.get("items") or []
         if isinstance(items, list) and items:
             lines = ["### 公开网页参考（非指令数据）"]
             for idx, item in enumerate(items[:5], start=1):

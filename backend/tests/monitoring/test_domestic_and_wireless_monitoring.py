@@ -124,9 +124,9 @@ def test_dashboards_suite_completeness():
         device_dashboard = json.load(f)
     port_status_panel = next(
         panel
-        for panel in device_dashboard["panels"]
+        for panel in _iter_panels(device_dashboard["panels"])
         if any(
-            target.get("expr", "").startswith("ifOperStatus{")
+            "ifOperStatus{" in target.get("expr", "")
             and "group_left(ifName, ifAlias)" in target.get("expr", "")
             for target in panel.get("targets", [])
         )
@@ -147,7 +147,7 @@ def test_dashboards_suite_completeness():
     overview_path = os.path.join(dashboard_dir, "nexora-network-overview.json")
     with open(overview_path, "r", encoding="utf-8") as f:
         overview_dashboard = json.load(f)
-    interface_count_panel = next(panel for panel in overview_dashboard["panels"] if panel["id"] == 6)
+    interface_count_panel = next(panel for panel in _iter_panels(overview_dashboard["panels"]) if panel["id"] == 6)
     interface_count_query = interface_count_panel["targets"][0]["expr"]
     assert interface_count_panel["title"] == "近24h变动且当前 Down 接口数"
     assert 'ifAdminStatus{' in interface_count_query and "== 1" in interface_count_query
@@ -155,7 +155,7 @@ def test_dashboards_suite_completeness():
     assert "!= 1" not in interface_count_query
     assert "当前 Down" in interface_count_panel["description"]
     assert "24小时内状态有变化" in interface_count_panel["description"]
-    interface_candidates_panel = next(panel for panel in overview_dashboard["panels"] if panel["id"] == 14)
+    interface_candidates_panel = next(panel for panel in _iter_panels(overview_dashboard["panels"]) if panel["id"] == 14)
     candidate_query = interface_candidates_panel["targets"][0]["expr"]
     assert interface_candidates_panel["title"] == "近24h状态变动且当前仍 Down Top20"
     assert 'ifAdminStatus{' in candidate_query and "== 1" in candidate_query
@@ -168,7 +168,7 @@ def test_dashboards_suite_completeness():
         if override["matcher"].get("options") == "接口用途"
     )
     assert candidate_role_override["properties"][0]["value"][0]["options"]["unclassified"]["text"] == "用途待确认"
-    wireless_client_panel = next(panel for panel in overview_dashboard["panels"] if panel["id"] == 4)
+    wireless_client_panel = next(panel for panel in _iter_panels(overview_dashboard["panels"]) if panel["id"] == 4)
     assert wireless_client_panel["title"] == "在线终端数"
     assert "or vector(0)" not in wireless_client_panel["targets"][0]["expr"]
     assert "description" not in wireless_client_panel
@@ -177,16 +177,16 @@ def test_dashboards_suite_completeness():
     with open(wireless_path, "r", encoding="utf-8") as f:
         wireless_dashboard = json.load(f)
     for panel_id in range(1, 5):
-        panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == panel_id)
+        panel = next(panel for panel in _iter_panels(wireless_dashboard["panels"]) if panel["id"] == panel_id)
         assert "or vector(0)" not in panel["targets"][0]["expr"]
-    bss_panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == 12)
+    bss_panel = next(panel for panel in _iter_panels(wireless_dashboard["panels"]) if panel["id"] == 12)
     assert 'vendor=~"$vendor"' in bss_panel["targets"][0]["expr"]
     assert '(?i)' not in bss_panel["targets"][0]["expr"]
-    ssid_panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == 13)
+    ssid_panel = next(panel for panel in _iter_panels(wireless_dashboard["panels"]) if panel["id"] == 13)
     assert ssid_panel["title"] == "SSID 客户端 Top 20"
     assert 'vendor=~"$vendor"' in ssid_panel["targets"][0]["expr"]
     assert '(?i)' not in ssid_panel["targets"][0]["expr"]
-    ap_wireless_client_panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == 10)
+    ap_wireless_client_panel = next(panel for panel in _iter_panels(wireless_dashboard["panels"]) if panel["id"] == 10)
     assert 'component_class="wireless_access_point",sensor_class="clients"' in ap_wireless_client_panel["targets"][0]["expr"]
     assert 'vendor=~"$vendor"' in ap_wireless_client_panel["targets"][0]["expr"]
     assert ap_wireless_client_panel["title"] == "AP 关联终端 Top 20"
@@ -194,7 +194,7 @@ def test_dashboards_suite_completeness():
     interface_dashboard_path = os.path.join(dashboard_dir, "nexora-network-interface.json")
     with open(interface_dashboard_path, "r", encoding="utf-8") as f:
         interface_dashboard = json.load(f)
-    utilization_panel = next(panel for panel in interface_dashboard["panels"] if panel["id"] == 6)
+    utilization_panel = next(panel for panel in _iter_panels(interface_dashboard["panels"]) if panel["id"] == 6)
     role_override = next(
         override
         for override in utilization_panel["fieldConfig"]["overrides"]
@@ -205,8 +205,8 @@ def test_dashboards_suite_completeness():
     interface_detail_path = os.path.join(dashboard_dir, "nexora-interface-detail.json")
     with open(interface_detail_path, "r", encoding="utf-8") as f:
         interface_detail = json.load(f)
-    optical_table = next(panel for panel in interface_detail["panels"] if panel["id"] == 18)
-    optical_trend = next(panel for panel in interface_detail["panels"] if panel["id"] == 19)
+    optical_table = next(panel for panel in _iter_panels(interface_detail["panels"]) if panel["id"] == 18)
+    optical_trend = next(panel for panel in _iter_panels(interface_detail["panels"]) if panel["id"] == 19)
     assert optical_table["fieldConfig"]["overrides"][0]["properties"][0] == {
         "id": "unit", "value": "dBm"
     }
@@ -231,11 +231,11 @@ def test_dashboards_suite_completeness():
             dashboard = json.load(f)
         joined_expressions = [
             target.get("expr", "")
-            for panel in dashboard["panels"]
+            for panel in _iter_panels(dashboard["panels"])
             for target in panel.get("targets", [])
             if "group_left(ifName, ifAlias)" in target.get("expr", "")
         ]
-        assert joined_expressions
+        assert joined_expressions, f"{filename}: missing interface identity queries"
         assert all("group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{" in expr for expr in joined_expressions)
         assert all("or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{" in expr for expr in joined_expressions)
         assert all("ifDescr{" not in expr for expr in joined_expressions)
@@ -244,7 +244,7 @@ def test_dashboards_suite_completeness():
             for expr in joined_expressions
         )
 
-        for panel in dashboard["panels"]:
+        for panel in _iter_panels(dashboard["panels"]):
             if not any("group_left(ifName, ifAlias)" in target.get("expr", "") for target in panel.get("targets", [])):
                 continue
             organize = next(
@@ -348,12 +348,13 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
 
     offline_ac_query = panels["离线 AC"]["targets"][0]["expr"]
     online_ac_query = panels["在线 AC"]["targets"][0]["expr"]
-    assert "count by (site_name,vendor,role,hostname)" in offline_ac_query
-    assert 'role="wireless_controller"' in offline_ac_query
-    assert "- count(count by (site_name,vendor,role,hostname)" in offline_ac_query
-    assert 'up{' in online_ac_query and '== 1' in online_ac_query
-    assert "* 0" in offline_ac_query
-    assert "* 0" in online_ac_query  # Existing but fully-down AC targets show 0.
+    # Both counts use the same binary up series, deduplicated by stable target identity.
+    assert online_ac_query.startswith("sum(max by (asset_id,instance) (")
+    assert offline_ac_query == "sum(1 - " + online_ac_query[4:]
+    for expression in (online_ac_query, offline_ac_query):
+        assert 'up{' in expression and 'role="wireless_controller"' in expression
+        assert 'and on(asset_id) nexora_hw_sensor_info{' in expression
+        assert "or vector(0)" not in expression  # No target is distinct from all targets down.
 
     panels_by_id = {panel["id"]: panel for panel in dashboard["panels"]}
     for panel_id in (9, 10):
@@ -732,7 +733,7 @@ def test_all_grafana_dashboards_have_consistent_kpi_and_section_layout():
     by_uid = {}
     for filename, dashboard in catalog:
         validate_dashboard(filename, dashboard)
-        by_uid[dashboard["uid"]] = {panel["id"]: panel for panel in dashboard["panels"]}
+        by_uid[dashboard["uid"]] = {panel["id"]: panel for panel in _iter_panels(dashboard["panels"])}
 
         panels = dashboard["panels"]
         assert any(panel["type"] == "row" for panel in panels)
@@ -748,7 +749,11 @@ def test_all_grafana_dashboards_have_consistent_kpi_and_section_layout():
         assert all(panel["gridPos"]["h"] == 4 for panel in first_summary_row)
 
         stat_panels = [panel for panel in panels if panel["type"] == "stat"]
-        assert all(panel["options"]["graphMode"] == "none" for panel in stat_panels)
+        # NOC v3 allows area presentation, with explicit no-sparkline exceptions.
+        from monitoring.grafana.generate_dashboards import NOC_V3_NO_SPARKLINE_STATS
+        for panel in stat_panels:
+            expected_mode = "none" if (dashboard["uid"], panel["id"]) in NOC_V3_NO_SPARKLINE_STATS else "area"
+            assert panel["options"]["graphMode"] == expected_mode
         assert all(
             target.get("instant") is True
             for panel in stat_panels

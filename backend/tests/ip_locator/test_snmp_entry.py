@@ -18,6 +18,9 @@ def setup_snmp(monkeypatch):
     monkeypatch.setattr(trace, '_load_devices', lambda **kw: [{'id': 's5', 'hostname': 'S6850-5'}, {'id': 'ac20', 'hostname': 'AC_20'}])
     monkeypatch.setattr(evidence, 'find_current_endpoint_evidence', lambda *a, **kw: deepcopy(proof))
     monkeypatch.setattr(trace, '_trace_contract_version', lambda: 'test-snmp')
+    # This fixture supplies a synthetic projection, not real collection rows.
+    # The generation lock itself is covered by test_collection_publication_fence.
+    monkeypatch.setattr(tasks, '_lock_current_collection_generations', lambda *a, **kw: True)
     monkeypatch.setattr(trace, '_cache_for_scope', lambda *a: pytest.fail('must not read old CLI cache'))
     return proof
 
@@ -50,7 +53,10 @@ def test_snmp_manifest_rechecks_source_before_publication(setup_snmp, monkeypatc
     if changed:
         current['location']['port'] = 'GigabitEthernet1/0/3'
     monkeypatch.setattr(evidence, 'find_current_endpoint_evidence', lambda *a, **kw: current)
-    valid, gaps = tasks._dependency_manifest_current_in_transaction(object(), result['dependency_manifest'], lock=True)
+    class Conn:
+        def execute(self, sql):
+            assert sql in {"SAVEPOINT locator_current_fence", "RELEASE SAVEPOINT locator_current_fence"}
+    valid, gaps = tasks._dependency_manifest_current_in_transaction(Conn(), result['dependency_manifest'], lock=True)
     assert valid is not changed
     assert gaps == (['dependency_changed:current_endpoint'] if changed else [])
 
@@ -72,3 +78,12 @@ def test_snmp_result_publication_uses_postgresql_fence(isolated_db, setup_snmp, 
     assert saved['status'] == ('partial' if changed else 'completed')
     assert saved['result']['source'] == 'ipam_current'
     assert saved['result']['dependency_fence']['status'] == ('changed' if changed else 'current')
+    if changed:
+        assert saved['result']['status'] == 'partial'
+        assert saved['result']['found'] is False
+        assert saved['result']['conclusion'] == 'dependency_changed'
+        assert not saved['result'].get('location')
+        assert saved['result']['locations'] == []
+        assert saved['result']['terminal_candidates'] == []
+    else:
+        assert saved['result']['found'] is True

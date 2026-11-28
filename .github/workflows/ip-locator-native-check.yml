@@ -1,0 +1,96 @@
+name: IP Locator native PostgreSQL and Redis
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'docker/postgres/**'
+      - 'scripts/validate_postgresql_only.py'
+      - '.github/workflows/ip-locator-native-check.yml'
+  workflow_dispatch:
+    inputs:
+      full_backend:
+        description: Also run complete backend pytest
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  locator-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      PYTHONPATH: backend:.
+      DATABASE_URL: postgresql://locator_test:locator_test_ci@127.0.0.1:55432/nexora_locator_ci
+      REDIS_URL: redis://127.0.0.1:56379/0
+      IP_LOCATOR_TEST_REDIS_URL: redis://127.0.0.1:56379/0
+      IP_LOCATOR_SCALE_LARGE: '1'
+      CREDENTIAL_ENCRYPTION_KEY: test-only-credential-placeholder
+      SECRET_KEY: native-locator-ci-test-only-not-production
+      DB_POOL_MIN_SIZE: '2'
+      DB_POOL_SIZE: '16'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Enforce PostgreSQL-only source policy
+        id: pg_policy
+        continue-on-error: true
+        run: python scripts/validate_postgresql_only.py --list
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcairo2-dev pkg-config libffi-dev libssl-dev
+          python -m pip install -r backend/requirements.txt "pytest>=9,<10" pytest-asyncio
+      - name: Start isolated PostgreSQL 18 and Redis
+        run: |
+          docker build -t nexora-locator-ci-pg docker/postgres
+          docker run -d --name locator-ci-pg -p 127.0.0.1:55432:5432 \
+            -e POSTGRES_USER=locator_test -e POSTGRES_PASSWORD=locator_test_ci \
+            -e POSTGRES_DB=nexora_locator_ci -e POSTGRES_EXPORTER_USER=locator_ci_metrics \
+            -e POSTGRES_EXPORTER_PASSWORD=locator_ci_metrics_password \
+            nexora-locator-ci-pg -c shared_preload_libraries=pg_stat_statements
+          docker run -d --name locator-ci-redis -p 127.0.0.1:56379:6379 redis:7.4.2-alpine
+          python - <<'PY'
+          import os, time
+          import psycopg2, redis
+          for _ in range(90):
+              try:
+                  with psycopg2.connect(os.environ["DATABASE_URL"], connect_timeout=2) as conn:
+                      with conn.cursor() as cur:
+                          cur.execute("SHOW server_version_num")
+                          assert 180000 <= int(cur.fetchone()[0]) < 190000
+                  conn.close()
+                  assert redis.Redis.from_url(os.environ["REDIS_URL"], socket_connect_timeout=2).ping()
+                  break
+              except (psycopg2.Error, redis.RedisError):
+                  time.sleep(2)
+          else:
+              raise SystemExit("PostgreSQL/Redis not ready")
+          PY
+      - name: Native locator and IPAM regression
+        run: python -m pytest backend/tests/ip_locator backend/tests/ipam backend/tests/ai/test_neural_memory_graph.py -q -s --junitxml=locator-native.xml
+      - name: Full backend regression (P0 merge gate)
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || inputs.full_backend) }}
+        run: python -m pytest backend/tests -q --junitxml=backend-native.xml
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-test-results
+          path: '*-native.xml'
+          if-no-files-found: warn
+      - name: Remove isolated containers
+        if: always()
+        run: docker rm -f locator-ci-pg locator-ci-redis || true
+      # A source-policy failure still fails the job, but must not suppress
+      # useful native regression results for existing unrelated debt.
+      - name: Enforce source-policy result
+        if: always() && steps.pg_policy.outcome == 'failure'
+        run: exit 1

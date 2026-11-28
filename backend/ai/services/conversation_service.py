@@ -7,6 +7,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
+from psycopg2.errors import UndefinedColumn
+
 from database.core import get_db_connection
 from ai.security.classification import DataLevel, classify_text, redact_secrets
 from ai.security.minimizer import minimize
@@ -502,24 +504,6 @@ def import_messages(*, conversation_id: str, tenant_id: str, user_id: str, messa
     return {"conversation": _conversation_result(conversation), "imported": imported, "skipped": skipped}
 
 
-_CACHED_TOKENS_COL_READY = False
-
-
-def _ensure_cached_tokens_column(conn: Any) -> None:
-    global _CACHED_TOKENS_COL_READY
-    if _CACHED_TOKENS_COL_READY:
-        return
-    try:
-        conn.execute("ALTER TABLE ai_messages ADD COLUMN IF NOT EXISTS cached_tokens INTEGER")
-        conn.commit()
-    except Exception:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-    _CACHED_TOKENS_COL_READY = True
-
-
 def append_message(*, conversation_id: str, tenant_id: str, user_id: str, role: str, content: str, citations: list[dict[str, Any]] | None = None, reasoning_internal: str | None = None, requested_model_id: str | None = None, actual_model_id: str | None = None, provider_id: str | None = None, route_reason: str | None = None, fallback_used: bool = False, execution_mode: str | None = None, external_egress: bool | None = None, input_tokens: int | None = None, output_tokens: int | None = None, cached_tokens: int | None = None, latency_ms: int | None = None, token_source: str | None = None) -> dict[str, Any]:
     if role not in {"system", "user", "assistant", "tool"}:
         raise ValueError("unsupported conversation role")
@@ -539,12 +523,12 @@ def append_message(*, conversation_id: str, tenant_id: str, user_id: str, role: 
     message_id = f"msg_{uuid.uuid4().hex[:20]}"
     now = _now()
     with get_db_connection() as conn:
-        _ensure_cached_tokens_column(conn)
         conversation = _get_conversation(conn, conversation_id, tenant_id=tenant_id, user_id=user_id)
         if not conversation:
             raise LookupError("conversation not found")
         next_seq = conn.execute("SELECT COALESCE(MAX(sequence_no), 0) + 1 AS n FROM ai_messages WHERE conversation_id = ?", (conversation_id,)).fetchone()["n"]
         token_count = max(1, len(readable_content) // 3)
+        conn.execute("SAVEPOINT ai_message_insert")
         try:
             conn.execute(
                 """
@@ -554,11 +538,13 @@ def append_message(*, conversation_id: str, tenant_id: str, user_id: str, role: 
                 """,
                 (message_id, conversation_id, int(next_seq), role, safe_content, (reasoning_internal or "")[:10000] or None, json.dumps(citations or [], ensure_ascii=False), token_count, requested_model_id, actual_model_id, provider_id, route_reason, int(fallback_used), safe_execution_mode, int(external_egress) if external_egress is not None else None, safe_input_tokens, safe_output_tokens, safe_cached_tokens, safe_latency_ms, safe_token_source, now),
             )
-        except Exception:
+        except UndefinedColumn:
+            conn.execute("ROLLBACK TO SAVEPOINT ai_message_insert")
             conn.execute(
                 "INSERT INTO ai_messages (id, conversation_id, sequence_no, role, content_safe, reasoning_internal, tool_calls_json, citations_json, token_count, created_at) VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?, ?)",
                 (message_id, conversation_id, int(next_seq), role, safe_content, (reasoning_internal or "")[:10000] or None, json.dumps(citations or [], ensure_ascii=False), token_count, now),
             )
+        conn.execute("RELEASE SAVEPOINT ai_message_insert")
         conn.execute("UPDATE ai_conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
         conn.commit()
     return {"id": message_id, "conversation_id": conversation_id, "sequence_no": int(next_seq), "role": role, "content": readable_content, "citations": citations or [], "token_count": token_count, "execution_mode": safe_execution_mode, "external_egress": external_egress, "input_tokens": safe_input_tokens, "output_tokens": safe_output_tokens, "cached_tokens": safe_cached_tokens, "latency_ms": safe_latency_ms, "token_source": safe_token_source, "created_at": now}
@@ -567,20 +553,22 @@ def append_message(*, conversation_id: str, tenant_id: str, user_id: str, role: 
 def get_context(*, conversation_id: str, tenant_id: str, user_id: str, max_messages: int = 40) -> dict[str, Any]:
     max_messages = max(1, min(int(max_messages), 100))
     with get_db_connection() as conn:
-        _ensure_cached_tokens_column(conn)
         conversation = _get_conversation(conn, conversation_id, tenant_id=tenant_id, user_id=user_id)
         if not conversation:
             raise LookupError("conversation not found")
+        conn.execute("SAVEPOINT ai_message_read")
         try:
             rows = conn.execute(
                 "SELECT id, sequence_no, role, content_safe, citations_json, token_count, requested_model_id, actual_model_id, provider_id, route_reason, fallback_used, execution_mode, external_egress, input_tokens, output_tokens, cached_tokens, latency_ms, token_source, created_at FROM ai_messages WHERE conversation_id = ? ORDER BY sequence_no DESC LIMIT ?",
                 (conversation_id, max_messages),
             ).fetchall()
-        except Exception:
+        except UndefinedColumn:
+            conn.execute("ROLLBACK TO SAVEPOINT ai_message_read")
             rows = conn.execute(
                 "SELECT id, sequence_no, role, content_safe, citations_json, token_count, created_at FROM ai_messages WHERE conversation_id = ? ORDER BY sequence_no DESC LIMIT ?",
                 (conversation_id, max_messages),
             ).fetchall()
+        conn.execute("RELEASE SAVEPOINT ai_message_read")
     items = []
     for row in reversed(rows):
         item = dict(row)

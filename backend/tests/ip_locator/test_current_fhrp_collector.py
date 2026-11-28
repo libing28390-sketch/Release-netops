@@ -242,8 +242,8 @@ def test_h3c_incomplete_address_family_preserves_last_complete_vrrp_snapshot(iso
 
 def test_unsupported_platform_is_not_sent_device_commands(isolated_db, monkeypatch):
     del isolated_db
-    device_id = "current-fhrp-huawei-device"
-    _seed_device(device_id, platform="huawei_vrp", vendor="huawei")
+    device_id = "current-fhrp-linux-device"
+    _seed_device(device_id, platform="linux", vendor="linux")
     monkeypatch.setattr(
         collector.vault_service,
         "resolve_collector_credentials",

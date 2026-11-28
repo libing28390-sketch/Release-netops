@@ -116,6 +116,7 @@ def test_scripts_are_visible_and_approvers_cross_history_but_actions_and_self_ap
             category="",
             script_type="",
             status="",
+            domain="",
             page=None,
             page_size=20,
             user=author,
