@@ -299,7 +299,7 @@ def _pipeline_versions(
             parser_functions = (_parse_lldp_verbose_neighbors,)
         elif target.get("snapshot") == "lag_members":
             action_functions = (_lag_member_command, legacy._send_command)
-            parser_functions = (_parse_lag_member_ports,)
+            parser_functions = (_parse_lag_member_ports, _parse_lag_member_states)
         schema_kind = "neighbor"
     if target.get("transport") == "snmp_targeted":
         from services import ip_locator_fact_access as fact_access
@@ -349,7 +349,7 @@ def _trace_contract_version() -> str:
         getattr(legacy, "_collect_lldp_from_device", None), _lldp_neighbors,
         _load_lldp_snapshot, _record_topology_snapshot_dependency, lldp_snapshot_versions,
         _trace_ip_uncached, find_current_endpoint_evidence, _current_cross_device_fdb_path,
-        _parse_lag_member_ports, _expand_lag_member_ports_live, _leased_lag_member_query, _topology_neighbors,
+        _parse_lag_member_ports, _parse_lag_member_states, _expand_lag_member_ports_live, _leased_lag_member_query, _topology_neighbors,
         fact_access.TargetedFactReader.read, fact_access._scope_profile,
         fact_access._read_arp, fact_access._read_fdb,
     )
@@ -1470,33 +1470,55 @@ def _lag_member_command(device: dict[str, Any], port: str) -> str:
     return ""
 
 
-def _parse_lag_member_ports(output: str, lag_norm: str = "") -> list[str]:
-    """Parse physical member interface names from LAG verbose/summary CLI output."""
-    if not output:
-        return []
-    found: list[str] = []
-    seen: set[str] = set()
-    for line in str(output).splitlines():
+def _parse_lag_member_states(output: str, lag_norm: str = "") -> tuple[list[str], list[str]]:
+    """Return positively selected members and unresolved member-state hints.
+
+    Recognize Comware S/U, VRP Selected/Unselected or Up/Down, and IOS
+    bundled (P) / nonforwarding flags. A bare interface token is not proof.
+    """
+    selected: dict[str, str] = {}
+    unresolved: dict[str, str] = {}
+    inactive: set[str] = set()
+    for line in str(output or "").splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith(("Loadsharing", "Aggregate Interface", "Aggregation Mode", "System ID")):
             continue
         for match in _PHYSICAL_MEMBER_TOKEN_RE.finditer(stripped):
             raw_port = match.group(1)
-            tail = stripped[match.end():]
-            # Known non-forwarding markers in Comware, VRP and IOS summaries.
-            # Unknown vendor formats remain candidate hints, not terminal proof.
-            if re.match(r"^\s*(?:\(R\))?\s+(?:U|I|Unselect(?:ed)?|Down)\b", tail, re.IGNORECASE):
-                continue
-            flag = re.match(r"^\s*\(([A-Za-z]+)\)", tail)
-            if flag and flag.group(1) in {"D", "I", "s", "H", "w", "u", "f", "M"}:
-                continue
             norm = legacy.normalize_interface_name(raw_port).lower()
             if not norm or norm == lag_norm or _LAG_NAME_RE.match(re.sub(r"\s+", "", norm)):
                 continue
-            if norm not in seen:
-                seen.add(norm)
-                found.append(raw_port)
-    return found
+            tail = stripped[match.end():]
+            # Comware marks the reference port (R), followed by S/U/I.
+            tail = re.sub(r"^\s*\(R\)\s+", " ", tail)
+            flag = re.match(r"^\s*\(([A-Za-z]+)\)", tail)
+            word = re.match(r"^\s+([A-Za-z]+)\b", tail)
+            marker = word.group(1).lower() if word else ""
+            if flag:
+                marker = flag.group(1)
+                state = ("selected" if marker == "P" else
+                         "inactive" if marker in {"D", "I", "s", "H", "w", "u", "f", "M"} else "unknown")
+            else:
+                state = ("selected" if marker in {"s", "selected", "up"} else
+                         "inactive" if marker in {"u", "i", "unselected", "unselect", "down", "individual", "standby"}
+                         else "unknown")
+            if state == "selected":
+                selected.setdefault(norm, raw_port)
+            elif state == "inactive":
+                inactive.add(norm)
+            else:
+                unresolved.setdefault(norm, raw_port)
+    # Conflicting observations of the same port are not positive evidence.
+    for norm in selected.keys() & inactive:
+        unresolved[norm] = selected[norm]
+    return (
+        [name for norm, name in selected.items() if norm not in inactive],
+        [name for norm, name in unresolved.items() if norm not in selected or norm in inactive],
+    )
+
+
+def _parse_lag_member_ports(output: str, lag_norm: str = "") -> list[str]:
+    return _parse_lag_member_states(output, lag_norm)[0]
 
 
 def _lldp_interface_verbose_command(device: dict[str, Any], port: str) -> str:
@@ -1899,7 +1921,9 @@ def _leased_lag_member_query(
     value, collected_at, task_id, _ = _cli_result_parts(raw)
     if not collected_at or time.monotonic() >= deadline:
         raise TimeoutError("locator aggregation query has no valid timestamp or exceeded deadline")
-    members = _parse_lag_member_ports(str(value or ""), target["port"])
+    members, unresolved = _parse_lag_member_states(str(value or ""), target["port"])
+    if unresolved:
+        result["coverage_gaps"].append(f"lag_member_state_unverified:{device['id']}:{target['port']}")
     if not members:
         return ""
     observation = _persist_observation(
@@ -1907,7 +1931,7 @@ def _leased_lag_member_query(
         network_domain_id=str(scope.get("network_domain_id") or ""),
         site_id=str(scope.get("site_id") or ""), vrf=str(scope.get("vrf") or "default"),
         device_id=str(device["id"]), kind="interface",
-        bridge_domain=f"lag-members:{target['port']}", records={"members": members},
+        bridge_domain=f"lag-members:{target['port']}", records={"members": members, "unresolved_members": unresolved},
         collected_at=collected_at, query_task_id=task_id, result=result,
         device=device, target=target, fresh_seconds=120, retain_seconds=120,
     )
@@ -4973,6 +4997,7 @@ def _trace_ip_uncached(
         "neighbor_query_failed:",
         "neighbor_unsupported:",
         "neighbor_parse_incomplete:",
+        "lag_member_state_unverified:",
         "route_loop:",
         "next_hop_out_of_scope:",
         "device_budget_exceeded",
