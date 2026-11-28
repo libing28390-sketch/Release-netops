@@ -1,36 +1,47 @@
-"""Test bulk reconciliation without contacting a device or production DB.
+"""Native PostgreSQL snapshot reconciliation and collection regressions.
 
-SQLite executes the real generated DML after stripping PostgreSQL-only casts.
-The separate isolated_db cases exercise the production collection services.
+Temporary tables copy the migrated table types and primary keys. Dedicated
+connections prevent session-local tables from leaking into the application pool.
 """
 from datetime import datetime, timezone
-import re
-import sqlite3
+import ipaddress
+import json
 
 import pytest
+import psycopg2
 
 from services.ipam_snapshot_write_service import reconcile_current_snapshot
 
 
 class DB:
-    def __init__(self):
-        self.db = sqlite3.connect(":memory:")
+    def __init__(self, conn):
+        self.db = conn
         self.statements = []
         for kind in ("fdb", "endpoint"):
-            cols = ("source_device_id TEXT, observation_source TEXT, context_source TEXT, context_type TEXT, "
-                    "local_context_key TEXT, local_context_name TEXT, "
-                    + ("ip_address TEXT, " if kind == "endpoint" else "")
-                    + "mac_address TEXT, interface_name TEXT, normalized_interface_name TEXT, vlan_key INT, "
-                    + ("entry_type TEXT, " if kind == "fdb" else "")
-                    + "generation INT, observed_at TEXT, run_id TEXT, metadata_json TEXT")
-            key = ("source_device_id, observation_source, context_source, context_type, local_context_key, "
-                   + ("ip_address, " if kind == "endpoint" else "")
-                   + "mac_address, normalized_interface_name, vlan_key")
-            self.db.execute(f"CREATE TABLE ipam_current_{kind}_observations ({cols}, PRIMARY KEY ({key}))")
+            table = f"ipam_current_{kind}_observations"
+            self.db.execute(f"CREATE TEMP TABLE {table} (LIKE public.{table} INCLUDING ALL)")
+        self.db.commit()
 
     def execute(self, sql, params):
         self.statements.append((sql, len(params)))
-        return self.db.execute(re.sub(r"::(?:inet|jsonb|timestamptz)", "", sql), params)
+        return self.db.execute(sql, params)
+
+
+@pytest.fixture
+def db_factory(isolated_db):
+    from database import core
+
+    opened = []
+    def make():
+        conn = core._PgRawConnection(psycopg2.connect(core._DATABASE_URL))
+        opened.append(conn)
+        return DB(conn)
+
+    try:
+        yield make
+    finally:
+        for conn in opened:
+            conn.close()
 
 
 def scope(kind="fdb", device="d1", key=""):
@@ -53,16 +64,21 @@ def row(i, g=1, sc=None, port="ge1/0/1", **kw):
 
 def read(db, kind="fdb"):
     table = "fdb" if kind == "fdb" else "endpoint"
-    db.db.row_factory = sqlite3.Row
-    return [dict(r) for r in db.db.execute(
+    rows = [dict(r) for r in db.db.execute(
         f"SELECT * FROM ipam_current_{table}_observations "
         "ORDER BY source_device_id, local_context_key, mac_address, normalized_interface_name"
-    )]
+    ).fetchall()]
+    for record in rows:
+        if "ip_address" in record:
+            record["ip_address"] = str(ipaddress.ip_interface(record["ip_address"]).ip)
+        record["observed_at"] = record["observed_at"].astimezone(timezone.utc).isoformat()
+        record["metadata_json"] = json.dumps(record["metadata_json"], sort_keys=True, separators=(",", ":"))
+    return rows
 
 
 @pytest.mark.parametrize("kind", ["arp", "ndp", "fdb"])
-def test_reconcile(kind):
-    db = DB()
+def test_reconcile(kind, db_factory):
+    db = db_factory()
     sc, other, alt = scope(kind), scope(kind, "d2"), scope(kind, key="other")
     for s in (sc, other, alt):
         reconcile_current_snapshot(db, scope=s, generation=1, rows=[row(i, sc=s) for i in (1, 2, 3)])
@@ -81,8 +97,8 @@ def test_reconcile(kind):
 
 
 @pytest.mark.parametrize("n", [0, 1, 499, 500, 501, 1000, 1001])
-def test_batches(n):
-    db = DB()
+def test_batches(n, db_factory):
+    db = db_factory()
     reconcile_current_snapshot(db, scope=scope(), generation=1, rows=[row(i) for i in range(n)])
     assert len(read(db)) == n
     assert len(db.statements) == (n + 499) // 500 + 1
@@ -90,8 +106,8 @@ def test_batches(n):
 
 
 @pytest.mark.parametrize("kind", ["scope", "generation", "duplicate"])
-def test_reject_before_write(kind):
-    db = DB()
+def test_reject_before_write(kind, db_factory):
+    db = db_factory()
     rows = [row(i) for i in range(501)]
     if kind == "scope":
         rows[-1]["source_device_id"] = "d2"
@@ -104,8 +120,8 @@ def test_reject_before_write(kind):
     assert not db.statements
 
 
-def test_rollback_on_second_batch():
-    db = DB()
+def test_rollback_on_second_batch(db_factory):
+    db = db_factory()
     reconcile_current_snapshot(db, scope=scope(), generation=1, rows=[row(9)])
     db.db.commit()
     old, original = read(db), db.execute
@@ -115,18 +131,18 @@ def test_rollback_on_second_batch():
         nonlocal n
         n += 1
         if n == 2:
-            raise RuntimeError("failed batch")
+            return original("SELECT 1 / 0", ())
         return original(sql, params)
 
     db.execute = fail
-    with pytest.raises(RuntimeError):
+    with pytest.raises(psycopg2.errors.DivisionByZero):
         reconcile_current_snapshot(db, scope=scope(), generation=2, rows=[row(i, 2) for i in range(501)])
     db.db.rollback()
     assert read(db) == old
 
 
-def test_multiple_ports_same_mac_preserved():
-    db = DB()
+def test_multiple_ports_same_mac_preserved(db_factory):
+    db = db_factory()
     reconcile_current_snapshot(db, scope=scope(), generation=1,
                                rows=[row(1), row(1, port="ge1/0/2")])
     assert len(read(db)) == 2
@@ -197,10 +213,10 @@ def test_production_collection_multibatch_and_failed_attempt(isolated_db, kind):
         assert conn.execute(f"SELECT COUNT(*) FROM {table} WHERE source_device_id = ?", (device,)).fetchone()[0] == 0
 
 @pytest.mark.parametrize("kind", ["arp", "ndp", "fdb"])
-def test_matches_full_replace_across_20_generations(kind):
+def test_matches_full_replace_across_20_generations(kind, db_factory):
     import random
     rng = random.Random(42)
-    db, ref = DB(), DB()
+    db, ref = db_factory(), db_factory()
     sc, alt = scope(kind), scope(kind, key="other")
     table = "ipam_current_fdb_observations" if kind == "fdb" else "ipam_current_endpoint_observations"
     for g in range(1, 21):
