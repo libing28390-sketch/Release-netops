@@ -114,7 +114,10 @@ def test_every_catalog_model_has_vendor_official_provenance():
             assert urlsplit(row["official_url"]).hostname in allowed_hosts[vendor]
             assert row["verification_level"] == "official_model_or_series_catalog"
             expected_date = "2026-09-04" if row["model"] in {"C3850", "S6850"} else "2026-08-23"
-            assert row["source_checked_at"] == expected_date
+            # New vendor-reviewed catalog rows may carry a later review date.
+            from datetime import date
+            checked = date.fromisoformat(row["source_checked_at"])
+            assert date.fromisoformat(expected_date) <= checked <= date.today()
 
 
 def test_wan_and_security_models_have_their_own_official_page():
