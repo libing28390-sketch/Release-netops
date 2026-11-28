@@ -1513,12 +1513,12 @@ def _parse_lag_member_states(output: str, lag_norm: str = "") -> tuple[list[str]
                 inactive.add(norm)
             else:
                 unresolved.setdefault(norm, raw_port)
-    # Conflicting observations of the same port are not positive evidence.
-    for norm in selected.keys() & inactive:
+    # Conflicting or unknown observations of the same port are not positive evidence.
+    for norm in selected.keys() & (inactive | unresolved.keys()):
         unresolved[norm] = selected[norm]
     return (
-        [name for norm, name in selected.items() if norm not in inactive],
-        [name for norm, name in unresolved.items() if norm not in selected or norm in inactive],
+        [name for norm, name in selected.items() if norm not in inactive and norm not in unresolved],
+        list(unresolved.values()),
     )
 
 
