@@ -350,7 +350,7 @@ def _trace_contract_version() -> str:
         getattr(legacy, "_parse_mac_output", None), getattr(legacy, "_parse_mac_table_line", None),
         getattr(legacy, "_collect_lldp_from_device", None), _lldp_neighbors,
         _load_lldp_snapshot, _record_topology_snapshot_dependency, lldp_snapshot_versions,
-        _trace_ip_uncached, _may_reuse_locator_facts, find_current_endpoint_evidence, _current_cross_device_fdb_path,
+        _trace_ip_uncached, _may_reuse_locator_facts, _request_budget_status, find_current_endpoint_evidence, _current_cross_device_fdb_path,
         _resolve_current_vrf_id, _select_current_arp_scope,
         _current_facts_are_compatible, _current_fact_is_fresh,
         _parse_lag_member_ports, _parse_lag_member_states, _expand_lag_member_ports_live, _leased_lag_member_query, _topology_neighbors,
@@ -2639,7 +2639,7 @@ def _trace_ip_uncached(
     enable_ping: bool = False,
     limits: TraceLimits | None = None,
     route_fresh_seconds: int = 300,
-    deadline_seconds: int = 180,
+    deadline_seconds: float = 180,
 ) -> dict[str, Any]:
     """Execute the four-stage CLI-only trace with bounded branching."""
     try:
@@ -2665,7 +2665,7 @@ def _trace_ip_uncached(
             "errors": ["当前四阶段定位仅支持 IPv4；IPv6 需要 NDP 专项适配"],
         }
     limits = limits or TraceLimits()
-    deadline = time.monotonic() + max(1, int(deadline_seconds or 180))
+    deadline = time.monotonic() + max(0.001, float(deadline_seconds or 180))
     deadline_exceeded = False
     cancelled = False
     storage_failed = False
@@ -5611,9 +5611,9 @@ def trace_ip(target_ip: str, **kwargs: Any) -> dict[str, Any]:
         stopped = interruption()
         if stopped is not None:
             return stopped
-        # Round down to avoid granting the CLI a fresh full deadline.
-        remaining = int(wait_until - time.monotonic())
-        if remaining < 1:
+        # Preserve the fractional remaining budget, including short requests.
+        remaining = wait_until - time.monotonic()
+        if remaining < 0.001:
             return {
                 "run_id": durable_run_id or str(uuid.uuid4()), "target_ip": target_ip,
                 "status": "partial", "conclusion": "deadline_exceeded", "found": False,
