@@ -177,6 +177,35 @@ def _non_probe_result(
     }
 
 
+def _authorize_direct_probe(model_id: str, *, tenant_id: str, user_id: str, roles: Optional[list[str]], operation: str, base_url: str, provider_id: str) -> str:
+    """Authorize fixed, public-only health operations before any HTTP transport."""
+    from ai.services.model_catalog import _normalize_base_url, _provider_endpoint_patterns, _target_allowed
+    from urllib.parse import urlsplit
+
+    model = llm_gateway._get_model_details(model_id)
+    if model["id"] != model_id or model["provider_id"] != provider_id:
+        raise AIException("AI_MODEL_NOT_FOUND", "Health probe model is unavailable")
+    llm_gateway._authorize_model(model, tenant_id=tenant_id, user_id=user_id, roles=roles)
+    llm_gateway._assert_egress(model, tenant_id=tenant_id)
+    if operation not in {"models", "embeddings"}:
+        raise ValueError("unsupported health probe operation")
+    if operation == "embeddings" and llm_gateway._budget_exceeded(provider_id=provider_id, model_id=model_id):
+        raise AIException("AI_BUDGET_EXCEEDED", "Health probe budget exceeded")
+    # Local HTTP is restricted to literal loopback, as in the provider transport.
+    parsed = urlsplit(base_url)
+    if (model["provider_type"] in {"local", "ollama"} and parsed.scheme == "http"
+            and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+            and parsed.username is None and parsed.password is None and not parsed.query
+            and not parsed.fragment and not any(ord(c) < 33 or c == chr(92) for c in base_url)):
+        return base_url if base_url.endswith("/" + operation) else base_url + "/" + operation
+    base_url, _ = _normalize_base_url(base_url)
+    patterns = _provider_endpoint_patterns(model.get("approved_endpoint_patterns"), base_url, model["provider_type"])
+    endpoint = base_url if base_url.endswith("/" + operation) else base_url + "/" + operation
+    if not _target_allowed(endpoint, base_url, patterns):
+        raise AIException("AI_PROVIDER_ENDPOINT_DENIED", "Health probe endpoint is not approved")
+    return endpoint
+
+
 async def check_model_health(
     model_id: str,
     *,
@@ -247,15 +276,16 @@ async def check_model_health(
                 (model_id,),
             ).fetchone()
         base_url = str((prov[0] if prov else "") or "").rstrip("/")
-        api_key = decrypt_api_key(prov[1], provider_id=str(prov[3])) if (prov and prov[1]) else ""
-        timeout_sec = 20.0
-        proxy_url = str(prov[2]).strip() if (prov and prov[2]) else None
-        endpoint = base_url if base_url.endswith("/embeddings") else f"{base_url}/embeddings"
-        headers = {"Content-Type": "application/json"}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
         try:
-            async with httpx.AsyncClient(timeout=timeout_sec, proxy=proxy_url or None) as client:
+            endpoint = _authorize_direct_probe(model_id, tenant_id=tenant_id, user_id=user_id,
+                                               roles=roles, operation="embeddings",
+                                               base_url=base_url, provider_id=str(prov[3]) if prov else "")
+            api_key = decrypt_api_key(prov[1], provider_id=str(prov[3])) if (prov and prov[1]) else ""
+            proxy_url = str(prov[2]).strip() if (prov and prov[2]) else None
+            headers = {"Content-Type": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            async with httpx.AsyncClient(timeout=20.0, proxy=proxy_url or None, follow_redirects=False) as client:
                 resp = await client.post(endpoint, headers=headers, json={"model": model[2], "input": "ping"})
             latency_ms = max(1, int(round((time.perf_counter() - started) * 1000)))
             if resp.status_code == 200:
@@ -277,12 +307,12 @@ async def check_model_health(
                         "message": f"embedding probe succeeded (dim={dim})",
                         "sla": sla,
                     }
-            err_msg = f"HTTP {resp.status_code}: {resp.text[:200]}"
+            err_msg = f"Embedding probe returned HTTP {resp.status_code}"
             err_code = "AI_EMBEDDING_PROBE_FAILED"
         except Exception as exc:
             latency_ms = max(1, int(round((time.perf_counter() - started) * 1000)))
-            err_msg = str(exc)
-            err_code = "AI_EMBEDDING_PROBE_ERROR"
+            err_msg = "Embedding probe blocked or failed"
+            err_code = _error_code(exc) if isinstance(exc, AIException) else "AI_EMBEDDING_PROBE_ERROR"
         checked_at = datetime.now(timezone.utc).isoformat()
         sla = _record_model_health(model_id, status="unhealthy", checked_at=checked_at, latency_ms=latency_ms, error_code=err_code)
         return {
@@ -342,12 +372,14 @@ async def check_model_health(
                     (model_id,),
                 ).fetchone()
             base_url = str((prov[0] if prov else "") or "").rstrip("/")
-            api_key = decrypt_api_key(prov[1], provider_id=str(prov[3])) if (prov and prov[1]) else ""
-            proxy_url = str(prov[2]).strip() if (prov and prov[2]) else None
             if base_url:
-                endpoint = base_url if base_url.endswith("/models") else f"{base_url}/models"
+                endpoint = _authorize_direct_probe(model_id, tenant_id=tenant_id, user_id=user_id,
+                                                   roles=roles, operation="models",
+                                                   base_url=base_url, provider_id=str(prov[3]) if prov else "")
+                api_key = decrypt_api_key(prov[1], provider_id=str(prov[3])) if (prov and prov[1]) else ""
+                proxy_url = str(prov[2]).strip() if (prov and prov[2]) else None
                 headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-                async with httpx.AsyncClient(timeout=10.0, proxy=proxy_url or None) as client:
+                async with httpx.AsyncClient(timeout=10.0, proxy=proxy_url or None, follow_redirects=False) as client:
                     resp = await client.get(endpoint, headers=headers)
                 if resp.status_code == 200:
                     latency_ms = max(1, int((time.perf_counter() - started) * 1000))

@@ -24,6 +24,10 @@ AI_ROOT = Path(__file__).resolve().parents[2] / "ai"
 # Adding a module here is an ADR-006 decision: say which gateway or local
 # allowlist protects it.
 NETWORK_CLIENT_MODULES = {
+    # Fixed public metadata/health operations are gated and redirect-free.
+    "providers/anthropic.py": "LLM adapter inherits the protected, redirect-free shared transport",
+    "services/model_catalog.py": "provider/tenant/region policy and approved catalog destination",
+    "services/model_health.py": "fixed public probes authorized by model ACL, egress and endpoint checks",
     "providers/openai_compatible.py": "LLM provider transport; payload comes from AISecurityGateway.protect",
     "providers/embedding.py": "external embeddings via protect_embedding; bge-m3 sidecar restricted to local hosts",
     "services/retrieval_contract.py": "reranker sidecar restricted to local hosts",
@@ -229,3 +233,27 @@ def test_adr011_mask_reveals_at_most_four_characters():
     masked = mask_api_key("sk-contract-0123456789wxyz")
     assert masked.endswith("wxyz") and "0123456789" not in masked
     assert sum(ch != "*" for ch in masked) <= 4
+
+
+def test_direct_health_probe_checks_model_egress_before_transport(monkeypatch):
+    from ai.services import model_health
+    from ai.gateway.exceptions import AIException
+
+    gateway = model_health.llm_gateway
+    monkeypatch.setattr(gateway, "_get_model_details", lambda model_id: {
+        "id": model_id, "provider_id": "p1", "provider_type": "openai",
+        "approved_endpoint_patterns": ["https://api.example.com/v1"],
+    })
+    monkeypatch.setattr(gateway, "_authorize_model", lambda *args, **kwargs: None)
+
+    def deny(*args, **kwargs):
+        raise AIException("AI_SECURITY_KILL_SWITCH", "blocked")
+
+    monkeypatch.setattr(gateway, "_assert_egress", deny)
+    for operation in ("models", "embeddings"):
+        with pytest.raises(AIException) as caught:
+            model_health._authorize_direct_probe(
+                "m1", tenant_id="t1", user_id="u1", roles=["admin"],
+                operation=operation, base_url="https://api.example.com/v1", provider_id="p1",
+            )
+        assert caught.value.code == "AI_SECURITY_KILL_SWITCH"
