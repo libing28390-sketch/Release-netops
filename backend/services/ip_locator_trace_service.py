@@ -336,6 +336,8 @@ def _trace_contract_version() -> str:
     from services.topology_lldp_snapshot_service import lldp_snapshot_versions
     from services.ip_locator_endpoint_evidence import (
         find_current_endpoint_evidence, _current_cross_device_fdb_path,
+        _resolve_current_vrf_id, _select_current_arp_scope,
+        _current_facts_are_compatible, _current_fact_is_fresh,
     )
     from services import ip_locator_fact_access as fact_access
     from core.config import settings
@@ -349,6 +351,8 @@ def _trace_contract_version() -> str:
         getattr(legacy, "_collect_lldp_from_device", None), _lldp_neighbors,
         _load_lldp_snapshot, _record_topology_snapshot_dependency, lldp_snapshot_versions,
         _trace_ip_uncached, _may_reuse_locator_facts, find_current_endpoint_evidence, _current_cross_device_fdb_path,
+        _resolve_current_vrf_id, _select_current_arp_scope,
+        _current_facts_are_compatible, _current_fact_is_fresh,
         _parse_lag_member_ports, _parse_lag_member_states, _expand_lag_member_ports_live, _leased_lag_member_query, _topology_neighbors,
         fact_access.TargetedFactReader.read, fact_access._scope_profile,
         fact_access._read_arp, fact_access._read_fdb,
@@ -5566,12 +5570,68 @@ def _registered_ipam_vip_result(target_ip: str, **kwargs: Any) -> dict[str, Any]
     return result
 
 
+def _request_budget_status(cancel_check: Any, deadline: float, now: float) -> str:
+    """Treat cancellation-check failure as cancellation; never extend a request."""
+    if callable(cancel_check):
+        try:
+            if cancel_check():
+                return "cancelled"
+        except Exception:
+            return "cancelled"
+    return "deadline_exceeded" if now >= deadline else ""
+
+
 def trace_ip(target_ip: str, **kwargs: Any) -> dict[str, Any]:
     """Prefer registered VIPs and SNMP evidence, then bounded CLI tracing."""
+    # One wall-clock budget covers fast evidence, shared-result waits and
+    # the remaining CLI trace. Blocking driver calls are still cooperative.
+    task_deadline = max(1, int(kwargs.get("deadline_seconds") or 180))
+    wait_until = time.monotonic() + task_deadline
+    durable_run_id = str(kwargs.get("durable_run_id") or "")
+    cancel_check = kwargs.get("cancel_check")
+    try:
+        target_ip = str(ipaddress.ip_address(str(target_ip).strip()))
+    except ValueError:
+        return _trace_ip_uncached(target_ip, **kwargs)
+
+    def interruption():
+        reason = _request_budget_status(cancel_check, wait_until, time.monotonic())
+        if not reason:
+            return None
+        return {
+            "run_id": durable_run_id or str(uuid.uuid4()),
+            "target_ip": target_ip,
+            "status": "cancelled" if reason == "cancelled" else "partial",
+            "conclusion": reason, "found": False,
+            "coverage_gaps": ["task_cancelled" if reason == "cancelled" else "task_deadline_exceeded"],
+            "errors": [], "timestamp": _now_iso(),
+        }
+
+    def run_remaining_trace():
+        stopped = interruption()
+        if stopped is not None:
+            return stopped
+        # Round down to avoid granting the CLI a fresh full deadline.
+        remaining = int(wait_until - time.monotonic())
+        if remaining < 1:
+            return {
+                "run_id": durable_run_id or str(uuid.uuid4()), "target_ip": target_ip,
+                "status": "partial", "conclusion": "deadline_exceeded", "found": False,
+                "coverage_gaps": ["task_deadline_exceeded"], "errors": [], "timestamp": _now_iso(),
+            }
+        result = _trace_ip_uncached(target_ip, **{**kwargs, "deadline_seconds": remaining})
+        return interruption() or result
+
+    stopped = interruption()
+    if stopped is not None:
+        return stopped
     # Materialize generators before they are used by both evidence and fallback.
     if kwargs.get("authorized_device_ids") is not None:
         kwargs["authorized_device_ids"] = tuple(kwargs["authorized_device_ids"])
     vip_result = _registered_ipam_vip_result(target_ip, **kwargs)
+    stopped = interruption()
+    if stopped is not None:
+        return stopped
     if vip_result is not None:
         return vip_result
     try:
@@ -5579,9 +5639,11 @@ def trace_ip(target_ip: str, **kwargs: Any) -> dict[str, Any]:
     except Exception as exc:
         logger.warning("[IPLocator] SNMP evidence lookup unavailable (%s); continuing bounded trace", type(exc).__name__)
         endpoint_result = None
+    stopped = interruption()
+    if stopped is not None:
+        return stopped
     if endpoint_result is not None:
         return endpoint_result
-    durable_run_id = str(kwargs.get("durable_run_id") or "")
     force_refresh = bool(kwargs.get("force_refresh", False))
     tenant_id = str(kwargs.get("tenant_id") or "tenant-default")
     site_id = str(kwargs.get("site_id") or "")
@@ -5601,7 +5663,7 @@ def trace_ip(target_ip: str, **kwargs: Any) -> dict[str, Any]:
     result_key = _cache_key(cache, "result", scope_hash, target_ip, vrf, start_device_id or "auto")
     lock_key = _cache_key(cache, "lock", scope_hash, target_ip, vrf, start_device_id or "auto")
     if cache is None or not lock_key or force_refresh:
-        return _trace_ip_uncached(target_ip, **kwargs)
+        return run_remaining_trace()
 
     # A completed result may have been written by another request before this
     # call acquired the lock.  The uncached function performs the authoritative
@@ -5623,22 +5685,26 @@ def trace_ip(target_ip: str, **kwargs: Any) -> dict[str, Any]:
             variant="whole_result",
         )
         cached["cache"] = {**dict(cached.get("cache") or {}), "result": "hit"}
-        return cached
+        return interruption() or cached
 
-    task_deadline = max(1, int(kwargs.get("deadline_seconds") or 180))
+    stopped = interruption()
+    if stopped is not None:
+        return stopped
     lock_ttl = max(30, task_deadline)
     token = cache.acquire_lock(lock_key, ttl=lock_ttl)
     if token is None and cache.ping() is not True:
         # Redis failure degrades to scoped PostgreSQL observations plus the
         # deployment-wide/device PostgreSQL leases. Never treat cache failure
         # as permission to open unbudgeted CLI sessions.
-        return _trace_ip_uncached(target_ip, **kwargs)
+        return run_remaining_trace()
     if token is None:
         # Another worker owns the single-flight query. Wait for its result or
         # for its bounded lease to expire, then compete for the lock again.
         # Do not start a duplicate path merely because the first CLI hop is slow.
-        wait_until = time.monotonic() + task_deadline
         while time.monotonic() < wait_until:
+            stopped = interruption()
+            if stopped is not None:
+                return stopped
             cached = cache.get_json(result_key)
             if isinstance(cached, dict) and cache.is_fresh(
                 "result",
@@ -5656,14 +5722,20 @@ def trace_ip(target_ip: str, **kwargs: Any) -> dict[str, Any]:
                     variant="whole_result",
                 )
                 cached["cache"] = {**dict(cached.get("cache") or {}), "result": "hit"}
-                return cached
+                return interruption() or cached
+            stopped = interruption()
+            if stopped is not None:
+                return stopped
             token = cache.acquire_lock(lock_key, ttl=lock_ttl)
             if token is not None:
                 break
             if cache.ping() is not True:
-                return _trace_ip_uncached(target_ip, **kwargs)
-            time.sleep(0.2)
+                return run_remaining_trace()
+            time.sleep(min(0.2, max(0.0, wait_until - time.monotonic())))
         if token is None:
+            stopped = interruption()
+            if stopped is not None and stopped["status"] == "cancelled":
+                return stopped
             return {
                 "run_id": durable_run_id or str(uuid.uuid4()),
                 "target_ip": target_ip,
@@ -5678,7 +5750,7 @@ def trace_ip(target_ip: str, **kwargs: Any) -> dict[str, Any]:
     try:
         # The second freshness check is required after waiting to acquire the
         # lock; another worker may have completed just before us.
-        return _trace_ip_uncached(target_ip, **kwargs)
+        return run_remaining_trace()
     finally:
         cache.release_lock(lock_key, token)
 
