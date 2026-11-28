@@ -157,6 +157,46 @@ def _non_empty(value: Any, default: str = "") -> str:
     return text or default
 
 
+def _lock_current_collection_generations(conn, expected: Mapping[str, Any]) -> bool:
+    """Fence participating collection state rows until publication commits.
+
+    Ordered shared locks block a new begin/finish for these exact contexts.
+    This does not lock unrelated devices or prevent entirely new sources.
+    """
+    keys: dict[tuple[str, str, str, str, str], int] = {}
+    for kind in ("arp", "fdb"):
+        rows = expected.get(f"{kind}_evidence")
+        if not isinstance(rows, list) or not rows:
+            return False
+        for row in rows:
+            if not isinstance(row, Mapping):
+                return False
+            key = (
+                _non_empty(row.get("device_id")), kind,
+                _non_empty(row.get("context_source")), _non_empty(row.get("context_type")),
+                _non_empty(row.get("local_context_key")),
+            )
+            generation = row.get("generation")
+            if not all(key[:4]) or "local_context_key" not in row or type(generation) is not int or generation < 1:
+                return False
+            if key in keys and keys[key] != generation:
+                return False
+            keys[key] = generation
+    for key, generation in sorted(keys.items()):
+        row = conn.execute(
+            """SELECT latest_attempt_generation, last_success_generation, latest_status
+                 FROM ipam_endpoint_collection_states
+                WHERE device_id = ? AND observation_source = ?
+                  AND context_source = ? AND context_type = ? AND local_context_key = ?
+                FOR SHARE""", key,
+        ).fetchone()
+        if (row is None or int(row["latest_attempt_generation"] or 0) != generation
+                or int(row["last_success_generation"] or 0) != generation
+                or row["latest_status"] not in {"complete", "scope_unknown"}):
+            return False
+    return True
+
+
 def _dependency_manifest_current_in_transaction(
     conn,
     manifest: Mapping[str, Any],
@@ -272,6 +312,8 @@ def _dependency_manifest_current_in_transaction(
                 or not isinstance(context.get("authorized_device_ids"), list)):
             return False, ["dependency_manifest_invalid_current_endpoint" if is_current_endpoint else "dependency_manifest_invalid_snmp_endpoint"]
         try:
+            if is_current_endpoint and lock and not _lock_current_collection_generations(conn, expected):
+                return False, ["dependency_changed:current_endpoint"]
             finder = find_current_endpoint_evidence if is_current_endpoint else find_endpoint_evidence
             current = finder(
                 _non_empty(manifest.get("target_ip")), conn=conn,
@@ -1721,6 +1763,7 @@ def _downgrade_stale_locator_result(result: dict[str, Any], gaps: list[str]) -> 
         result.pop(key, None)
     result["locations"] = []
     result["terminal_candidates"] = []
+    result["mac_lookup"] = {"status": "not_attempted"}
 
 
 def save_locator_run_result(
