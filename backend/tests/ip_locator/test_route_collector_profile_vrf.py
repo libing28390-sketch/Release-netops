@@ -126,9 +126,16 @@ def test_profile_route_collector_persists_live_h3c_vrfs_in_isolated_store(
 
     monkeypatch.setattr(platform_registry_service, "execute_platform_action", execute_action)
 
+    monkeypatch.delenv("IP_LOCATOR_ALLOW_FULL_RIB_COLLECTION", raising=False)
+    disabled = ip_locator_service.run_route_collector(
+        respect_collection_policy=False, device_ids={device["id"]},
+    )
+    assert disabled["status"] == "disabled_by_policy"
+    assert discovery_calls == [] and action_calls == []
     ip_locator_service.run_route_collector(
         respect_collection_policy=False,
         device_ids={device["id"]},
+        allow_full_rib=True,  # Explicit opt-in in this isolated legacy collector test only.
     )
 
     assert discovery_calls == [
