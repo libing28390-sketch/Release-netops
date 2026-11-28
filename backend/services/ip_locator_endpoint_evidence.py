@@ -193,6 +193,21 @@ def _current_cross_device_fdb_path(
             if (_id(row.get("switchport_mode")).lower() != "access"
                     or discovery._normalize_vlan_number(row.get("access_vlan")) != vlan):
                 return None
+            # Recheck the underlying topology instead of trusting a possibly
+            # stale access-edge classification. Any live downstream link means
+            # the learned MAC proves only a forwarding direction here.
+            for raw in conn.execute(
+                """SELECT * FROM topology_links
+                    WHERE source_device_id = ? OR target_device_id = ?""",
+                (device, device),
+            ).fetchall():
+                link = dict(raw)
+                if _id(link.get("status")).lower() not in {"up", "degraded"}:
+                    continue
+                for side in ("source", "target"):
+                    if (_id(link.get(f"{side}_device_id")) == device
+                            and port_key(link.get(f"{side}_port_normalized") or link.get(f"{side}_port")) == port_key(port)):
+                        return None
             return path if len(path) > 1 else None
         if classification != "trunk_tagged_interface" or not tagged(row):
             return None
