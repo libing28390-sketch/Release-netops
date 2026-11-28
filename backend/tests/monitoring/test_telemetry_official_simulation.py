@@ -143,8 +143,35 @@ def test_h3c_comware_v7_v2_and_v3_official_protobuf_and_json_normalization():
     assert len(v3_samples) == len(v2_samples)
 
 
-def test_end_to_end_control_plane_provisioning_and_simulation():
+def test_end_to_end_control_plane_provisioning_and_simulation(isolated_db, monkeypatch):
     """Verify no-TLS provisioning, template seeding, and end-to-end simulation on PostgreSQL."""
+    from api import assets
+    from fastapi import BackgroundTasks
+    from services import collector_sync_service
+
+    # Never depend on a production/demo device in an empty test database.
+    # The simulated telemetry receiver does not need an actual device session.
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    monkeypatch.setenv("TELEMETRY_GRPC_BIND_IP", "0.0.0.0")
+    monkeypatch.setenv("TELEMETRY_DEVICE_TARGET_ADDRESS", "192.0.2.100")
+    monkeypatch.setenv("TELEMETRY_GRPC_BIND_PORT", "10051")
+    monkeypatch.setattr(collector_sync_service, "trigger_async_monitoring_sync", lambda: None)
+    result = assets.import_assets(
+        [assets.AssetImportCreate(
+            asset_type="network_device", hostname="telemetry-fixture-s6850",
+            asset_tag="telemetry-fixture-s6850", management_ip="192.0.2.91",
+            vendor="H3C", model="S6850-56HF", platform="h3c_comware",
+            snmp_collection_enabled=False,
+        )],
+        detailed=True, background_tasks=BackgroundTasks(),
+    )
+    assert result["created"] == 1, result
+    with get_db_connection() as conn:
+        conn.execute(
+            "UPDATE devices SET version = ? WHERE hostname = ?",
+            ("7.1.070, Release 6717P01", "telemetry-fixture-s6850"),
+        )
+        conn.commit()
     admin_user = {"id": "user-admin", "username": "admin", "role": "Administrator", "tenant_id": "tenant-default"}
     profiles = svc.list_profiles()["items"]
     assert len(profiles) >= 6
@@ -156,7 +183,7 @@ def test_end_to_end_control_plane_provisioning_and_simulation():
 
     with get_db_connection() as conn:
         h3c_dev = conn.execute(
-            "SELECT id, ip_address FROM devices WHERE LOWER(vendor) = 'h3c' AND asset_id IS NOT NULL LIMIT 1"
+            "SELECT id, ip_address FROM devices WHERE hostname = 'telemetry-fixture-s6850' AND LOWER(vendor) = 'h3c' AND asset_id IS NOT NULL LIMIT 1"
         ).fetchone()
     assert h3c_dev is not None
     device_id = str(h3c_dev["id"])
