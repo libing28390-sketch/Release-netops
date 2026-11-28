@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import logging
 import re
-import sqlite3
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -48,7 +47,7 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
 
 
 def ensure_odf_tables(conn, *, force: bool = False) -> None:
-    """Idempotently ensure ODF CMDB tables and indexes exist on PostgreSQL or SQLite."""
+    """Idempotently ensure ODF CMDB tables and indexes exist on PostgreSQL."""
     global _ODF_SCHEMA_READY
     if _ODF_SCHEMA_READY and not force:
         return
@@ -60,173 +59,87 @@ def ensure_odf_tables(conn, *, force: bool = False) -> None:
 
 
 def _ensure_odf_tables_locked(conn) -> None:
-    from database import _USE_PG
-
-    use_pg = (not isinstance(conn, sqlite3.Connection)) and _USE_PG
-    if use_pg:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS odf_frames (
-                id VARCHAR(50) PRIMARY KEY,
-                site_id VARCHAR(50) NOT NULL,
-                frame_code VARCHAR(64) NOT NULL UNIQUE,
-                name VARCHAR(120) NOT NULL,
-                vendor VARCHAR(80) DEFAULT '',
-                model VARCHAR(120) DEFAULT '',
-                floor VARCHAR(100) DEFAULT '',
-                room VARCHAR(100) DEFAULT '',
-                row VARCHAR(50) DEFAULT '',
-                rack_id VARCHAR(50) DEFAULT '',
-                tray_count INTEGER NOT NULL DEFAULT 12,
-                ports_per_tray INTEGER NOT NULL DEFAULT 48,
-                total_cores INTEGER NOT NULL DEFAULT 576,
-                connector_type VARCHAR(24) NOT NULL DEFAULT 'LC/UPC',
-                fiber_mode VARCHAR(24) NOT NULL DEFAULT 'OS2',
-                status VARCHAR(24) NOT NULL DEFAULT 'active',
-                remarks TEXT DEFAULT '',
-                created_at TEXT DEFAULT '',
-                updated_at TEXT DEFAULT '',
-                FOREIGN KEY (site_id) REFERENCES sites (id) ON DELETE CASCADE
-            )
-            """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS odf_frames (
+            id VARCHAR(50) PRIMARY KEY,
+            site_id VARCHAR(50) NOT NULL,
+            frame_code VARCHAR(64) NOT NULL UNIQUE,
+            name VARCHAR(120) NOT NULL,
+            vendor VARCHAR(80) DEFAULT '',
+            model VARCHAR(120) DEFAULT '',
+            floor VARCHAR(100) DEFAULT '',
+            room VARCHAR(100) DEFAULT '',
+            row VARCHAR(50) DEFAULT '',
+            rack_id VARCHAR(50) DEFAULT '',
+            tray_count INTEGER NOT NULL DEFAULT 12,
+            ports_per_tray INTEGER NOT NULL DEFAULT 48,
+            total_cores INTEGER NOT NULL DEFAULT 576,
+            connector_type VARCHAR(24) NOT NULL DEFAULT 'LC/UPC',
+            fiber_mode VARCHAR(24) NOT NULL DEFAULT 'OS2',
+            status VARCHAR(24) NOT NULL DEFAULT 'active',
+            remarks TEXT DEFAULT '',
+            created_at TEXT DEFAULT '',
+            updated_at TEXT DEFAULT '',
+            FOREIGN KEY (site_id) REFERENCES sites (id) ON DELETE CASCADE
         )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS odf_trays (
-                id VARCHAR(50) PRIMARY KEY,
-                frame_id VARCHAR(50) NOT NULL,
-                tray_no INTEGER NOT NULL,
-                tray_code VARCHAR(32) NOT NULL,
-                label VARCHAR(160) DEFAULT '',
-                port_count INTEGER NOT NULL DEFAULT 48,
-                fiber_mode VARCHAR(24) NOT NULL DEFAULT 'OS2',
-                connector_type VARCHAR(24) NOT NULL DEFAULT 'LC/UPC',
-                status VARCHAR(24) NOT NULL DEFAULT 'active',
-                remarks TEXT DEFAULT '',
-                created_at TEXT DEFAULT '',
-                updated_at TEXT DEFAULT '',
-                FOREIGN KEY (frame_id) REFERENCES odf_frames (id) ON DELETE CASCADE,
-                UNIQUE (frame_id, tray_no)
-            )
-            """
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS odf_trays (
+            id VARCHAR(50) PRIMARY KEY,
+            frame_id VARCHAR(50) NOT NULL,
+            tray_no INTEGER NOT NULL,
+            tray_code VARCHAR(32) NOT NULL,
+            label VARCHAR(160) DEFAULT '',
+            port_count INTEGER NOT NULL DEFAULT 48,
+            fiber_mode VARCHAR(24) NOT NULL DEFAULT 'OS2',
+            connector_type VARCHAR(24) NOT NULL DEFAULT 'LC/UPC',
+            status VARCHAR(24) NOT NULL DEFAULT 'active',
+            remarks TEXT DEFAULT '',
+            created_at TEXT DEFAULT '',
+            updated_at TEXT DEFAULT '',
+            FOREIGN KEY (frame_id) REFERENCES odf_frames (id) ON DELETE CASCADE,
+            UNIQUE (frame_id, tray_no)
         )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS odf_ports (
-                id VARCHAR(50) PRIMARY KEY,
-                frame_id VARCHAR(50) NOT NULL,
-                tray_id VARCHAR(50) NOT NULL,
-                tray_no INTEGER NOT NULL,
-                port_no INTEGER NOT NULL,
-                port_code VARCHAR(48) NOT NULL,
-                status VARCHAR(24) NOT NULL DEFAULT 'occupied',
-                fiber_type VARCHAR(24) NOT NULL DEFAULT 'OS2',
-                connector_type VARCHAR(24) NOT NULL DEFAULT 'LC/UPC',
-                a_device_id VARCHAR(64) DEFAULT '',
-                a_device_name VARCHAR(160) DEFAULT '',
-                a_interface_name VARCHAR(120) DEFAULT '',
-                a_rack_name VARCHAR(120) DEFAULT '',
-                z_endpoint_type VARCHAR(24) NOT NULL DEFAULT 'device',
-                z_device_id VARCHAR(64) DEFAULT '',
-                z_device_name VARCHAR(160) DEFAULT '',
-                z_interface_name VARCHAR(120) DEFAULT '',
-                z_odf_frame_id VARCHAR(50) DEFAULT '',
-                z_odf_port_code VARCHAR(48) DEFAULT '',
-                z_peer_label VARCHAR(200) DEFAULT '',
-                cable_tag VARCHAR(120) DEFAULT '',
-                circuit_id VARCHAR(120) DEFAULT '',
-                attenuation_db REAL,
-                remarks TEXT DEFAULT '',
-                updated_by VARCHAR(80) DEFAULT '',
-                updated_at TEXT DEFAULT '',
-                FOREIGN KEY (frame_id) REFERENCES odf_frames (id) ON DELETE CASCADE,
-                FOREIGN KEY (tray_id) REFERENCES odf_trays (id) ON DELETE CASCADE,
-                UNIQUE (tray_id, port_no)
-            )
-            """
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS odf_ports (
+            id VARCHAR(50) PRIMARY KEY,
+            frame_id VARCHAR(50) NOT NULL,
+            tray_id VARCHAR(50) NOT NULL,
+            tray_no INTEGER NOT NULL,
+            port_no INTEGER NOT NULL,
+            port_code VARCHAR(48) NOT NULL,
+            status VARCHAR(24) NOT NULL DEFAULT 'occupied',
+            fiber_type VARCHAR(24) NOT NULL DEFAULT 'OS2',
+            connector_type VARCHAR(24) NOT NULL DEFAULT 'LC/UPC',
+            a_device_id VARCHAR(64) DEFAULT '',
+            a_device_name VARCHAR(160) DEFAULT '',
+            a_interface_name VARCHAR(120) DEFAULT '',
+            a_rack_name VARCHAR(120) DEFAULT '',
+            z_endpoint_type VARCHAR(24) NOT NULL DEFAULT 'device',
+            z_device_id VARCHAR(64) DEFAULT '',
+            z_device_name VARCHAR(160) DEFAULT '',
+            z_interface_name VARCHAR(120) DEFAULT '',
+            z_odf_frame_id VARCHAR(50) DEFAULT '',
+            z_odf_port_code VARCHAR(48) DEFAULT '',
+            z_peer_label VARCHAR(200) DEFAULT '',
+            cable_tag VARCHAR(120) DEFAULT '',
+            circuit_id VARCHAR(120) DEFAULT '',
+            attenuation_db REAL,
+            remarks TEXT DEFAULT '',
+            updated_by VARCHAR(80) DEFAULT '',
+            updated_at TEXT DEFAULT '',
+            FOREIGN KEY (frame_id) REFERENCES odf_frames (id) ON DELETE CASCADE,
+            FOREIGN KEY (tray_id) REFERENCES odf_trays (id) ON DELETE CASCADE,
+            UNIQUE (tray_id, port_no)
         )
-    else:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS odf_frames (
-                id TEXT PRIMARY KEY,
-                site_id TEXT NOT NULL,
-                frame_code TEXT NOT NULL UNIQUE,
-                name TEXT NOT NULL,
-                vendor TEXT DEFAULT '',
-                model TEXT DEFAULT '',
-                floor TEXT DEFAULT '',
-                room TEXT DEFAULT '',
-                row TEXT DEFAULT '',
-                rack_id TEXT DEFAULT '',
-                tray_count INTEGER NOT NULL DEFAULT 12,
-                ports_per_tray INTEGER NOT NULL DEFAULT 48,
-                total_cores INTEGER NOT NULL DEFAULT 576,
-                connector_type TEXT NOT NULL DEFAULT 'LC/UPC',
-                fiber_mode TEXT NOT NULL DEFAULT 'OS2',
-                status TEXT NOT NULL DEFAULT 'active',
-                remarks TEXT DEFAULT '',
-                created_at TEXT DEFAULT '',
-                updated_at TEXT DEFAULT '',
-                FOREIGN KEY (site_id) REFERENCES sites (id) ON DELETE CASCADE
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS odf_trays (
-                id TEXT PRIMARY KEY,
-                frame_id TEXT NOT NULL,
-                tray_no INTEGER NOT NULL,
-                tray_code TEXT NOT NULL,
-                label TEXT DEFAULT '',
-                port_count INTEGER NOT NULL DEFAULT 48,
-                fiber_mode TEXT NOT NULL DEFAULT 'OS2',
-                connector_type TEXT NOT NULL DEFAULT 'LC/UPC',
-                status TEXT NOT NULL DEFAULT 'active',
-                remarks TEXT DEFAULT '',
-                created_at TEXT DEFAULT '',
-                updated_at TEXT DEFAULT '',
-                FOREIGN KEY (frame_id) REFERENCES odf_frames (id) ON DELETE CASCADE,
-                UNIQUE (frame_id, tray_no)
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS odf_ports (
-                id TEXT PRIMARY KEY,
-                frame_id TEXT NOT NULL,
-                tray_id TEXT NOT NULL,
-                tray_no INTEGER NOT NULL,
-                port_no INTEGER NOT NULL,
-                port_code TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'occupied',
-                fiber_type TEXT NOT NULL DEFAULT 'OS2',
-                connector_type TEXT NOT NULL DEFAULT 'LC/UPC',
-                a_device_id TEXT DEFAULT '',
-                a_device_name TEXT DEFAULT '',
-                a_interface_name TEXT DEFAULT '',
-                a_rack_name TEXT DEFAULT '',
-                z_endpoint_type TEXT NOT NULL DEFAULT 'device',
-                z_device_id TEXT DEFAULT '',
-                z_device_name TEXT DEFAULT '',
-                z_interface_name TEXT DEFAULT '',
-                z_odf_frame_id TEXT DEFAULT '',
-                z_odf_port_code TEXT DEFAULT '',
-                z_peer_label TEXT DEFAULT '',
-                cable_tag TEXT DEFAULT '',
-                circuit_id TEXT DEFAULT '',
-                attenuation_db REAL,
-                remarks TEXT DEFAULT '',
-                updated_by TEXT DEFAULT '',
-                updated_at TEXT DEFAULT '',
-                FOREIGN KEY (frame_id) REFERENCES odf_frames (id) ON DELETE CASCADE,
-                FOREIGN KEY (tray_id) REFERENCES odf_trays (id) ON DELETE CASCADE,
-                UNIQUE (tray_id, port_no)
-            )
-            """
-        )
+        """
+    )
 
     conn.execute("CREATE INDEX IF NOT EXISTS idx_odf_frames_site_id ON odf_frames(site_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_odf_trays_frame_no ON odf_trays(frame_id, tray_no)")
