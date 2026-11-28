@@ -14,12 +14,15 @@ from services.ipam_snapshot_write_service import reconcile_current_snapshot
 
 
 class DB:
-    def __init__(self, conn):
+    def __init__(self, conn, raw):
         self.db = conn
         self.statements = []
-        for kind in ("fdb", "endpoint"):
-            table = f"ipam_current_{kind}_observations"
-            self.db.execute(f"CREATE TEMP TABLE {table} (LIKE public.{table} INCLUDING ALL)")
+        # The application adapter translates LIKE predicates to ILIKE. Use
+        # the native cursor for this PostgreSQL DDL (LIKE is not a predicate).
+        with raw.cursor() as cursor:
+            for kind in ("fdb", "endpoint"):
+                table = f"ipam_current_{kind}_observations"
+                cursor.execute(f"CREATE TEMP TABLE {table} (LIKE public.{table} INCLUDING ALL)")
         self.db.commit()
 
     def execute(self, sql, params):
@@ -33,9 +36,10 @@ def db_factory(isolated_db):
 
     opened = []
     def make():
-        conn = core._PgRawConnection(psycopg2.connect(core._DATABASE_URL))
+        raw = psycopg2.connect(core._DATABASE_URL)
+        conn = core._PgRawConnection(raw)
         opened.append(conn)
-        return DB(conn)
+        return DB(conn, raw)
 
     try:
         yield make
