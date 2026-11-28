@@ -49,6 +49,9 @@ COPY backend/ /app/backend/
 # needs this catalog to resolve exact/family/generic metadata consistently.
 COPY assets/catalog/ /app/assets/catalog/
 
+# Package the reviewed product catalog and alias seeds used by AI Center.
+COPY docs/knowledge-engine/catalog/ /app/docs/knowledge-engine/catalog/
+
 # Copy environment template
 COPY .env.example /app/.env.example
 
