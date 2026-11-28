@@ -211,6 +211,24 @@ def test_endpoint_supersede_preserves_distinct_address_spaces_and_isolates_unkno
     kept_migrated = _supersede_older_endpoint_context_observations([unk_dev1, resolved_dev1])
     assert [item['id'] for item in kept_migrated] == ['obs-res-1']
 
+    # Newer unresolved observation from the SAME device supersedes stale resolved row (no duplicate IP)
+    pending_dev1_newer = {
+        **unk_dev1,
+        'id': 'obs-unk-1-newer',
+        'observed_at': '2026-11-27T08:15:00Z',
+    }
+    kept_same_dev_pending = _supersede_older_endpoint_context_observations([resolved_dev1, pending_dev1_newer])
+    assert [item['id'] for item in kept_same_dev_pending] == ['obs-unk-1-newer']
+
+    # Newer unresolved observation from a DIFFERENT device must NOT supersede dev-1's resolved row
+    pending_dev2_newer = {
+        **pending_dev1_newer,
+        'id': 'obs-unk-2-newer',
+        'source_device_id': 'dev-2',
+    }
+    kept_other_dev_pending = _supersede_older_endpoint_context_observations([resolved_dev1, pending_dev2_newer])
+    assert {item['id'] for item in kept_other_dev_pending} == {'obs-res-1', 'obs-unk-2-newer'}
+
 
 def test_prefix_vlan_scope_and_target_site_authorization_and_mixed_tenant_batch(isolated_db, make_user) -> None:
     _ensure_site('site-a', 'tenant-default')

@@ -1,0 +1,12 @@
+# nexora-action-code: get_stp
+Value Required INSTANCE (\d+)
+Value Required INTERFACE ([A-Za-z][\w-]*\s*\d[\d/.:]*)
+Value Required ROLE (\S+)
+Value Required STATE (\S+)
+Value PROTECTION (\S+)
+
+Start
+  ^\s*MSTID\s+Port\s+Role\s+STP\s+State\s+Protection\s*$$ -> Rows
+
+Rows
+  ^\s*${INSTANCE}\s+${INTERFACE}\s+${ROLE}\s+${STATE}\s+${PROTECTION}\s*$$ -> Record

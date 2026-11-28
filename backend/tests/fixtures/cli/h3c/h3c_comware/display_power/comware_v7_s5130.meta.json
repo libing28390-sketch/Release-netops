@@ -3,7 +3,34 @@
   "source_url": "https://www.h3c.com/en/d_202204/1583056_294551_0.htm",
   "vendor": "H3C",
   "platform": "Comware7",
-  "model_family": "H3C switches",
+  "model_family": "S12500R",
   "command": "display power",
-  "source_note": "Official power supply output with state, mode, current, voltage, power, and airflow."
+  "source_note": "CLI command: display power. Official power-supply output with state, mode, current, voltage, power, and airflow for the S12500R series. The cited release is the command-reference/document release; the sample does not itself confirm the running device software build.",
+  "source_title": "Support - 03-Hardware resource management commands - H3C",
+  "source_section": "display power > Examples",
+  "documentation_release": "R51xx",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "expected_record_count": 2,
+  "expected_fields": [
+    "SLOT",
+    "POWER_ID",
+    "STATUS",
+    "MODE",
+    "CURRENT",
+    "VOLTAGE",
+    "POWER_W",
+    "AIRFLOW"
+  ],
+  "expected_template_prefix": "h3c_comware_v7_",
+  "expected_template": "h3c_comware_v7_display_power.textfsm",
+  "expected_record_index": 0,
+  "expected_values": {
+    "SLOT": "1",
+    "POWER_ID": "1",
+    "STATUS": "Normal",
+    "MODE": "AC",
+    "POWER_W": "66"
+  },
+  "parser_platform": "h3c_comware_v7"
 }

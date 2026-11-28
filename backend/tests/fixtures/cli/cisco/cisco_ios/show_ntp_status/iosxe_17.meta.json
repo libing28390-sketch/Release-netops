@@ -5,5 +5,22 @@
   "platform": "IOS-XE",
   "model_family": "IOS-XE routers",
   "command": "show ntp status",
-  "source_note": "Official Cisco IOS XE 17.x system management guide example."
+  "source_note": "Official IOS XE 17.x example; the page identifies the software family but not the exact device build.",
+  "source_title": "System Management Configuration Guide, Cisco IOS XE 17.x",
+  "source_section": "Network Time Protocol > Verifying Network Time Protocol > show ntp status example",
+  "platform_version": "17.x",
+  "software_version": "unknown",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "SYNC_STATUS",
+    "STRATUM",
+    "REFERENCE"
+  ],
+  "expected_values": {
+    "SYNC_STATUS": "synchronized",
+    "STRATUM": "8"
+  },
+  "expected_template": "cisco_ios_show_ntp_status.textfsm",
+  "expected_template_prefix": "cisco_ios_",
+  "parser_platform": "cisco_ios"
 }

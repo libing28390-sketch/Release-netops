@@ -1200,7 +1200,11 @@ export const useAutomation = ({
               });
             if (!resp.ok) {
               const errData = await resp.json().catch(() => ({}));
-              return { device, ok: false, error: errData.detail || errData.error || resp.statusText };
+              const detail = errData.detail || errData.error || resp.statusText;
+              const message = typeof detail === 'string'
+                ? detail
+                : String(detail?.message || JSON.stringify(detail));
+              return { device, ok: false, error: message };
             }
             const data = await resp.json();
             return { device, ok: true, data };
@@ -1258,9 +1262,9 @@ export const useAutomation = ({
           }
           if (Array.isArray(firstCat.records)) {
             const recordsWithHost = firstCat.records.map((rec: any) => ({
+              ...rec,
               'Hostname': res.device.hostname,
               'IP Address': res.device.ip_address,
-              ...rec,
             }));
             combinedRecords = [...combinedRecords, ...recordsWithHost];
           }
@@ -1271,7 +1275,7 @@ export const useAutomation = ({
           hostname: String(res.device.hostname || ''),
           ip_address: String(res.device.ip_address || ''),
           platform: String(res.device.platform || ''),
-          request_status: 'success',
+          request_status: firstCat?.success === false || res.data?.success === false ? 'failed' : 'success',
           parser: firstCat?.parser ? String(firstCat.parser) : undefined,
           parser_platform: firstCat?.parser_platform ? String(firstCat.parser_platform) : undefined,
           source: firstCat?.source ? String(firstCat.source) : undefined,

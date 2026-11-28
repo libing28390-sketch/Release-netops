@@ -1,0 +1,29 @@
+{
+  "vendor": "ZTE",
+  "platform": "zte_zxros",
+  "parser_platform": "zte_zxros",
+  "command": "show version",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.zte.com.cn/content/dam/zte-site/res-www-zte-com-cn/trust_center/eucc/ZTE_IPN_Common_Criteria_Security_Evaluation_Certified_Configuration.pdf",
+  "source_title": "ZTE IPN Solution V1.2 Common Criteria Security Evaluation - Certified Configuration v1.6",
+  "software_family": "ZTE ZXR10 Software",
+  "documentation_release": "v1.6",
+  "expected_record_count": 1,
+  "expected_template": "zte_zxros_show_version.textfsm",
+  "platform_version": "V1",
+  "software_version": "V1.00.30.01P26",
+  "model": "ZXR10 9904X",
+  "model_family": "ZXR10 9900X",
+  "source_section": "Check the installed software version and target model > ZXR10 9900X series > printed page 2-11",
+  "source_note": "Two model and version lines excerpted. The hardware suffix V1.0 is taken from the chassis banner; the separately listed hot patch is outside the version excerpt.",
+  "expected_fields": [
+    "MODEL",
+    "HARDWARE_VERSION",
+    "VERSION"
+  ],
+  "expected_values": {
+    "MODEL": "9904X",
+    "HARDWARE_VERSION": "V1.0",
+    "VERSION": "V1.00.30.01P26"
+  }
+}

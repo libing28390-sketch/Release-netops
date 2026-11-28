@@ -116,6 +116,23 @@ def test_internal_operation_catalog_keeps_template_operations(nsot_preview_data)
     catalog_by_key = {item["collector_key"]: item for item in catalog_data["operations"]}
     assert catalog_by_key["endpoint_location"]["status"] == "projection"
     assert catalog_by_key["prefix_projection"]["status"] == "projection"
+    bgp_routes = next(
+        command
+        for operation in catalog_data["operations"]
+        for command in operation["commands"]
+        if command.get("action_code") == "get_bgp_routes"
+    )
+    with database.get_db_connection() as connection:
+        release_action = connection.execute(
+            """SELECT a.command FROM platform_profiles p
+                 JOIN platform_release_actions a ON a.release_id = p.current_release_id
+                WHERE p.id = ? AND a.action_code = 'get_bgp_routes'""",
+            (context["platform_profile_id"],),
+        ).fetchone()
+    assert release_action is not None
+    assert bgp_routes["command"] == release_action["command"]
+    assert bgp_routes["status"] == "supported"
+    assert bgp_routes["textfsm_template"] == "h3c_comware_v7_display_bgp_routing_table_ipv4.textfsm"
 
 
 

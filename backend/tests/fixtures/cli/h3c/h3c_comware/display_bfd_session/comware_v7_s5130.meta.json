@@ -3,7 +3,34 @@
   "source_url": "https://www.h3c.com/en/d_202301/1752404_294551_0.htm",
   "vendor": "H3C",
   "platform": "Comware7",
-  "model_family": "H3C switches",
+  "model_family": "S5170-EI",
   "command": "display bfd session",
-  "source_note": "Official brief BFD session output with dynamic and static IPv4 rows."
+  "source_note": "CLI command: display bfd session. Official BFD command-reference example with dynamic and static IPv4 session rows. The cited release is the command-reference/document release; the sample does not itself confirm the running device software build.",
+  "source_title": "Support - 09-BFD commands - H3C",
+  "source_section": "display bfd session > Examples",
+  "documentation_release": "R11xx",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "expected_record_count": 2,
+  "expected_fields": [
+    "LOCAL_DISCRIMINATOR",
+    "REMOTE_DISCRIMINATOR",
+    "SOURCE_IP",
+    "DESTINATION_IP",
+    "STATUS",
+    "HOLDTIME",
+    "INTERFACE"
+  ],
+  "expected_template_prefix": "h3c_comware_v7_",
+  "expected_template": "h3c_comware_v7_display_bfd_session.textfsm",
+  "expected_record_index": 0,
+  "expected_values": {
+    "LOCAL_DISCRIMINATOR": "513",
+    "REMOTE_DISCRIMINATOR": "513",
+    "SOURCE_IP": "1.1.1.1",
+    "DESTINATION_IP": "1.1.1.2",
+    "STATUS": "Up",
+    "INTERFACE": "Vlan100"
+  },
+  "parser_platform": "h3c_comware_v7"
 }

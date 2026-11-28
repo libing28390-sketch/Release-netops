@@ -1,0 +1,26 @@
+{
+  "vendor": "H3C",
+  "platform": "h3c_comware",
+  "parser_platform": "h3c_comware_v9",
+  "platform_version": "V9",
+  "software_version": "unknown",
+  "model_family": "H3C SR6602-I/IE",
+  "command": "display isis peer",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/Support/Resource_Center/EN/Routers/Catalog/SR6602-I%5BIE%5D/SR6602-I%5BIE%5D/Technical_Documents/Diagnose___Maintain/Troubleshooting/H3C_TG-32016/09/202603/2785159_294551_0.htm",
+  "source_title": "H3C SR6602-I/IE MPLS TE Troubleshooting Guide",
+  "source_section": "Display the summary information of IS-IS neighbors",
+  "source_note": "First adjacency in the official CLI example, with whitespace normalized. The example does not identify the running build.",
+  "expected_record_count": 1,
+  "expected_fields": ["SYSTEM_ID", "INTERFACE", "CIRCUIT_ID", "STATUS", "HOLDTIME", "LEVEL", "PRIORITY"],
+  "expected_values": {
+    "SYSTEM_ID": "0000.0000.0001",
+    "INTERFACE": "XGE0/0/6",
+    "CIRCUIT_ID": "0000.0000.0001.01",
+    "STATUS": "Up",
+    "HOLDTIME": "27s",
+    "LEVEL": "L1(L1L2)",
+    "PRIORITY": "64"
+  },
+  "expected_template": "h3c_comware_v9_display_isis_peer.textfsm"
+}

@@ -1,0 +1,27 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/Support/Resource_Center/HK/Home/Switches/00-Public/Reference_Guides/Command_References/H3C_S6850_S9850_CR-Release_655x-6W100/03/201910/1234781_294551_0.htm",
+  "vendor": "H3C",
+  "platform": "Comware7",
+  "parser_platform": "h3c_comware_v7",
+  "model_family": "S6850/S9850 switch series",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "documentation_release": "Release 655x-6W100",
+  "command": "display vlan brief",
+  "source_title": "Support - 07-VLAN commands - H3C",
+  "source_section": "display vlan brief > Examples > Display brief VLAN information",
+  "source_note": "The official example wraps VLAN 1 ports across three lines. The parser combines all nine ports in the VLAN record. The command-reference release does not confirm the running device build.",
+  "expected_record_count": 3,
+  "expected_fields": [
+    "VLAN_ID",
+    "VLAN_NAME",
+    "PORTS"
+  ],
+  "expected_values": {
+    "VLAN_ID": "1",
+    "VLAN_NAME": "VLAN 0001",
+    "PORTS": "WGE1/0/1 WGE1/0/2 WGE1/0/3 WGE1/0/4 WGE1/0/5 WGE1/0/6 WGE1/0/7 WGE1/0/8 WGE1/0/9"
+  },
+  "expected_template": "h3c_comware_v7_display_vlan_brief.textfsm"
+}

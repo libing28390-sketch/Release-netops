@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from fastapi import APIRouter, Body, HTTPException, Query
 
-from core.rbac import require_permission, require_role
+from core.rbac import authorize_resource, require_permission, require_role
 from core.textfsm import (
     list_templates,
     list_template_suggestions,
@@ -22,6 +22,8 @@ from core.textfsm import (
     get_supported_platforms,
     smart_parse_cli,
     template_action_code,
+    template_content_hash,
+    TemplateConflictError,
     canonical_template_filename,
     resolve_textfsm_platform,
     resolve_textfsm_template_namespace,
@@ -65,12 +67,20 @@ def api_list_templates(
     start = (page - 1) * page_size
     end = start + page_size
     paginated_items = items[start:end]
+    permissions = {
+        'can_create': authorize_resource(_user, 'textfsm', 'create'),
+        'can_edit': authorize_resource(_user, 'textfsm', 'edit_draft'),
+        'can_test': authorize_resource(_user, 'textfsm', 'test'),
+        # The delete endpoint is intentionally Administrator-only.
+        'can_delete': _user.get('role') == 'Administrator',
+    }
     
     return {
         'success': True,
         'data': {
             'total': total,
             'items': paginated_items,
+            'permissions': permissions,
             'page': page,
             'page_size': page_size
         },
@@ -207,6 +217,7 @@ def api_get_template(filename: str, _user=require_permission('textfsm', 'view'))
                 'editable': source == 'custom',
                 'default_sample': default_sample,
                 'action_code': template_action_code(content),
+                'content_hash': template_content_hash(content),
             },
             'message': '',
         }
@@ -257,8 +268,15 @@ def api_create_template(
         filename = f"{filename}.textfsm"
 
     try:
-        result = save_custom_template(filename, content, action_code=action_code)
+        result = save_custom_template(
+            filename,
+            content,
+            action_code=action_code,
+            create_only=True,
+        )
         return {'success': True, 'data': result, 'message': '模板已保存'}
+    except TemplateConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -276,6 +294,13 @@ def api_update_template(
     content = body.get('content') or ''
     if not content:
         raise HTTPException(status_code=400, detail='模板内容不能为空')
+    expected_hash = None
+    if 'expected_hash' in body:
+        supplied_hash = body.get('expected_hash')
+        if not isinstance(supplied_hash, str) or not supplied_hash.strip():
+            raise HTTPException(status_code=400, detail='expected_hash 必须是 SHA-256 十六进制值')
+        expected_hash = supplied_hash.strip()
+    expected_source = body.get('expected_source') if 'expected_source' in body else None
 
     try:
         if 'action_code' not in body:
@@ -288,8 +313,16 @@ def api_update_template(
             # Explicit null/empty from the editor means "clear association";
             # omission above means preserve the existing metadata.
             action_code = str(body.get('action_code') or '').strip()
-        result = save_custom_template(filename, content, action_code=action_code)
+        result = save_custom_template(
+            filename,
+            content,
+            action_code=action_code,
+            expected_hash=expected_hash,
+            expected_source=expected_source,
+        )
         return {'success': True, 'data': result, 'message': '模板已更新'}
+    except TemplateConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

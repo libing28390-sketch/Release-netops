@@ -5,5 +5,21 @@
   "platform": "VRP8",
   "model_family": "CloudEngine S16700",
   "command": "display ospf peer brief",
-  "source_note": "Official OSPF multi-area adjacency example, brief neighbor output."
+  "source_note": "Official CloudEngine S16700 OSPF example; exact software build is not stated.",
+  "source_title": "Example for Configuring OSPF Multi-area Adjacency - Huawei",
+  "source_section": "Verification > display ospf peer brief",
+  "platform_version": "V8",
+  "software_version": "unknown",
+  "expected_record_count": 3,
+  "expected_fields": [
+    "OSPF_PROCESS",
+    "LOCAL_ROUTER_ID",
+    "AREA_ID",
+    "INTERFACE",
+    "NEIGHBOR_ID",
+    "STATUS"
+  ],
+  "expected_template": "huawei_vrpv8_display_ospf_peer_brief.textfsm",
+  "expected_template_prefix": "huawei_vrpv8_",
+  "parser_platform": "huawei_vrp8"
 }

@@ -7,7 +7,27 @@
   "source_type": "official_vendor_documentation",
   "source_url": "https://support.huawei.com/enterprise/en/doc/EDOC1100459417/cdd85713/basic-interface-configuration-commands",
   "source_title": "Basic Interface Configuration Commands - Huawei",
-  "source_section": "display interface brief",
+  "source_section": "display interface brief > Example",
   "expected_record_count": 1,
-  "expected_fields": ["INTERFACE", "PHY", "PROTOCOL", "INUTI", "OUTUTI", "INERRORS", "OUTERRORS"]
+  "expected_fields": [
+    "INTERFACE",
+    "PHY",
+    "PROTOCOL",
+    "INUTI",
+    "OUTUTI",
+    "INERRORS",
+    "OUTERRORS"
+  ],
+  "platform_version": "V5",
+  "software_version": "unknown",
+  "model_family": "S5700/S6700",
+  "source_note": "Official Huawei command-reference example; exact software build is not stated in the retrieved source metadata.",
+  "expected_values": {
+    "INTERFACE": "GigabitEthernet0/0/1",
+    "PHY": "up",
+    "PROTOCOL": "up"
+  },
+  "expected_template": "huawei_vrp_display_interface_brief.textfsm",
+  "expected_template_prefix": "huawei_vrp_",
+  "parser_platform": "huawei_vrp5"
 }

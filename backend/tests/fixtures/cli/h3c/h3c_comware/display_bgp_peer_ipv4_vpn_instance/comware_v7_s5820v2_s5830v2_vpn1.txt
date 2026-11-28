@@ -1,0 +1,15 @@
+<Sysname> display bgp peer ipv4 vpn-instance vpn1
+
+
+
+ BGP local router ID: 2.2.2.2
+
+ Local AS number: 100
+
+ Total number of peers: 1                  Peers in established state: 1
+
+
+
+ Peer           AS  MsgRcvd  MsgSent    OutQ  PrefRcv   Up/Down    State
+
+ 10.1.1.1      200       24       29       0        1   00:18:47  Established

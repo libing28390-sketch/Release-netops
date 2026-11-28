@@ -1,0 +1,32 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Reference_Guides/Command_References/H3C_CR-28394/02/202508/2623837_294551_0.htm",
+  "vendor": "H3C",
+  "platform": "Comware9",
+  "model_family": "H3C S9827 & S9857 Switch Series",
+  "model": "S9827/S9857",
+  "command": "display clock",
+  "source_title": "Support - 01-Basic device management commands- H3C",
+  "source_document_title": "H3C S9827 & S9857 Switch Series Command References-R932x-6W100",
+  "source_section": "02-System Management Command Reference > Basic device management commands > display clock > Examples > Time zone Z5 and daylight saving time PDT",
+  "source_note": "Official S9827/S9857 command-reference example. The H3C S9827 product page identifies Comware V9. R932x-6W100 is the documentation release, not a confirmed running device build.",
+  "version_evidence_url": "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Data_Center_Switch/Aggregation_Switch/S9800/S9827/",
+  "version_evidence_title": "H3C S9827系列数据中心交换机",
+  "version_evidence_section": "Product overview",
+  "documentation_release": "R932x-6W100",
+  "platform_version": "V9",
+  "software_version": "unknown",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "CLOCK",
+    "TIMEZONE"
+  ],
+  "expected_template_prefix": "h3c_comware_v9_",
+  "expected_template": "h3c_comware_v9_display_clock.textfsm",
+  "expected_record_index": 0,
+  "expected_values": {
+    "CLOCK": "15:11:00 Z5 Fri 03/16/2019",
+    "TIMEZONE": "Z5"
+  },
+  "parser_platform": "h3c_comware_v9"
+}

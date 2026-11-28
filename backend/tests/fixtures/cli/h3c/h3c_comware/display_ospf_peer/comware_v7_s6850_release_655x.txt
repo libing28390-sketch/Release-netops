@@ -1,0 +1,17 @@
+<Sysname> display ospf peer
+
+          OSPF Process 1 with Router ID 1.1.1.1
+
+                  Neighbor Brief Information
+
+ Area 0.0.0.0 interface 1.1.1.1(Vlan-interface100)'s neighbors
+
+ Router ID       Address       Pri Dead-Time  State             Interface
+
+ 1.1.1.2         1.1.1.2       1   40         Full/DR           Vlan10
+
+ Sham link: 11.11.11.11 -> 22.22.22.22
+
+ Router ID       Address       Pri Dead-Time  State
+
+ 22.22.22.22     22.22.22.22   1   36         Full

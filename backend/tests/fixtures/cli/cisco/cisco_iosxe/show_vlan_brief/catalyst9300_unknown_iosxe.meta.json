@@ -1,0 +1,29 @@
+{
+  "vendor": "Cisco",
+  "platform": "cisco_xe",
+  "parser_platform": "cisco_xe",
+  "software_family": "IOS XE",
+  "platform_version": "unknown",
+  "software_version": "unknown",
+  "model_family": "Catalyst 9300",
+  "command": "show vlan brief",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.cisco.com/c/en/us/support/docs/switches/catalyst-9300-switch/221717-troubleshoot-dhcp-on-catalyst-9000-switc.pdf",
+  "source_title": "Troubleshoot DHCP on Catalyst 9000 Switches",
+  "source_section": "Troubleshooting > Switch Configured as Layer 2 Bridge > Step 2. Check the layer 2 path, PDF lines 91-104",
+  "source_note": "Cisco publishes this exact `show vlan brief` output for a C9300 lab device and lists C9300 in the document components. The IOS XE release/build is not specified, so this fixture does not establish IOS XE 17.18 coverage.",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "VLAN_ID",
+    "VLAN_NAME",
+    "STATUS",
+    "INTERFACES"
+  ],
+  "expected_values": {
+    "VLAN_ID": "1",
+    "VLAN_NAME": "default",
+    "STATUS": "active"
+  },
+  "expected_record_index": 0,
+  "expected_template": "cisco_ios_show_vlan.textfsm"
+}

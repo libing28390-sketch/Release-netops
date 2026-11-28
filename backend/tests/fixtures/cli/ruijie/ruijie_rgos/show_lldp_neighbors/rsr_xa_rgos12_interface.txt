@@ -1,0 +1,3 @@
+System Name    Local Intf    Port ID    Capability    Aging-time
+DeviceB        Gi0/2         Gi0/1      B, R          1minutes 49seconds
+Total entries displayed: 1

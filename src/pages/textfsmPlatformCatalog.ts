@@ -58,15 +58,22 @@ export const TEXTFSM_PLATFORM_FAMILIES: TextFSMPlatformFamilyOption[] = [
     labelEn: 'RGOS',
     versions: ['common', 'v10', 'v11', 'v12', 'unknown'],
   },
+  {
+    value: 'ruijie_rgos_rsr',
+    vendor: 'ruijie',
+    label: 'RSR 系列 RGOS',
+    labelEn: 'RGOS for RSR Series',
+    versions: ['v10'],
+  },
   { value: 'zte_zxros', vendor: 'zte', label: 'ZXROS', labelEn: 'ZXROS', versions: ['common'] },
   { value: 'zte_rosng', vendor: 'zte', label: 'ROSng', labelEn: 'ROSng', versions: ['common'] },
-  { value: 'zte_os_unknown', vendor: 'zte', label: '未知系统', labelEn: 'Unknown OS', versions: ['common'] },
+  { value: 'zte_os_unknown', vendor: 'zte', label: '未知系统（中兴）', labelEn: 'Unknown OS (ZTE)', versions: ['common'] },
   { value: 'dptech_conplat', vendor: 'dptech', label: 'ConPlat', labelEn: 'ConPlat', versions: ['common'] },
   {
     value: 'dptech_conplat_unknown',
     vendor: 'dptech',
-    label: '未知系统',
-    labelEn: 'Unknown OS',
+    label: '未知系统（迪普）',
+    labelEn: 'Unknown OS (DPTech)',
     versions: ['common'],
   },
   {
@@ -76,6 +83,7 @@ export const TEXTFSM_PLATFORM_FAMILIES: TextFSMPlatformFamilyOption[] = [
     labelEn: 'MyPower',
     versions: ['common', 'v6', 'v8', 'v9', 'unknown'],
   },
+  { value: 'raisecom_ros', vendor: 'raisecom', label: 'ROS', labelEn: 'ROS', versions: ['common'] },
   { value: 'paloalto_panos', vendor: 'paloalto', label: 'PAN-OS', labelEn: 'PAN-OS', versions: ['common'] },
   { value: 'fortinet', vendor: 'fortinet', label: 'FortiOS', labelEn: 'FortiOS', versions: ['common'] },
   { value: 'hillstone_stoneos', vendor: 'hillstone', label: 'StoneOS', labelEn: 'StoneOS', versions: ['common'] },
@@ -112,6 +120,7 @@ const CONCRETE_PLATFORM_BY_SELECTION: Record<string, string> = {
   'ruijie_rgos:v11': 'ruijie_rgos_v11',
   'ruijie_rgos:v12': 'ruijie_rgos_v12',
   'ruijie_rgos:unknown': 'ruijie_rgos_unknown',
+  'ruijie_rgos_rsr:v10': 'ruijie_rgos_rsr_v10',
 };
 
 const LEGACY_PLATFORM_SELECTIONS: Record<string, { platformFamily: string; version: string }> = {
@@ -147,6 +156,7 @@ const LEGACY_PLATFORM_SELECTIONS: Record<string, { platformFamily: string; versi
   ruijie_rgos_v11: { platformFamily: 'ruijie_rgos', version: 'v11' },
   ruijie_rgos_v12: { platformFamily: 'ruijie_rgos', version: 'v12' },
   ruijie_rgos_unknown: { platformFamily: 'ruijie_rgos', version: 'unknown' },
+  ruijie_rgos_rsr_v10: { platformFamily: 'ruijie_rgos_rsr', version: 'v10' },
   ruijie_s6k_rgos12: { platformFamily: 'ruijie_rgos', version: 'v12' },
   ruijie_eg_rgos11: { platformFamily: 'ruijie_rgos', version: 'v11' },
   zte_zxros: { platformFamily: 'zte_zxros', version: 'common' },
@@ -183,6 +193,9 @@ export const getEditorSelection = (platform: string, versionHint?: string) => {
 
   const family = getPlatformFamilyOption(platformFamily);
   const supportedVersions = family?.versions || ['common'];
+  if (normalizedPlatform === 'h3c_comware' && family?.versions.includes(normalizedVersion)) {
+    version = normalizedVersion;
+  }
   if (platformFamily === 'huawei_vrp' && !['v5', 'v8', 'unknown'].includes(version)) {
     version = 'v5';
   }

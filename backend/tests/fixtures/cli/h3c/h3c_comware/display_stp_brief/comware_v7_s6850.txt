@@ -1,0 +1,4 @@
+[DeviceD] display stp brief
+ MST ID  Port                  Role  STP State   Protection
+ 0       HundredGigE 1/0/1     ALTE  DISCARDING  NONE
+ 0       HundredGigE1/0/2      ROOT  FORWARDING  NONE

@@ -1,9 +1,27 @@
 {
   "source_type": "official_vendor_documentation",
-  "source_url": "https://www.cisco.com/c/en/us/support/docs/switches/nexus-7000-series-switches/113585-nex7000-ntp-config.html",
+  "source_url": "https://www.cisco.com/c/en/us/support/docs/switches/nexus-7000-series-switches/113585-nex7000-ntp-config.pdf",
   "vendor": "Cisco",
   "platform": "NX-OS",
   "model_family": "Nexus 7000",
   "command": "show ntp peer-status",
-  "source_note": "Official Cisco Nexus 7000 NTP configuration example."
+  "source_note": "Official Cisco Nexus 7000 configuration example; the PDF does not specify an NX-OS release.",
+  "source_title": "NTP on Nexus 7000 Series Switch Configuration Example",
+  "source_section": "Verify > show ntp peer-status",
+  "platform_version": "unknown",
+  "software_version": "unknown",
+  "expected_record_count": 3,
+  "expected_fields": [
+    "SYNC_MODE",
+    "REMOTE",
+    "LOCAL",
+    "STRATUM",
+    "POLL",
+    "REACH",
+    "DELAY",
+    "VRF"
+  ],
+  "expected_template": "cisco_nxos_show_ntp_peer_status.textfsm",
+  "expected_template_prefix": "cisco_nxos_",
+  "parser_platform": "cisco_nxos"
 }

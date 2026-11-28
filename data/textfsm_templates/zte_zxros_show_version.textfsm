@@ -1,13 +1,15 @@
+# nexora-action-code: get_version
 Value Filldown MODEL ([A-Za-z0-9_-]+)
-Value Filldown VERSION ([^\r\n,]+)
+Value HARDWARE_VERSION (V\d+(?:\.\d+)+)
+Value Filldown,Required VERSION ([^\r\n,]+)
 Value UPTIME (.*?)
 Value BOARD_NAME (.*?)
-Value MAIN_PROCESSOR (\S+)
+Value MAIN_PROCESSOR (.+?)
 Value BOOTROM (\S+)
 Value MEMORY (.*?)
 
 Start
-  ^ZXR10\s+${MODEL}\s*$$
+  ^ZXR10\s+${MODEL}(?:\s+${HARDWARE_VERSION})?\s*$$
   ^ZTE ZXR10 Software,\s+Version:\s+${VERSION}
   ^System uptime is\s+${UPTIME}\s*$$
   ^Board Name\s+:\s+${BOARD_NAME}\s*$$

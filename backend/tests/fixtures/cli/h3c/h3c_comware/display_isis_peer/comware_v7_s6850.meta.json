@@ -1,0 +1,36 @@
+{
+  "vendor": "H3C",
+  "platform": "h3c_comware",
+  "software_family": "Comware 7",
+  "model": "S6850/S9850",
+  "command": "display isis peer",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/Support/Resource_Center/EN/Home/Switches/00-Public/Reference_Guides/Command_References/H3C_S6850_S9850_CR-655X/05/202112/1500348_294551_0.htm",
+  "source_title": "H3C S6850 & S9850 Switch Series Command References-Release 655x-6W102",
+  "source_section": "05-Layer 3-IP Routing Command Reference > 05-IS-IS commands > display isis peer > Display brief IS-IS neighbor information",
+  "source_note": "Official S6850/S9850 command reference example. The documentation release is identified, but the sample does not report the running device software build.",
+  "model_family": "H3C S6850/S9850 switch series",
+  "documentation_release": "Release 655x-6W102",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "expected_record_count": 2,
+  "expected_fields": [
+    "SYSTEM_ID",
+    "INTERFACE",
+    "CIRCUIT_ID",
+    "STATUS",
+    "HOLDTIME",
+    "LEVEL",
+    "PRIORITY"
+  ],
+  "expected_values": {
+    "SYSTEM_ID": "0000.0000.0001",
+    "INTERFACE": "Vlan100",
+    "STATUS": "Up",
+    "LEVEL": "L1(L1L2)"
+  },
+  "expected_template_prefix": "h3c_comware_v7_",
+  "expected_template": "h3c_comware_v7_display_isis_peer.textfsm",
+  "expected_record_index": 0,
+  "parser_platform": "h3c_comware_v7"
+}

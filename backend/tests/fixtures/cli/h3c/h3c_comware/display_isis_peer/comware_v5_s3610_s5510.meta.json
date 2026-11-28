@@ -1,0 +1,27 @@
+{
+  "vendor": "H3C",
+  "platform": "h3c_comware",
+  "parser_platform": "h3c_comware_v5",
+  "platform_version": "V5",
+  "software_version": "unknown",
+  "documentation_release": "Release 5309-6W100",
+  "model_family": "S3610/S5510",
+  "command": "display isis peer",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/cn/d_200904/631690_30005_0.htm",
+  "source_title": "H3C S3610/S5510 Operation Manual Release 5309-6W100, IP Routing, IS-IS Configuration",
+  "source_section": "1.13.2 DIS selection example > first Switch A neighbor output",
+  "source_note": "First adjacency in the official example, with whitespace normalized. The manual identifies its Release but the example does not display the running software build.",
+  "expected_record_count": 1,
+  "expected_fields": ["SYSTEM_ID", "INTERFACE", "CIRCUIT_ID", "STATUS", "HOLDTIME", "LEVEL", "PRIORITY"],
+  "expected_values": {
+    "SYSTEM_ID": "0000.0000.0002",
+    "INTERFACE": "Vlan-interface100",
+    "CIRCUIT_ID": "0000.0000.0003.01",
+    "STATUS": "Up",
+    "HOLDTIME": "21s",
+    "LEVEL": "L1(L1L2)",
+    "PRIORITY": "64"
+  },
+  "expected_template": "h3c_comware_v5_display_isis_peer.textfsm"
+}

@@ -1,0 +1,29 @@
+{
+  "vendor": "ZTE",
+  "platform": "zte_zxros",
+  "parser_platform": "zte_zxros",
+  "command": "show version",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.zte.com.cn/content/dam/zte-site/res-www-zte-com-cn/trust_center/eucc/ZTE_IPN_Common_Criteria_Security_Evaluation_Certified_Configuration.pdf",
+  "source_title": "ZTE IPN Solution V1.2 Common Criteria Security Evaluation - Certified Configuration v1.6",
+  "software_family": "ZTE ZXR10 Software",
+  "documentation_release": "v1.6",
+  "expected_record_count": 1,
+  "expected_template": "zte_zxros_show_version.textfsm",
+  "platform_version": "V6",
+  "software_version": "5900 V6.00.03.92P02",
+  "model": "ZXR10 5960X-56QU-HF",
+  "model_family": "ZXR10 5960X",
+  "source_section": "Check the installed software version and target model > ZXR10 5960X series > printed pages 2-11 and 2-12",
+  "source_note": "Three lines excerpted. The banner reports 5960; the main board line identifies the specific 5960X model. This tests the shared parser used by the 5900 V6 profile.",
+  "expected_fields": [
+    "MODEL",
+    "VERSION",
+    "BOARD_NAME"
+  ],
+  "expected_values": {
+    "MODEL": "5960",
+    "VERSION": "5900 V6.00.03.92P02",
+    "BOARD_NAME": "5960X-56QU-HF"
+  }
+}

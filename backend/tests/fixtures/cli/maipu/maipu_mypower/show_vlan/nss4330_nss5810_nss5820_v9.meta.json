@@ -1,0 +1,33 @@
+{
+  "vendor": "Maipu",
+  "platform": "maipu_mypower",
+  "software_family": "MyPower",
+  "software_version": "unknown",
+  "source_type": "vendor_documentation_mirror",
+  "parser_platform": "maipu_mypower_v9",
+  "platform_version": "V9",
+  "model_family": "NSS4330 / NSS5810 / NSS5820(V1)",
+  "documentation_release": "V9.7.40.8(R)-20220429",
+  "command": "show vlan 2",
+  "source_url": "https://support.marvel.ru/wp-content/uploads/2023/01/nss4330-nss5810-nss5820.zip",
+  "source_title": "Maipu NSS4330 NSS5810 NSS5820(V1) Series Switch Configuration Manual",
+  "source_section": "03 Ethernet Switching/52.html > 3.3.1 Configure Port-Based VLANs > Device1 VLAN 2 verification",
+  "source_note": "Vendor-authored English CHM hosted by distributor Marvel. The sample does not identify an individual switch or the running build. Spacing normalized from HTML.",
+  "expected_record_count": 2,
+  "expected_fields": [
+    "VLAN_ID",
+    "VLAN_NAME",
+    "STATUS",
+    "TYPE",
+    "PORTS"
+  ],
+  "expected_record_index": 1,
+  "expected_values": {
+    "VLAN_ID": "2",
+    "VLAN_NAME": "VLAN0002",
+    "TYPE": "static",
+    "STATUS": "Untagged",
+    "PORTS": "gi0/1"
+  },
+  "expected_template": "maipu_mypower_v9_show_vlan.textfsm"
+}

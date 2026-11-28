@@ -1,0 +1,7 @@
+<Sysname> display bgp routing-table ipv4 vpn-instance vpn1
+
+ Total number of routes: 1
+
+     Network            NextHop         MED        LocPrf     PrefVal Path/Ogn
+
+*  i 10.10.10.10/32     3.3.3.3         0          100        100     i

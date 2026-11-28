@@ -1,0 +1,30 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/d_202504/2410917_294551_0.htm",
+  "vendor": "H3C",
+  "platform": "h3c_comware",
+  "model_family": "RA5300/5300-X/5300-AC",
+  "command": "display bgp routing-table ipv4 vpn-instance vpn1",
+  "source_note": "The fixture retains the heading and sole route of the first named VPN example. H3C lists CMW710 software for the RA5300 R7752 family. The command output does not report a running build.",
+  "source_title": "H3C RA5300[5300-X][5300-AC] Routers Command Reference, MPLS L3VPN",
+  "source_section": "bestroute same-rd, first display bgp routing-table ipv4 vpn-instance vpn1 example",
+  "documentation_release": "R7752-6W100",
+  "platform_version": "V7",
+  "platform_version_evidence_url": "https://www.h3c.com/en/support/resource_center/en/routers/catalog/5g_ipran/5g_ipran/Default.htm?category=917257",
+  "software_version": "unknown",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "FLAGS",
+    "NETWORK",
+    "NEXT_HOP",
+    "ATTRIBUTES"
+  ],
+  "expected_template": "h3c_comware_v7_display_bgp_routing_table_ipv4.textfsm",
+  "expected_values": {
+    "FLAGS": "*  i",
+    "NETWORK": "10.10.10.10/32",
+    "NEXT_HOP": "3.3.3.3",
+    "ATTRIBUTES": "0          100        0       i"
+  },
+  "parser_platform": "h3c_comware_v7"
+}

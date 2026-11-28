@@ -1,0 +1,11 @@
+<Sysname> display memory
+
+Memory statistics are measured in KB:
+
+Slot 1:
+
+         Total      Used      Free    Shared   Buffers    Cached   FreeRatio
+
+Mem:    8090436   1633592   6456844        0      3672    187888       79.8%
+
+-/+ Buffers/Cache:   1442032   6648404

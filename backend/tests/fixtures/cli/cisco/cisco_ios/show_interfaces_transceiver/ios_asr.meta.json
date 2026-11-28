@@ -5,5 +5,21 @@
   "platform": "IOS/IOS-XE",
   "model_family": "Cisco routers and Catalyst platforms",
   "command": "show interfaces transceiver",
-  "source_note": "Official Cisco interface command reference transceiver example."
+  "source_note": "Official Cisco IOS interface command reference output. The source is a cross-platform command reference and does not establish a specific installed software build.",
+  "source_title": "Cisco IOS Interface and Hardware Component Command Reference",
+  "source_section": "show interfaces transceiver > Examples",
+  "platform_version": "unknown",
+  "software_version": "unknown",
+  "expected_record_count": 3,
+  "expected_fields": [
+    "INTERFACE",
+    "TEMPERATURE",
+    "VOLTAGE",
+    "CURRENT",
+    "TX_POWER",
+    "RX_POWER"
+  ],
+  "expected_template": "cisco_ios_show_interfaces_transceiver.textfsm",
+  "expected_template_prefix": "cisco_ios_",
+  "parser_platform": "cisco_ios"
 }

@@ -1,0 +1,29 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/Support/Resource_Center/EN/Routers/Catalog/SR6602-I%5BIE%5D/SR6602-I%5BIE%5D/Technical_Documents/Configure___Deploy/Configuration_Guides/H3C_CG-25235/11/202503/2372497_294551_0.htm",
+  "vendor": "H3C",
+  "platform": "Comware9",
+  "model_family": "SR6602-I/IE",
+  "command": "display bgp routing-table ipv4 vpn-instance vpn1",
+  "source_note": "The fixture retains the heading and sole route of the first named VPN example. The guide establishes the V9 documentation scope. The command output does not report a running build.",
+  "source_title": "H3C SR6602-I[IE] Configuration Guides – MPLS L3VPN configuration",
+  "source_section": "First display bgp routing-table ipv4 vpn-instance vpn1 example, immediately before the VPNv4 table comparison",
+  "documentation_release": "R9141-6W100",
+  "platform_version": "V9",
+  "software_version": "unknown",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "FLAGS",
+    "NETWORK",
+    "NEXT_HOP",
+    "ATTRIBUTES"
+  ],
+  "expected_template": "h3c_comware_v9_display_bgp_routing_table_ipv4.textfsm",
+  "expected_values": {
+    "FLAGS": "*  i",
+    "NETWORK": "10.10.10.10/32",
+    "NEXT_HOP": "3.3.3.3",
+    "ATTRIBUTES": "0          100        100     i"
+  },
+  "parser_platform": "h3c_comware_v9"
+}

@@ -1,0 +1,38 @@
+{
+  "vendor": "Cisco",
+  "platform": "cisco_ios",
+  "parser_platform": "cisco_ios",
+  "software_family": "IOS XE",
+  "platform_version": "17.x",
+  "software_version": "unknown",
+  "model_family": "Catalyst 9300",
+  "command": "show spanning-tree",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-18/command_reference/b_1718_9300_cr.pdf",
+  "source_title": "Command Reference, Cisco IOS XE 17.18.x (Catalyst 9300 Switches)",
+  "source_section": "show spanning-tree > summary of interface information > printed page 1003",
+  "source_note": "The document targets IOS XE 17.18.x. Excerpted the VLAN header and one forwarding and one blocking port row; the sample does not identify the exact running build.",
+  "expected_record_count": 2,
+  "expected_fields": [
+    "VLAN_ID",
+    "INTERFACE",
+    "ROLE",
+    "STATUS",
+    "COST",
+    "PORT_PRIORITY",
+    "PORT_ID",
+    "TYPE"
+  ],
+  "expected_record_index": 1,
+  "expected_values": {
+    "VLAN_ID": "1",
+    "INTERFACE": "FiF2/0/17",
+    "ROLE": "Back",
+    "STATUS": "BLK",
+    "COST": "2000",
+    "PORT_PRIORITY": "128",
+    "PORT_ID": "185",
+    "TYPE": "P2p"
+  },
+  "expected_template": "cisco_ios_show_spanning-tree.textfsm"
+}

@@ -1,0 +1,32 @@
+{
+  "vendor": "Ruijie",
+  "platform": "ruijie_rgos",
+  "parser_platform": "ruijie_rgos_v12",
+  "software_family": "RGOS",
+  "platform_version": "V12",
+  "software_version": "S5750X_RGOS 12.6(4)B1002, Release(13132006)",
+  "model": "RG-S5750C-48GT4XS-X",
+  "model_family": "RG-S5750-X",
+  "documentation_release": "RG-S6120/S6100 command reference for 12.6(4)B0103",
+  "command": "show version detail",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www-file.ruijie.com.cn/Fu/Article/f95e9404-9272-4bb1-9869-39e99a11812a/v0/%E5%AE%98%E7%BD%91%E5%8F%91%E5%B8%83/HTML/01-%E5%9F%BA%E7%A1%80%E9%85%8D%E7%BD%AE/03-%E5%9F%BA%E7%A1%80%E7%AE%A1%E7%90%86%E5%91%BD%E4%BB%A4.html",
+  "source_title": "锐捷 RG-S6120、RG-S6100 系列交换机 RGOS 12.6(4)B0103 命令参考：基础管理命令",
+  "source_section": "1.98 show version > show version detail",
+  "source_note": "The example itself identifies the S5750-X stack and B1002 runtime build. It is published in a guide for another switch series. Retains the version and first two slots; serial numbers are replaced.",
+  "expected_record_count": 2,
+  "expected_fields": [
+    "SOFTWARE_VERSION",
+    "SLOT",
+    "MODULE_NAME",
+    "MODULE_SN"
+  ],
+  "expected_record_index": 1,
+  "expected_values": {
+    "SOFTWARE_VERSION": "S5750X_RGOS 12.6(4)B1002, Release(13132006)",
+    "SLOT": "['1/0']",
+    "MODULE_NAME": "['S5750C-24GT8XS-X']",
+    "MODULE_SN": "['REDACTED-2']"
+  },
+  "expected_template": "ruijie_rgos_v12_show_version.textfsm"
+}

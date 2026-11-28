@@ -1,0 +1,29 @@
+{
+  "vendor": "Cisco",
+  "platform": "cisco_xe",
+  "parser_platform": "cisco_xe",
+  "software_family": "IOS XE",
+  "platform_version": "17.x",
+  "software_version": "unknown",
+  "model_family": "Catalyst 9300",
+  "command": "show vlan",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-18/command_reference/b_1718_9300_cr/vlan_commands.html",
+  "source_title": "Command Reference, Cisco IOS XE 17.18.x (Catalyst 9300 Switches) - VLAN Commands",
+  "source_section": "show vlan > Examples > output from show vlan (printed page 17; web section lines 623-672)",
+  "source_note": "Exact official show vlan output example, including the VLAN and VLAN Type tables. The source specifies IOS XE 17.18.x/Catalyst 9300 documentation but not the running build used to produce the output.",
+  "expected_record_count": 8,
+  "expected_fields": [
+    "VLAN_ID",
+    "VLAN_NAME",
+    "STATUS",
+    "INTERFACES"
+  ],
+  "expected_values": {
+    "VLAN_ID": "1005",
+    "VLAN_NAME": "trnet-default",
+    "STATUS": "act/unsup"
+  },
+  "expected_record_index": 7,
+  "expected_template": "cisco_ios_show_vlan.textfsm"
+}

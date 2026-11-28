@@ -1,0 +1,6 @@
+<Sysname> display interface loopback 0
+
+LoopBack0
+Current state: UP
+Line protocol state: UP(spoofing)
+Description: LoopBack0 Interface

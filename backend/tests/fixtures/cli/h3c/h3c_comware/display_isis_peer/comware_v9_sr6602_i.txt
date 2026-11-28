@@ -1,0 +1,3 @@
+System ID: 0000.0000.0001
+Interface: XGE0/0/6                   Circuit Id: 0000.0000.0001.01
+State: Up     HoldTime: 27s       Type: L1(L1L2)     PRI: 64

@@ -3,7 +3,34 @@
   "source_url": "https://www.h3c.com/en/d_202212/1747761_294551_0.htm",
   "vendor": "H3C",
   "platform": "Comware7",
-  "model_family": "H3C switches",
+  "model_family": "S9820-8M/S6880",
   "command": "display environment",
-  "source_note": "Official temperature sensor output and field definitions."
+  "source_note": "CLI command: display environment. Official temperature-sensor output and field definitions for the documented S9820-8M/S6880 family. The cited release is the command-reference/document release; the sample does not itself confirm the running device software build.",
+  "source_title": "Support - 03-Hardware resource management commands - H3C",
+  "source_section": "display environment > Examples",
+  "documentation_release": "R1116Pxx",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "SLOT",
+    "SENSOR",
+    "SENSOR_ID",
+    "TEMPERATURE",
+    "LOWER",
+    "WARNING",
+    "ALARM"
+  ],
+  "expected_values": {
+    "SLOT": "1",
+    "SENSOR": "hotspot",
+    "TEMPERATURE": "30",
+    "LOWER": "0",
+    "WARNING": "65",
+    "ALARM": "70"
+  },
+  "expected_template_prefix": "h3c_comware_v7_",
+  "expected_template": "h3c_comware_v7_display_environment.textfsm",
+  "expected_record_index": 0,
+  "parser_platform": "h3c_comware_v7"
 }

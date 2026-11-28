@@ -7,7 +7,30 @@
   "source_type": "official_vendor_documentation",
   "source_url": "https://www.h3c.com/en/d_202212/1738057_294551_0.htm",
   "source_title": "03-Hardware resource management commands - H3C",
-  "source_section": "display memory",
+  "source_section": "display memory > Examples",
   "expected_record_count": 1,
-  "expected_fields": ["MEMORY_CLASS", "TOTAL_KB", "USED_KB", "FREE_KB", "SHARED_KB", "BUFFERS_KB", "CACHED_KB", "FREE_RATIO"]
+  "expected_fields": [
+    "MEMORY_CLASS",
+    "TOTAL_MEMORY_MB",
+    "USED_MEMORY_MB",
+    "FREE_MEMORY_MB",
+    "SHARED_MEMORY_MB",
+    "BUFFERS_MEMORY_MB",
+    "CACHED_MEMORY_MB",
+    "FREE_RATIO"
+  ],
+  "documentation_release": "unknown",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "model_family": "Not stated in the official sample",
+  "expected_values": {
+    "MEMORY_CLASS": "Mem",
+    "FREE_RATIO": "69.5%",
+    "TOTAL_MEMORY_MB": "496.07 MB"
+  },
+  "expected_template_prefix": "h3c_comware_v7_",
+  "source_note": "CLI command: display memory. Official hardware-resource command reference example. The output contains memory counters but does not identify a product model or running software build.",
+  "expected_template": "h3c_comware_v7_display_memory.textfsm",
+  "expected_record_index": 0,
+  "parser_platform": "h3c_comware_v7"
 }

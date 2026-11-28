@@ -1,0 +1,6 @@
+[DeviceD] display stp brief
+MSTID Port Role STP State Protection
+0 GigabitEthernet1/0/1 ROOT FORWARDING NONE
+0 GigabitEthernet1/0/2 ALTE DISCARDING NONE
+1 GigabitEthernet1/0/1 ALTE DISCARDING NONE
+1 GigabitEthernet1/0/2 ROOT FORWARDING NONE

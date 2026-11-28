@@ -3,7 +3,28 @@
   "source_url": "https://www.h3c.com/en/d_202212/1747761_294551_0.htm",
   "vendor": "H3C",
   "platform": "Comware7",
-  "model_family": "H3C switches",
+  "model_family": "S9820-8M/S6880",
   "command": "display fan",
-  "source_note": "Official fan tray status output."
+  "source_note": "CLI command: display fan. Official fan-tray status output for the documented S9820-8M/S6880 family. The cited release is the command-reference/document release; the sample does not itself confirm the running device software build.",
+  "source_title": "Support - 03-Hardware resource management commands - H3C",
+  "source_section": "display fan > Examples",
+  "documentation_release": "R1116Pxx",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "expected_record_count": 2,
+  "expected_fields": [
+    "SLOT",
+    "DEVICE_ID",
+    "STATUS",
+    "AIRFLOW"
+  ],
+  "expected_template_prefix": "h3c_comware_v7_",
+  "expected_template": "h3c_comware_v7_display_fan.textfsm",
+  "expected_record_index": 0,
+  "expected_values": {
+    "DEVICE_ID": "1",
+    "STATUS": "Normal",
+    "AIRFLOW": "Fan-Panel-Exhaust"
+  },
+  "parser_platform": "h3c_comware_v7"
 }

@@ -5,5 +5,22 @@
   "platform": "VRP8",
   "model_family": "NE08E/NE05E",
   "command": "display mac-address static vlan 2",
-  "source_note": "Official extended MAC table example with PEVLAN, CEVLAN, and LSP/LSR-ID columns."
+  "source_note": "Official NE08E/NE05E MAC configuration example with PEVLAN, CEVLAN, and LSP/LSR-ID fields; exact build is not stated.",
+  "source_title": "MAC Configuration - Huawei",
+  "source_section": "display mac-address static vlan 2 > extended MAC entry output",
+  "platform_version": "V8",
+  "software_version": "unknown",
+  "expected_record_count": 3,
+  "expected_fields": [
+    "MAC_ADDRESS",
+    "VLAN_VSI",
+    "PEVLAN",
+    "CEVLAN",
+    "LEARNED_FROM",
+    "TYPE",
+    "LSP_LSR_ID"
+  ],
+  "expected_template": "huawei_vrpv8_display_mac_address.textfsm",
+  "expected_template_prefix": "huawei_vrpv8_",
+  "parser_platform": "huawei_vrp8"
 }

@@ -1,0 +1,3 @@
+MST 0 vlans map : ALL
+Interface      Role Sts Cost      Prio     OperEdge Type
+Fo1/3/3          Desg BLK 500        128      False    P2p

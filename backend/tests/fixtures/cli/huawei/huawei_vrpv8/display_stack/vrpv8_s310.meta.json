@@ -5,5 +5,20 @@
   "platform": "VRP8",
   "model_family": "S220/S310/S530",
   "command": "display stack",
-  "source_note": "Official stack verification example showing Master, Standby, and Slave members."
+  "source_note": "Official S220/S310/S530 stack verification example; exact software build is not stated.",
+  "source_title": "Checking Whether a Stack Is Set Up Successfully - Huawei",
+  "source_section": "Procedure > Verify the stack setup > display stack",
+  "platform_version": "V8",
+  "software_version": "unknown",
+  "expected_record_count": 3,
+  "expected_fields": [
+    "MEMBER_ID",
+    "ROLE",
+    "MAC_ADDRESS",
+    "PRIORITY",
+    "DEVICE_TYPE"
+  ],
+  "expected_template": "huawei_vrpv8_display_stack.textfsm",
+  "expected_template_prefix": "huawei_vrpv8_",
+  "parser_platform": "huawei_vrp8"
 }

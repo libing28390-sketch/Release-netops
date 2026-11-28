@@ -1,0 +1,63 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/cn/d_202508/2612317_30005_0.htm",
+  "vendor": "H3C",
+  "platform": "Comware9",
+  "model_family": "H3C S9825 & S9855系列交换机",
+  "model": "S9825/S9855",
+  "command": "display stp brief",
+  "source_title": "08-生成树配置-新华三集团-H3C",
+  "source_document_title": "H3C S9825 & S9855系列交换机 配置指导-R932x-6W102",
+  "source_section": "04-二层技术-以太网交换配置指导 > 08-生成树配置 > 5 验证配置 > 查看 Device D 上生成树的简要信息",
+  "source_note": "Official S9825/S9855 guide example. The H3C S9825 document directory lists this R932x guide and the Comware V9 security hardening guide; the R932x guide also states Comware V9 support. R932x-6W102 is the documentation release, not a confirmed running device build.",
+  "version_evidence_url": "https://www.h3c.com/cn/Service/Document_Software/Document_Center/Switches/Catalog/S9800/S9825/",
+  "version_evidence_title": "S9825系列-新华三集团-H3C",
+  "version_evidence_section": "Document catalog > Configuration Guides and Security Hardening Guide (Comware V9)",
+  "same_guide_v9_evidence_url": "https://www.h3c.com/cn/d_202508/2612466_30005_0.htm",
+  "same_guide_v9_evidence_title": "03-容器和开放性应用公共配置-新华三集团-H3C",
+  "same_guide_v9_evidence_section": "18-开放性应用管理配置指导 > Comware V9 support",
+  "documentation_release": "R932x-6W102",
+  "platform_version": "V9",
+  "software_version": "unknown",
+  "expected_record_count": 6,
+  "expected_fields": [
+    "INSTANCE",
+    "INTERFACE",
+    "ROLE",
+    "STATUS",
+    "PROTECTION"
+  ],
+  "expected_template_prefix": "h3c_comware_v9_",
+  "expected_template": "h3c_comware_v9_display_stp_brief.textfsm",
+  "expected_record_index": 0,
+  "expected_values": {
+    "INSTANCE": "20",
+    "INTERFACE": "HundredGigE1/0/1",
+    "ROLE": "ALTE",
+    "STATUS": "DISCARDING",
+    "PROTECTION": "NONE"
+  },
+  "expected_records": [
+    {
+      "index": 1,
+      "values": {
+        "INSTANCE": "20",
+        "INTERFACE": "HundredGigE1/0/2",
+        "ROLE": "ROOT",
+        "STATUS": "FORWARDING",
+        "PROTECTION": "NONE"
+      }
+    },
+    {
+      "index": 5,
+      "values": {
+        "INSTANCE": "40",
+        "INTERFACE": "HundredGigE1/0/3",
+        "ROLE": "ROOT",
+        "STATUS": "FORWARDING",
+        "PROTECTION": "NONE"
+      }
+    }
+  ],
+  "parser_platform": "h3c_comware_v9"
+}

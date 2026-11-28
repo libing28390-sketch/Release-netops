@@ -20,17 +20,7 @@ Header
   ^. -> Next
 
 TableNew
-  ^\s*${NEIGHBOR}\s+${LOCAL_INTERFACE}\s+${NEIGHBOR_INTERFACE}\s+${CAPABILITIES}\s+${HOLD_TIME}\s*$$ -> CheckWrap
-  ^\s*[A-Za-z0-9\-_]+\s*$$ -> Next
-  ^\s*$$
-  ^. -> Next
-
-CheckWrap
-  ^\s*[A-Za-z0-9\-_]+\s*$$ -> Record TableNew
-  ^\s*${NEIGHBOR}\s+${LOCAL_INTERFACE}\s+${NEIGHBOR_INTERFACE}\s+${CAPABILITIES}\s+${HOLD_TIME}\s*$$ -> Continue.Record
-  ^\s*${NEIGHBOR}\s+${LOCAL_INTERFACE}\s+${NEIGHBOR_INTERFACE}\s+${CAPABILITIES}\s+${HOLD_TIME}\s*$$ -> CheckWrap
-  ^\s*$$ -> Record TableNew
-  ^. -> Record TableNew
+  ^\s*${NEIGHBOR}\s+${LOCAL_INTERFACE}\s+${NEIGHBOR_INTERFACE}\s+${CAPABILITIES}\s+${HOLD_TIME}\s*$$ -> Record
 
 TableOld
   ^\s*${NEIGHBOR}\s+${LOCAL_INTERFACE}\s+${HOLD_TIME}\s+${CAPABILITIES}\s+${NEIGHBOR_INTERFACE}\s*$$ -> Record

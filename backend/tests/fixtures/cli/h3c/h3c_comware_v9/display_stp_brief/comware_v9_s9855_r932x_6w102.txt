@@ -1,0 +1,9 @@
+[DeviceD] display stp brief
+
+VLAN ID      Port                 Role  STP State     Protection
+20           HundredGigE1/0/1      ALTE  DISCARDING    NONE
+20           HundredGigE1/0/2      ROOT  FORWARDING    NONE
+20           HundredGigE1/0/3      ALTE  DISCARDING    NONE
+30           HundredGigE1/0/1      ROOT  FORWARDING    NONE
+30           HundredGigE1/0/2      ALTE  DISCARDING    NONE
+40           HundredGigE1/0/3      ROOT  FORWARDING    NONE

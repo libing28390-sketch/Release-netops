@@ -1,0 +1,30 @@
+{
+  "vendor": "Ruijie",
+  "platform": "ruijie_rgos",
+  "parser_platform": "ruijie_rgos_v12",
+  "software_family": "RGOS",
+  "platform_version": "V12",
+  "software_version": "unknown",
+  "model_family": "RG-S6120 / RG-S6100",
+  "documentation_release": "12.6(4)B0103",
+  "source_type": "official_vendor_documentation",
+  "command": "show vlan",
+  "source_url": "https://www-file.ruijie.com.cn/Fu/Article/f95e9404-9272-4bb1-9869-39e99a11812a/v0/%E5%AE%98%E7%BD%91%E5%8F%91%E5%B8%83/HTML/05-%E4%BB%A5%E5%A4%AA%E7%BD%91%E4%BA%A4%E6%8D%A2/04-VLAN%E5%91%BD%E4%BB%A4.html",
+  "source_title": "锐捷 RG-S6120、RG-S6100 系列交换机 RGOS 12.6(4)B0103 命令参考：VLAN 命令",
+  "source_section": "1.30 show vlan > 查看所有 VLAN 的配置及成员端口信息",
+  "source_note": "Abridged to the first VLAN and its first continuation line. B0103 identifies the document target release. The example does not identify the exact switch model or running build.",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "VLAN_ID",
+    "VLAN_NAME",
+    "STATUS",
+    "PORTS"
+  ],
+  "expected_values": {
+    "VLAN_ID": "1",
+    "VLAN_NAME": "VLAN0001",
+    "STATUS": "STATIC",
+    "PORTS": "Gi0/1, Gi0/2, Gi0/4, Gi0/5, Gi0/6, Gi0/7, Gi0/8, Gi0/9"
+  },
+  "expected_template": "ruijie_rgos_v12_show_vlan.textfsm"
+}

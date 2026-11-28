@@ -1,0 +1,15 @@
+Value Required SYSTEM_ID (\S+)
+Value Required INTERFACE (\S+)
+Value CIRCUIT_ID (\S+)
+Value STATE (\S+)
+Value HOLDTIME (\S+)
+Value LEVEL (\S+)
+Value PRIORITY (\S+)
+
+Start
+  ^\s*System\s+[Ii][Dd]: -> Continue.Clear
+  ^\s*System\s+[Ii][Dd]:\s+${SYSTEM_ID}\s*$$
+  ^\s*Interface:\s+${INTERFACE}\s+Circuit\s+[Ii]d:\s+${CIRCUIT_ID}\s*$$
+  ^\s*State:\s+${STATE}\s+Hold[Tt]ime:\s+${HOLDTIME}\s+Type:\s+${LEVEL}\s+PRI:\s+${PRIORITY}\s*$$ -> Record
+
+EOF

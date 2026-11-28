@@ -1,5 +1,5 @@
 import { DataTable } from '../components/DataTable';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FileCode, Plus, Search, RefreshCw, Pencil, Trash2, X, Save,
   CheckCircle2, AlertCircle, Loader2, PlayCircle,
@@ -59,6 +59,20 @@ interface TestResult {
   fields: string[];
 }
 
+interface TemplatePermissions {
+  can_create: boolean;
+  can_edit: boolean;
+  can_test: boolean;
+  can_delete: boolean;
+}
+
+const NO_TEMPLATE_PERMISSIONS: TemplatePermissions = {
+  can_create: false,
+  can_edit: false,
+  can_test: false,
+  can_delete: false,
+};
+
 const TEXTFSM_EXCLUDED_ACTION_CODES = new Set(['get_running_config', 'get_startup_config']);
 
 const getTemplateDisplayMeta = (template: Template) => {
@@ -84,19 +98,65 @@ Start
   ^CPU:\\s+\${EXAMPLE_FIELD}% -> Record
 `;
 
+const readResponseJson = async (response: Response): Promise<Record<string, any>> => {
+  try {
+    const payload: unknown = await response.json();
+    return payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload as Record<string, any>
+      : {};
+  } catch {
+    return {};
+  }
+};
+
+const readApiMessage = (value: unknown): string | null => {
+  if (typeof value === 'string') return value.trim() || null;
+  if (Array.isArray(value)) {
+    const messages = value.map(readApiMessage).filter((message): message is string => !!message);
+    return messages.length ? messages.join('；') : null;
+  }
+  if (value && typeof value === 'object') {
+    const object = value as Record<string, unknown>;
+    for (const key of ['message', 'msg', 'detail', 'error', 'reason']) {
+      const message = readApiMessage(object[key]);
+      if (message) return message;
+    }
+  }
+  return null;
+};
+
+const getApiErrorMessage = (
+  payload: Record<string, any>,
+  status: number,
+  isZh: boolean,
+  fallback: string,
+): string => (
+  readApiMessage(payload.detail)
+  || readApiMessage(payload.message)
+  || readApiMessage(payload.error)
+  || (status === 401 ? (isZh ? '登录状态已失效，请重新登录' : 'Your session has expired. Please sign in again.') : '')
+  || (status === 403 ? (isZh ? '没有权限执行此操作' : 'You do not have permission to perform this action.') : '')
+  || (status === 409 ? (isZh ? '模板已发生变化，请重新打开后再保存' : 'The template changed. Reopen it before saving again.') : '')
+  || fallback
+);
+
 const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
   const isZh = language === 'zh';
 
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [templatePermissions, setTemplatePermissions] = useState<TemplatePermissions>(NO_TEMPLATE_PERMISSIONS);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [vendorFilter, setVendorFilter] = useState('');
   const [platformFamilyFilter, setPlatformFamilyFilter] = useState('');
   const [versionFilter, setVersionFilter] = useState('');
   const [sourceFilter, setSourceFilter] = useState<'' | 'builtin' | 'custom'>('');
+  const [listError, setListError] = useState('');
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
+  const [editingHash, setEditingHash] = useState<string | null>(null);
+  const [editingSource, setEditingSource] = useState<Template['source'] | null>(null);
   const [editorVendor, setEditorVendor] = useState('cisco');
   const [editorPlatformFamily, setEditorPlatformFamily] = useState('cisco_ios');
   const [editorVersion, setEditorVersion] = useState('common');
@@ -105,6 +165,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
   const [actionOptions, setActionOptions] = useState<ActionOption[]>([]);
   const [actionOptionsLoading, setActionOptionsLoading] = useState(false);
   const [editorContent, setEditorContent] = useState(DEFAULT_TEMPLATE_CONTENT);
+  const [actionOptionsError, setActionOptionsError] = useState('');
   const [saving, setSaving] = useState(false);
 
   const [sampleOutput, setSampleOutput] = useState('');
@@ -115,6 +176,9 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
 
   const [confirmDelete, setConfirmDelete] = useState<Template | null>(null);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const listRequestId = useRef(0);
+  const editorRequestId = useRef(0);
+  const testRequestId = useRef(0);
 
   const showToast = (type: 'success' | 'error', text: string) => {
     setToast({ type, text });
@@ -130,8 +194,17 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
     return token ? { Authorization: `Bearer ${token}` } : {};
   }, []);
 
+  const invalidateTestPreview = () => {
+    testRequestId.current += 1;
+    setTestResult(null);
+    setTestError('');
+    setTesting(false);
+  };
+
   const fetchTemplates = useCallback(async () => {
+    const requestId = ++listRequestId.current;
     setLoading(true);
+    setListError('');
     try {
       const params = new URLSearchParams();
       if (vendorFilter) params.set('vendor', vendorFilter);
@@ -143,16 +216,40 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
       params.set('page_size', String(pageSize));
       
       const res = await fetch(`/api/textfsm/templates?${params.toString()}`, { headers: authHeaders });
-      if (res.ok) {
-        const json = await res.json();
-        setTemplates(json?.data?.items || []);
-        setTotal(json?.data?.total || 0);
+      const json = await readResponseJson(res);
+      if (!res.ok || json.success === false) {
+        if (requestId === listRequestId.current) {
+          setListError(getApiErrorMessage(json, res.status, isZh, isZh ? '加载模板失败' : 'Failed to load templates'));
+        }
+      } else if (requestId === listRequestId.current) {
+        setTemplates(Array.isArray(json?.data?.items) ? json.data.items : []);
+        setTotal(Number(json?.data?.total) || 0);
+        const permissions = json?.data?.permissions;
+        setTemplatePermissions(permissions && typeof permissions === 'object'
+          ? {
+              can_create: permissions.can_create === true,
+              can_edit: permissions.can_edit === true,
+              can_test: permissions.can_test === true,
+              can_delete: permissions.can_delete === true,
+            }
+          : NO_TEMPLATE_PERMISSIONS);
       }
-    } catch (e) { /* noop */ }
-    setLoading(false);
-  }, [vendorFilter, platformFamilyFilter, versionFilter, search, sourceFilter, page, pageSize, authHeaders]);
+    } catch {
+      if (requestId === listRequestId.current) {
+        setListError(isZh ? '网络错误，无法加载模板' : 'Network error while loading templates');
+      }
+    } finally {
+      if (requestId === listRequestId.current) setLoading(false);
+    }
+  }, [vendorFilter, platformFamilyFilter, versionFilter, search, sourceFilter, page, pageSize, authHeaders, isZh]);
 
-  useEffect(() => { fetchTemplates(); }, [fetchTemplates]);
+  const fetchTemplatesRef = useRef(fetchTemplates);
+  fetchTemplatesRef.current = fetchTemplates;
+
+  useEffect(() => {
+    void fetchTemplates();
+    return () => { listRequestId.current += 1; };
+  }, [fetchTemplates]);
 
   // Reset page on filter change
   useEffect(() => {
@@ -229,33 +326,53 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
   useEffect(() => {
     if (!editorOpen || !editorPlatform) {
       setActionOptions([]);
+      setActionOptionsError('');
       setActionOptionsLoading(false);
       return undefined;
     }
     let active = true;
     setActionOptionsLoading(true);
+    setActionOptions([]);
+    setActionOptionsError('');
     const params = new URLSearchParams({ platform: editorPlatform });
-    fetch(`/api/textfsm/action-options?${params.toString()}`, { headers: authHeaders })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((payload) => {
-        if (active) setActionOptions(payload?.data || []);
-      })
-      .catch(() => {
-        if (active) setActionOptions([]);
-      })
-      .finally(() => {
+    void (async () => {
+      try {
+        const response = await fetch(`/api/textfsm/action-options?${params.toString()}`, { headers: authHeaders });
+        const payload = await readResponseJson(response);
+        if (!response.ok || payload.success === false) {
+          throw new Error(getApiErrorMessage(payload, response.status, isZh, isZh ? '加载动作选项失败' : 'Failed to load action options'));
+        }
+        if (active) setActionOptions(Array.isArray(payload?.data) ? payload.data : []);
+      } catch (error) {
+        if (active) {
+          setActionOptions([]);
+          setActionOptionsError(error instanceof Error ? error.message : (isZh ? '网络错误' : 'Network error'));
+        }
+      } finally {
         if (active) setActionOptionsLoading(false);
-      });
+      }
+    })();
     return () => {
       active = false;
     };
-  }, [authHeaders, editorOpen, editorPlatform]);
+  }, [authHeaders, editorOpen, editorPlatform, isZh]);
 
-  useAlertOverlayDismiss(editorOpen, () => setEditorOpen(false));
+  const closeEditor = () => {
+    editorRequestId.current += 1;
+    invalidateTestPreview();
+    setEditorOpen(false);
+  };
+
+  useAlertOverlayDismiss(editorOpen, closeEditor);
   useAlertOverlayDismiss(!!confirmDelete, () => setConfirmDelete(null));
 
   const openNewEditor = () => {
+    if (!templatePermissions.can_create) return;
+    editorRequestId.current += 1;
+    invalidateTestPreview();
     setEditingTemplate(null);
+    setEditingHash(null);
+    setEditingSource(null);
     setEditorVendor('cisco');
     setEditorPlatformFamily('');
     setEditorVersion('');
@@ -264,18 +381,26 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
     setEditorContent(DEFAULT_TEMPLATE_CONTENT);
     setSampleOutput('');
     setDefaultSample('');
-    setTestResult(null);
-    setTestError('');
     setEditorOpen(true);
   };
 
   const openEditor = async (tpl: Template) => {
+    if (!templatePermissions.can_edit) return;
+    const requestId = ++editorRequestId.current;
+    invalidateTestPreview();
     try {
       const res = await fetch(`/api/textfsm/templates/${tpl.filename}`, { headers: authHeaders });
-      if (!res.ok) throw new Error('Fetch failed');
-      const json = await res.json();
+      const json = await readResponseJson(res);
+      if (!res.ok || json.success === false) {
+        throw new Error(getApiErrorMessage(json, res.status, isZh, isZh ? '加载模板失败' : 'Failed to load template'));
+      }
+      if (requestId !== editorRequestId.current) return;
       const selection = getEditorSelection(tpl.platform, tpl.version || tpl.template_variant);
       setEditingTemplate(tpl);
+      setEditingHash(typeof json?.data?.content_hash === 'string' ? json.data.content_hash : null);
+      setEditingSource(json?.data?.source === 'custom' || json?.data?.source === 'builtin'
+        ? json.data.source
+        : tpl.source);
       setEditorVendor(selection.vendor);
       setEditorPlatformFamily(selection.platformFamily);
       setEditorVersion(selection.version);
@@ -284,11 +409,10 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
       setEditorContent(json?.data?.content || '');
       setSampleOutput('');
       setDefaultSample(json?.data?.default_sample || '');
-      setTestResult(null);
-      setTestError('');
       setEditorOpen(true);
-    } catch {
-      showToast('error', isZh ? '加载模板失败' : 'Failed to load template');
+    } catch (error) {
+      if (requestId !== editorRequestId.current) return;
+      showToast('error', error instanceof Error ? error.message : (isZh ? '加载模板失败' : 'Failed to load template'));
     }
   };
 
@@ -299,6 +423,11 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
   };
 
   const handleSave = async () => {
+    const requestId = editorRequestId.current;
+    if (editingTemplate ? !templatePermissions.can_edit : !templatePermissions.can_create) {
+      showToast('error', isZh ? '没有权限保存模板' : 'You do not have permission to save templates');
+      return;
+    }
     if (!editorContent.trim()) {
       showToast('error', isZh ? '模板内容不能为空' : 'Content cannot be empty');
       return;
@@ -308,7 +437,6 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
       const filename = editingTemplate?.filename || generateFilename();
       if (!filename) {
         showToast('error', isZh ? '请填写厂商、平台、版本和命令' : 'Vendor, platform, version and command required');
-        setSaving(false);
         return;
       }
 
@@ -317,7 +445,12 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
         ? `/api/textfsm/templates/${editingTemplate.filename}`
         : '/api/textfsm/templates';
       const body = editingTemplate
-        ? { content: editorContent, action_code: editorActionCode || null }
+        ? {
+            content: editorContent,
+            action_code: editorActionCode || null,
+            expected_hash: editingHash,
+            expected_source: editingSource || editingTemplate.source,
+          }
         : {
             platform: editorPlatform,
             platform_family: editorPlatformFamily,
@@ -332,25 +465,32 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
         headers: { ...authHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      const json = await res.json();
+      const json = await readResponseJson(res);
+      if (requestId !== editorRequestId.current) {
+        if (res.ok && json.success) await fetchTemplatesRef.current();
+        return;
+      }
       if (res.ok && json.success) {
         showToast('success', isZh ? '模板已保存' : 'Template saved');
-        setEditorOpen(false);
-        await fetchTemplates();
+        closeEditor();
+        await fetchTemplatesRef.current();
       } else {
-        showToast('error', json.detail || json.message || (isZh ? '保存失败' : 'Save failed'));
+        showToast('error', getApiErrorMessage(json, res.status, isZh, isZh ? '保存失败' : 'Save failed'));
       }
-    } catch (e) {
+    } catch {
       showToast('error', isZh ? '网络错误' : 'Network error');
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   const handleTest = async () => {
+    if (!templatePermissions.can_test) return;
     if (!editorContent.trim() || !sampleOutput.trim()) {
       setTestError(isZh ? '请提供模板内容和样本输出' : 'Template and sample required');
       return;
     }
+    const requestId = ++testRequestId.current;
     setTesting(true);
     setTestError('');
     setTestResult(null);
@@ -360,34 +500,37 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
         headers: { ...authHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: editorContent, sample_output: sampleOutput }),
       });
-      const json = await res.json();
+      const json = await readResponseJson(res);
+      if (requestId !== testRequestId.current) return;
       if (res.ok && json.success) {
         setTestResult(json.data);
         if (json.data.count === 0) {
           setTestError(json.message || (isZh ? '模板未匹配到任何记录' : 'No records matched'));
         }
       } else {
-        setTestError(json.message || (isZh ? '测试失败' : 'Test failed'));
+        setTestError(getApiErrorMessage(json, res.status, isZh, isZh ? '测试失败' : 'Test failed'));
       }
-    } catch (e) {
-      setTestError(isZh ? '网络错误' : 'Network error');
+    } catch {
+      if (requestId === testRequestId.current) setTestError(isZh ? '网络错误' : 'Network error');
+    } finally {
+      if (requestId === testRequestId.current) setTesting(false);
     }
-    setTesting(false);
   };
 
   const handleDelete = async (tpl: Template) => {
+    if (!templatePermissions.can_delete) return;
     try {
       const res = await fetch(`/api/textfsm/templates/${tpl.filename}`, {
         method: 'DELETE',
         headers: authHeaders,
       });
-      const json = await res.json();
+      const json = await readResponseJson(res);
       if (res.ok && json.success) {
         showToast('success', isZh ? '模板已删除' : 'Template deleted');
         setConfirmDelete(null);
-        await fetchTemplates();
+        await fetchTemplatesRef.current();
       } else {
-        showToast('error', json.detail || (isZh ? '删除失败' : 'Delete failed'));
+        showToast('error', getApiErrorMessage(json, res.status, isZh, isZh ? '删除失败' : 'Delete failed'));
       }
     } catch {
       showToast('error', isZh ? '网络错误' : 'Network error');
@@ -422,9 +565,11 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
       <ListToolbar
         className="py-1"
         leadingAction={(
-          <ActionButton icon={Plus} variant="primary" size="md" onClick={openNewEditor}>
-            {isZh ? '新建' : 'New'}
-          </ActionButton>
+          templatePermissions.can_create ? (
+            <ActionButton icon={Plus} variant="primary" size="md" onClick={openNewEditor}>
+              {isZh ? '新建' : 'New'}
+            </ActionButton>
+          ) : null
         )}
       >
         <div className="relative min-w-[220px] max-w-md flex-1">
@@ -531,7 +676,10 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
               {loading && (
                 <tr><td colSpan={9} className="text-center py-10 text-black/30"><Loader2 size={20} className="animate-spin inline-block" /></td></tr>
               )}
-              {!loading && templates.length === 0 && (
+              {!loading && listError && (
+                <tr><td colSpan={9} role="alert" className="text-center py-4 text-sm text-red-600">{listError}</td></tr>
+              )}
+              {!loading && !listError && templates.length === 0 && (
                 <tr><td colSpan={9} className="text-center py-10 text-black/30">{isZh ? '没有匹配的模板' : 'No templates found'}</td></tr>
               )}
                 {!loading && templates.map((tpl) => (
@@ -558,14 +706,16 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                   </td>
                   <TableActionCell className="w-28 whitespace-nowrap px-4 py-2.5 text-right">
                     <ActionIconGroup label={isZh ? '模板操作' : 'Template actions'} className="w-full">
-                      <ActionIconButton
-                        icon={Pencil}
-                        label={tpl.source === 'builtin'
-                          ? (isZh ? '编辑并创建自定义覆盖' : 'Edit and create a custom override')
-                          : (isZh ? '编辑' : 'Edit')}
-                        onClick={() => openEditor(tpl)}
-                      />
-                      {tpl.source === 'custom' && (
+                      {templatePermissions.can_edit && (
+                        <ActionIconButton
+                          icon={Pencil}
+                          label={tpl.source === 'builtin'
+                            ? (isZh ? '编辑并创建自定义覆盖' : 'Edit and create a custom override')
+                            : (isZh ? '编辑' : 'Edit')}
+                          onClick={() => openEditor(tpl)}
+                        />
+                      )}
+                      {tpl.source === 'custom' && templatePermissions.can_delete && (
                         <ActionIconButton
                           icon={Trash2}
                           label={isZh ? '删除' : 'Delete'}
@@ -612,7 +762,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                     <span className="font-mono text-[11px] text-black/40 ml-2">{editingTemplate.filename}</span>
                   )}
                 </h3>
-                <button onClick={() => setEditorOpen(false)} className="p-1 rounded hover:bg-black/5"><X size={16} /></button>
+                <button onClick={closeEditor} className="p-1 rounded hover:bg-black/5"><X size={16} /></button>
               </div>
 
               <div className="flex-1 overflow-y-auto p-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -722,6 +872,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                         </optgroup>
                       ))}
                     </select>
+                    {actionOptionsError && <div role="alert" className="mt-1.5 text-[10px] text-red-600">{actionOptionsError}</div>}
                     {editorActionCode && (
                       <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[10px] text-cyan-700/70">
                         <span className="shrink-0 text-black/35">{isZh ? '命令' : 'Command'}</span>
@@ -756,7 +907,10 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                     </label>
                     <textarea
                       value={editorContent}
-                      onChange={(e) => setEditorContent(e.target.value)}
+                      onChange={(e) => {
+                        invalidateTestPreview();
+                        setEditorContent(e.target.value);
+                      }}
                       className="flex-1 min-h-[280px] font-mono text-[12px] leading-5 p-3 rounded-lg border border-black/10 bg-white focus:outline-none focus:border-[#2563eb]"
                       spellCheck={false}
                     />
@@ -772,7 +926,10 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                           {isZh ? '系统内置参考回显样本' : 'Builtin Reference Example Output'}
                         </span>
                         <button
-                          onClick={() => setSampleOutput(defaultSample)}
+                          onClick={() => {
+                            invalidateTestPreview();
+                            setSampleOutput(defaultSample);
+                          }}
                           className="rounded bg-cyan-600 px-2 py-0.5 text-[9px] font-bold text-white hover:bg-cyan-700 transition-all"
                         >
                           {isZh ? '一键填充到测试框' : 'Use Reference'}
@@ -790,21 +947,26 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                     </label>
                     <textarea
                       value={sampleOutput}
-                      onChange={(e) => setSampleOutput(e.target.value)}
+                      onChange={(e) => {
+                        invalidateTestPreview();
+                        setSampleOutput(e.target.value);
+                      }}
                       placeholder={isZh ? '粘贴设备真实 CLI 输出...' : 'Paste real CLI output from device...'}
                       className="flex-1 min-h-[140px] font-mono text-[11px] leading-5 p-3 rounded-lg border border-black/10 bg-white focus:outline-none focus:border-[#2563eb]"
                       spellCheck={false}
                     />
                   </div>
 
-                  <button
-                    onClick={handleTest}
-                    disabled={testing}
-                    className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-semibold disabled:opacity-50"
-                  >
-                    {testing ? <Loader2 size={13} className="animate-spin" /> : <PlayCircle size={13} />}
-                    {isZh ? '测试解析' : 'Test Parse'}
-                  </button>
+                  {templatePermissions.can_test && (
+                    <button
+                      onClick={handleTest}
+                      disabled={testing}
+                      className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-semibold disabled:opacity-50"
+                    >
+                      {testing ? <Loader2 size={13} className="animate-spin" /> : <PlayCircle size={13} />}
+                      {isZh ? '测试解析' : 'Test Parse'}
+                    </button>
+                  )}
 
                   <div className="flex-1 flex flex-col min-h-0">
                     <label className="text-[11px] font-semibold text-black/50 uppercase tracking-wider mb-1">
@@ -839,14 +1001,14 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
 
               <div className="px-5 py-3 border-t border-black/5 bg-slate-50/50 flex justify-end gap-2">
                 <button
-                  onClick={() => setEditorOpen(false)}
+                  onClick={closeEditor}
                   className="px-4 py-2 rounded-lg text-xs font-semibold text-black/60 hover:bg-black/5"
                 >
                   {isZh ? '取消' : 'Cancel'}
                 </button>
                 <button
                   onClick={handleSave}
-                  disabled={saving}
+                  disabled={saving || (editingTemplate ? !templatePermissions.can_edit : !templatePermissions.can_create)}
                   className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#2563eb] text-white text-xs font-semibold hover:bg-[#1d4ed8] disabled:opacity-50"
                 >
                   {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
@@ -860,7 +1022,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
 
       {/* Delete Confirm */}
       <AnimatePresence>
-        {confirmDelete && (
+        {confirmDelete && templatePermissions.can_delete && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}

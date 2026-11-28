@@ -641,6 +641,24 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
                   : 'show ip bgp summary',
         },
         {
+          icon: '🧭',
+          label: 'BGP路由',
+          labelEn: 'BGP Routes',
+          group: 'route',
+          scope: 'network',
+          operationalCategory: 'bgp_routes',
+          excludeRoles: ['access'],
+          cmds: isHuawei
+            ? 'display bgp routing-table'
+            : isH3c
+              ? 'display bgp routing-table ipv4'
+              : isJuniper
+                ? 'show route protocol bgp'
+                : isZte || isRuijie
+                  ? 'show ip bgp'
+                  : 'show ip bgp',
+        },
+        {
           icon: '🔍',
           label: 'OSPF邻居',
           labelEn: 'OSPF Nbrs',
@@ -653,6 +671,20 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
             : isNxos
               ? 'show ip ospf neighbors'
               : 'show ip ospf neighbor',
+        },
+        {
+          icon: '🧭',
+          label: 'IS-IS邻居',
+          labelEn: 'IS-IS Neighbors',
+          group: 'route',
+          scope: 'network',
+          operationalCategory: 'isis',
+          excludeRoles: ['access'],
+          cmds: isHuawei || isH3c
+            ? 'display isis peer'
+            : isJuniper
+              ? 'show isis adjacency'
+              : 'show isis neighbors',
         },
         {
           icon: '⏱️',

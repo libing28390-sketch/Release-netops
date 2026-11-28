@@ -1,0 +1,19 @@
+# nexora-action-code: get_stp
+Value Filldown,Required INSTANCE (\d+)
+Value Required INTERFACE (\S+)
+Value ROLE (\S+)
+Value STATE (\S+)
+Value COST (\d+)
+Value PORT_PRIORITY (\d+)
+Value PORT_NUMBER (\d+)
+Value TYPE (.+?)
+
+Start
+  ^\s*MST${INSTANCE}\s*$$
+  ^\s*Interface\s+Role\s+State\s+Cost\s+Prio\.Nbr\s+Type\s*$$ -> Rows
+
+Rows
+  ^\s*MST${INSTANCE}\s*$$ -> Start
+  ^\s*${INTERFACE}\s+${ROLE}\s+${STATE}\s+${COST}\s+${PORT_PRIORITY}\.${PORT_NUMBER}\s+${TYPE}\s*$$ -> Record
+
+EOF

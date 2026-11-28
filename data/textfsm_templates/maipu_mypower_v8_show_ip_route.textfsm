@@ -1,0 +1,18 @@
+# nexora-action-code: get_route_table
+Value Filldown PROTOCOL ([A-Za-z]+(?:\*)?)
+Value Filldown,Required NETWORK (\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?)
+Value DISTANCE (\d+)
+Value METRIC (\d+)
+Value NEXTHOP_IP (\d{1,3}(?:\.\d{1,3}){3})
+Value UPTIME (\S+)
+Value INTERFACE (\S+)
+
+Start
+  ^\s*(?:Codes|Routing Table): -> Clearall
+  ^.*#\s*show\s+ -> Clearall
+  ^\s*${PROTOCOL}\s+${NETWORK}\s+(?:\[${DISTANCE}/${METRIC}\]\s+)?via\s+${NEXTHOP_IP},\s+${UPTIME},\s+${INTERFACE}\s*$$ -> Record
+  ^\s+\[${DISTANCE}/${METRIC}\]\s+via\s+${NEXTHOP_IP},\s+${UPTIME},\s+${INTERFACE}\s*$$ -> Record
+  ^\s*${PROTOCOL}\s+${NETWORK}\s+is directly connected,\s+${UPTIME},\s+${INTERFACE}\s*$$ -> Record
+  ^\s*${PROTOCOL}\s+${NETWORK}\s+ -> Clearall
+
+EOF

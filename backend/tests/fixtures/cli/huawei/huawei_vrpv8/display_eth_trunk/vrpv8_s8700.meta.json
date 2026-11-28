@@ -5,5 +5,26 @@
   "platform": "VRP8",
   "model_family": "CloudEngine S8700",
   "command": "display eth-trunk",
-  "source_note": "Official Eth-Trunk command reference example."
+  "source_note": "Official CloudEngine S8700 Eth-Trunk command-reference sample; exact software build is not stated.",
+  "source_title": "Eth-Trunk Configuration Commands - Huawei",
+  "source_section": "display eth-trunk > command output example",
+  "platform_version": "V8",
+  "software_version": "unknown",
+  "expected_record_count": 3,
+  "expected_fields": [
+    "ETH_TRUNK",
+    "OPERATE_STATUS",
+    "NUMBER_OF_UP_PORT_IN_TRUNK",
+    "INTERFACE",
+    "STATUS",
+    "PORT_TYPE",
+    "PORT_PRIORITY",
+    "PORT_NUMBER",
+    "PORT_KEY",
+    "PORT_STATE",
+    "WEIGHT"
+  ],
+  "expected_template": "huawei_vrpv8_display_eth_trunk.textfsm",
+  "expected_template_prefix": "huawei_vrpv8_",
+  "parser_platform": "huawei_vrp8"
 }

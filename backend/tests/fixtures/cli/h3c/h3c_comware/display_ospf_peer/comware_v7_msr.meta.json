@@ -1,0 +1,21 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/Support/Resource_Center/EN/Home/Routers/00-Public/Reference_Guides/Command_References/H3C_MSR_Comware_7_CR-R0615/08/202210/1709603_294551_0.htm",
+  "vendor": "H3C",
+  "platform": "h3c_comware",
+  "parser_platform": "h3c_comware_v7",
+  "software_family": "Comware",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "documentation_release": "CR-R0615",
+  "model_family": "MSR series",
+  "command": "display ospf peer",
+  "source_title": "H3C MSR Comware 7 Command Reference R0615",
+  "source_section": "display ospf peer > Examples > Display brief OSPF neighbor information (lines 10370-10386)",
+  "source_note": "The official Comware 7 command reference shows State before Interface, one regular neighbor, and a sham-link neighbor table without an Interface column. The parser emits the sham-link neighbor with an empty INTERFACE value; the reference release does not confirm the running device build.",
+  "expected_record_count": 2,
+  "expected_fields": ["OSPF_PROCESS", "LOCAL_ROUTER_ID", "AREA_ID", "NEIGHBOR_ID", "IP_ADDRESS", "PRIORITY", "DEAD_TIME", "STATUS", "INTERFACE"],
+  "expected_values": {"OSPF_PROCESS": "1", "LOCAL_ROUTER_ID": "1.1.1.1", "AREA_ID": "0.0.0.0", "NEIGHBOR_ID": "1.1.1.2", "IP_ADDRESS": "1.1.1.2", "STATUS": "Full/DR", "INTERFACE": "GE1/0/1"},
+  "expected_record_index": 0,
+  "expected_template": "h3c_comware_v7_display_ospf_peer.textfsm"
+}

@@ -1,0 +1,17 @@
+[PE1] display ip routing-table vpn-instance vpn1
+
+Destinations : 11        Routes : 11
+
+Destination/Mask    Proto  Pre  Cost        NextHop         Interface
+
+0.0.0.0/32          Direct 0    0           127.0.0.1       InLoop0
+10.1.1.0/24         Direct 0    0           10.1.1.2        GE3/1/1
+10.1.1.0/32         Direct 0    0           10.1.1.2        GE3/1/1
+10.1.1.2/32         Direct 0    0           127.0.0.1       InLoop0
+10.1.1.255/32       Direct 0    0           10.1.1.2        GE3/1/1
+10.3.1.0/24         BGP    255  0           3.3.3.9         GE 3/1/4
+127.0.0.0/8         Direct 0    0           127.0.0.1       InLoop0
+127.0.0.0/32        Direct 0    0           127.0.0.1       InLoop0
+127.0.0.1/32        Direct 0    0           127.0.0.1       InLoop0
+127.255.255.255/32  Direct 0    0           127.0.0.1       InLoop0
+255.255.255.255/32  Direct 0    0           127.0.0.1       InLoop0

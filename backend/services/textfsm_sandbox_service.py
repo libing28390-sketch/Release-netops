@@ -112,20 +112,58 @@ def _byte_length(value: str) -> int:
     return len(str(value or "").encode("utf-8", errors="ignore"))
 
 
-def _worker() -> int:
+_DEFAULT_MEMORY_BYTES = 128 * 1024 * 1024
+
+
+def _worker(max_memory_bytes: int) -> int:
     try:
+        if os.name == "posix":
+            import resource
+
+            resource.setrlimit(resource.RLIMIT_AS, (max_memory_bytes, max_memory_bytes))
         payload = json.load(sys.stdin)
         template = str(payload.get("template") or "")
         output = str(payload.get("output") or "")
-        from core.textfsm import parse_with_template_content
+        if payload.get("mode", "template") == "ntc":
+            from ntc_templates.parse import parse_output
 
-        records = parse_with_template_content(template, output)
+            records = parse_output(
+                platform=str(payload.get("platform") or ""),
+                command=str(payload.get("command") or ""),
+                data=output,
+            )
+        else:
+            from core.textfsm import parse_with_template_content
+
+            if payload.get("normalize_records", True):
+                records = parse_with_template_content(template, output)
+            else:
+                import io
+                import textfsm
+
+                records = textfsm.TextFSM(io.StringIO(template)).ParseTextToDicts(output)
         if not isinstance(records, list):
             records = []
-        print(json.dumps({"success": True, "records": records}, ensure_ascii=False), flush=True)
+        if len(records) > int(payload.get("max_records", 1000)):
+            raise TextFSMSandboxError("RECORD_LIMIT_EXCEEDED", "Parser returned too many records")
+        response_payload = {"success": True, "records": records}
+        max_output_bytes = int(payload.get("max_output_bytes", 2_000_000))
+        response_size = _byte_length(json.dumps(response_payload, ensure_ascii=False))
+        if response_size > max_output_bytes:
+            raise TextFSMSandboxError("TEMPLATE_LIMIT_EXCEEDED", "Parser sandbox response exceeds the size limit")
+        response = json.dumps(response_payload, ensure_ascii=True)
+        if len(response) > max_output_bytes * 6 + 1024:
+            raise TextFSMSandboxError("TEMPLATE_LIMIT_EXCEEDED", "Parser sandbox response exceeds the transport limit")
+        print(response, flush=True)
         return 0
+    except TextFSMSandboxError as exc:
+        print(json.dumps({"success": False, "error_code": exc.code, "error": exc.message}), flush=True)
+        return 1
+    except MemoryError:
+        print('{"success":false,"error_code":"TEMPLATE_MEMORY_LIMIT_EXCEEDED"}', flush=True)
+        return 1
     except Exception as exc:
-        print(json.dumps({"success": False, "error": str(exc)}, ensure_ascii=False), flush=True)
+        print(json.dumps({"success": False, "error": str(exc)}, ensure_ascii=True), flush=True)
         return 1
 
 
@@ -139,11 +177,19 @@ def parse_template_in_sandbox(
     max_records: int = 1_000,
     max_fields: int = 128,
     max_field_bytes: int = 65_536,
-    max_memory_bytes: int = 128 * 1024 * 1024,
+    max_memory_bytes: int = _DEFAULT_MEMORY_BYTES,
+    normalize_records: bool = True,
+    _mode: str = "template",
+    _platform: str = "",
+    _command: str = "",
 ) -> list[dict[str, Any]]:
     """Parse template content in a short-lived, bounded child process."""
     template_content = str(template_content or "")
     output = str(output or "")
+    if _mode not in {"template", "ntc"}:
+        raise ValueError("Unsupported parser sandbox mode")
+    if _mode == "ntc" and (not str(_platform or "").strip() or not str(_command or "").strip()):
+        raise ValueError("NTC parser mode requires platform and command")
     if _byte_length(template_content) > max_template_bytes:
         raise TextFSMSandboxError("TEMPLATE_LIMIT_EXCEEDED", "Parser template exceeds the size limit")
     if _byte_length(output) > max_output_bytes:
@@ -153,7 +199,13 @@ def parse_template_in_sandbox(
     env = os.environ.copy()
     existing_pythonpath = env.get("PYTHONPATH")
     env["PYTHONPATH"] = str(backend_root) + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
-    command = [sys.executable, "-m", "services.textfsm_sandbox_service", "--worker"]
+    memory_limit = int(max_memory_bytes or _DEFAULT_MEMORY_BYTES)
+    if memory_limit < 1:
+        raise ValueError("Parser sandbox memory limit must be positive")
+    command = [
+        sys.executable, "-m", "services.textfsm_sandbox_service", "--worker",
+        "--max-memory-bytes", str(memory_limit),
+    ]
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0
     job = None
     proc = None
@@ -172,9 +224,18 @@ def parse_template_in_sandbox(
             start_new_session=os.name != "nt",
         )
         if os.name == "nt":
-            job = _WindowsJobObject(proc, max_memory_bytes)
+            job = _WindowsJobObject(proc, memory_limit)
         stdout, _stderr = proc.communicate(
-            input=json.dumps({"template": template_content, "output": output}, ensure_ascii=False),
+            input=json.dumps({
+                "mode": _mode,
+                "template": template_content,
+                "output": output,
+                "platform": _platform,
+                "command": _command,
+                "max_records": max_records,
+                "max_output_bytes": max_output_bytes,
+                "normalize_records": normalize_records,
+            }, ensure_ascii=True),
             timeout=max(1, min(int(timeout_seconds or 30), 120)),
         )
     except subprocess.TimeoutExpired as exc:
@@ -214,13 +275,20 @@ def parse_template_in_sandbox(
             job.close()
 
     stdout = (stdout or "").strip()
-    if _byte_length(stdout) > max_output_bytes:
-        raise TextFSMSandboxError("TEMPLATE_LIMIT_EXCEEDED", "Parser sandbox response exceeds the size limit")
+    if len(stdout) > max_output_bytes * 6 + 1024:
+        raise TextFSMSandboxError("TEMPLATE_LIMIT_EXCEEDED", "Parser sandbox transport response exceeds the limit")
     try:
         response = json.loads(stdout or "{}")
     except json.JSONDecodeError as exc:
         raise TextFSMSandboxError("TEMPLATE_SANDBOX_FAILED", "Parser sandbox returned invalid data") from exc
+    response_size = _byte_length(json.dumps(response, ensure_ascii=False, default=str))
+    if response_size > max_output_bytes:
+        raise TextFSMSandboxError("TEMPLATE_LIMIT_EXCEEDED", "Parser sandbox response exceeds the size limit")
     if proc.returncode != 0 or not response.get("success"):
+        if response.get("error_code") == "TEMPLATE_MEMORY_LIMIT_EXCEEDED":
+            raise TextFSMSandboxError("TEMPLATE_MEMORY_LIMIT_EXCEEDED", "Parser sandbox memory limit exceeded")
+        if response.get("error_code") in {"RECORD_LIMIT_EXCEEDED", "TEMPLATE_LIMIT_EXCEEDED"}:
+            raise TextFSMSandboxError(response["error_code"], str(response.get("error") or "Parser limit exceeded"))
         raise TextFSMSandboxError("TEMPLATE_NOT_MATCHED", "测试回显与当前 TextFSM 模板不匹配")
 
     records = response.get("records") or []
@@ -235,11 +303,40 @@ def parse_template_in_sandbox(
     return records
 
 
+def parse_ntc_output_in_sandbox(
+    platform: str,
+    command: str,
+    output: str,
+    *,
+    timeout_seconds: int = 30,
+    max_output_bytes: int = 2_000_000,
+    max_records: int = 100_000,
+    max_fields: int = 128,
+    max_field_bytes: int = 65_536,
+    max_memory_bytes: int = _DEFAULT_MEMORY_BYTES,
+) -> list[dict[str, Any]]:
+    """Run the trusted NTC parser with the same process and output bounds."""
+    return parse_template_in_sandbox(
+        "",
+        output,
+        timeout_seconds=timeout_seconds,
+        max_output_bytes=max_output_bytes,
+        max_records=max_records,
+        max_fields=max_fields,
+        max_field_bytes=max_field_bytes,
+        max_memory_bytes=max_memory_bytes,
+        _mode="ntc",
+        _platform=platform,
+        _command=command,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--worker", action="store_true")
+    parser.add_argument("--max-memory-bytes", type=int, default=_DEFAULT_MEMORY_BYTES)
     args, _ = parser.parse_known_args()
-    return _worker() if args.worker else 2
+    return _worker(args.max_memory_bytes) if args.worker and args.max_memory_bytes > 0 else 2
 
 
 if __name__ == "__main__":

@@ -1,0 +1,35 @@
+{
+  "vendor": "Ruijie",
+  "platform": "ruijie_rgos",
+  "parser_platform": "ruijie_rgos_v11",
+  "software_family": "RGOS",
+  "platform_version": "V11",
+  "software_version": "unknown",
+  "model_family": "Wireless AC / VAC",
+  "documentation_release": "11.X (20260327 document edition)",
+  "command": "show interface status",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www-file.ruijie.com.cn/Fu/Article/c13a2855-799c-4e81-8406-139b8272768d/v34/01%20%E6%97%A0%E7%BA%BFWLAN%E4%BA%A7%E5%93%81%E4%B8%80%E6%9C%AC%E9%80%9A%E9%80%82%E7%94%A8%E4%BA%8E11.X%E8%BD%AF%E4%BB%B6%E7%89%88%E6%9C%AC20260327/01%20%E6%97%A0%E7%BA%BFWLAN%E4%BA%A7%E5%93%81%E4%B8%80%E6%9C%AC%E9%80%9A%E9%80%82%E7%94%A8%E4%BA%8E11.X%E8%BD%AF%E4%BB%B6%E7%89%88%E6%9C%AC20260327/2019102214545148543.html",
+  "source_title": "锐捷无线 WLAN 产品一本通（适用于 11.X 软件版本）",
+  "source_section": "VAC 检查 > 6、show interface status",
+  "source_note": "Two rows excerpted from the V11 VAC example, spanning a service port and a VSL port with a blank VLAN column. The example does not identify an exact model or software build.",
+  "expected_record_count": 2,
+  "expected_fields": [
+    "INTERFACE",
+    "STATUS",
+    "VLAN",
+    "DUPLEX",
+    "SPEED",
+    "TYPE"
+  ],
+  "expected_record_index": 1,
+  "expected_values": {
+    "INTERFACE": "GigabitEthernet 1/0/4",
+    "STATUS": "up",
+    "VLAN": "",
+    "DUPLEX": "Full",
+    "SPEED": "100M",
+    "TYPE": "copper"
+  },
+  "expected_template": "ruijie_rgos_v11_show_interface_status.textfsm"
+}

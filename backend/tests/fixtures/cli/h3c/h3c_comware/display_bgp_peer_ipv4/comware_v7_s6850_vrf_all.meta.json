@@ -1,0 +1,42 @@
+{
+  "vendor": "H3C",
+  "platform": "h3c_comware",
+  "software_family": "Comware 7",
+  "model": "S6850/S9850",
+  "command": "display bgp peer ipv4 vpn-instance-all",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/Support/Resource_Center/EN/Home/Switches/00-Public/Reference_Guides/Command_References/H3C_S6850_S9850_CR-655X/05/202112/1500349_294551_0.htm",
+  "source_title": "H3C S6850 & S9850 Switch Series Command References-Release 655x-6W102",
+  "source_section": "06-BGP commands > display bgp peer > Display brief BGP IPv4 unicast peer information for all VPN instances",
+  "source_note": "Official S6850/S9850 command reference example. This all-VPN sample verifies the IPv4 peer row grammar; the document also defines the matching specific vpn-instance command. The sample does not report the running device software build.",
+  "model_family": "H3C S6850/S9850 switch series",
+  "documentation_release": "Release 655x-6W102",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "expected_record_count": 4,
+  "expected_fields": [
+    "LOCAL_ROUTER_ID",
+    "LOCAL_AS_NUMBER",
+    "VRF_NAME",
+    "PEER",
+    "REMOTE_AS",
+    "MSG_RECEIVED",
+    "MSG_SENT",
+    "OUT_QUEUE",
+    "PREFIX_RECEIVED",
+    "UP_DOWN",
+    "STATUS"
+  ],
+  "expected_values": {
+    "LOCAL_ROUTER_ID": "111.1.1.1",
+    "LOCAL_AS_NUMBER": "100",
+    "VRF_NAME": "1",
+    "PEER": "111.1.1.1",
+    "REMOTE_AS": "100",
+    "STATUS": "Connect"
+  },
+  "expected_template_prefix": "h3c_comware_v7_",
+  "expected_template": "h3c_comware_v7_display_bgp_peer_ipv4_unicast.textfsm",
+  "expected_record_index": 0,
+  "parser_platform": "h3c_comware_v7"
+}

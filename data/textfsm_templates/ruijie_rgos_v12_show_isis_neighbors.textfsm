@@ -1,0 +1,16 @@
+Value Required SYSTEM_ID (\S+)
+Value LEVEL (L[12](?:L[12])?)
+Value IP_ADDRESS (\S+)
+Value STATE (\S+)
+Value HOLD_TIME (\d+)
+Value CIRCUIT_ID (\S+)
+Value INTERFACE (\S+(?:\s+\S+)*)
+
+Start
+  ^\s*System\s+Id\s+Type\s+IP\s+Address\s+State\s+Holdtime\s+Circuit\s+Interface\s*$$ -> Neighbors
+
+Neighbors
+  ^\s*Area\s+\S+:\s*$$ -> Start
+  ^\s*${SYSTEM_ID}\s+${LEVEL}\s+${IP_ADDRESS}\s+${STATE}\s+${HOLD_TIME}\s+${CIRCUIT_ID}\s+${INTERFACE}\s*$$ -> Record
+
+EOF

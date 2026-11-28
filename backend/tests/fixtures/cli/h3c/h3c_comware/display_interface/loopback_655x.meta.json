@@ -1,0 +1,29 @@
+{
+  "vendor": "H3C",
+  "platform": "h3c_comware",
+  "model_family": "S6850/S9850",
+  "command": "display interface loopback 0",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/Support/Resource_Center/HK/Home/Switches/00-Public/Reference_Guides/Command_References/H3C_S6850_S9850_CR-Release_655x-6W100/03/201910/1234783_294551_0.htm",
+  "source_title": "H3C Loopback, null, and inloopback interface commands",
+  "source_section": "display interface loopback 0 example",
+  "source_note": "Selected lines from the individual interface output. The example does not identify a running software build.",
+  "documentation_release": "Release 655x-6W100",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "INTERFACE",
+    "STATUS",
+    "PROTOCOL",
+    "DESCRIPTION"
+  ],
+  "expected_values": {
+    "INTERFACE": "LoopBack0",
+    "STATUS": "UP",
+    "PROTOCOL": "UP(spoofing)",
+    "DESCRIPTION": "LoopBack0 Interface"
+  },
+  "expected_template": "h3c_comware_v7_display_interface.textfsm",
+  "parser_platform": "h3c_comware_v7"
+}

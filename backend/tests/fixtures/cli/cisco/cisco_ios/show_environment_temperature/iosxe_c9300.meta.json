@@ -5,5 +5,30 @@
   "platform": "IOS-XE 17.9",
   "model_family": "Catalyst 9300",
   "command": "show environment temperature",
-  "source_note": "Official Cisco IOS XE command reference example."
+  "source_note": "Official Catalyst 9300 IOS XE 17.9.x command-reference example; the output does not identify a more specific installed build.",
+  "source_title": "Command Reference, Cisco IOS XE Cupertino 17.9.x (Catalyst 9300 Switches)",
+  "source_section": "Interface and Hardware Commands > show environment temperature example",
+  "platform_version": "17.9.x",
+  "software_version": "unknown",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "SWITCH",
+    "SWITCH_TEMPERATURE",
+    "INLET_TEMPERATURE_VALUE",
+    "INLET_TEMPERATURE_STATE",
+    "INLET_YELLOW_THRESHOLD",
+    "INLET_RED_THRESHOLD",
+    "HOTSPOT_TEMPERATURE_VALUE",
+    "HOTSPOT_TEMPERATURE_STATE",
+    "HOTSPOT_YELLOW_THRESHOLD",
+    "HOTSPOT_RED_THRESHOLD"
+  ],
+  "expected_values": {
+    "SWITCH": "1",
+    "INLET_TEMPERATURE_VALUE": "25",
+    "HOTSPOT_TEMPERATURE_VALUE": "35"
+  },
+  "expected_template": "cisco_ios_show_environment_temperature.textfsm",
+  "expected_template_prefix": "cisco_ios_",
+  "parser_platform": "cisco_ios"
 }

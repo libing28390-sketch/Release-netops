@@ -1,0 +1,13 @@
+Value Required STATUS (\*>[a-z]?)
+Value Required PREFIX (\S+)
+Value Required NEXT_HOP (\S+)
+Value Required METRIC (\d+)
+Value LOCAL_PREF (\d*)
+Value Required WEIGHT (\d+)
+Value AS_PATH (\d*(?:\s+\d+)*)
+Value Required ORIGIN ([ie?])
+
+Start
+  ^\s*${STATUS}\s+${PREFIX}\s+${NEXT_HOP}\s+${METRIC}\s+${LOCAL_PREF}\s+${WEIGHT}\s+${AS_PATH}${ORIGIN}\s*$$ -> Record
+  ^\s*$$
+  ^.*

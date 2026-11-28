@@ -10,9 +10,14 @@ core/textfsm.py — TextFSM 模板管理引擎
 from __future__ import annotations
 
 import io
+import hashlib
 import logging
 import os
 import re
+import tempfile
+import threading
+import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +60,80 @@ _CUSTOM_TEMPLATES_DIR = _PROJECT_ROOT / "data" / "textfsm_templates"
 # data volume. This keeps repository updates visible without overwriting
 # templates edited or created by users in data/textfsm_templates.
 _PACKAGED_TEMPLATES_DIR = _PROJECT_ROOT / "release-textfsm-templates"
+
+# File locks coordinate writers across worker threads and processes sharing
+# the persistent template volume.  The lock file is stable and is never
+# replaced or removed; only template files are atomically replaced.
+_TEMPLATE_STORAGE_THREAD_LOCK = threading.RLock()
+_TEMPLATE_CATALOG_CACHE_LOCK = threading.RLock()
+_TEMPLATE_CATALOG_CACHE_TTL_SECONDS = 1.0
+_TEMPLATE_CATALOG_CACHE_FINGERPRINT: tuple[Any, ...] | None = None
+_TEMPLATE_CATALOG_CACHE_AT = 0.0
+_TEMPLATE_CATALOG_CACHE_ENTRIES: tuple[dict[str, Any], ...] = ()
+
+
+class TemplateConflictError(RuntimeError):
+    """Raised when a template write is based on stale or existing state."""
+
+
+def template_content_hash(content: str) -> str:
+    """Return a stable SHA-256 digest for the exact UTF-8 template content."""
+    return hashlib.sha256(str(content).encode('utf-8')).hexdigest()
+
+
+@contextmanager
+def _template_storage_lock():
+    """Serialize custom-template mutations across threads and processes."""
+    _CUSTOM_TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
+    lock_path = _CUSTOM_TEMPLATES_DIR / '.textfsm_templates.lock'
+
+    with _TEMPLATE_STORAGE_THREAD_LOCK:
+        with lock_path.open('a+b') as lock_file:
+            if os.name == 'nt':
+                import msvcrt
+
+                # msvcrt byte-range locks require at least one byte in the
+                # file. Appending the initial byte is safe if workers race.
+                lock_file.seek(0, os.SEEK_END)
+                if lock_file.tell() == 0:
+                    lock_file.write(b'\0')
+                    lock_file.flush()
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                try:
+                    yield
+                finally:
+                    lock_file.seek(0)
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _atomic_write_template(path: Path, content: str) -> None:
+    """Write complete UTF-8 content beside the target, then atomically swap."""
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f'.{path.name}.',
+        suffix='.tmp',
+        dir=str(path.parent),
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(file_descriptor, 'w', encoding='utf-8', newline='') as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        try:
+            temporary_path.unlink()
+        except FileNotFoundError:
+            pass
 
 # Nexora exposes one H3C/Comware parser family.  Concrete Comware generations
 # are selected by the Platform Profile and, where the grammar really differs,
@@ -137,6 +216,9 @@ _PLANNED_TEMPLATE_PLATFORM_CANDIDATES = {
     'ruijie_rgos_v11': ['ruijie_rgos_v11', 'ruijie_rgos'],
     'ruijie_rgos_v12': ['ruijie_rgos_v12', 'ruijie_rgos'],
     'ruijie_rgos_unknown': ['ruijie_rgos_unknown', 'ruijie_rgos'],
+    # Official 10.X samples cover the RSR series only. Keep this parser key
+    # isolated from the generic V10 Profile and its EG-family devices.
+    'ruijie_rgos_rsr_v10': ['ruijie_rgos_rsr_v10'],
     'zte_rosng': ['zte_rosng', 'zte_zxros'],
     'zte_os_unknown': ['zte_os_unknown', 'zte_zxros'],
     'dptech_conplat': ['dptech_conplat', 'dptech_ios'],
@@ -160,6 +242,7 @@ _PLANNED_TEMPLATE_PLATFORM_VERSIONS = {
     'ruijie_rgos_v11': 'v11',
     'ruijie_rgos_v12': 'v12',
     'ruijie_rgos_unknown': 'unknown',
+    'ruijie_rgos_rsr_v10': 'v10',
 }
 
 _PLANNED_TEMPLATE_PLATFORM_BY_SELECTION = {
@@ -179,6 +262,7 @@ _PLANNED_TEMPLATE_PLATFORM_BY_SELECTION = {
     ('ruijie_rgos', 'v11'): 'ruijie_rgos_v11',
     ('ruijie_rgos', 'v12'): 'ruijie_rgos_v12',
     ('ruijie_rgos', 'unknown'): 'ruijie_rgos_unknown',
+    ('ruijie_rgos_rsr', 'v10'): 'ruijie_rgos_rsr_v10',
 }
 
 def resolve_textfsm_platform(platform: str | None) -> str | None:
@@ -351,6 +435,30 @@ def _legacy_file_fallback_enabled() -> bool:
 def _template_filename_variants(platform: str, command: str) -> list[str]:
     """Return current names first, then compatible legacy NTC names."""
     commands = [command]
+    if platform == 'ruijie_rgos_v12' and re.fullmatch(
+        r'show lldp neighbors interface [a-z][a-z0-9-]*\s*\d+(?:[/.:]\d+)*',
+        command.strip().lower(),
+    ):
+        commands.append('show lldp neighbors')
+    if platform == 'ruijie_rgos_v12' and re.fullmatch(
+        r'show interfaces [a-z][a-z0-9-]*\s*\d+(?:[/.:]\d+)* status',
+        command.strip().lower(),
+    ):
+        commands.append('show interfaces status')
+    if platform == 'ruijie_rgos_v12' and command.strip().lower() == 'show version detail':
+        commands.append('show version')
+    if platform == 'cisco_ios' and command.strip().lower() == 'show vlan brief':
+        # Cisco IOS/IOS-XE's brief form uses the same VLAN table grammar as
+        # ``show vlan``; keep the real command in fixtures and releases while
+        # resolving it to the shared NTC parser file.
+        commands.append('show vlan')
+    if platform == 'maipu_mypower_v9' and re.fullmatch(r'show vlan \d+', command.strip().lower()):
+        commands.append('show vlan')
+    if platform == 'h3c_comware_v7' and re.fullmatch(
+        r'display interface (?:main|(?:bridge-aggregation|route-aggregation|loopback|vlan-interface) \d+)',
+        command.strip().lower(),
+    ):
+        commands.append('display interface')
     # The shared Huawei normalizer expands `display arp` to `display arp all`.
     # YunShan's profile uses the documented versionless query. Both forms use
     # the same YunShan grammar without selecting another OS namespace.
@@ -393,10 +501,51 @@ def _find_template(platform: str, command: str) -> Path | None:
     # as ``display transceiver verbose`` while the shared grammar is named
     # after ``display transceiver interface``.
     if platform and ('huawei' in platform.lower() or 'comware' in platform.lower()):
-        for regex, canonical in _HUAWEI_H3C_COMMAND_MAPPING:
-            if regex.match(str(lookup_command).strip()):
-                lookup_command = canonical
-                break
+        normalized_lookup = str(lookup_command).strip()
+        # Huawei uses ``display memory-usage`` while Comware uses the distinct
+        # ``display memory`` command. The shared alias table's abbreviated
+        # memory rule matches both, so keep this platform-specific form ahead
+        # of the generic mapping just as smart_parse_cli does below.
+        if 'comware' in platform.lower() and re.match(
+            r'^dis(?:play)?\s+mem(?:ory)?\s*$', normalized_lookup, re.I
+        ):
+            lookup_command = 'display memory'
+        elif 'comware' in platform.lower() and re.match(
+            r'^dis(?:play)?\s+bgp\s+routing-table\s+ipv4(?:\s+unicast)?(?:\s+vpn-instance\s+\S+)?\s*$',
+            normalized_lookup,
+            re.I,
+        ):
+            # Comware accepts the optional ``unicast`` keyword without
+            # changing this route table's output grammar.
+            lookup_command = 'display bgp routing-table ipv4'
+        elif 'comware' in platform.lower() and re.match(
+            r'^dis(?:play)?\s+ip\s+routing-table\s+vpn-instance\s+\S+\s*$',
+            normalized_lookup,
+            re.I,
+        ):
+            lookup_command = 'display ip routing-table'
+        elif 'comware' in platform.lower() and re.match(
+            r'^dis(?:play)?\s+bgp\s+vpnv4\s+vpn-instance\s+\S+\s+routing-table\s*$',
+            normalized_lookup,
+            re.I,
+        ):
+            # Legacy Comware V5's BGP VPNv4 RIB is a distinct table from
+            # ``display ip routing-table vpn-instance`` and Comware V7's
+            # ``display bgp routing-table ipv4 unicast vpn-instance``.
+            # Resolve only the VPN name parameter to the shared V5 grammar;
+            # keep the caller's actual command unchanged.
+            lookup_command = 'display bgp vpnv4 vpn-instance routing-table'
+        elif platform.lower() in {'h3c_comware', 'h3c_comware_v7'} and re.match(
+            r'^dis(?:play)?\s+bgp\s+peer\s+ipv4(?:\s+unicast)?\s+vpn-instance(?:-all|\s+\S+)\s*$',
+            normalized_lookup,
+            re.I,
+        ):
+            lookup_command = 'display bgp peer ipv4 unicast'
+        else:
+            for regex, canonical in _HUAWEI_H3C_COMMAND_MAPPING:
+                if regex.match(normalized_lookup):
+                    lookup_command = canonical
+                    break
 
     packaged = _get_packaged_templates_dir()
     builtin = _get_builtin_templates_dir()
@@ -480,6 +629,10 @@ _HUAWEI_H3C_COMMAND_MAPPING = [
     (re.compile(r'^dis(?:play)?\s+int(?:erface)?\s+br(?:ief)?\b', re.I), 'display interface brief'),
     (re.compile(r'^dis(?:play)?\s+arp(?:\s+all)?\b', re.I), 'display arp all'),
     (re.compile(r'^dis(?:play)?\s+ip\s+routing-table\s*$', re.I), 'display ip routing-table'),
+    # Comware V5 exposes the VPN's BGP VPNv4 table with the vpn-instance name
+    # embedded in the command. Canonicalize that parameter only for parser
+    # lookup; the Quick Ops command sent to the device remains unchanged.
+    (re.compile(r'^dis(?:play)?\s+bgp\s+vpnv4\s+vpn-instance\s+\S+\s+routing-table\s*$', re.I), 'display bgp vpnv4 vpn-instance routing-table'),
     (re.compile(r'^dis(?:play)?\s+bgp\s+peer\s*$', re.I), 'display bgp peer'),
     (re.compile(r'^dis(?:play)?\s+bgp\s+routing-table\s*$', re.I), 'display bgp routing-table'),
     (re.compile(r'^dis(?:play)?\s+mac-address\b', re.I), 'display mac-address'),
@@ -775,6 +928,30 @@ def smart_parse_cli(
             if normalized_command.lower() != 'display memory':
                 is_normalized = True
             normalized_command = 'display memory'
+        elif 'comware' in platform.lower() and re.match(
+            r'^dis(?:play)?\s+bgp\s+routing-table\s+ipv4(?:\s+unicast)?(?:\s+vpn-instance\s+\S+)?\s*$',
+            normalized_command,
+            re.I,
+        ):
+            if normalized_command.lower() != 'display bgp routing-table ipv4':
+                is_normalized = True
+            normalized_command = 'display bgp routing-table ipv4'
+        elif 'comware' in platform.lower() and re.match(
+            r'^dis(?:play)?\s+ip\s+routing-table\s+vpn-instance\s+\S+\s*$',
+            normalized_command,
+            re.I,
+        ):
+            if normalized_command.lower() != 'display ip routing-table':
+                is_normalized = True
+            normalized_command = 'display ip routing-table'
+        elif platform.lower() in {'h3c_comware', 'h3c_comware_v7'} and re.match(
+            r'^dis(?:play)?\s+bgp\s+peer\s+ipv4(?:\s+unicast)?\s+vpn-instance(?:-all|\s+\S+)\s*$',
+            normalized_command,
+            re.I,
+        ):
+            if normalized_command.lower() != 'display bgp peer ipv4 unicast':
+                is_normalized = True
+            normalized_command = 'display bgp peer ipv4 unicast'
         elif 'huawei' in platform.lower() and re.match(r'^dis(?:play)?\s+mem(?:ory)?(?:-usage)?\b', normalized_command, re.I):
             if normalized_command.lower() != 'display memory-usage':
                 is_normalized = True
@@ -855,10 +1032,14 @@ def smart_parse_cli(
     # 6. 依次执行 TextFSM 解析并评分，成功匹配记录则直接返回
     for template_path, matched_platform, template_source in candidates:
         try:
-            import textfsm
-            with open(template_path, encoding='utf-8') as f:
-                fsm = textfsm.TextFSM(f)
-            result = fsm.ParseTextToDicts(clean_output)
+            from services.textfsm_sandbox_service import parse_template_in_sandbox
+
+            result = parse_template_in_sandbox(
+                template_path.read_text(encoding='utf-8'),
+                clean_output,
+                max_records=100_000,
+                normalize_records=False,
+            )
             matched_rows = len(result)
             if matched_rows == 0:
                 continue  # 如果该模板匹配到的记录行为空，说明不匹配当前回显格式，继续尝试下一个候选模板
@@ -903,6 +1084,20 @@ def smart_parse_cli(
                 normalized_records.append(norm_record)
                 
             normalized_records = post_process_parsed_records(normalized_records)
+
+            if template_path.name == 'ruijie_rgos_v12_show_vlan.textfsm':
+                for record in normalized_records:
+                    ports = record.get('PORTS')
+                    if isinstance(ports, list) and all(isinstance(line, str) for line in ports):
+                        record['PORTS'] = ', '.join(line.rstrip(',') for line in ports)
+
+            if template_path.name == 'h3c_comware_v7_display_vlan_brief.textfsm':
+                for record in normalized_records:
+                    ports = record.get('PORTS')
+                    if isinstance(ports, list):
+                        record['PORTS'] = ' '.join(
+                            ' '.join(str(line).split()) for line in ports if str(line).strip()
+                        )
 
             # ``display device manuinfo`` prints ``Subslot`` under the most
             # recent ``Slot`` heading instead of repeating the slot number.
@@ -960,13 +1155,18 @@ def smart_parse_cli(
             }
 
     try:
-        from ntc_templates.parse import parse_output
+        from services.textfsm_sandbox_service import parse_ntc_output_in_sandbox
         ntc_platform = (
             'hp_comware'
             if parser_platform == 'h3c_comware'
             else parser_platform
         )
-        parsed = parse_output(platform=ntc_platform, command=normalized_command, data=clean_output)
+        parsed = parse_ntc_output_in_sandbox(
+            platform=ntc_platform,
+            command=normalized_command,
+            output=clean_output,
+            max_records=100_000,
+        )
         if isinstance(parsed, list):
             return {
                 'success': True,
@@ -980,8 +1180,9 @@ def smart_parse_cli(
                 'data': parsed,
                 'message': '解析成功 (NTC 原生解析)'
             }
-    except Exception:
-        pass
+    except Exception as exc:
+        error_code = getattr(exc, 'code', 'PARSER_FAILURE')
+        logger.info('NTC parser fallback failed for %s/%s (%s)', parser_platform, normalized_command, error_code)
         
     return {
         'success': False,
@@ -1012,6 +1213,14 @@ def post_process_parsed_records(records: list[dict[str, Any]]) -> list[dict[str,
     例如：在 bytes 格式和 MB 格式之间进行换算，或复制内存使用率。
     """
     for record in records:
+        continuation = record.get('PATH_CONTINUATION')
+        if continuation and record.get('NETWORK') and record.get('NEXT_HOP'):
+            # Split the original columns before joining the AS path lines.
+            # Splitting the joined tail would mistake AS numbers for LocPrf.
+            columns = re.split(r'\s{2,}', str(record.get('ATTRIBUTES') or '').strip())
+            if len(columns) in (3, 4) and all(part.isdigit() for part in columns[:-1]):
+                record['AS_PATH'] = ' '.join([columns[-1], *continuation])
+
         # H3C Comware V5 reports memory in bytes, while the V7/V9 table
         # reports it in KB. Expose one user-facing unit across all H3C
         # generations and remove the raw-unit fields from the result.
@@ -1092,11 +1301,94 @@ def parse_with_template_content(template_content: str, output: str) -> list[dict
         return []
     except textfsm.TextFSMTemplateError as e:
         raise ValueError(f"模板语法错误: {e}") from e
+    except MemoryError:
+        raise
     except Exception as e:
         raise ValueError(f"解析失败: {e}") from e
 
 
 # ── 模板管理 CRUD ─────────────────────────────────────────────────────
+
+def _template_catalog_entries(directory: Path | None, source: str) -> dict[str, dict[str, Any]]:
+    """Build one catalog layer, keeping the canonical alias when both exist."""
+    entries: dict[str, dict[str, Any]] = {}
+    if directory is None:
+        return entries
+
+    for path in sorted(directory.glob('*.textfsm'), key=_template_catalog_file_sort_key):
+        info = _parse_template_filename(path.name)
+        if not info:
+            continue
+        catalog_filename = _canonical_template_filename(path.name)
+        try:
+            action_code = template_action_code(path.read_text(encoding='utf-8'))
+        except FileNotFoundError:
+            # A concurrent delete may remove a file after glob() returns it.
+            continue
+        entries.setdefault(catalog_filename, {
+            **_template_catalog_metadata(info),
+            'source': source,
+            'filename': catalog_filename,
+            'action_code': action_code,
+        })
+    return entries
+
+
+def _template_catalog_directory_fingerprint(directory: Path | None) -> tuple[Any, ...] | None:
+    if directory is None:
+        return None
+    try:
+        stat = directory.stat()
+        resolved = str(directory.resolve())
+    except FileNotFoundError:
+        return (str(directory), None)
+    return (resolved, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
+
+
+def _invalidate_template_catalog_cache() -> None:
+    global _TEMPLATE_CATALOG_CACHE_FINGERPRINT, _TEMPLATE_CATALOG_CACHE_AT, _TEMPLATE_CATALOG_CACHE_ENTRIES
+    with _TEMPLATE_CATALOG_CACHE_LOCK:
+        _TEMPLATE_CATALOG_CACHE_FINGERPRINT = None
+        _TEMPLATE_CATALOG_CACHE_AT = 0.0
+        _TEMPLATE_CATALOG_CACHE_ENTRIES = ()
+
+
+def _template_catalog_snapshot() -> list[dict[str, Any]]:
+    """Read template files once per directory change, with a short external-edit refresh window."""
+    global _TEMPLATE_CATALOG_CACHE_FINGERPRINT, _TEMPLATE_CATALOG_CACHE_AT, _TEMPLATE_CATALOG_CACHE_ENTRIES
+    builtin = _get_builtin_templates_dir()
+    packaged = _get_packaged_templates_dir()
+    custom = _CUSTOM_TEMPLATES_DIR
+    custom.mkdir(parents=True, exist_ok=True)
+    directories = (builtin, packaged, custom)
+    fingerprint = tuple(_template_catalog_directory_fingerprint(path) for path in directories)
+    now = time.monotonic()
+
+    with _TEMPLATE_CATALOG_CACHE_LOCK:
+        if (
+            fingerprint == _TEMPLATE_CATALOG_CACHE_FINGERPRINT
+            and now - _TEMPLATE_CATALOG_CACHE_AT < _TEMPLATE_CATALOG_CACHE_TTL_SECONDS
+        ):
+            return [dict(item) for item in _TEMPLATE_CATALOG_CACHE_ENTRIES]
+
+        templates: dict[str, dict[str, Any]] = {}
+        templates.update(_template_catalog_entries(builtin, 'builtin'))
+        templates.update(_template_catalog_entries(packaged, 'builtin'))
+        templates.update(_template_catalog_entries(custom, 'custom'))
+        result = sorted(templates.values(), key=lambda item: item.get('filename', '').lower())
+
+        if fingerprint == tuple(_template_catalog_directory_fingerprint(path) for path in directories):
+            _TEMPLATE_CATALOG_CACHE_FINGERPRINT = fingerprint
+            _TEMPLATE_CATALOG_CACHE_AT = time.monotonic()
+            _TEMPLATE_CATALOG_CACHE_ENTRIES = tuple(dict(item) for item in result)
+        else:
+            # A concurrent filesystem update occurred during the scan; return
+            # this response but force the next request to rebuild the index.
+            _TEMPLATE_CATALOG_CACHE_FINGERPRINT = None
+            _TEMPLATE_CATALOG_CACHE_AT = 0.0
+            _TEMPLATE_CATALOG_CACHE_ENTRIES = ()
+        return [dict(item) for item in result]
+
 
 def list_templates(
     platform_filter: str = '',
@@ -1111,53 +1403,7 @@ def list_templates(
     列出所有可用模板（内置 + 自定义），标注来源。
     自定义模板同名时覆盖内置模板（source='custom'）。
     """
-    templates: dict[str, dict[str, Any]] = {}
-
-    # 1. 先加载内置模板
-    builtin = _get_builtin_templates_dir()
-    if builtin:
-        for f in sorted(builtin.glob('*.textfsm'), key=_template_catalog_file_sort_key):
-            info = _parse_template_filename(f.name)
-            if info:
-                catalog_filename = _canonical_template_filename(f.name)
-                templates[catalog_filename] = {
-                    **_template_catalog_metadata(info),
-                    'source': 'builtin',
-                    'filename': catalog_filename,
-                    'action_code': template_action_code(f.read_text(encoding='utf-8')),
-                }
-
-    # 2. 加载随应用打包的只读默认模板
-    packaged = _get_packaged_templates_dir()
-    if packaged:
-        for f in sorted(packaged.glob('*.textfsm'), key=_template_catalog_file_sort_key):
-            info = _parse_template_filename(f.name)
-            if info:
-                catalog_filename = _canonical_template_filename(f.name)
-                templates[catalog_filename] = {
-                    **_template_catalog_metadata(info),
-                    'source': 'builtin',
-                    'filename': catalog_filename,
-                    'action_code': template_action_code(f.read_text(encoding='utf-8')),
-                }
-
-    # 3. 自定义模板覆盖（或新增）
-    _CUSTOM_TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
-    for f in sorted(_CUSTOM_TEMPLATES_DIR.glob('*.textfsm'), key=_template_catalog_file_sort_key):
-        info = _parse_template_filename(f.name)
-        if info:
-            catalog_filename = _canonical_template_filename(f.name)
-            templates[catalog_filename] = {
-                **_template_catalog_metadata(info),
-                'source': 'custom',
-                'filename': catalog_filename,
-                'action_code': template_action_code(f.read_text(encoding='utf-8')),
-            }
-
-    result = list(templates.values())
-
-    # 排序：按文件名升序，确保分页稳定性
-    result.sort(key=lambda x: x.get('filename', '').lower())
+    result = _template_catalog_snapshot()
 
     # 过滤
     if platform_filter:
@@ -1221,6 +1467,8 @@ def _normalize_template_platform_family(value: str | None) -> str:
         return 'h3c_comware'
     if raw == 'maipu' or raw.startswith('maipu_mypower'):
         return 'maipu_mypower'
+    if raw == 'ruijie_rgos_rsr' or raw.startswith('ruijie_rgos_rsr_'):
+        return 'ruijie_rgos_rsr'
     if raw in {'ruijie', 'ruijie_os'} or raw.startswith('ruijie_rgos'):
         return 'ruijie_rgos'
     if raw in {'zte_zxros', 'zte_rosng', 'zte_os_unknown'}:
@@ -1282,6 +1530,9 @@ def _template_catalog_metadata(info: dict[str, Any]) -> dict[str, Any]:
     elif platform == 'maipu' or platform.startswith('maipu_mypower'):
         vendor = 'maipu'
         platform_family = 'maipu_mypower'
+    elif platform.startswith('ruijie_rgos_rsr_'):
+        vendor = 'ruijie'
+        platform_family = 'ruijie_rgos_rsr'
     elif platform in {'ruijie', 'ruijie_os', 'ruijie_rgos'} or platform.startswith('ruijie_rgos_'):
         vendor = 'ruijie'
         platform_family = 'ruijie_rgos'
@@ -1366,9 +1617,18 @@ _TEMPLATE_COMMAND_CANONICAL: dict[str, dict[str, str]] = {
         # The NTC filename uses the singular spelling, while IOS/IOS-XE exposes
         # the verified operational command with the plural ``interfaces`` form.
         'show interface transceiver': 'show interfaces transceiver',
+        # The template filename tokenizes command separators as underscores;
+        # the actual Catalyst command keeps this separator as a hyphen.
+        'show mac address table': 'show mac address-table',
     },
     'cisco_nxos': {
         'show ntp peer status': 'show ntp peer-status',
+    },
+    'ruijie_rgos_v12': {
+        'show spanning tree summary': 'show spanning-tree summary',
+    },
+    'ruijie_rgos_v11': {
+        'show spanning tree summary': 'show spanning-tree summary',
     },
 }
 
@@ -1448,11 +1708,10 @@ def _template_platform_candidates(platform: str) -> list[str]:
         # devices use an explicit V5/V7/V9 parser selector above.
         return ['h3c_comware_v7', 'h3c_comware']
     if selected == 'ruijie_rgos':
-        # The legacy family value is still stored by existing devices. The
-        # current built-in Ruijie profile is RGOS 12, so preserve that
-        # backwards-compatible parser path without letting the explicit
-        # ``unknown`` profile silently select a release grammar.
-        return ['ruijie_rgos_v12', 'ruijie_rgos']
+        # An unversioned family may use only a family-level common template.
+        # The explicit unknown profile likewise must not inherit the latest
+        # version-specific grammar from a different release.
+        return ['ruijie_rgos']
     candidates = [normalized] if normalized else []
     candidates.extend(_COMPATIBLE_PLATFORMS.get(normalized, []))
     return list(dict.fromkeys(candidates))
@@ -1607,7 +1866,7 @@ def _parse_template_filename(filename: str) -> dict[str, Any] | None:
         'fortinet',
         'checkpoint_gaia',
         'hillstone_stoneos',
-        'ruijie_rgos_unknown', 'ruijie_rgos_v10', 'ruijie_rgos_v11', 'ruijie_rgos_v12', 'ruijie_rgos',
+        'ruijie_rgos_rsr_v10', 'ruijie_rgos_unknown', 'ruijie_rgos_v10', 'ruijie_rgos_v11', 'ruijie_rgos_v12', 'ruijie_rgos',
         'ruijie_os',
         'zte_os_unknown', 'zte_rosng', 'zte_zxros',
         'raisecom_ros',
@@ -1671,7 +1930,13 @@ def get_template_content(filename: str) -> tuple[str, str]:
     for candidate in aliases:
         custom_path = _CUSTOM_TEMPLATES_DIR / candidate
         if custom_path.exists():
-            return custom_path.read_text(encoding='utf-8'), 'custom'
+            try:
+                return custom_path.read_text(encoding='utf-8'), 'custom'
+            except FileNotFoundError:
+                # Deletion can race with the exists/read pair; keep looking
+                # through aliases and builtin fallbacks instead of surfacing
+                # an inconsistent 500 to callers.
+                continue
 
     packaged = _get_packaged_templates_dir()
     if packaged:
@@ -1695,6 +1960,9 @@ def save_custom_template(
     content: str,
     *,
     action_code: str | None = None,
+    create_only: bool = False,
+    expected_hash: str | None = None,
+    expected_source: str | None = None,
 ) -> dict[str, Any]:
     """
     保存自定义模板到 data/textfsm_templates/。
@@ -1705,6 +1973,12 @@ def save_custom_template(
     filename = _canonical_template_filename(filename)
     if not filename.endswith('.textfsm') or '/' in filename or '\\' in filename or '..' in filename:
         raise ValueError(f"非法文件名: {filename}")
+    if expected_hash is not None and not re.fullmatch(r'[0-9a-fA-F]{64}', str(expected_hash)):
+        raise ValueError('expected_hash 必须是 SHA-256 十六进制值')
+    if expected_source is not None and expected_source not in {'custom', 'builtin'}:
+        raise ValueError('expected_source 必须为 custom 或 builtin')
+    if expected_source is not None and expected_hash is None:
+        raise ValueError('expected_source 需要与 expected_hash 一起传入')
 
     # An action association is optional metadata.  If an editor updates a
     # template without sending the field, preserve any existing association
@@ -1717,9 +1991,31 @@ def save_custom_template(
     except textfsm.TextFSMTemplateError as e:
         raise ValueError(f"模板语法错误: {e}") from e
 
-    _CUSTOM_TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
     path = _CUSTOM_TEMPLATES_DIR / filename
-    path.write_text(content, encoding='utf-8')
+    aliases = _template_filename_aliases(filename)
+    with _template_storage_lock():
+        if create_only and any((_CUSTOM_TEMPLATES_DIR / candidate).exists() for candidate in aliases):
+            raise TemplateConflictError('同名自定义模板已存在，请刷新后再编辑')
+
+        if expected_hash is not None:
+            try:
+                current_content, current_source = get_template_content(filename)
+            except FileNotFoundError as exc:
+                raise TemplateConflictError('模板已被删除，请刷新后重试') from exc
+            if template_content_hash(current_content) != str(expected_hash).lower():
+                raise TemplateConflictError('模板内容已被其他操作修改，请刷新后重试')
+            if expected_source is not None and current_source != expected_source:
+                raise TemplateConflictError('模板来源已发生变化，请刷新后重试')
+
+        _atomic_write_template(path, content)
+
+        # The canonical Huawei name now contains the authoritative version.
+        # Remove every legacy custom alias only after the atomic replacement.
+        for candidate in aliases:
+            alias_path = _CUSTOM_TEMPLATES_DIR / candidate
+            if alias_path != path and alias_path.exists():
+                alias_path.unlink()
+        _invalidate_template_catalog_cache()
 
     info = _parse_template_filename(filename) or {}
     metadata = _template_catalog_metadata(info)
@@ -1742,12 +2038,16 @@ def delete_custom_template(filename: str) -> bool:
     if not filename.endswith('.textfsm') or '/' in filename or '\\' in filename or '..' in filename:
         raise ValueError(f"非法文件名: {filename}")
 
-    for candidate in _template_filename_aliases(filename):
-        path = _CUSTOM_TEMPLATES_DIR / candidate
-        if path.exists():
-            path.unlink()
-            return True
-    return False
+    deleted = False
+    with _template_storage_lock():
+        for candidate in _template_filename_aliases(filename):
+            path = _CUSTOM_TEMPLATES_DIR / candidate
+            if path.exists():
+                path.unlink()
+                deleted = True
+        if deleted:
+            _invalidate_template_catalog_cache()
+    return deleted
 
 
 def get_supported_platforms() -> list[str]:

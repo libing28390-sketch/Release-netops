@@ -1,0 +1,5 @@
+VLAN0001
+Interface            Role Sts Cost      Prio.Nbr Type
+-------------------   --- --- --------- -------- ----
+Fi1/0/17              Desg FWD 2000      128.17   P2p
+FiF2/0/17             Back BLK 2000      128.185  P2p

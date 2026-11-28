@@ -34,7 +34,25 @@ vi.mock('./components/ParameterConfigStep', () => ({
   ),
 }));
 vi.mock('./components/ExecutionResultsStep', () => ({ ExecutionResultsStep: () => null }));
-vi.mock('./components/QuickQueryOverlay', () => ({ QuickQueryOverlay: () => null }));
+vi.mock('./components/QuickQueryOverlay', () => ({
+  QuickQueryOverlay: ({ hasTargets, queryPresets, onRunQuickQuery }: {
+    hasTargets: boolean;
+    queryPresets: Array<{ label: string; cmds: string; operationalCategory?: string }>;
+    onRunQuickQuery: (label: string, commands: string, category?: string, authRole?: string) => void;
+  }) => hasTargets ? (
+    <div>
+      {queryPresets.map((preset) => (
+        <button
+          key={`${preset.label}:${preset.operationalCategory || ''}`}
+          type="button"
+          onClick={() => onRunQuickQuery(preset.label, preset.cmds, preset.operationalCategory, 'normal')}
+        >
+          {preset.label}
+        </button>
+      ))}
+    </div>
+  ) : null,
+}));
 vi.mock('./components/QuickQueryResultOverlay', () => ({ QuickQueryResultOverlay: () => null }));
 vi.mock('./components/TextFSMDebugger', () => ({ TextFSMDebugger: () => null }));
 
@@ -154,5 +172,38 @@ describe('AutomationExecuteTab Escape behavior', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(trigger));
     expect(onRunApply).not.toHaveBeenCalled();
+  });
+
+  it('exposes BGP route and IS-IS categories through the registered Quick Ops actions', () => {
+    const onRunQuickQuery = vi.fn();
+    render(<AutomationExecuteTab {...makeProps(vi.fn(), {
+      selectedDevice: {
+        ...device,
+        platform: 'h3c_comware_v7',
+        vendor: 'H3C',
+        role: 'core',
+      },
+      batchMode: false,
+      batchDeviceIds: [],
+      onRunQuickQuery,
+    })} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'BGP路由' }));
+    fireEvent.click(screen.getByRole('button', { name: 'IS-IS邻居' }));
+
+    expect(onRunQuickQuery).toHaveBeenNthCalledWith(
+      1,
+      'BGP路由',
+      'display bgp routing-table ipv4',
+      'bgp_routes',
+      'normal',
+    );
+    expect(onRunQuickQuery).toHaveBeenNthCalledWith(
+      2,
+      'IS-IS邻居',
+      'display isis peer',
+      'isis',
+      'normal',
+    );
   });
 });

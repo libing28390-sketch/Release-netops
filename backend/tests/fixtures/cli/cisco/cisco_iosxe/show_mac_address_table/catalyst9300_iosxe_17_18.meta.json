@@ -1,0 +1,30 @@
+{
+  "vendor": "Cisco",
+  "platform": "cisco_xe",
+  "parser_platform": "cisco_ios",
+  "software_family": "IOS XE",
+  "platform_version": "17.x",
+  "software_version": "unknown",
+  "model_family": "Catalyst 9300",
+  "command": "show mac address-table",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-18/command_reference/b_1718_9300_cr/system_management_commands.html",
+  "source_title": "Command Reference, Cisco IOS XE 17.18.x (Catalyst 9300 Switches) - System Management Commands",
+  "source_section": "show mac address-table > Examples > sample output",
+  "source_note": "Abridged table excerpt preserving the official MAC and port field format. The documentation identifies IOS XE 17.18.x and Catalyst 9300; the sample does not specify the exact running build.",
+  "expected_record_count": 3,
+  "expected_fields": [
+    "VLAN",
+    "MAC_ADDRESS",
+    "TYPE",
+    "INTERFACE"
+  ],
+  "expected_record_index": 2,
+  "expected_values": {
+    "VLAN": "1021",
+    "MAC_ADDRESS": "0002.02cc.0002",
+    "TYPE": "STATIC",
+    "INTERFACE": "Gi6/0/2"
+  },
+  "expected_template": "cisco_ios_show_mac_address_table.textfsm"
+}

@@ -1,0 +1,7 @@
+<Sysname> display mac-address vlan 100
+MAC Address      VLAN ID    State            Port/Nickname            Aging
+0001-0101-0101   100        Multiport        WGE1/0/1                 N
+                                           WGE1/0/2
+0033-0033-0033   100        Blackhole        N/A                      N
+0000-0000-0002   100        Static           WGE1/0/3                 N
+00e0-fc00-5829   100        Learned          WGE1/0/4                 Y

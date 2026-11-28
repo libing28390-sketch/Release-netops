@@ -1,0 +1,17 @@
+# nexora-action-code: get_version
+# Official Ruijie sample: https://www.ruijie.com.cn/fw/wt/18252/
+# The page shows an EG1000S with RGOS 10.3(4b7), Release(83522).
+Value SYSTEM_DESCRIPTION (.+?)
+Value SYSTEM_START_TIME (.+?)
+Value SYSTEM_UPTIME ([0-9:.]+)
+Value SYSTEM_HARDWARE_VERSION ([\w.()+-]+)
+Value SYSTEM_SOFTWARE_VERSION (RGOS [^,\r\n]+,\s*Release\([^)]+\))
+Value SYSTEM_BOOT_VERSION (\S+)
+
+Start
+  ^System description\s*:\s*${SYSTEM_DESCRIPTION}\s*$$
+  ^System start time\s*:\s*${SYSTEM_START_TIME}\s*$$
+  ^System uptime\s*:\s*${SYSTEM_UPTIME}\s*$$
+  ^System hardware version\s*:\s*${SYSTEM_HARDWARE_VERSION}(?:-+.*)?$$
+  ^System software version\s*:\s*${SYSTEM_SOFTWARE_VERSION}(?:-+.*)?$$
+  ^System BOOT version\s*:\s*${SYSTEM_BOOT_VERSION}\s*$$ -> Record

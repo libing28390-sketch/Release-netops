@@ -1,0 +1,12 @@
+<Sysname> display isis peer
+
+                 Peer information for IS-IS(1)
+                 -----------------------------
+
+System ID: 0000.0000.0001
+Interface: Vlan100                   Circuit Id: 0000.0000.0001.01
+State: Up     HoldTime: 27s       Type: L1(L1L2)     PRI: 64
+
+System ID: 0000.0000.0001
+Interface: Vlan100                   Circuit Id: 0000.0000.0001.01
+State: Up     HoldTime: 27s       Type: L2(L1L2)     PRI: 64

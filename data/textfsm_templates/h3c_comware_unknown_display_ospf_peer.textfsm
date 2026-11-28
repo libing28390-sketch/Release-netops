@@ -1,0 +1,23 @@
+# nexora-action-code: get_ospf_neighbors
+# Official H3C S9500 Command Manual, Release 2132 [V2.03], section 1.1.24.
+# https://www.h3c.com/en/d_200806/607561_294551_0.htm
+Value Filldown OSPF_PROCESS (\d+)
+Value Filldown LOCAL_ROUTER_ID (\d+\.\d+\.\d+\.\d+)
+Value Filldown AREA_ID (\d+\.\d+\.\d+\.\d+)
+Value Required NEIGHBOR_ID (\d+\.\d+\.\d+\.\d+)
+Value Required ADDRESS (\d+\.\d+\.\d+\.\d+)
+Value Required PRIORITY (\d+)
+Value Required DEAD_TIME (\d+)
+Value Required INTERFACE (\S+)
+Value Required STATE (\S+(?:/\S+)?)
+
+Start
+  ^\s*OSPF\s+Process\s+${OSPF_PROCESS}\s+with\s+Router\s+ID\s+${LOCAL_ROUTER_ID}\s*$$
+  ^\s*Area:\s+${AREA_ID}\s*$$
+  ^\s*Neighbor\s+Brief\s+Information\s*$$
+  ^\s*Router\s+ID\s+Address\s+Pri\s+Dead-Time\s+Interface\s+State\s*$$
+  ^\s*${NEIGHBOR_ID}\s+${ADDRESS}\s+${PRIORITY}\s+${DEAD_TIME}\s+${INTERFACE}\s+${STATE}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next
+
+EOF

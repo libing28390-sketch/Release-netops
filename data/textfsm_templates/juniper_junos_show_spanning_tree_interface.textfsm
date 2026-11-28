@@ -1,0 +1,19 @@
+# nexora-action-code: get_stp
+Value Filldown INSTANCE_TYPE (instance|VLAN)
+Value Filldown,Required INSTANCE (\d+)
+Value Required INTERFACE (\S+)
+Value PORT_ID (\d+:\d+)
+Value DESIGNATED_PORT_ID (\d+:\d+)
+Value DESIGNATED_BRIDGE (\d+\.[0-9a-fA-F]{12})
+Value COST (\d+)
+Value STATE (\S+)
+Value ROLE (\S+)
+
+Start
+  ^\s*Spanning tree interface parameters for ${INSTANCE_TYPE} ${INSTANCE}\s*$$ -> Ports
+
+Ports
+  ^\s*Spanning tree interface parameters for ${INSTANCE_TYPE} ${INSTANCE}\s*$$
+  ^\s*${INTERFACE}\s+${PORT_ID}\s+${DESIGNATED_PORT_ID}\s+${DESIGNATED_BRIDGE}\s+${COST}\s+${STATE}\s+${ROLE}\s*$$ -> Record
+
+EOF

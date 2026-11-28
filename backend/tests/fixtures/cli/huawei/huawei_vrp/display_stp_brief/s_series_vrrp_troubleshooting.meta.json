@@ -1,0 +1,31 @@
+{
+  "vendor": "Huawei",
+  "platform": "huawei_vrp",
+  "parser_platform": "huawei_vrp5",
+  "software_family": "VRP",
+  "platform_version": "unknown",
+  "software_version": "unknown",
+  "model_family": "S series",
+  "command": "display stp brief",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://info.support.huawei.com/network/ptmngsys/Web/tsrev_s/en/content/s/12_edesk_Abnormal_VRRP_Status/edesk_Abnormal_VRRP_Status_edesk004.html",
+  "source_title": "Checking Whether STP Flapping Occurs",
+  "source_section": "Procedure > display stp brief",
+  "source_note": "Huawei troubleshooting example. The document section identifies the switch family, while this output does not identify the exact platform generation or software build. The parser namespace is the target under test.",
+  "expected_record_count": 2,
+  "expected_fields": [
+    "INSTANCE",
+    "INTERFACE",
+    "ROLE",
+    "STATUS",
+    "PROTECTION"
+  ],
+  "expected_values": {
+    "INSTANCE": "0",
+    "INTERFACE": "GigabitEthernet1/0/24",
+    "ROLE": "ALTE",
+    "STATUS": "DISCARDING",
+    "PROTECTION": "NONE"
+  },
+  "expected_template": "huawei_vrp5_display_stp_brief.textfsm"
+}

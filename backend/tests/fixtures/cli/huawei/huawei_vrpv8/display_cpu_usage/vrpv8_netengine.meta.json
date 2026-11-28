@@ -7,7 +7,28 @@
   "source_type": "official_vendor_documentation",
   "source_url": "https://support.huawei.com/enterprise/en/doc/EDOC1100400980/55e776e6/troubleshooting-high-cpu-usage",
   "source_title": "Troubleshooting High CPU Usage - Huawei",
-  "source_section": "Checking the Software Version and Board Status / CPU usage examples",
+  "source_section": "Checking the Software Version and Board Status > CPU usage examples",
+  "source_note": "The official Huawei example identifies a NetEngine A816 and demonstrates the VRP V8 CPU output fields; the exact running software build is not stated.",
+  "model_family": "NetEngine A800 series",
   "expected_record_count": 1,
-  "expected_fields": ["SLOT", "CPU_ID", "SYSTEM_CPU", "DATAPLANE_CPU", "CPU_5_SEC", "CPU_1_MIN", "CPU_5_MIN", "MAX_CPU"]
+  "expected_fields": [
+    "SLOT",
+    "CPU_ID",
+    "SYSTEM_CPU",
+    "DATAPLANE_CPU",
+    "CPU_5_SEC",
+    "CPU_1_MIN",
+    "CPU_5_MIN",
+    "MAX_CPU"
+  ],
+  "platform_version": "V8",
+  "software_version": "unknown",
+  "expected_values": {
+    "SLOT": "1",
+    "CPU_ID": "0",
+    "SYSTEM_CPU": "9"
+  },
+  "expected_template": "huawei_vrpv8_display_cpu_usage.textfsm",
+  "expected_template_prefix": "huawei_vrpv8_",
+  "parser_platform": "huawei_vrp8"
 }

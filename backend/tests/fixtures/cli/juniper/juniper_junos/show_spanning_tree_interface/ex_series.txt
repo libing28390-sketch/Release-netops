@@ -1,0 +1,3 @@
+Spanning tree interface parameters for instance 2
+ge-0/0/0.0  128:513  128:1    8194.001b549fd000  1000  FWD  ROOT
+ge-0/0/4.0  128:517  128:1   16386.001b54013080  1000  BLK  ALT

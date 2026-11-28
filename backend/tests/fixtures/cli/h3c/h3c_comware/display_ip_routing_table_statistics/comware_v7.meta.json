@@ -7,7 +7,31 @@
   "source_type": "official_vendor_documentation",
   "source_url": "https://www.h3c.com/en/d_202507/2600661_294551_0.htm",
   "source_title": "01-Basic IP Routing commands - H3C",
-  "source_section": "display ip routing-table statistics",
+  "source_section": "display ip routing-table statistics > Examples",
   "expected_record_count": 8,
-  "expected_fields": ["TOTAL_PREFIXES", "ACTIVE_PREFIXES", "PROTO", "TOTAL", "ACTIVE", "ADDED", "DELETED"]
+  "expected_fields": [
+    "TOTAL_PREFIXES",
+    "ACTIVE_PREFIXES",
+    "PROTO",
+    "TOTAL",
+    "ACTIVE",
+    "ADDED",
+    "DELETED"
+  ],
+  "documentation_release": "unknown",
+  "platform_version": "unknown",
+  "software_version": "unknown",
+  "model_family": "Not stated in the official sample",
+  "expected_template_prefix": "h3c_comware_v7_",
+  "source_note": "CLI command: display ip routing-table statistics. Official H3C basic IP routing command reference example. The page does not establish a specific device software build.",
+  "expected_template": "h3c_comware_v7_display_ip_routing_table_statistics.textfsm",
+  "expected_record_index": 0,
+  "expected_values": {
+    "TOTAL_PREFIXES": "11",
+    "ACTIVE_PREFIXES": "11",
+    "PROTO": "DIRECT",
+    "TOTAL": "8",
+    "ACTIVE": "8"
+  },
+  "parser_platform": "h3c_comware_v7"
 }

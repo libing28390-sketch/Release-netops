@@ -5,5 +5,27 @@
   "platform": "Comware7",
   "model_family": "S5130S-HI/S5110V2/S3100V3-EI",
   "command": "display irf",
-  "source_note": "Official IRF fabric information example, including master/login markers."
+  "source_note": "CLI command: display irf. Official IRF fabric-information example, including master/login markers. The cited release is the command-reference/document release; the sample does not itself confirm the running device software build.",
+  "source_title": "Support - 01-IRF commands - H3C",
+  "source_section": "display irf > Examples",
+  "documentation_release": "R612x-6W103",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "expected_record_count": 2,
+  "expected_fields": [
+    "MEMBER_ID",
+    "ROLE",
+    "PRIORITY",
+    "CPU_MAC",
+    "DESCRIPTION"
+  ],
+  "expected_template_prefix": "h3c_comware_v7_",
+  "expected_template": "h3c_comware_v7_display_irf.textfsm",
+  "expected_record_index": 0,
+  "expected_values": {
+    "MEMBER_ID": "1",
+    "ROLE": "Loading",
+    "CPU_MAC": "00e0-fcbe-3102"
+  },
+  "parser_platform": "h3c_comware_v7"
 }

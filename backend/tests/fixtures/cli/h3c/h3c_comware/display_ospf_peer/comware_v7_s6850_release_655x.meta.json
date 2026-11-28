@@ -1,0 +1,39 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/Support/Resource_Center/EN/Home/Switches/00-Public/Reference_Guides/Command_References/H3C_S6850_S9850_CR-655X/05/202112/1500347_294551_0.htm",
+  "vendor": "H3C",
+  "platform": "Comware7",
+  "parser_platform": "h3c_comware_v7",
+  "model_family": "S6850/S9850 switch series",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "documentation_release": "Release 655x-6W102",
+  "command": "display ospf peer",
+  "source_title": "Support - 04-OSPF commands - H3C",
+  "source_section": "display ospf peer > Examples > Display brief OSPF neighbor information",
+  "source_note": "The official example includes a regular neighbor with Vlan10 and a sham-link neighbor in a second table without an Interface column. The parser preserves both neighbors and leaves the sham-link INTERFACE empty; the command-reference release does not confirm the running device build.",
+  "expected_record_count": 2,
+  "expected_fields": [
+    "OSPF_PROCESS",
+    "LOCAL_ROUTER_ID",
+    "AREA_ID",
+    "NEIGHBOR_ID",
+    "IP_ADDRESS",
+    "PRIORITY",
+    "DEAD_TIME",
+    "STATUS",
+    "INTERFACE"
+  ],
+  "expected_template_prefix": "h3c_comware_v7_",
+  "expected_template": "h3c_comware_v7_display_ospf_peer.textfsm",
+  "expected_record_index": 0,
+  "expected_values": {
+    "OSPF_PROCESS": "1",
+    "LOCAL_ROUTER_ID": "1.1.1.1",
+    "AREA_ID": "0.0.0.0",
+    "NEIGHBOR_ID": "1.1.1.2",
+    "IP_ADDRESS": "1.1.1.2",
+    "STATUS": "Full/DR",
+    "INTERFACE": "Vlan10"
+  }
+}

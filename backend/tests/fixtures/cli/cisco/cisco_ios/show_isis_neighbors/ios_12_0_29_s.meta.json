@@ -1,0 +1,27 @@
+{
+  "vendor": "Cisco",
+  "platform": "cisco_ios",
+  "parser_platform": "cisco_ios",
+  "platform_version": "12.0",
+  "software_version": "12.0(29)S",
+  "model_family": "Cisco IOS router (model unspecified)",
+  "command": "show isis neighbors",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_isis/command/irs-cr-book/irs-l1.html",
+  "source_title": "Cisco IOS IP Routing: ISIS Command Reference",
+  "source_section": "show isis neighbors > Examples > Release 12.0(29)S",
+  "source_note": "Cisco explicitly identifies the release for this example. The router model is unspecified.",
+  "expected_record_count": 2,
+  "expected_fields": ["SYSTEM_ID", "TYPE", "INTERFACE", "IP_ADDRESS", "STATUS", "HOLD_TIME", "CIRCUIT_ID"],
+  "expected_values": {
+    "SYSTEM_ID": "0000.0000.0002",
+    "TYPE": "L2",
+    "INTERFACE": "Et0/0",
+    "IP_ADDRESS": "192.168.128.2",
+    "STATUS": "UP",
+    "HOLD_TIME": "28",
+    "CIRCUIT_ID": "R5.02"
+  },
+  "expected_record_index": 1,
+  "expected_template": "cisco_ios_show_isis_neighbors.textfsm"
+}

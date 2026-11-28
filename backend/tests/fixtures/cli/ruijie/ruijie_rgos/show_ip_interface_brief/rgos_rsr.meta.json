@@ -1,13 +1,20 @@
 {
   "vendor": "Ruijie",
   "platform": "ruijie_rgos",
+  "parser_platform": "ruijie_rgos_unknown",
   "software_family": "RGOS",
+  "platform_version": "unknown",
+  "software_version": "unknown",
+  "source_note": "The official CLI output does not identify a software release; keep this sample in the unknown-version namespace.",
   "model": "RSR series",
+  "model_family": "RSR series",
   "command": "show ip interface brief",
   "source_type": "official_vendor_documentation",
   "source_url": "https://www.ruijie.com.cn/fw/wt/36825/",
-  "source_title": "路由器系统类异常，即CPU利用率高",
+  "source_title": "路由器3G类异常，即3G拨号成功但业务不通，导致3G路由器下的业务无法正常办理",
   "source_section": "show ip interface brief",
   "expected_record_count": 1,
-  "expected_fields": ["INTERFACE", "IP_ADDRESS_PRI", "IP_ADDRESS_SEC", "STATUS", "PROTOCOL"]
+  "expected_fields": ["INTERFACE", "IP_ADDRESS_PRI", "IP_ADDRESS_SEC", "STATUS", "PROTOCOL"],
+  "expected_values": {"INTERFACE": "Async 1", "IP_ADDRESS_PRI": "10.10.0.2", "STATUS": "up", "PROTOCOL": "up"},
+  "expected_template": "ruijie_rgos_unknown_show_ip_interface_brief.textfsm"
 }

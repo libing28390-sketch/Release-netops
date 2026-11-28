@@ -1,0 +1,26 @@
+{
+  "vendor": "Huawei",
+  "platform": "huawei_yunshan",
+  "parser_platform": "huawei_yunshan",
+  "platform_version": "1.23",
+  "software_version": "V300R024C00",
+  "documentation_release": "V300R024C00",
+  "model_family": "CloudEngine 5800",
+  "model": "CE5855-48T4XS",
+  "command": "display version",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://info.support.huawei.com/info-finder/vue/zh/enterprise/openSearch?keyword=V300R024C00",
+  "source_title": "CloudEngine 5800 系列交换机 V300R024C00 产品文档 (EDOC1100411907)",
+  "source_section": "版本配套说明 > display version > 表 1 命令输出信息描述",
+  "source_note": "Excerpt from Huawei Info-Finder's indexed product documentation and its output-field descriptions. The excerpt retains only the OS banner, version, and model/uptime fields.",
+  "expected_record_count": 1,
+  "expected_fields": ["OS_NAME", "VERSION", "PRODUCT_VERSION", "MODEL", "UPTIME"],
+  "expected_values": {
+    "OS_NAME": "YunShan OS",
+    "VERSION": "1.23.0.1",
+    "PRODUCT_VERSION": "CE5800 V300R024C00",
+    "MODEL": "CE5855-48T4XS",
+    "UPTIME": "5 days, 3 hours, 48 minutes"
+  },
+  "expected_template": "huawei_yunshan_display_version.textfsm"
+}

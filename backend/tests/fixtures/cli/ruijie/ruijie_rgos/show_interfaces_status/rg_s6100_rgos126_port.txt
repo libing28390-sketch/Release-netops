@@ -1,0 +1,4 @@
+Hostname# show interfaces gigabitethernet 0/1 status
+Interface              Status  Vlan  Duplex   Speed    Type
+---------------------  ------  ----  -------  -------  ------
+GigabitEthernet 0/1    up      1     Full     1000M    copper

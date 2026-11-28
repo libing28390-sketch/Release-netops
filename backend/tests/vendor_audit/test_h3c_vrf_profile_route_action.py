@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from services import ip_locator_service
 from services.operational_data_service import parse_device_cli_output
+from services.platform_registry_service import get_profile_action_commands
 
 
 H3C_VRF_LIST_OUTPUT_WITH_PROMPTS = """\
@@ -38,6 +39,17 @@ H3C_V7_CONTEXT = {
     "parser_platform": "h3c_comware_v7",
     "parser_family": "h3c_comware",
 }
+
+
+def test_h3c_v7_default_vrf_bgp_route_command_matches_comware_7_syntax():
+    commands = get_profile_action_commands({
+        "platform_code": "h3c_comware_v7",
+        "parser_platform": "h3c_comware",
+    })
+
+    assert commands["get_bgp_routes_vrf"] == (
+        "display bgp routing-table ipv4 unicast vpn-instance {{vrf}}"
+    )
 
 
 def _fake_vrf_command(monkeypatch, output: str) -> list[str]:
@@ -115,11 +127,23 @@ def test_h3c_profile_vrf_route_action_records_normalize_for_route_cache():
     )
 
     assert parsed["parse_status"] == "matched", parsed
+    assert parsed["template"] == "h3c_comware_v7_display_ip_routing_table.textfsm"
     assert len(parsed["records"]) == 8
     assert all(
-        record.get("network") and record.get("prefix_length") is not None
-        and record.get("nexthop_ip") and record.get("nexthop_if")
+        record.get("destination") and record.get("nexthop") and record.get("interface")
         for record in parsed["records"]
+    )
+
+    from services.platform_registry_service import _normalize_records
+
+    action_records = _normalize_records(
+        parsed["records"],
+        max_records=1000,
+        expected_fields={"prefix", "next_hop", "interface"},
+    )
+    assert all(
+        record.get("prefix") and record.get("next_hop") and record.get("interface")
+        for record in action_records
     )
 
     normalized = ip_locator_service._normalize_profile_route_records(

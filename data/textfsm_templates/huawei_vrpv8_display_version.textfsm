@@ -1,0 +1,14 @@
+# nexora-action-code: get_version
+# Official Huawei NetEngine A816 VRP V8 sample:
+# https://support.huawei.com/enterprise/en/doc/EDOC1100400980/55e776e6/troubleshooting-high-cpu-usage
+Value Required VRP_VERSION (\S+)
+Value Required PRODUCT_VERSION (.+?)
+Value Required MODEL (.+?)
+Value Required UPTIME (.+?)
+
+Start
+  ^VRP\s+\(R\)\s+software,\s+Version\s+${VRP_VERSION}\s+\(${PRODUCT_VERSION}\)\s*$$
+  ^(?:HUAWEI|Huawei)\s+${MODEL}\s+uptime\s+is\s+${UPTIME}\s*$$ -> Record
+  ^Copyright.*$$
+  ^\s*$$
+  ^. -> Next

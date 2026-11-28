@@ -1,0 +1,7 @@
+# nexora-action-code: get_cpu
+# H3C MSR 50-06 command reference, section 1.1.8:
+# https://www.h3c.com/cn/d_200809/615821_30005_0.htm
+Value Required USAGE (\d+(?:\.\d+)?%)
+
+Start
+  ^\s*CPU\s+Usage\s*:\s*${USAGE}\s*$$ -> Record

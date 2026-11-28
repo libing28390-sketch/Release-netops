@@ -1,0 +1,19 @@
+{
+  "vendor": "H3C",
+  "platform": "h3c_comware",
+  "model_family": "S6850/S9850/S9820-64H",
+  "command": "display stp brief",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/Support/Resource_Center/EN/Home/Switches/00-Public/Configure___Deploy/Configuration_Examples/H3C_S6850_S9850_S9820-64H_CE-6W100/202002/1273931_294551_0.htm",
+  "source_title": "H3C S6850 & S9850 & S9820-64H Spanning Tree Configuration Examples",
+  "source_section": "Display brief spanning tree information on Device D",
+  "source_note": "Two-row excerpt from Device D output, with HTML spacing normalized. The document scope is Release 655x, and the excerpt does not identify the device build.",
+  "documentation_release": "Release 655x-6W100",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "expected_record_count": 2,
+  "expected_fields": ["INSTANCE", "INTERFACE", "ROLE", "STATUS", "PROTECTION"],
+  "expected_values": {"INSTANCE": "0", "INTERFACE": "HundredGigE 1/0/1", "ROLE": "ALTE", "STATUS": "DISCARDING"},
+  "expected_template": "h3c_comware_v7_display_stp_brief.textfsm",
+  "parser_platform": "h3c_comware_v7"
+}

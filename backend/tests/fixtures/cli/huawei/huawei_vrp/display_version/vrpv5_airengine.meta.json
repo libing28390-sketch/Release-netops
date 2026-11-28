@@ -9,5 +9,23 @@
   "source_title": "display version - Huawei Command Reference",
   "source_section": "Example",
   "expected_record_count": 1,
-  "expected_fields": ["VRP_VERSION", "PRODUCT_VERSION", "MODEL", "UPTIME"]
+  "expected_fields": [
+    "VRP_VERSION",
+    "PRODUCT_VERSION",
+    "MODEL",
+    "UPTIME",
+    "PATCH_VERSION"
+  ],
+  "platform_version": "5.170",
+  "software_version": "V200R024C10",
+  "model_family": "AirEngine8760-X1-PRO",
+  "source_note": "The official Huawei command-reference sample prints VRP Version 5.170 and product software V200R024C10.",
+  "expected_values": {
+    "VRP_VERSION": "5.170",
+    "PRODUCT_VERSION": "AirEngine8760-X1-PRO  V200R024C10",
+    "MODEL": "AirEngine8760-X1-PRO"
+  },
+  "expected_template": "huawei_vrp_display_version.textfsm",
+  "expected_template_prefix": "huawei_vrp_",
+  "parser_platform": "huawei_vrp5"
 }

@@ -1,6 +1,6 @@
 import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import TextFSMTemplatesTab from './TextFSMTemplatesTab';
 
 const jsonResponse = (body: unknown, status = 200) => ({
@@ -41,8 +41,10 @@ const actionOptions = [
   },
 ];
 
+const operatorPermissions = { can_create: true, can_edit: true, can_test: true, can_delete: false };
+
 describe('TextFSMTemplatesTab', () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
+  let fetchMock: Mock<(input: RequestInfo | URL, init?: RequestInit) => Promise<ReturnType<typeof jsonResponse>>>;
 
   beforeEach(() => {
     fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -51,7 +53,7 @@ describe('TextFSMTemplatesTab', () => {
       if (url.startsWith('/api/textfsm/templates?')) {
         return jsonResponse({
           success: true,
-          data: { total: 1, items: [builtinTemplate], page: 1, page_size: 20 },
+          data: { total: 1, items: [builtinTemplate], page: 1, page_size: 20, permissions: operatorPermissions },
           message: '',
         });
       }
@@ -69,6 +71,8 @@ describe('TextFSMTemplatesTab', () => {
             ...builtinTemplate,
             content: 'Value VERSION (\\S+)\\n\\nStart\\n  ^Version: \\${VERSION} -> Record\\n',
             default_sample: '',
+            content_hash: 'builtin-content-hash',
+            source: 'builtin',
           },
           message: '',
         });
@@ -84,6 +88,31 @@ describe('TextFSMTemplatesTab', () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+  });
+
+  it('hides template changes and test controls when the API grants view-only access', async () => {
+    const customTemplate = { ...builtinTemplate, filename: 'cisco_ios_custom.textfsm', source: 'custom' as const };
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input).startsWith('/api/textfsm/templates?')) {
+        return jsonResponse({
+          success: true,
+          data: {
+            total: 1,
+            items: [customTemplate],
+            permissions: { can_create: false, can_edit: false, can_test: false, can_delete: false },
+          },
+        });
+      }
+      return jsonResponse({ success: true, data: {} });
+    });
+
+    render(<TextFSMTemplatesTab t={(key) => key} language="zh" />);
+
+    await screen.findByText(customTemplate.filename);
+    expect(screen.queryByRole('button', { name: '新建' })).toBeNull();
+    expect(screen.queryByTitle('编辑')).toBeNull();
+    expect(screen.queryByTitle('编辑并创建自定义覆盖')).toBeNull();
+    expect(screen.queryByTitle('删除')).toBeNull();
   });
 
   it('opens built-in templates as editable copy-on-write overrides', async () => {
@@ -110,8 +139,137 @@ describe('TextFSMTemplatesTab', () => {
         String(input) === `/api/textfsm/templates/${builtinTemplate.filename}`
         && init?.method === 'PUT'
         && JSON.parse(String(init.body)).content.includes('Value VERSION')
+        && JSON.parse(String(init.body)).expected_hash === 'builtin-content-hash'
+        && JSON.parse(String(init.body)).expected_source === 'builtin'
       ))).toBe(true);
     });
+  });
+
+  it('ignores an older template list response when a newer filter has loaded', async () => {
+    const slowTemplate = { ...builtinTemplate, filename: 'cisco_ios_slow.textfsm' };
+    const fastTemplate = { ...builtinTemplate, filename: 'cisco_ios_fast.textfsm' };
+    const defaultFetch = fetchMock.getMockImplementation();
+    let resolveSlow!: (response: ReturnType<typeof jsonResponse>) => void;
+    const slowResponse = new Promise<ReturnType<typeof jsonResponse>>((resolve) => { resolveSlow = resolve; });
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith('/api/textfsm/templates?')) {
+        const query = new URL(url, 'http://localhost').searchParams.get('search');
+        if (query === 'slow') return slowResponse;
+        if (query === 'fast') {
+          return jsonResponse({ success: true, data: { total: 1, items: [fastTemplate], permissions: operatorPermissions } });
+        }
+      }
+      return defaultFetch ? defaultFetch(input, init) : jsonResponse({ success: true, data: {} });
+    });
+
+    render(<TextFSMTemplatesTab t={(key) => key} language="zh" />);
+    await screen.findByText(builtinTemplate.filename);
+    const search = screen.getByRole('searchbox');
+    fireEvent.change(search, { target: { value: 'slow' } });
+    fireEvent.change(search, { target: { value: 'fast' } });
+
+    await screen.findByText(fastTemplate.filename);
+    resolveSlow(jsonResponse({ success: true, data: { total: 1, items: [slowTemplate], permissions: operatorPermissions } }));
+
+    await waitFor(() => {
+      expect(screen.getByText(fastTemplate.filename)).toBeTruthy();
+      expect(screen.queryByText(slowTemplate.filename)).toBeNull();
+    });
+  });
+
+  it('ignores an older detail response when another template was opened later', async () => {
+    const customTemplate = {
+      ...builtinTemplate,
+      filename: 'cisco_ios_show_interfaces.textfsm',
+      command: 'show interfaces',
+      source: 'custom' as const,
+    };
+    const defaultFetch = fetchMock.getMockImplementation();
+    let resolveOld!: (response: ReturnType<typeof jsonResponse>) => void;
+    const oldResponse = new Promise<ReturnType<typeof jsonResponse>>((resolve) => { resolveOld = resolve; });
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith('/api/textfsm/templates?')) {
+        return jsonResponse({ success: true, data: { total: 2, items: [builtinTemplate, customTemplate], permissions: operatorPermissions } });
+      }
+      if (url === `/api/textfsm/templates/${builtinTemplate.filename}`) return oldResponse;
+      if (url === `/api/textfsm/templates/${customTemplate.filename}`) {
+        return jsonResponse({
+          success: true,
+          data: { ...customTemplate, content: 'new template', content_hash: 'custom-hash', source: 'custom' },
+        });
+      }
+      return defaultFetch ? defaultFetch(input, init) : jsonResponse({ success: true, data: {} });
+    });
+
+    render(<TextFSMTemplatesTab t={(key) => key} language="zh" />);
+    await screen.findByText(customTemplate.filename);
+    fireEvent.click(screen.getByTitle('编辑并创建自定义覆盖'));
+    fireEvent.click(screen.getByTitle('编辑'));
+
+    expect(await screen.findByRole('heading', { name: /show_interfaces/ })).toBeTruthy();
+    resolveOld(jsonResponse({
+      success: true,
+      data: { ...builtinTemplate, content: 'old template', content_hash: 'old-hash', source: 'builtin' },
+    }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /show_interfaces/ })).toBeTruthy();
+      expect(screen.queryByRole('heading', { name: /show_version/ })).toBeNull();
+    });
+  });
+
+  it('invalidates a pending test preview when the template content changes', async () => {
+    const defaultFetch = fetchMock.getMockImplementation();
+    let resolveTest!: (response: ReturnType<typeof jsonResponse>) => void;
+    const pendingTest = new Promise<ReturnType<typeof jsonResponse>>((resolve) => { resolveTest = resolve; });
+    fetchMock.mockImplementation((input, init) => (
+      String(input) === '/api/textfsm/test'
+        ? pendingTest
+        : defaultFetch?.(input, init) || Promise.resolve(jsonResponse({ success: true, data: {} }))
+    ));
+
+    const { container } = render(<TextFSMTemplatesTab t={(key) => key} language="zh" />);
+    await screen.findByText(builtinTemplate.filename);
+    fireEvent.click(screen.getByTitle('编辑并创建自定义覆盖'));
+    await screen.findByRole('heading', { name: /^编辑模板/ });
+
+    fireEvent.change(screen.getByPlaceholderText('粘贴设备真实 CLI 输出...'), { target: { value: 'sample output' } });
+    fireEvent.click(screen.getByRole('button', { name: '测试解析' }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input) === '/api/textfsm/test')).toBe(true));
+
+    const editor = Array.from(container.querySelectorAll('textarea')).find((element) => !element.placeholder) as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: 'changed template' } });
+    resolveTest(jsonResponse({
+      success: true,
+      data: { count: 1, fields: ['RESULT'], records: [{ RESULT: 'STALE_RECORD' }] },
+    }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/STALE_RECORD/)).toBeNull();
+      expect(screen.getByText('粘贴样本输出后点击"测试解析"')).toBeTruthy();
+    });
+  });
+
+  it('shows an object-shaped API conflict detail as a readable toast', async () => {
+    const defaultFetch = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input) === `/api/textfsm/templates/${builtinTemplate.filename}` && init?.method === 'PUT') {
+        return Promise.resolve(jsonResponse({ success: false, detail: { message: '模板版本已变化，请重新打开' } }, 409));
+      }
+      return defaultFetch?.(input, init) || Promise.resolve(jsonResponse({ success: true, data: {} }));
+    });
+
+    render(<TextFSMTemplatesTab t={(key) => key} language="zh" />);
+    await screen.findByText(builtinTemplate.filename);
+    fireEvent.click(screen.getByTitle('编辑并创建自定义覆盖'));
+    await screen.findByRole('heading', { name: /^编辑模板/ });
+    fireEvent.click(screen.getByRole('button', { name: '保存模板' }));
+
+    expect(await screen.findByText('模板版本已变化，请重新打开')).toBeTruthy();
   });
 
   it('allows changing the action association while editing an existing template', async () => {

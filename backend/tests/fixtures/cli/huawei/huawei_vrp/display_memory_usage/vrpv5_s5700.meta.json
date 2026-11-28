@@ -7,7 +7,26 @@
   "source_type": "official_vendor_documentation",
   "source_url": "https://info.support.huawei.com/network/ptmngsys/Web/tsrev_s/en/content/s/35_edesk_the_cpu_usage_is_high/edesk_the_cpu_usage_is_higher_desk001.html",
   "source_title": "Checking Whether High Memory Usage Occurs - Huawei",
-  "source_section": "Procedure",
+  "source_section": "Procedure > display memory-usage example",
   "expected_record_count": 1,
-  "expected_fields": ["SYSTEM_TOTAL_MEMORY", "TOTAL_MEMORY_USED", "MEMORY_USING_PERCENTAGE"]
+  "expected_fields": [
+    "RECORD_TIME",
+    "SYSTEM_TOTAL_MEMORY",
+    "TOTAL_MEMORY_USED",
+    "MEMORY_USING_PERCENTAGE",
+    "TOTAL_MEMORY_MB",
+    "MEMORY_USING_PCT"
+  ],
+  "platform_version": "V5",
+  "software_version": "unknown",
+  "model_family": "S2300/S3300/S5300/S5700",
+  "source_note": "Official Huawei troubleshooting example identifies applicable switch series but does not provide an exact software build in the captured output.",
+  "expected_values": {
+    "SYSTEM_TOTAL_MEMORY": "867837916",
+    "TOTAL_MEMORY_USED": "203704524",
+    "MEMORY_USING_PERCENTAGE": "23"
+  },
+  "expected_template": "huawei_vrp_display_memory_usage.textfsm",
+  "expected_template_prefix": "huawei_vrp_",
+  "parser_platform": "huawei_vrp5"
 }

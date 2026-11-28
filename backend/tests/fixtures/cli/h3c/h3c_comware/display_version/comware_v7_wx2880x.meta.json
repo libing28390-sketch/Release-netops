@@ -9,5 +9,28 @@
   "source_title": "04-Hardware management and maintenance - H3C",
   "source_section": "Displaying software and hardware version information",
   "expected_record_count": 1,
-  "expected_fields": ["SOFTWARE_VERSION", "RELEASE", "DEVICE", "UPTIME", "LAST_REBOOT_REASON", "BOOT_IMAGE", "SYSTEM_IMAGE", "HARDWARE_VERSION"]
+  "expected_fields": [
+    "SOFTWARE_VERSION",
+    "RELEASE",
+    "DEVICE",
+    "UPTIME",
+    "LAST_REBOOT_REASON",
+    "BOOT_IMAGE",
+    "SYSTEM_IMAGE",
+    "HARDWARE_VERSION"
+  ],
+  "platform_version": "V7.1.064",
+  "software_version": "7.1.064, ESS 5610",
+  "model_family": "WX2880X",
+  "expected_values": {
+    "SOFTWARE_VERSION": "7.1.064",
+    "RELEASE": "ESS 5610",
+    "DEVICE": "WX2880X",
+    "HARDWARE_VERSION": "Ver.A"
+  },
+  "expected_template_prefix": "h3c_comware_v7_",
+  "source_note": "CLI command: display version. The official display-version example explicitly reports Comware 7.1.064, ESS 5610, model WX2880X, and hardware version Ver.A.",
+  "expected_template": "h3c_comware_v7_display_version.textfsm",
+  "expected_record_index": 0,
+  "parser_platform": "h3c_comware_v7"
 }

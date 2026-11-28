@@ -1,9 +1,19 @@
-Value Required FLAGS ([*><dehisS?\s]+)
-Value Required NETWORK ((?:\d{1,3}\.){3}\d{1,3}(?:/\d+)?)
+Value FLAGS ([*><adehisS?]+(?:[ \t]+[*><adehisS?]+)*)
+Value Filldown,Required NETWORK ((?:\d{1,3}\.){3}\d{1,3}(?:/\d+)?)
 Value Required NEXT_HOP ((?:\d{1,3}\.){3}\d{1,3})
 Value ATTRIBUTES (.+)
+Value List PATH_CONTINUATION (\d+(?:\.\d+)?(?:\s+\d+(?:\.\d+)?)*(?:\s*[ie?])?)
 
 Start
-  ^\s*${FLAGS}\s+${NETWORK}\s+${NEXT_HOP}\s+${ATTRIBUTES}\s*$$ -> Record
-  ^\s*$$
-  ^.*
+  ^\s*Network\s+NextHop\s+MED\s+LocPrf\s+PrefVal\s+Path/Ogn\s*$$ -> Rows
+
+Rows
+  ^\s*Network\s+NextHop\s+MED\s+LocPrf\s+PrefVal\s+Path/Ogn\s*$$ -> Continue.Record
+  ^\s*Network\s+NextHop\s+MED\s+LocPrf\s+PrefVal\s+Path/Ogn\s*$$ -> Clearall
+  ^\s*(?:VPN instance:|BGP local router ID|Total number of routes:) -> Continue.Record
+  ^\s*(?:VPN instance:|BGP local router ID|Total number of routes:) -> Clearall Start
+  ^\s*(?:[*><adehisS?]+(?:[ \t]+[*><adehisS?]+)*\s+)?(?:\d{1,3}\.){3}\d{1,3}(?:/\d+)?\s+(?:\d{1,3}\.){3}\d{1,3}\s+ -> Continue.Record
+  ^\s*(?:${FLAGS}\s+)?${NETWORK}\s+${NEXT_HOP}\s+${ATTRIBUTES}\s*$$
+  ^\s*[*><adehisS?]+(?:[ \t]+[*><adehisS?]+)*\s+(?:\d{1,3}\.){3}\d{1,3}\s+ -> Continue.Record
+  ^\s*${FLAGS}\s+${NEXT_HOP}\s+${ATTRIBUTES}\s*$$
+  ^\s+${PATH_CONTINUATION}\s*$$
