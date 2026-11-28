@@ -233,6 +233,7 @@ def test_targeted_current_projection_retains_same_target_conflicts(isolated_db):
 @pytest.mark.parametrize("failure", [
     "", "unknown_scope", "wrong_space", "unauthorized", "wrong_vlan",
     "stale_link", "stale_interface", "ambiguous_fdb", "inferred_link",
+    "edge_has_neighbor",
 ])
 def test_cross_device_current_fdb_requires_positive_tagged_path(monkeypatch, failure):
     from services.ip_locator_endpoint_evidence import _current_cross_device_fdb_path
@@ -271,6 +272,7 @@ def test_cross_device_current_fdb_requires_positive_tagged_path(monkeypatch, fai
         "source_port": "GE1/0/1", "target_port": "GE1/0/1", "status": "up",
         "link_kind": "physical", "discovery_source": "lldp", "last_seen": stamp,
     }
+    links = [link]
     allowed = {gateway, access}
     rows = [edge]
     if failure == "unknown_scope":
@@ -289,6 +291,9 @@ def test_cross_device_current_fdb_requires_positive_tagged_path(monkeypatch, fai
         rows.append(dict(edge, switch_port="GE1/0/3"))
     elif failure == "inferred_link":
         link["is_inferred"] = True
+    elif failure == "edge_has_neighbor":
+        links.append(dict(link, id="link-2", source_device_id=access,
+                          source_port="GE1/0/2", target_device_id="third"))
 
     class Rows:
         def __init__(self, rows):
@@ -301,7 +306,8 @@ def test_cross_device_current_fdb_requires_positive_tagged_path(monkeypatch, fai
             if "FROM interfaces" in sql:
                 return Rows(interfaces[params[0]])
             if "FROM topology_links" in sql:
-                return Rows([link])
+                return Rows([item for item in links
+                             if params[0] in {item["source_device_id"], item["target_device_id"]}])
             raise AssertionError(sql)
 
     monkeypatch.setattr(
