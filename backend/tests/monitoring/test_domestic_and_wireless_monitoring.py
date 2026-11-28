@@ -147,7 +147,7 @@ def test_dashboards_suite_completeness():
     overview_path = os.path.join(dashboard_dir, "nexora-network-overview.json")
     with open(overview_path, "r", encoding="utf-8") as f:
         overview_dashboard = json.load(f)
-    interface_count_panel = next(panel for panel in overview_dashboard["panels"] if panel["id"] == 6)
+    interface_count_panel = next(panel for panel in _iter_panels(overview_dashboard["panels"]) if panel["id"] == 6)
     interface_count_query = interface_count_panel["targets"][0]["expr"]
     assert interface_count_panel["title"] == "近24h变动且当前 Down 接口数"
     assert 'ifAdminStatus{' in interface_count_query and "== 1" in interface_count_query
@@ -168,7 +168,7 @@ def test_dashboards_suite_completeness():
         if override["matcher"].get("options") == "接口用途"
     )
     assert candidate_role_override["properties"][0]["value"][0]["options"]["unclassified"]["text"] == "用途待确认"
-    wireless_client_panel = next(panel for panel in overview_dashboard["panels"] if panel["id"] == 4)
+    wireless_client_panel = next(panel for panel in _iter_panels(overview_dashboard["panels"]) if panel["id"] == 4)
     assert wireless_client_panel["title"] == "在线终端数"
     assert "or vector(0)" not in wireless_client_panel["targets"][0]["expr"]
     assert "description" not in wireless_client_panel
@@ -177,16 +177,16 @@ def test_dashboards_suite_completeness():
     with open(wireless_path, "r", encoding="utf-8") as f:
         wireless_dashboard = json.load(f)
     for panel_id in range(1, 5):
-        panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == panel_id)
+        panel = next(panel for panel in _iter_panels(wireless_dashboard["panels"]) if panel["id"] == panel_id)
         assert "or vector(0)" not in panel["targets"][0]["expr"]
-    bss_panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == 12)
+    bss_panel = next(panel for panel in _iter_panels(wireless_dashboard["panels"]) if panel["id"] == 12)
     assert 'vendor=~"$vendor"' in bss_panel["targets"][0]["expr"]
     assert '(?i)' not in bss_panel["targets"][0]["expr"]
-    ssid_panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == 13)
+    ssid_panel = next(panel for panel in _iter_panels(wireless_dashboard["panels"]) if panel["id"] == 13)
     assert ssid_panel["title"] == "SSID 客户端 Top 20"
     assert 'vendor=~"$vendor"' in ssid_panel["targets"][0]["expr"]
     assert '(?i)' not in ssid_panel["targets"][0]["expr"]
-    ap_wireless_client_panel = next(panel for panel in wireless_dashboard["panels"] if panel["id"] == 10)
+    ap_wireless_client_panel = next(panel for panel in _iter_panels(wireless_dashboard["panels"]) if panel["id"] == 10)
     assert 'component_class="wireless_access_point",sensor_class="clients"' in ap_wireless_client_panel["targets"][0]["expr"]
     assert 'vendor=~"$vendor"' in ap_wireless_client_panel["targets"][0]["expr"]
     assert ap_wireless_client_panel["title"] == "AP 关联终端 Top 20"
@@ -194,7 +194,7 @@ def test_dashboards_suite_completeness():
     interface_dashboard_path = os.path.join(dashboard_dir, "nexora-network-interface.json")
     with open(interface_dashboard_path, "r", encoding="utf-8") as f:
         interface_dashboard = json.load(f)
-    utilization_panel = next(panel for panel in interface_dashboard["panels"] if panel["id"] == 6)
+    utilization_panel = next(panel for panel in _iter_panels(interface_dashboard["panels"]) if panel["id"] == 6)
     role_override = next(
         override
         for override in utilization_panel["fieldConfig"]["overrides"]
@@ -205,8 +205,8 @@ def test_dashboards_suite_completeness():
     interface_detail_path = os.path.join(dashboard_dir, "nexora-interface-detail.json")
     with open(interface_detail_path, "r", encoding="utf-8") as f:
         interface_detail = json.load(f)
-    optical_table = next(panel for panel in interface_detail["panels"] if panel["id"] == 18)
-    optical_trend = next(panel for panel in interface_detail["panels"] if panel["id"] == 19)
+    optical_table = next(panel for panel in _iter_panels(interface_detail["panels"]) if panel["id"] == 18)
+    optical_trend = next(panel for panel in _iter_panels(interface_detail["panels"]) if panel["id"] == 19)
     assert optical_table["fieldConfig"]["overrides"][0]["properties"][0] == {
         "id": "unit", "value": "dBm"
     }

@@ -4609,7 +4609,7 @@ NOC_V3_PANEL_DESCRIPTIONS = {
     # 04 接口全景
     ("nexora-network-interface", 14): "展示端口管理状态与运行状态；默认聚焦已启用但运行 Down 的异常端口，可通过顶部筛选查看停用端口。",
     # 09 接口详情
-    ("nexora-interface-detail", 18): "展示当前端口光模块实测接收/发送光功率（dBm）；不同型号模块收光灵敏度存在差异，过低时请排查光纤衰耗。",
+    ("nexora-interface-detail", 18): "展示端口实测光功率（接收/发送，dBm）；阈值因模块而异，过低时请排查光纤衰耗。",
     # 10 监控平台健康
     ("nexora-platform-health", 1): "当前正常响应指标抓取的监控服务端点总数。",
     ("nexora-platform-health", 2): "当前采集失败的平台端点数量；0 表示全部正常，无样本时仍显示暂无数据。",

@@ -527,7 +527,7 @@ def ensure_official_product_registry_documents(
                 f"网络范围：{'园区网' if item['scope'] == 'campus' else '数据中心'}\n"
                 f"CLI 平台：{item['platform']}\n"
                 f"官方产品目录：{reference}\n"
-                f"核验日期：{item.get("source_checked_at", OFFICIAL_MODEL_CHECKED_AT)}（仅采用厂商官网列出的系列/型号）\n"
+                f"核验日期：{item.get('source_checked_at', OFFICIAL_MODEL_CHECKED_AT)}（仅采用厂商官网列出的系列/型号）\n"
                 f"官方来源类型：{metadata['official_source_kind']}；来源定位型号：{model}"
             )
             result = knowledge_service.add_document_and_chunk(
