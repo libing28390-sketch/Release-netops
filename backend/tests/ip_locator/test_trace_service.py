@@ -1368,3 +1368,48 @@ def test_lag_member_query_requires_coordinated_callback(monkeypatch):
     assert members == []
     assert not resolved
     assert "neighbor_parse_incomplete:sw:lag_members" in result["coverage_gaps"]
+
+@pytest.mark.parametrize("output, selected, unresolved", [
+    ("GE1/0/1 S\nGE1/0/2 U\nGE1/0/3 Unknown", ["GE1/0/1"], ["GE1/0/3"]),
+    ("GE1/0/1 Selected\nGE1/0/2 Unselected\nGE1/0/3 Up", ["GE1/0/1", "GE1/0/3"], []),
+    ("Gi1/0/1(P) Gi1/0/2(D) Gi1/0/3(I) Gi1/0/4(Z)", ["Gi1/0/1"], ["Gi1/0/4"]),
+    ("GE1/0/1 S\nGE1/0/1 U", [], ["GE1/0/1"]),
+    ("GE1/0/1", [], ["GE1/0/1"]),
+])
+def test_lag_state_parser_only_accepts_positive_members(output, selected, unresolved):
+    assert trace_service._parse_lag_member_states(output) == (selected, unresolved)
+
+
+@pytest.mark.parametrize("force_refresh, pending, expected", [
+    (True, False, False), (True, True, False),
+    (False, True, False), (False, False, True),
+])
+def test_fact_reuse_policy_is_shared_by_cache_tiers(monkeypatch, force_refresh, pending, expected):
+    monkeypatch.setattr(trace_service, "_pending_fact_invalidation", lambda *args: pending)
+    assert trace_service._may_reuse_locator_facts(force_refresh, "scope", "192.0.2.5") is expected
+
+
+def test_historical_lookup_fails_closed_without_authorized_device(monkeypatch):
+    class Conn:
+        def execute(self, *args):
+            pytest.fail("empty authorized scope must not read history")
+    assert trace_service._lookup_historical_last_seen(
+        Conn(), "192.0.2.5", tenant_id="tenant-default", authorized_device_ids=[],
+    ) is None
+
+
+def test_historical_lookup_applies_scope_before_limit():
+    class Conn:
+        def execute(self, sql, params):
+            assert "JOIN devices d ON d.id = o.source_device_id" in sql
+            assert "o.tenant_id = ?" in sql and "d.tenant_id = ?" in sql
+            assert "o.source_device_id IN (?)" in sql
+            assert "LOWER(o.site_id)" in sql and "LOWER(d.site_id)" in sql
+            assert params == ("192.0.2.5", "tenant-default", "tenant-default", "site1", "site1", "sw1")
+            return self
+        def fetchone(self):
+            return None
+    assert trace_service._lookup_historical_last_seen(
+        Conn(), "192.0.2.5", tenant_id="tenant-default",
+        site_id="site1", authorized_device_ids=["sw1"],
+    ) is None
