@@ -1606,7 +1606,7 @@ ${rep.repair_commands}
             {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
             {zh ? '定位' : 'Locate'}
           </button>
-          {result?.mac && result.mac !== 'N/A' && (
+          {result && (
             <button
               type="button"
               onClick={() => doLocate(undefined, true)}
@@ -1888,7 +1888,9 @@ ${rep.repair_commands}
                     )}
                   </div>
                   <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
-                    {zh ? '已从 ARP 获取 MAC 和 VLAN；ARP 接口是三层来源。下方分开展示 MAC 表命中的 VLAN 成员接口，以及尚未确认的接入口角色。' : 'ARP resolved the MAC and VLAN. Its interface is an L3 source; the VLAN member interface matched by the MAC table and any remaining access-role uncertainty appear below.'}
+                    {(Boolean(result.mac && result.mac !== 'N/A') || ((result.searched_devices?.arp?.length ?? 0) > 0 && Boolean(result.arp_source?.vlan)))
+                      ? (zh ? '已从 ARP 获取 MAC 和 VLAN；ARP 接口是三层来源。下方分开展示 MAC 表命中的 VLAN 成员接口，以及尚未确认的接入口角色。' : 'ARP resolved the MAC and VLAN. Its interface is an L3 source; the VLAN member interface matched by the MAC table and any remaining access-role uncertainty appear below.')
+                      : (zh ? '当前现网未能定位到直连网关或在线 ARP 表项（终端可能已离线、网段路由已撤销或部分上游设备不可达）。' : 'Could not resolve a live direct gateway or active ARP entry (the endpoint may be offline, the subnet route withdrawn, or an upstream device unreachable).')}
                   </p>
                   {macLookupMessage && macLookup?.status !== 'not_attempted' && (
                     <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">{macLookupMessage}</p>
@@ -1896,6 +1898,21 @@ ${rep.repair_commands}
                   {result.errors?.map((err, i) => (
                     <p key={i} className="text-xs text-amber-600 dark:text-amber-400 mt-1">{err}</p>
                   ))}
+                  {result.historical_last_seen && (
+                    <div className="mt-3 rounded-xl border border-amber-300/60 dark:border-amber-500/30 bg-white/80 dark:bg-black/20 px-3.5 py-2.5 text-xs">
+                      <p className="font-semibold text-amber-800 dark:text-amber-300">
+                        {zh ? '离线历史归档快照（最后在线位置）' : 'Offline Historical Snapshot (Last Seen)'}
+                      </p>
+                      <p className="mt-1 font-mono text-black/75 dark:text-white/80">
+                        {result.historical_last_seen.device} : {result.historical_last_seen.port || '-'}
+                        {result.historical_last_seen.vlan ? ` (VLAN ${result.historical_last_seen.vlan})` : ''}
+                        {result.historical_last_seen.mac ? ` · MAC ${result.historical_last_seen.mac}` : ''}
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-black/50 dark:text-white/50">
+                        {zh ? '最后在线时间' : 'Last seen'}: {formatExactTime(result.historical_last_seen.last_seen, zh)}
+                      </p>
+                    </div>
+                  )}
                   {(result.trace_hops?.length ?? 0) > 0 && (
                     <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-amber-800 dark:text-amber-300">
                       {result.trace_hops?.map((hop, i) => (

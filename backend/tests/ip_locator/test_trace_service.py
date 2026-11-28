@@ -1418,3 +1418,126 @@ def test_historical_lookup_applies_scope_before_limit():
         Conn(), "192.0.2.5", tenant_id="tenant-default",
         site_id="site1", authorized_device_ids=["sw1"],
     ) is None
+
+
+def test_explicit_no_lldp_neighbor_marks_per_port_scan_confirmed_empty(monkeypatch):
+    from services import ip_locator_trace_service as ts
+    from services.ip_locator_cli_service import LocatorCLIResult
+
+    assert ts._is_explicit_no_lldp_neighbor("There is no neighbor on the interface.\n") is True
+    assert ts._is_explicit_no_lldp_neighbor("Total entries displayed: 0") is True
+    assert ts._is_explicit_no_lldp_neighbor("unclassified response") is False
+    assert ts._is_explicit_no_lldp_neighbor("") is False
+
+    h3c_dev = {"id": "sw-6", "hostname": "S6850-6", "ip_address": "10.254.0.6", "platform": "hp_comware"}
+    monkeypatch.setattr(
+        ts.legacy,
+        "_send_command",
+        lambda device, command, force_refresh=False: "There is no neighbor on the interface.\n",
+    )
+
+    def fake_lease(device, operation, callback, **kwargs):
+        target = kwargs["task_context"]["target"]
+        if target.get("snapshot") == "port":
+            return LocatorCLIResult(
+                value=callback(), collected_at=ts._now_iso(),
+                task_id="port-" + target["port"], status={},
+            )
+        return LocatorCLIResult(
+            value=[], collected_at="", task_id="t-1",
+            status={"status": "query_failed", "reason": "full_lldp_timeout"},
+        )
+
+    persisted = []
+    monkeypatch.setattr(ts, "_run_cli_with_device_lease", fake_lease)
+    monkeypatch.setattr(ts, "_persist_observation", lambda **kw: persisted.append(kw) or {"generation": 1})
+
+    result = ts._initial_result("172.16.6.10", "default", {}, ts.TraceLimits())
+    selected, collected_at, _, status = ts._load_lldp_snapshot(
+        h3c_dev,
+        "BAGG10",
+        cache=None,
+        scope={},
+        scope_hash="h",
+        tenant_id="tenant-default",
+        target_ip="172.16.6.10",
+        network_domain_id="",
+        site_id="",
+        vrf="default",
+        force_refresh=True,
+        durable_run_id="",
+        run_owner_id="",
+        cancel_check=None,
+        result=result,
+        wait_seconds=10,
+        expanded_member_ports={"gigabitethernet1/0/2"},
+        physical_member_names=["GE1/0/2"],
+    )
+    assert selected == []
+    assert collected_at
+    assert status == {"status": "empty", "source": "per_port_lldp_verbose", "coverage": "targeted"}
+    assert not any(gap.startswith("neighbor_parse_incomplete:") for gap in result["coverage_gaps"])
+    assert len(persisted) == 1 and persisted[0]["coverage"] == "targeted"
+    assert any("确认无 LLDP 邻居" in step for step in result["trace_steps"])
+
+
+def test_lookup_locator_path_last_seen_enforces_scope_and_extracts_port():
+    class Conn:
+        def execute(self, sql, params):
+            assert "FROM locator_observations o" in sql
+            assert "JOIN devices d ON d.id = o.device_id" in sql
+            assert "o.observation_kind = 'path'" in sql
+            assert "o.device_id IN (?)" in sql
+            self._row = {
+                "device_id": "sw-6",
+                "device_name": "S6850-6",
+                "target_mac": "8e475b9d0806",
+                "vlan_id": 8,
+                "records_json": {"device": "S6850-6", "port": "GE1/0/2", "vlan": "8", "mac": "8e475b9d0806"},
+                "collected_at": "2026-11-28T16:09:43+08:00",
+            }
+            return self
+
+        def fetchone(self):
+            return self._row
+
+    hit = trace_service._lookup_locator_path_last_seen(
+        Conn(), "172.16.6.10", tenant_id="tenant-default", authorized_device_ids=["sw-6"],
+    )
+    assert hit is not None
+    assert hit["device"] == "S6850-6"
+    assert hit["port"] == "GE1/0/2"
+    assert hit["vlan"] == "8"
+    assert hit["mac"] == "8e475b9d0806"
+    assert hit["source"] == "locator_observations"
+    assert trace_service._lookup_locator_path_last_seen(
+        Conn(), "172.16.6.10", tenant_id="tenant-default", authorized_device_ids=[],
+    ) is None
+
+
+def test_lldp_verbose_parses_capabilities_for_fit_ap_and_hypervisor():
+    from services import ip_locator_trace_service as ts
+
+    ap_out = (
+        "LLDP neighbor-information of port 20[GigabitEthernet1/0/20]:\n"
+        "  System name             : 1F-Lobby-WiFi\n"
+        "  Port ID                 : GigabitEthernet0/0/0\n"
+        "  System capabilities enabled : Bridge, WLAN Access Point\n"
+        "  Management address      : 10.16.40.88\n"
+    )
+    ap_neighbors = ts._parse_lldp_verbose_neighbors(ap_out, "GE1/0/20")
+    assert len(ap_neighbors) == 1
+    assert "WLAN Access Point" in ap_neighbors[0]["capabilities"]
+    assert ts._is_fit_ap_neighbor(ap_neighbors[0]) is True
+
+    esxi_out = (
+        "LLDP neighbor-information of port 10[Ten-GigabitEthernet1/0/10]:\n"
+        "  System name             : compute-node-01\n"
+        "  Port ID                 : vmnic0\n"
+        "  System description      :\n"
+        "    VMware ESXi 8.0.2 build-22380479\n"
+    )
+    esxi_neighbors = ts._parse_lldp_verbose_neighbors(esxi_out, "XGE1/0/10")
+    assert len(esxi_neighbors) == 1
+    assert "VMware ESXi" in esxi_neighbors[0]["system_description"]
+    assert ts._is_hypervisor_neighbor(esxi_neighbors[0]) is True

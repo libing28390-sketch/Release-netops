@@ -1548,6 +1548,25 @@ def _lldp_interface_verbose_command(device: dict[str, Any], port: str) -> str:
     return ""
 
 
+_EXPLICIT_NO_LLDP_NEIGHBOR_RE = re.compile(
+    r"(?i)(?:there\s+is\s+no\s+neighbor\s+on\s+the\s+interface"
+    r"|no\s+lldp\s+neighbor(?:s|\s+information)?\b"
+    r"|info:\s*no\s+neighbor\b"
+    r"|total\s+entries\s+displayed\s*:\s*0\b"
+    r"|no\s+neighbors?\s+found\b"
+    r"|\b0\s+neighbors?\b"
+    r"|lldp\s+neighbor\s+information\s+is\s+empty)",
+)
+
+
+def _is_explicit_no_lldp_neighbor(output: str) -> bool:
+    """Return True only when a device explicitly confirms 0 LLDP neighbors on the port."""
+    text = str(output or "").strip()
+    if not text:
+        return False
+    return bool(_EXPLICIT_NO_LLDP_NEIGHBOR_RE.search(text))
+
+
 def _parse_lldp_verbose_neighbors(output: str, local_port: str) -> list[dict[str, Any]]:
     """Parse neighbor name, management IP, and remote port from per-interface LLDP verbose output."""
     text = str(output or "")
@@ -1568,9 +1587,13 @@ def _parse_lldp_verbose_neighbors(output: str, local_port: str) -> list[dict[str
             blk,
         )
         port_m = re.search(r"(?im)^\s*Port\s+ID\s*[:=]\s*([^\r\n]+)", blk)
+        cap_m = re.search(r"(?im)^\s*System\s+capabilities\s+enabled\s*[:=]\s*([^\r\n]+)", blk)
+        desc_m = re.search(r"(?im)^\s*System\s+description\s*[:=]\s*(?:([^\r\n]+)|\r?\n\s+([^\r\n]+))", blk)
         sys_name = sys_m.group(1).strip() if sys_m else ""
         mgmt_ip = mgmt_m.group(1).strip() if mgmt_m else ""
         remote_port = port_m.group(1).strip() if port_m else ""
+        capabilities = cap_m.group(1).strip() if cap_m else ""
+        sys_desc = ((desc_m.group(1) or desc_m.group(2) or "").strip()) if desc_m else ""
         if not sys_name and not mgmt_ip:
             continue
         key = (sys_name.lower(), mgmt_ip)
@@ -1582,6 +1605,8 @@ def _parse_lldp_verbose_neighbors(output: str, local_port: str) -> list[dict[str
             "neighbor_name": sys_name or mgmt_ip,
             "neighbor_ip": mgmt_ip,
             "neighbor_port": remote_port,
+            "capabilities": capabilities,
+            "system_description": sys_desc,
             "evidence": "lldp_interface_verbose",
         })
     return neighbors
@@ -2268,6 +2293,7 @@ def _load_lldp_snapshot(
         incomplete = len(distinct_ports) > member_budget
         by_neighbor = {}
         member_timestamps: list[str] = []
+        confirmed_empty_ports = 0
         for phys_port in distinct_ports[:member_budget]:
             if time.monotonic() >= member_deadline or (callable(cancel_check) and cancel_check()):
                 incomplete = True
@@ -2296,6 +2322,7 @@ def _load_lldp_snapshot(
                 )
                 lldp_out, port_at, port_task_id, _ = _cli_result_parts(query)
                 parsed_neighbors = _parse_lldp_verbose_neighbors(str(lldp_out or ""), phys_port)
+                explicit_empty = (not parsed_neighbors) and _is_explicit_no_lldp_neighbor(str(lldp_out or ""))
                 if not port_at:
                     incomplete = True
                     continue
@@ -2303,7 +2330,7 @@ def _load_lldp_snapshot(
                     tenant_id=tenant_id, scope_hash=scope_hash,
                     network_domain_id=network_domain_id, site_id=site_id, vrf=vrf,
                     device_id=device_id, kind="neighbor", bridge_domain=f"lldp-port:{port_identity}",
-                    records=parsed_neighbors, coverage="targeted" if parsed_neighbors else "partial",
+                    records=parsed_neighbors, coverage="targeted" if (parsed_neighbors or explicit_empty) else "partial",
                     collected_at=port_at, query_task_id=port_task_id,
                     result=result, device=device, target=port_target,
                 )
@@ -2315,8 +2342,13 @@ def _load_lldp_snapshot(
                 if parsed_neighbors:
                     member_timestamps.append(port_at)
                 if not parsed_neighbors:
-                    incomplete = True
-                    _log_trace_step(result, f"[{label}] `{lldp_cmd}` 未解析到 LLDP 邻居，结果未确认")
+                    if explicit_empty:
+                        confirmed_empty_ports += 1
+                        member_timestamps.append(port_at)
+                        _log_trace_step(result, f"[{label}] `{lldp_cmd}` 确认无 LLDP 邻居")
+                    else:
+                        incomplete = True
+                        _log_trace_step(result, f"[{label}] `{lldp_cmd}` 未解析到 LLDP 邻居，结果未确认")
                     continue
                 summary_nb = ", ".join(
                     f"{n.get('neighbor_name')} ({n.get('neighbor_ip')})" if n.get("neighbor_ip") else str(n.get("neighbor_name"))
@@ -2335,7 +2367,14 @@ def _load_lldp_snapshot(
             collected_at = min(member_timestamps)
             snapshot_status = {"status": "found", "source": "per_port_lldp_verbose",
                                "coverage": "partial" if incomplete else "targeted"}
+        elif confirmed_empty_ports > 0 and not incomplete:
+            selected = []
+            collected_at = min(member_timestamps)
+            snapshot_status = {"status": "empty", "source": "per_port_lldp_verbose",
+                               "coverage": "targeted"}
+            _set_cache_source(result, "topology", device, "cli", vrf=vrf, variant="port_neighbor")
         elif incomplete:
+            selected = []
             snapshot_status = {"status": "parse_incomplete", "source": "per_port_lldp_verbose",
                                "coverage": "partial"}
         # Per-port evidence is independently fenced in PostgreSQL. Never
@@ -2419,13 +2458,19 @@ def _is_hypervisor_mac(mac: Any) -> bool:
 def _is_fit_ap_neighbor(neighbor: Mapping[str, Any]) -> bool:
     name = str(neighbor.get("neighbor_name") or "").strip()
     proto = str(neighbor.get("protocol") or "").strip()
-    text = f"{name} {proto}"
-    return bool(name and _FIT_AP_NAME_RE.search(text))
+    caps = str(neighbor.get("capabilities") or "").strip()
+    desc = str(neighbor.get("system_description") or "").strip()
+    if re.search(r"\bwlan\s+(?:access\s+point|ap)\b", f"{caps} {desc}", re.IGNORECASE):
+        return True
+    text = f"{name} {proto} {desc}"
+    return bool((name or desc) and _FIT_AP_NAME_RE.search(text))
 
 
 def _is_hypervisor_neighbor(neighbor: Mapping[str, Any]) -> bool:
     name = str(neighbor.get("neighbor_name") or "").strip()
-    return bool(name and _HYPERVISOR_NEIGHBOR_RE.search(name))
+    desc = str(neighbor.get("system_description") or "").strip()
+    text = f"{name} {desc}".strip()
+    return bool(text and _HYPERVISOR_NEIGHBOR_RE.search(text))
 
 
 def _gateway_ping_command(device: Mapping[str, Any], target_ip: str, vrf: str = "default") -> str:
@@ -2511,6 +2556,120 @@ def _lookup_historical_last_seen(
         # Do not fall back to an unscoped legacy table on a failed read.
         return None
     return None
+
+
+def _lookup_locator_path_last_seen(
+    conn: Any,
+    target_ip: str,
+    *,
+    tenant_id: str = "",
+    site_id: str = "",
+    vrf: str = "default",
+    authorized_device_ids: Iterable[str] | None = None,
+) -> dict[str, Any] | None:
+    """Return the latest scoped confirmed access-port path from locator_observations."""
+    if conn is None or not target_ip or not tenant_id:
+        return None
+    allowed = sorted({str(d) for d in authorized_device_ids if str(d)}) if authorized_device_ids is not None else None
+    if allowed == []:
+        return None
+    conditions = [
+        "o.observation_kind = 'path'",
+        "o.target_ip = ?",
+        "o.collected_at IS NOT NULL",
+        "o.tenant_id = ?",
+        "d.tenant_id = ?",
+    ]
+    params: list[Any] = [target_ip, tenant_id, tenant_id]
+    if vrf:
+        conditions.append("LOWER(COALESCE(o.vrf_name, 'default')) = LOWER(?)")
+        params.append(vrf)
+    if site_id:
+        conditions.append("LOWER(COALESCE(d.site_id, '')) = LOWER(?)")
+        params.append(site_id)
+    if allowed is not None:
+        conditions.append("o.device_id IN (" + ",".join("?" for _ in allowed) + ")")
+        params.extend(allowed)
+    try:
+        row = conn.execute(
+            """SELECT o.device_id, d.hostname AS device_name, o.target_mac, o.vlan_id,
+                      o.records_json, o.collected_at
+                 FROM locator_observations o
+                 JOIN devices d ON d.id = o.device_id
+                WHERE """ + " AND ".join(conditions) +
+            " ORDER BY o.collected_at DESC LIMIT 1",
+            tuple(params),
+        ).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        raw_rec = item.get("records_json")
+        rec: dict[str, Any] = {}
+        if isinstance(raw_rec, Mapping):
+            rec = dict(raw_rec)
+        elif isinstance(raw_rec, str) and raw_rec.strip():
+            try:
+                parsed = json.loads(raw_rec)
+                if isinstance(parsed, Mapping):
+                    rec = dict(parsed)
+            except Exception:
+                rec = {}
+        dev_id = str(item.get("device_id") or "")
+        observed = item.get("collected_at")
+        last_seen_str = observed.isoformat() if hasattr(observed, "isoformat") else str(observed or "")
+        return {
+            "status": "offline_historical_snapshot",
+            "ip": target_ip,
+            "mac": str(rec.get("mac") or item.get("target_mac") or ""),
+            "device_id": dev_id,
+            "device": str(rec.get("device") or item.get("device_name") or dev_id),
+            "port": str(rec.get("port") or ""),
+            "vlan": str(rec.get("vlan") or (item.get("vlan_id") if item.get("vlan_id") is not None else "")),
+            "last_seen": last_seen_str,
+            "source": "locator_observations",
+            "scope_status": "historical_unverified",
+        }
+    except Exception:
+        return None
+
+
+def _attach_historical_last_seen(
+    result: dict[str, Any],
+    target_ip: str,
+    *,
+    tenant_id: str,
+    site_id: str,
+    vrf: str,
+    authorized_device_ids: Iterable[str] | None,
+) -> None:
+    """Attach scoped Last-Seen historical evidence when live location is unavailable."""
+    if vrf.lower() not in {"default", "global"} or result.get("historical_last_seen"):
+        return
+    historical = None
+    try:
+        history_conn = get_db_connection()
+        try:
+            historical = _lookup_locator_path_last_seen(
+                history_conn, target_ip, tenant_id=tenant_id, site_id=site_id,
+                vrf=vrf, authorized_device_ids=authorized_device_ids,
+            )
+            if historical is None:
+                historical = _lookup_historical_last_seen(
+                    history_conn, target_ip, tenant_id=tenant_id, site_id=site_id,
+                    authorized_device_ids=authorized_device_ids,
+                )
+        finally:
+            history_conn.close()
+    except Exception:
+        logger.debug("[IPLocatorV2] historical lookup unavailable")
+    if historical is not None:
+        result["historical_last_seen"] = historical
+        _log_trace_step(
+            result,
+            f"[历史兜底] 当前现网未查到 {target_ip} 的在线表项，最后观测位置: "
+            f"{historical.get('device') or '-'} : {historical.get('port') or '-'} "
+            f"(VLAN {historical.get('vlan') or '-'}, MAC {historical.get('mac') or '-'})",
+        )
 
 
 def _count_edge_port_active_macs(conn: Any, device_id: str, port: str) -> int:
@@ -3438,6 +3597,10 @@ def _trace_ip_uncached(
         )
         if not result["coverage_gaps"]:
             result["coverage_gaps"].append("未找到 Direct 三层终结设备")
+        _attach_historical_last_seen(
+            result, target_ip, tenant_id=tenant_id, site_id=site_id,
+            vrf=vrf, authorized_device_ids=authorized_device_ids,
+        )
         result["completed_at"] = _now_iso()
         return result
 
@@ -4068,23 +4231,10 @@ def _trace_ip_uncached(
         result["completed_at"] = _now_iso()
         return add_legacy_compatibility(result)
     if not arp_hits:
-        historical = None
-        # The L3 connection is already closed; open a short, separate read.
-        # Legacy history has no proven named-VRF binding.
-        if vrf.lower() in {"default", "global"}:
-            try:
-                history_conn = get_db_connection()
-                try:
-                    historical = _lookup_historical_last_seen(
-                        history_conn, target_ip, tenant_id=tenant_id, site_id=site_id,
-                        authorized_device_ids=authorized_device_ids,
-                    )
-                finally:
-                    history_conn.close()
-            except Exception:
-                logger.debug("[IPLocatorV2] historical lookup unavailable")
-        if historical is not None:
-            result["historical_last_seen"] = historical
+        _attach_historical_last_seen(
+            result, target_ip, tenant_id=tenant_id, site_id=site_id,
+            vrf=vrf, authorized_device_ids=authorized_device_ids,
+        )
         result["status"] = "partial" if deadline_exceeded or result["coverage_gaps"] else "failed"
         has_unsupported_arp = any(str(gap).startswith("arp_unsupported:") for gap in result["coverage_gaps"])
         has_failed_arp = any(
@@ -4805,6 +4955,7 @@ def _trace_ip_uncached(
                     _include_evidence_timestamp(result, mac_collected_at)
                     topology: list[dict[str, Any]] = []
                     topology_collected_at = ""
+                    topology_status: dict[str, Any] = {}
                     port_norm_lower = legacy.normalize_interface_name(port).lower()
                     is_lag_port = bool(_LAG_NAME_RE.match(re.sub(r"\s+", "", port_norm_lower)))
                     expanded_member_ports: set[str] | None = None
@@ -4935,11 +5086,108 @@ def _trace_ip_uncached(
 
                     identity = terminal_identity
                     hop["terminal_evidence"] = identity
-                    # A forwarding MAC on a trunk or LAG proves a direction,
-                    # not a directly attached server. LLDP names and OUIs alone
-                    # are hints, not proof of the endpoint or of dual-homing.
-                    if (identity.get("is_trunk") or identity.get("is_aggregation")
-                            or fit_ap_neighbors or hypervisor_neighbors):
+                    lldp_confirmed_empty = (
+                        (not topology)
+                        and f"neighbor_parse_incomplete:{current_id}" not in result["coverage_gaps"]
+                        and (
+                            (
+                                topology_status.get("status") == "empty"
+                                and topology_status.get("coverage") == "targeted"
+                            )
+                            or (
+                                topology_status.get("status") in {"found", "not_found"}
+                                and topology_status.get("source") != "per_port_lldp_verbose"
+                            )
+                        )
+                    )
+                    if (is_lag_port and lag_members_resolved and physical_member_names
+                            and not unmanaged_neighbors_on_port and lldp_confirmed_empty):
+                        candidate_payload: dict[str, Any] = {
+                            "device_id": current_id,
+                            "device": label,
+                            "port": port,
+                            "vlan": hop["vlan"],
+                            "mac": mac,
+                            "l3_path": l3_path,
+                            "l2_path": path + [hop],
+                            "member_ports": list(physical_member_names),
+                            "confidence": "high",
+                            "endpoint_classification": "SERVER_LAG_ENDPOINT",
+                        }
+                        hop["endpoint_classification"] = "SERVER_LAG_ENDPOINT"
+                        final_candidates.append(candidate_payload)
+                        _log_trace_step(
+                            result,
+                            f"[{label}] 聚合口 {port}（成员: {', '.join(physical_member_names)}）已确认无下联交换机，"
+                            f"确认为服务器聚合直连口 (SERVER_LAG_ENDPOINT)",
+                        )
+                        continue
+                    if fit_ap_neighbors and not unmanaged_neighbors_on_port:
+                        ap_names = ", ".join(
+                            str(n.get("neighbor_name") or n.get("neighbor_ip") or "Fit-AP")
+                            for n in fit_ap_neighbors
+                        )
+                        candidate_payload = {
+                            "device_id": current_id,
+                            "device": label,
+                            "port": port,
+                            "vlan": hop["vlan"],
+                            "mac": mac,
+                            "l3_path": l3_path,
+                            "l2_path": path + [hop],
+                            "confidence": "high",
+                            "endpoint_classification": "FIT_AP_UPLINK_PORT",
+                        }
+                        hop["endpoint_classification"] = "FIT_AP_UPLINK_PORT"
+                        final_candidates.append(candidate_payload)
+                        _log_trace_step(
+                            result,
+                            f"[{label}] 端口 {port} 下联无线瘦 AP ({ap_names})，确认为 AP 上联接入口 (FIT_AP_UPLINK_PORT)",
+                        )
+                        continue
+                    if ((hypervisor_neighbors
+                            or (identity.get("is_trunk") and _is_hypervisor_mac(mac) and lldp_confirmed_empty))
+                            and not is_lag_port and not unmanaged_neighbors_on_port):
+                        candidate_payload = {
+                            "device_id": current_id,
+                            "device": label,
+                            "port": port,
+                            "vlan": hop["vlan"],
+                            "mac": mac,
+                            "l3_path": l3_path,
+                            "l2_path": path + [hop],
+                            "confidence": "high",
+                            "endpoint_classification": "HYPERVISOR_HOST_PORT",
+                        }
+                        hop["endpoint_classification"] = "HYPERVISOR_HOST_PORT"
+                        final_candidates.append(candidate_payload)
+                        _log_trace_step(
+                            result,
+                            f"[{label}] 端口 {port} 确认为虚拟化宿主机直连口 (HYPERVISOR_HOST_PORT)",
+                        )
+                        continue
+                    if (identity.get("is_trunk") and not is_lag_port
+                            and not unmanaged_neighbors_on_port and lldp_confirmed_empty):
+                        candidate_payload = {
+                            "device_id": current_id,
+                            "device": label,
+                            "port": port,
+                            "vlan": hop["vlan"],
+                            "mac": mac,
+                            "l3_path": l3_path,
+                            "l2_path": path + [hop],
+                            "confidence": "high",
+                            "endpoint_classification": "SERVER_TRUNK_ENDPOINT",
+                        }
+                        hop["endpoint_classification"] = "SERVER_TRUNK_ENDPOINT"
+                        final_candidates.append(candidate_payload)
+                        _log_trace_step(
+                            result,
+                            f"[{label}] 端口 {port} 已确认无下联交换机，确认为服务器 Trunk/Hybrid 直连口 (SERVER_TRUNK_ENDPOINT)",
+                        )
+                        continue
+                    # Unverified trunk or LAG without confirmed empty LLDP stays LAST_VISIBLE_PORT.
+                    if identity.get("is_trunk") or identity.get("is_aggregation") or is_lag_port:
                         hop["is_uplink"] = True
                         hop["endpoint_classification"] = "LAST_VISIBLE_PORT"
                         result["coverage_gaps"].append(f"topology_incomplete:{current_id}:{port}")
@@ -5044,14 +5292,25 @@ def _trace_ip_uncached(
         "arp_proxy_or_virtual_gateway:",
         "arp_ambiguous:",
     )
+    is_dual_homed_server_lag = (
+        len(final_candidates) == 2
+        and len({str(c.get("device_id") or "") for c in final_candidates}) == 2
+        and len({str(c.get("mac") or "").lower() for c in final_candidates}) == 1
+        and all(c.get("endpoint_classification") == "SERVER_LAG_ENDPOINT" for c in final_candidates)
+    )
+    candidate_sites = {
+        _device_site_key(by_id.get(str(c.get("device_id") or "")))
+        for c in final_candidates
+        if _device_site_key(by_id.get(str(c.get("device_id") or "")))
+    }
     confirmed_candidate_site = (
-        _device_site_key(by_id.get(str(final_candidates[0].get("device_id") or "")))
-        if len(final_candidates) == 1
+        next(iter(candidate_sites))
+        if (len(final_candidates) == 1 or is_dual_homed_server_lag) and len(candidate_sites) == 1
         else ""
     )
 
     def _gap_is_unrelated_to_confirmed_endpoint(gap: str) -> bool:
-        if len(final_candidates) != 1:
+        if len(final_candidates) != 1 and not is_dual_homed_server_lag:
             return False
         if gap.startswith("route_failed:"):
             failed_dev_id = gap.split(":", 1)[1].strip()
@@ -5096,6 +5355,32 @@ def _trace_ip_uncached(
             coverage="targeted",
             collected_at=str(result.get("evidence_collected_at") or _now_iso()),
             result=result,
+        )
+    elif is_dual_homed_server_lag and not has_unverified_branch and not deadline_exceeded:
+        result["found"] = True
+        result["status"] = "completed"
+        result["conclusion"] = "dual_homed_access_confirmed"
+        result["location"] = final_candidates[0]
+        _persist_observation(
+            tenant_id=tenant_id,
+            scope_hash=scope_hash,
+            network_domain_id=network_domain_id,
+            site_id=site_id,
+            vrf=vrf,
+            device_id=str(final_candidates[0].get("device_id") or ""),
+            kind="path",
+            target_ip=target_ip,
+            target_mac=str(final_candidates[0].get("mac") or ""),
+            vlan_id=final_candidates[0].get("vlan"),
+            records=final_candidates[0],
+            coverage="targeted",
+            collected_at=str(result.get("evidence_collected_at") or _now_iso()),
+            result=result,
+        )
+        _log_trace_step(
+            result,
+            f"[双归确认] 两台独立交换机均在聚合口确认直连 ({final_candidates[0].get('device')}:{final_candidates[0].get('port')} "
+            f"& {final_candidates[1].get('device')}:{final_candidates[1].get('port')})，判定为 M-LAG/DRNI 双归接入",
         )
     # A shared MAC alone cannot establish dual-homing: mobility, loops and
     # overlapping broadcast domains can produce the same observations.
