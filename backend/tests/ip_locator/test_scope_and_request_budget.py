@@ -1,7 +1,6 @@
 """Isolated VRF scope and singleflight budget regressions; no device IO."""
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -11,17 +10,21 @@ from services import ip_locator_trace_service as trace
 
 
 @pytest.fixture
-def vrf_db():
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.execute("CREATE TABLE vrfs(id TEXT, tenant_id TEXT, vrf_name TEXT)")
-    conn.executemany("INSERT INTO vrfs VALUES (?,?,?)", [
-        ("a", "t", "BLUE"), ("b", "t", "RED"), ("c", "other", "BLUE"),
-        ("d", "t", "DUP"), ("e", "t", "dup"), ("f", "t", "a"),
-    ])
+def vrf_db(isolated_db):
+    from database import get_db_connection
+
+    conn = get_db_connection()
     try:
+        # Use a session-local table so malformed/duplicate aliases can be
+        # exercised without changing the application schema or its constraints.
+        conn.execute("CREATE TEMP TABLE vrfs(id TEXT, tenant_id TEXT, vrf_name TEXT)")
+        conn.executemany("INSERT INTO vrfs VALUES (?,?,?)", [
+            ("a", "t", "BLUE"), ("b", "t", "RED"), ("c", "other", "BLUE"),
+            ("d", "t", "DUP"), ("e", "t", "dup"), ("f", "t", "a"),
+        ])
         yield conn
     finally:
+        conn.rollback()
         conn.close()
 
 
