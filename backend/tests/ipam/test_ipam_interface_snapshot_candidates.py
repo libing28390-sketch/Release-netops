@@ -122,11 +122,12 @@ def test_snapshot_candidates_without_vrf_require_explicit_global_and_are_not_bul
             "SELECT id, vrf_id, network_type FROM prefixes WHERE prefix='10.88.50.0/24'"
         ).fetchone()
         address = conn.execute(
-            "SELECT source_type, source_ref, interface_id FROM ip_addresses WHERE address='10.88.50.1'"
+            "SELECT source_type, source_ref, interface_id, purpose, device_type FROM ip_addresses WHERE address='10.88.50.1'"
         ).fetchone()
     assert prefix['vrf_id'] in ('', None)
     assert prefix['network_type'] == 'unclassified'
     assert address['source_type'] == 'interface_collection'
+    assert address['purpose'] == address['device_type'] == 'gateway'
     assert address['source_ref'] == 'cmdb-interface:snapshot-candidate-device:vlan-interface50:cli:unknown::10.88.50.1'
     # The existing IPAM schema uses an empty string to represent an unlinked
     # optional interface reference; the CMDB observation is still identified
@@ -421,3 +422,34 @@ def test_interface_prefix_generation_replays_same_idempotency_request(isolated_d
         ).fetchone()[0]
     assert prefix_count == 1
     assert address_count == 1
+
+def test_interface_generation_preserves_different_configured_gateway(isolated_db):
+    _seed_scope()
+    space = create_address_space(
+        name="Existing gateway scope", kind="global", vrf_id=None,
+        security_tenant_id="tenant-default",
+    )
+    prefix = create_subnet(
+        prefix="10.88.80.0/24", address_space_id=space["id"],
+        tenant_id="tenant-default", site_id="snapshot-candidate-site",
+        gateway="10.88.80.254",
+    )
+    _publish_snapshot_ip("10.88.80.1")
+    candidate = preview_interface_prefixes(page_size=100)["candidates"][0]
+    result = generate_interface_prefixes(
+        candidate_ids=[candidate["candidate_id"]],
+        address_space_overrides={candidate["candidate_id"]: space["id"]},
+    )
+    assert result["created_addresses"] == 1, result["skipped_addresses"]
+    with get_db_connection() as conn:
+        stored = conn.execute(
+            "SELECT gateway, gateway_device_id FROM prefixes WHERE id=?", (prefix["id"],)
+        ).fetchone()
+        address = conn.execute(
+            "SELECT device_type, purpose FROM ip_addresses WHERE subnet_id=? AND address='10.88.80.1'",
+            (prefix["id"],),
+        ).fetchone()
+    assert stored["gateway"] == "10.88.80.254"
+    assert not stored["gateway_device_id"]
+    assert address["device_type"] == "interface"
+    assert address["purpose"] != "gateway"
