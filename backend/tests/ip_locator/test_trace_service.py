@@ -1311,6 +1311,7 @@ def test_per_port_lldp_verbose_recovers_from_full_snapshot_failure_without_dupli
     result = ts._initial_result("192.168.11.111", "default", {}, ts.TraceLimits())
     expanded, phys_names, resolved = ts._expand_lag_member_ports_live(
         None, h3c_dev, "BAGG2", result=result,
+        live_query=lambda command: fake_send_command(h3c_dev, command, force_refresh=True),
     )
     assert resolved is True
     assert phys_names == ["XGE1/3/0/4", "XGE2/3/0/4", "XGE3/3/0/4", "XGE4/3/0/4"]
@@ -1357,3 +1358,13 @@ def test_per_port_lldp_verbose_recovers_from_full_snapshot_failure_without_dupli
     assert len(lag_cmds) == 1
     if mode != "empty":
         assert any("WXTJY-1F-SW4 (10.16.40.4)" in step for step in result["trace_steps"])
+
+def test_lag_member_query_requires_coordinated_callback(monkeypatch):
+    from services import ip_locator_trace_service as ts
+    device = {"id": "sw", "platform": "hp_comware", "hostname": "sw"}
+    monkeypatch.setattr(ts.legacy, "_send_command", lambda *a, **kw: pytest.fail("unleased SSH"))
+    result = ts._initial_result("192.0.2.5", "default", {}, ts.TraceLimits())
+    _, members, resolved = ts._expand_lag_member_ports_live(None, device, "BAGG2", result=result)
+    assert members == []
+    assert not resolved
+    assert "neighbor_parse_incomplete:sw:lag_members" in result["coverage_gaps"]
