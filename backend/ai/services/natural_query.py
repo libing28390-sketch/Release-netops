@@ -161,8 +161,8 @@ def render_alert_analysis(query: str, analysis: Dict[str, Any]) -> str:
             lines.append(
                 f"- 当前纳管设备：**{total_devs}** 台（在线 **{online_devs}** 台，离线 **{offline_devs}** 台）。"
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Alert summary inventory counts unavailable: %s", type(exc).__name__)
     if scope_parts:
         lines.append(f"- 查询范围：{' · '.join(scope_parts)}，共 **{total}** 条。")
         by_status = alerts.get("by_workflow_status") if isinstance(alerts.get("by_workflow_status"), dict) else {}

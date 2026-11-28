@@ -40,7 +40,9 @@ def test_interface_snapshot_clears_missing_current_rows(monkeypatch):
             admin_status TEXT, oper_status TEXT, primary_ip TEXT,
             ip_address TEXT, ip_prefix_length INTEGER, ip_version INTEGER, is_l3 BOOLEAN,
             ip_enabled INTEGER, switchport_mode TEXT, interface_type TEXT,
-            last_seen TEXT
+            last_seen TEXT, status_observed_at TEXT,
+            status_observation_source TEXT NOT NULL DEFAULT '',
+            certified_admin_status TEXT, certified_oper_status TEXT
         );
         INSERT INTO interfaces (
             id, device_id, interface_name, description, admin_status, oper_status,
@@ -86,7 +88,9 @@ def test_interface_snapshot_uses_boolean_flags_for_postgresql_compatibility(monk
             admin_status TEXT, oper_status TEXT, primary_ip TEXT,
             ip_address TEXT, ip_prefix_length INTEGER, ip_version INTEGER, is_l3 BOOLEAN,
             ip_enabled INTEGER, switchport_mode TEXT, interface_type TEXT,
-            last_seen TEXT
+            last_seen TEXT, status_observed_at TEXT,
+            status_observation_source TEXT NOT NULL DEFAULT '',
+            certified_admin_status TEXT, certified_oper_status TEXT
         );
         INSERT INTO interfaces (
             id, device_id, interface_name, description, admin_status, oper_status,

@@ -58,6 +58,6 @@ def test_deepseek_stream_uses_provider_reported_usage(monkeypatch) -> None:
         ]
 
     assert asyncio.run(collect()) == ["hello"]
-    assert usage == {"input_tokens": 21, "output_tokens": 4}
+    assert usage == {"input_tokens": 21, "output_tokens": 4, "cached_tokens": 0}
     assert captured["payload"]["stream_options"] == {"include_usage": True}
     assert captured["payload"]["stream"] is True
