@@ -1701,6 +1701,28 @@ def cleanup_locator_tasks(
         }
 
 
+def _downgrade_stale_locator_result(result: dict[str, Any], gaps: list[str]) -> None:
+    """Do not publish an obsolete attachment as a confirmed live location."""
+    existing = result.get("coverage_gaps")
+    result["coverage_gaps"] = list(dict.fromkeys(
+        [str(gap) for gap in existing] + gaps if isinstance(existing, list) else gaps
+    ))
+    result["dependency_fence"] = {
+        "status": "changed" if any(gap.startswith("dependency_changed:") for gap in gaps) else "incomplete",
+        "scope": "global",
+    }
+    result["status"] = "partial"
+    result["conclusion"] = "dependency_changed"
+    result["found"] = False
+    result["trace_status"] = "incomplete"
+    # Preserve raw observations for diagnostics, but remove live-location
+    # aliases consumed by both the new and legacy locator UI.
+    for key in ("location", "mac", "mac_display", "arp_source"):
+        result.pop(key, None)
+    result["locations"] = []
+    result["terminal_candidates"] = []
+
+
 def save_locator_run_result(
     run_id: str,
     *,
@@ -1760,21 +1782,10 @@ def save_locator_run_result(
                     lock=True,
                 )
             if dependency_gaps:
-                gaps = result_payload.get("coverage_gaps")
-                if not isinstance(gaps, list):
-                    gaps = []
-                    result_payload["coverage_gaps"] = gaps
-                for gap in dependency_gaps:
-                    if gap not in gaps:
-                        gaps.append(gap)
-                result_payload["dependency_fence"] = {
-                    "status": "changed" if any(gap.startswith("dependency_changed:") for gap in dependency_gaps) else "incomplete",
-                    "scope": "global",
-                }
-                if selected_status == "completed":
-                    selected_status = "partial"
-                    error_code = "DEPENDENCY_CHANGED"
-                    error_message = "定位依赖在执行期间发生变化，请重试"
+                _downgrade_stale_locator_result(result_payload, dependency_gaps)
+                selected_status = "partial"
+                error_code = "DEPENDENCY_CHANGED"
+                error_message = "定位依赖在执行期间发生变化，请重试"
             elif isinstance(dependency_manifest, Mapping):
                 result_payload["dependency_fence"] = {"status": "current", "scope": "global"}
         # Authorization inputs captured when a run was created are immutable.
