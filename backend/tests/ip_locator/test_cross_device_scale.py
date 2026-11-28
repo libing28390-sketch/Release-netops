@@ -1,12 +1,15 @@
-"""Scale simulation for the cross-device fact path (no network or production DB).
+"""Native PostgreSQL scale test of the cross-device path with synthetic facts.
 
-SQLite is only a test double for the interface/topology queries and indexed
-FDB projection. This is not a PostgreSQL performance or full locator test.
+The indexed FDB projection is synthetic; this is not a full locator API or
+production query-plan benchmark. Each test owns a disposable database.
 """
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-import sqlite3
 import os
+import time
+
+import psycopg2
+from psycopg2.extras import execute_values
 
 import pytest
 
@@ -14,8 +17,14 @@ from services import ipam_discovery_service as discovery
 from services.ip_locator_endpoint_evidence import _current_cross_device_fdb_path
 
 
-def _dict_row(cursor, row):
-    return dict(zip((column[0] for column in cursor.description), row))
+class CountedReader:
+    def __init__(self, conn):
+        self.conn = conn
+        self.statements = 0
+
+    def execute(self, sql, params=None):
+        self.statements += 1
+        return self.conn.execute(sql, params)
 
 
 @pytest.mark.parametrize("devices, aggregations, hosts", [
@@ -24,15 +33,20 @@ def _dict_row(cursor, row):
         os.getenv("IP_LOCATOR_SCALE_LARGE") != "1", reason="opt-in million-row scale test",
     )),
 ])
-def test_three_tier_fdb_100_parallel(tmp_path, monkeypatch, devices, aggregations, hosts):
-    db = str(tmp_path / "fabric.db")
+def test_three_tier_fdb_100_parallel(isolated_db, monkeypatch, devices, aggregations, hosts):
+    from database import core
+
+    dsn = core._DATABASE_URL
     stamp = datetime.now(timezone.utc).isoformat()
     first_access = aggregations + 1
     access_count = devices - first_access
     allowed = {f"d{i}" for i in range(devices)}
-    conn = sqlite3.connect(db)
+    raw = psycopg2.connect(dsn)
+    conn = core._PgRawConnection(raw)
     try:
-        conn.executescript("""
+        conn.execute("CREATE SCHEMA locator_scale")
+        conn.execute("SET search_path TO locator_scale")
+        conn.execute("""
             CREATE TABLE interfaces (
                 id TEXT, device_id TEXT, interface_name TEXT, interface_type TEXT,
                 switchport_mode TEXT, access_vlan INT, native_vlan INT,
@@ -75,8 +89,9 @@ def test_three_tier_fdb_100_parallel(tmp_path, monkeypatch, devices, aggregation
             interfaces.extend([port(agg, p, "trunk"), port(access, q, "trunk"),
                                port(access, "GE1/0/2", "access")])
             links.append(link(agg, access, p, q))
-        conn.executemany("INSERT INTO interfaces VALUES (?,?,?,?,?,?,?,?,?,?,?)", interfaces)
-        conn.executemany("INSERT INTO topology_links VALUES (?,?,?,?,?,?,?,?,?)", links)
+        with raw.cursor() as cur:
+            execute_values(cur, "INSERT INTO interfaces VALUES %s", interfaces, page_size=1000)
+            execute_values(cur, "INSERT INTO topology_links VALUES %s", links, page_size=1000)
 
         def row(device, mac, name, classification):
             return (device, mac, "7", name, classification, "tenant-default",
@@ -96,7 +111,16 @@ def test_three_tier_fdb_100_parallel(tmp_path, monkeypatch, devices, aggregation
                 yield row(f"d{a}", mac, f"GE1/0/{p}", "trunk_tagged_interface")
                 yield row(f"d{i}", mac, "GE1/0/2", "access_edge")
 
-        conn.executemany("INSERT INTO fdb VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", records())
+        with raw.cursor() as cur:
+            execute_values(cur, "INSERT INTO fdb VALUES %s", records(), page_size=2000)
+        conn.execute("ANALYZE interfaces")
+        conn.execute("ANALYZE topology_links")
+        conn.execute("ANALYZE fdb")
+        # Refresh the simulated observation clock after loading the data.
+        stamp = datetime.now(timezone.utc).isoformat()
+        conn.execute("UPDATE interfaces SET last_seen = ?", (stamp,))
+        conn.execute("UPDATE topology_links SET last_seen = ?", (stamp,))
+        conn.execute("UPDATE fdb SET observed_at = ?", (stamp,))
         conn.commit()
         assert conn.execute("SELECT COUNT(*) FROM fdb").fetchone()[0] == hosts * 3
         assert len(links) == devices - 1
@@ -113,11 +137,11 @@ def test_three_tier_fdb_100_parallel(tmp_path, monkeypatch, devices, aggregation
 
     def locate(pair):
         mac, expected = pair
-        reader = sqlite3.connect(db)
-        reader.row_factory = _dict_row
-        statements = []
-        reader.set_trace_callback(statements.append)
+        connection = core._PgRawConnection(psycopg2.connect(dsn))
         try:
+            connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            connection.execute("SET LOCAL search_path TO locator_scale")
+            reader = CountedReader(connection)
             root = projection(reader, device_id="d0", target_mac=mac)[0]
             arp = dict(root, source_device_id="d0", source_vrf_context_status="global")
             path = _current_cross_device_fdb_path(
@@ -128,12 +152,16 @@ def test_three_tier_fdb_100_parallel(tmp_path, monkeypatch, devices, aggregation
             assert path[-1]["switch_port"] == "GE1/0/2"
             assert len(path) == 3
             # Counts only SQL in the simulated path and the root FDB read.
-            assert len(statements) == 9
+            assert reader.statements == 9
         finally:
-            reader.close()
+            connection.close()
 
-    with ThreadPoolExecutor(max_workers=100) as pool:
+    # 100 submitted requests, bounded workers to avoid exhausting PG max_connections.
+    started = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=16) as pool:
         targets = [(mac, f"d{device}") for mac, device in (
             target(i * (hosts // 100)) for i in range(100)
         )]
         list(pool.map(locate, targets))
+    print(f"native PG path: devices={devices}, FDB={hosts * 3}, requests=100, "
+          f"workers=16, batch={time.perf_counter() - started:.3f}s")
