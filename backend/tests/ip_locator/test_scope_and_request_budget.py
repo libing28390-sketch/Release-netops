@@ -259,3 +259,19 @@ def test_force_refresh_no_shared_lock(env, monkeypatch):
     cache = configure(monkeypatch, clock, result_at=0)
     assert trace.trace_ip("192.0.2.1", force_refresh=True, deadline_seconds=2)["found"]
     assert len(calls) == 1 and cache.acquire_count == 0
+
+def test_result_published_between_cache_miss_and_lock(env, monkeypatch):
+    clock, calls = env
+    cache = configure(monkeypatch, clock, acquire_at=0)
+    acquire = cache.acquire_lock
+
+    def acquire_after_publish(key, ttl):
+        cache.result_at = clock.now
+        return acquire(key, ttl)
+
+    monkeypatch.setattr(cache, "acquire_lock", acquire_after_publish)
+    result = trace.trace_ip("192.0.2.1", deadline_seconds=2, durable_run_id="waiter")
+    assert result["found"] and result["cache"]["result"] == "hit"
+    assert result["run_id"] == "waiter"
+    assert calls == []
+    assert cache.released == [("lock", "token")]
