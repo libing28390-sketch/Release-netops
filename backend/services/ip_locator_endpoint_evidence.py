@@ -368,6 +368,10 @@ def find_current_endpoint_evidence(
     owns_connection = conn is None
     db_conn = conn if conn is not None else get_db_connection()
     try:
+        if owns_connection:
+            # All projections in one lookup must see the same committed
+            # ARP/FDB, mapping, interface and topology snapshot.
+            db_conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         if not is_default_vrf:
             requested_vrf = _resolve_current_vrf_id(db_conn, tenant, requested_vrf)
             if requested_vrf is None:
@@ -534,6 +538,10 @@ def find_current_endpoint_evidence(
                 },
                 "arp_evidence": [{
                     "observation_id": _id(arp.get("observation_id") or arp.get("id")),
+                    "generation": int(arp.get("generation") or 0),
+                    "context_source": _id(arp.get("context_source")),
+                    "context_type": _id(arp.get("context_type")),
+                    "local_context_key": _id(arp.get("local_context_key")),
                     "device_id": source_device_id,
                     "source_device_id": source_device_id,
                     "device": _id(arp.get("source_device_name") or source_device_id),
@@ -550,6 +558,9 @@ def find_current_endpoint_evidence(
                 }],
                 "fdb_evidence": [{
                     "observation_id": _id(hop.get("observation_id") or hop.get("id")),
+                    "context_source": _id(hop.get("context_source")),
+                    "context_type": _id(hop.get("context_type")),
+                    "local_context_key": _id(hop.get("local_context_key")),
                     "device_id": _id(hop.get("source_device_id")),
                     "interface": _id(hop.get("switch_port")),
                     "mac": mac,
