@@ -5665,27 +5665,26 @@ def trace_ip(target_ip: str, **kwargs: Any) -> dict[str, Any]:
     if cache is None or not lock_key or force_refresh:
         return run_remaining_trace()
 
-    # A completed result may have been written by another request before this
-    # call acquired the lock.  The uncached function performs the authoritative
-    # freshness check as well, so this is only a fast path.
-    cached = cache.get_json(result_key)
-    if isinstance(cached, dict) and cache.is_fresh(
-        "result",
-        cached.get("evidence_collected_at") or cached.get("completed_at") or cached.get("created_at"),
-    ) and _manifest_is_current_for_code(cached.get("dependency_manifest")) and not _pending_fact_invalidation(scope_hash, target_ip):
+    def shared_result():
+        cached = cache.get_json(result_key)
+        if not (
+            isinstance(cached, dict)
+            and cache.is_fresh("result", cached.get("evidence_collected_at") or cached.get("completed_at") or cached.get("created_at"))
+            and _manifest_is_current_for_code(cached.get("dependency_manifest"))
+            and not _pending_fact_invalidation(scope_hash, target_ip)
+        ):
+            return None
         cached = _copy_cached_result_for_request(cached)
         if durable_run_id:
             cached["run_id"] = durable_run_id
-        _set_cache_source(
-            cached,
-            "result",
-            {"hostname": "whole-result"},
-            "redis",
-            vrf=vrf,
-            variant="whole_result",
-        )
+        _set_cache_source(cached, "result", {"hostname": "whole-result"}, "redis",
+                          vrf=vrf, variant="whole_result")
         cached["cache"] = {**dict(cached.get("cache") or {}), "result": "hit"}
         return interruption() or cached
+
+    cached = shared_result()
+    if cached is not None:
+        return cached
 
     stopped = interruption()
     if stopped is not None:
@@ -5705,24 +5704,9 @@ def trace_ip(target_ip: str, **kwargs: Any) -> dict[str, Any]:
             stopped = interruption()
             if stopped is not None:
                 return stopped
-            cached = cache.get_json(result_key)
-            if isinstance(cached, dict) and cache.is_fresh(
-                "result",
-                cached.get("evidence_collected_at") or cached.get("completed_at") or cached.get("created_at"),
-            ) and _manifest_is_current_for_code(cached.get("dependency_manifest")) and not _pending_fact_invalidation(scope_hash, target_ip):
-                cached = _copy_cached_result_for_request(cached)
-                if durable_run_id:
-                    cached["run_id"] = durable_run_id
-                _set_cache_source(
-                    cached,
-                    "result",
-                    {"hostname": "whole-result"},
-                    "redis",
-                    vrf=vrf,
-                    variant="whole_result",
-                )
-                cached["cache"] = {**dict(cached.get("cache") or {}), "result": "hit"}
-                return interruption() or cached
+            cached = shared_result()
+            if cached is not None:
+                return cached
             stopped = interruption()
             if stopped is not None:
                 return stopped
@@ -5748,9 +5732,14 @@ def trace_ip(target_ip: str, **kwargs: Any) -> dict[str, Any]:
                 "timestamp": _now_iso(),
             }
     try:
-        # The second freshness check is required after waiting to acquire the
-        # lock; another worker may have completed just before us.
-        return run_remaining_trace()
+        # Close the race between observing a cache miss and acquiring a lock.
+        # Do not enter the full trace (and its PG setup) if the prior owner
+        # published an authoritative result in that interval.
+        stopped = interruption()
+        if stopped is not None:
+            return stopped
+        cached = shared_result()
+        return cached if cached is not None else run_remaining_trace()
     finally:
         cache.release_lock(lock_key, token)
 
