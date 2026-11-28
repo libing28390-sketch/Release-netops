@@ -156,7 +156,34 @@ def test_gateway_ping_commands_historical_fallback_and_smart_terminal_helpers(is
         conn.commit()
 
         assert _count_edge_port_active_macs(conn, "acc-edge", "GigabitEthernet1/0/12") == 3
-        hist = _lookup_historical_last_seen(conn, "192.168.55.88", authorized_device_ids=["acc-edge"])
+        scope = {"tenant_id": "tenant-default", "authorized_device_ids": ["acc-edge"]}
+        # Legacy endpoints lack the scoped discovery evidence required by the locator.
+        assert _lookup_historical_last_seen(conn, "192.168.55.88", **scope) is None
+        conn.execute(
+            """INSERT INTO ipam_discovery_snapshots (
+                   id, collector, device_id, source_device_name, tenant_id, site_id,
+                   vrf_context_status, scope_status, source_run_id, source_version,
+                   source_status, coverage_status, coverage_complete, coverage_reason,
+                   entry_count, observed_at, projected_at
+               ) VALUES ('hist-snap', 'arp', 'acc-edge', 'ACC-EDGE', 'tenant-default', 'site-b2',
+                         'unknown', 'scope_pending', '', 'hist-v1', 'success', 'unavailable', 0,
+                         'test_positive_only', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"""
+        )
+        conn.execute(
+            """INSERT INTO ipam_discovery_observations (
+                   id, snapshot_id, source_type, source_device_id, source_device_name,
+                   tenant_id, site_id, vrf_context_status, scope_status,
+                   ip, mac, interface_name, vlan, source_identity_key,
+                   source_observed_at, timestamp_status, projected_at
+               ) VALUES ('hist-obs', 'hist-snap', 'arp', 'acc-edge', 'ACC-EDGE',
+                         'tenant-default', 'site-b2', 'unknown', 'scope_pending',
+                         '192.168.55.88', '00:11:22:33:44:01', 'GigabitEthernet1/0/12', '55',
+                         'hist-key', CURRENT_TIMESTAMP, 'valid', CURRENT_TIMESTAMP)"""
+        )
+        conn.commit()
+        assert _lookup_historical_last_seen(conn, "192.168.55.88", tenant_id="other", authorized_device_ids=["acc-edge"]) is None
+        assert _lookup_historical_last_seen(conn, "192.168.55.88", tenant_id="tenant-default", authorized_device_ids=[]) is None
+        hist = _lookup_historical_last_seen(conn, "192.168.55.88", **scope)
         assert hist is not None
         assert hist["status"] == "offline_historical_snapshot"
         assert hist["device_id"] == "acc-edge"
