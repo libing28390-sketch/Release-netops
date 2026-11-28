@@ -2464,71 +2464,48 @@ def _lookup_historical_last_seen(
     site_id: str = "",
     authorized_device_ids: Iterable[str] | None = None,
 ) -> dict[str, Any] | None:
-    """Return the latest historical observation when live ARP is absent (offline host)."""
-    if conn is None or not target_ip:
+    """Return scoped last-seen evidence, never a confirmed current location."""
+    if conn is None or not target_ip or not tenant_id:
         return None
-    allowed = {str(d) for d in authorized_device_ids if str(d)} if authorized_device_ids is not None else None
+    allowed = sorted({str(d) for d in authorized_device_ids if str(d)}) if authorized_device_ids is not None else None
+    if allowed == []:
+        return None
+    # Apply authorization and tenant filters before LIMIT, including the
+    # current owner of the historical source device.
+    conditions = ["o.ip = ?", "o.source_observed_at IS NOT NULL",
+                  "o.tenant_id = ?", "d.tenant_id = ?"]
+    params = [target_ip, tenant_id, tenant_id]
+    if site_id:
+        conditions += ["LOWER(o.site_id) = LOWER(?)", "LOWER(d.site_id) = LOWER(?)"]
+        params += [site_id, site_id]
+    if allowed is not None:
+        conditions.append("o.source_device_id IN (" + ",".join("?" for _ in allowed) + ")")
+        params += allowed
     try:
-        rows = conn.execute(
+        row = conn.execute(
             """SELECT o.source_device_id, o.source_device_name, o.mac, o.interface_name,
-                      o.vlan, o.source_observed_at, o.site_id, o.tenant_id
+                      o.vlan, o.source_observed_at
                  FROM ipam_discovery_observations o
-                WHERE o.ip = ?
-                  AND o.source_observed_at IS NOT NULL
-                ORDER BY o.source_observed_at DESC
-                LIMIT 10""",
-            (target_ip,),
-        ).fetchall()
-        for raw in rows:
-            item = dict(raw) if isinstance(raw, Mapping) or hasattr(raw, "keys") else {}
+                 JOIN devices d ON d.id = o.source_device_id
+                WHERE """ + " AND ".join(conditions) +
+            " ORDER BY o.source_observed_at DESC LIMIT 1", tuple(params),
+        ).fetchone()
+        if row:
+            item = dict(row)
             dev_id = str(item.get("source_device_id") or "")
-            if allowed is not None and dev_id and dev_id not in allowed:
-                continue
-            if tenant_id and item.get("tenant_id") and str(item.get("tenant_id")) != tenant_id:
-                continue
-            if site_id and item.get("site_id") and str(item.get("site_id")).lower() != site_id.lower():
-                continue
             return {
                 "status": "offline_historical_snapshot",
-                "ip": target_ip,
-                "mac": str(item.get("mac") or ""),
-                "device_id": dev_id,
-                "device": str(item.get("source_device_name") or dev_id),
+                "ip": target_ip, "mac": str(item.get("mac") or ""),
+                "device_id": dev_id, "device": str(item.get("source_device_name") or dev_id),
                 "port": str(item.get("interface_name") or ""),
                 "vlan": str(item.get("vlan") or ""),
                 "last_seen": str(item.get("source_observed_at") or ""),
                 "source": "ipam_discovery_observations",
+                "scope_status": "historical_unverified",
             }
     except Exception:
-        pass
-    try:
-        row = conn.execute(
-            """SELECT e.ip, e.mac, e.switch_id, COALESCE(d.hostname, e.switch_id) AS switch_name,
-                      e.switch_port, e.vlan, e.last_seen, e.site
-                 FROM network_endpoints e
-                 LEFT JOIN devices d ON d.id = e.switch_id
-                WHERE e.ip = ?
-                ORDER BY e.last_seen DESC
-                LIMIT 1""",
-            (target_ip,),
-        ).fetchone()
-        if row:
-            item = dict(row) if isinstance(row, Mapping) or hasattr(row, "keys") else {}
-            dev_id = str(item.get("switch_id") or "")
-            if allowed is None or not dev_id or dev_id in allowed:
-                return {
-                    "status": "offline_historical_snapshot",
-                    "ip": target_ip,
-                    "mac": str(item.get("mac") or ""),
-                    "device_id": dev_id,
-                    "device": str(item.get("switch_name") or dev_id),
-                    "port": str(item.get("switch_port") or ""),
-                    "vlan": str(item.get("vlan") or ""),
-                    "last_seen": str(item.get("last_seen") or ""),
-                    "source": "network_endpoints",
-                }
-    except Exception:
-        pass
+        # Do not fall back to an unscoped legacy table on a failed read.
+        return None
     return None
 
 
