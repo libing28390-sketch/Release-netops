@@ -231,11 +231,11 @@ def test_dashboards_suite_completeness():
             dashboard = json.load(f)
         joined_expressions = [
             target.get("expr", "")
-            for panel in dashboard["panels"]
+            for panel in _iter_panels(dashboard["panels"])
             for target in panel.get("targets", [])
             if "group_left(ifName, ifAlias)" in target.get("expr", "")
         ]
-        assert joined_expressions
+        assert joined_expressions, f"{filename}: missing interface identity queries"
         assert all("group_left(ifAlias) (max by (instance, ifIndex, ifAlias) (ifAlias{" in expr for expr in joined_expressions)
         assert all("or on(instance, ifIndex) (max by (instance, ifIndex, ifName) (ifName{" in expr for expr in joined_expressions)
         assert all("ifDescr{" not in expr for expr in joined_expressions)
@@ -244,7 +244,7 @@ def test_dashboards_suite_completeness():
             for expr in joined_expressions
         )
 
-        for panel in dashboard["panels"]:
+        for panel in _iter_panels(dashboard["panels"]):
             if not any("group_left(ifName, ifAlias)" in target.get("expr", "") for target in panel.get("targets", [])):
                 continue
             organize = next(
