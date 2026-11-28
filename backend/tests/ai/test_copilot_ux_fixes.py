@@ -106,6 +106,8 @@ def test_parse_intent_uses_the_local_fallback_instead_of_a_failure(monkeypatch):
 
 
 def test_truncated_stream_keeps_the_text_and_reports_finish_reason(monkeypatch):
+    # This contract mocks the intent-parser/legacy synthesis path explicitly.
+    monkeypatch.setattr(assistant_module.settings, "AI_COPILOT_AGENTIC_CHAT_ENABLED", False)
     from ai.gateway.exceptions import AIOutputTruncatedException
 
     captured: list[dict] = []
@@ -134,6 +136,8 @@ def test_truncated_stream_keeps_the_text_and_reports_finish_reason(monkeypatch):
 
 
 def test_complete_stream_has_no_finish_reason(monkeypatch):
+    # This contract mocks the intent-parser/legacy synthesis path explicitly.
+    monkeypatch.setattr(assistant_module.settings, "AI_COPILOT_AGENTIC_CHAT_ENABLED", False)
     async def fake_intent(*_args, **_kwargs):
         return {"intent": "general_qa", "filters": {}}
 

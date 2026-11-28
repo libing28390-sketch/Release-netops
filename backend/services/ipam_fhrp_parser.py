@@ -54,7 +54,12 @@ def parse_cisco_fhrp_output(command: str, output: str, *, platform: str) -> dict
     normalized_platform = str(platform or "").strip().casefold()
     normalized_command = str(command or "").strip().casefold()
     protocol = _COMMANDS.get(normalized_command)
-    if normalized_platform not in _IOS_PLATFORMS or protocol is None:
+    nxos = normalized_platform in {"cisco_nxos", "nxos"}
+    supported_commands = (
+        {"show hsrp brief", "show vrrp brief"} if nxos
+        else {"show standby brief", "show vrrp brief"}
+    )
+    if normalized_platform not in _IOS_PLATFORMS or protocol is None or normalized_command not in supported_commands:
         return {"status": "unsupported", "observations": []}
 
     text = str(output or "")

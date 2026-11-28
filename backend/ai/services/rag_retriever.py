@@ -880,27 +880,9 @@ class RAGRetriever:
                 params,
             )
             document_count = int((cursor.fetchone() or [0])[0] or 0)
-            if document_count == 0 and any(
-                getattr(request, attr, None)
-                for attr in ("product_series", "product_model", "document_category")
-            ):
-                from dataclasses import replace as _dc_replace
-
-                relaxed_request = _dc_replace(
-                    request,
-                    product_series=None,
-                    product_model=None,
-                    document_category=None,
-                )
-                relaxed_where, relaxed_params = self._filter_sql(relaxed_request, columns)
-                cursor.execute(
-                    f"SELECT COUNT(*) FROM ai_document d WHERE {relaxed_where}",
-                    relaxed_params,
-                )
-                relaxed_count = int((cursor.fetchone() or [0])[0] or 0)
-                if relaxed_count > 0:
-                    where_sql, params = relaxed_where, relaxed_params
-                    document_count = relaxed_count
+            # Explicit product/category constraints are safety boundaries, not
+            # ranking hints. A no-match must not silently fetch another platform
+            # or a CLI-output document as configuration evidence.
             document_category_expr = "d.document_category" if "document_category" in columns else "NULL"
             cli_platform_expr = "d.cli_platform" if "cli_platform" in columns else "NULL"
             semantic_document_id_expr = "d.document_id" if "document_id" in columns else "NULL"

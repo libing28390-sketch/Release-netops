@@ -98,9 +98,9 @@ def test_history_policy_scales_by_scope_and_follow_up() -> None:
         history=history,
     )
 
-    assert public == {"turns": 4, "token_budget": 6000, "name": "public"}
-    assert network == {"turns": 8, "token_budget": 7000, "name": "network"}
-    assert continuous == {"turns": 12, "token_budget": 8000, "name": "complex"}
+    assert public == {"turns": 30, "token_budget": 48000, "name": "public"}
+    assert network == {"turns": 100, "token_budget": 110000, "name": "complex"}
+    assert continuous == {"turns": 100, "token_budget": 110000, "name": "complex"}
 
 
 def test_public_freshness_signal_overrides_knowledge_parser_defaults() -> None:
@@ -115,14 +115,14 @@ def test_public_freshness_signal_overrides_knowledge_parser_defaults() -> None:
         "查询北京今天的天气",
         intent="knowledge",
         filters={"document_category": "command"},
-    ) == {"turns": 4, "token_budget": 6000, "name": "public"}
+    ) == {"turns": 30, "token_budget": 48000, "name": "public"}
 
 
 def test_history_selector_keeps_recent_turns_and_token_budget() -> None:
     service = assistant_module.AIAssistantService()
     history = [
         {"role": role, "content": f"第 {index} 轮：" + ("详细配置说明 " * 160)}
-        for index in range(20)
+        for index in range(120)
         for role in ("user", "assistant")
     ]
 
@@ -138,15 +138,17 @@ def test_history_selector_keeps_recent_turns_and_token_budget() -> None:
         filters={"feature": "ospf", "document_category": "troubleshooting"},
     )
 
-    assert len(public_history) <= 8
-    assert len(complex_history) <= 24
-    assert sum(service._history_message_cost(item) for item in public_history) <= 6000
-    assert sum(service._history_message_cost(item) for item in complex_history) <= 8000
+    assert len(public_history) <= 60
+    assert len(complex_history) <= 200
+    assert sum(service._history_message_cost(item) for item in public_history) <= 48000
+    assert sum(service._history_message_cost(item) for item in complex_history) <= 110000
     assert public_history[-1]["role"] == "assistant"
-    assert public_history[-1]["content"].startswith("第 19 轮")
+    assert public_history[-1]["content"].startswith("第 119 轮")
 
 
 def test_general_chat_uses_public_classification_and_skips_broad_rag(monkeypatch: pytest.MonkeyPatch) -> None:
+    # This contract mocks the intent-parser/legacy synthesis path explicitly.
+    monkeypatch.setattr(assistant_module.settings, "AI_COPILOT_AGENTIC_CHAT_ENABLED", False)
     captured: list[dict] = []
 
     async def fake_intent(*args, **kwargs):
@@ -179,6 +181,8 @@ def test_general_chat_uses_public_classification_and_skips_broad_rag(monkeypatch
 
 
 def test_streaming_public_question_shows_web_step_and_external_citation(monkeypatch: pytest.MonkeyPatch) -> None:
+    # This contract mocks the intent-parser/legacy synthesis path explicitly.
+    monkeypatch.setattr(assistant_module.settings, "AI_COPILOT_AGENTIC_CHAT_ENABLED", False)
     captured: list[dict] = []
 
     async def fake_intent(*args, **kwargs):

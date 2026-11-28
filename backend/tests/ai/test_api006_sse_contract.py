@@ -51,6 +51,8 @@ def test_all_terminal_and_progress_helpers_are_versioned():
 
 
 def test_chat_stream_covers_meta_progress_token_citation_done_and_error(monkeypatch):
+    # This contract mocks the intent-parser/legacy synthesis path explicitly.
+    monkeypatch.setattr(assistant_module.settings, "AI_COPILOT_AGENTIC_CHAT_ENABLED", False)
     async def fake_parse_intent(message, user_id=None):
         return {"intent": "asset_analysis", "filters": {}}
 
@@ -97,6 +99,8 @@ def test_chat_stream_covers_meta_progress_token_citation_done_and_error(monkeypa
 
 
 def test_device_context_is_sent_to_provider_as_internal(monkeypatch):
+    # This contract mocks the intent-parser/legacy synthesis path explicitly.
+    monkeypatch.setattr(assistant_module.settings, "AI_COPILOT_AGENTIC_CHAT_ENABLED", False)
     async def fake_parse_intent(message, user_id=None):
         return {"intent": "device_search", "filters": {}}
 

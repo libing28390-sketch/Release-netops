@@ -363,10 +363,9 @@ def test_assistant_short_circuits_dangerous_intent_clarification(monkeypatch: py
         )
     )
 
-    assert result["execution_mode"] == "local_clarification"
+    assert result["execution_mode"] == "local_security_block"
     assert result["external_egress"] is False
-    assert result["clarification"]["requires_confirmation"] is True
-    assert result["answer"] == "请确认目标设备和变更内容。"
+    assert "Copilot 不会在设备上执行命令" in result["answer"]
 
 
 def test_generic_clarification_payload_is_persistable_and_exposes_safe_slots() -> None:
