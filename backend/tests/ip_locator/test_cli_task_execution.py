@@ -126,8 +126,10 @@ def test_session_pool_reuses_connection_and_releases_slot_after_idle(isolated_db
             return None
 
     clients = []
+    connection_params = []
 
-    def fake_connect(**_params):
+    def fake_connect(**params):
+        connection_params.append(params)
         client = FakeNetmikoClient()
         clients.append(client)
         return client
@@ -154,6 +156,9 @@ def test_session_pool_reuses_connection_and_releases_slot_after_idle(isolated_db
         assert first == "output:show ip route 192.0.2.1"
         assert second == "output:show ip arp 192.0.2.1"
         assert len(clients) == 1
+        for key in ("timeout", "conn_timeout", "auth_timeout", "banner_timeout",
+                    "blocking_timeout", "session_timeout"):
+            assert 0 < connection_params[0][key] <= 5
         assert clients[0].commands == ["show ip route 192.0.2.1", "show ip arp 192.0.2.1"]
 
         time.sleep(1.25)
