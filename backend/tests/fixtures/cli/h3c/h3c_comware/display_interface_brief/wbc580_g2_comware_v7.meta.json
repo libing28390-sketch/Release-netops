@@ -1,0 +1,39 @@
+{
+  "vendor": "H3C",
+  "platform": "h3c_comware",
+  "model_family": "WBC Series multiservice access controllers",
+  "command": "display interface brief",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/d_202112/1504438_294551_0.htm",
+  "source_title": "H3C WBC Series Multservice Access Controllers Command References (E5448)-6W100",
+  "source_section": "04-Interface Command Reference > 02-Ethernet interface commands > display interface > Examples (page 9)",
+  "source_note": "The complete official brief output includes route-mode logical interfaces, bridge-mode aggregates, and GE/XGE physical interfaces. The WBC580 G2 product information lists OS compatibility as Comware V7; the CLI example itself uses a generic Sysname prompt and does not identify a specific device or running build.",
+  "documentation_release": "E5448-6W100",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "platform_version_evidence_url": "https://www.h3c.com/cn/d_202304/1831574_30005_0.htm",
+  "platform_version_evidence_title": "H3C WBC Wireless AC Product Information",
+  "platform_version_evidence_note": "The official product table lists WBC580 G2 operating-system compatibility as Comware V7. This is product-line evidence, not the running build for the generic CLI example.",
+  "expected_record_count": 12,
+  "expected_fields": [
+    "INTERFACE",
+    "LINK",
+    "PROTOCOL",
+    "MAIN_IP",
+    "SPEED",
+    "DUPLEX",
+    "TYPE",
+    "PVID",
+    "DESCRIPTION"
+  ],
+  "expected_template_prefix": "h3c_comware_v7_",
+  "expected_template": "h3c_comware_v7_display_interface_brief.textfsm",
+  "expected_record_index": 0,
+  "expected_values": {
+    "INTERFACE": "Loop0",
+    "LINK": "UP",
+    "PROTOCOL": "UP(s)",
+    "MAIN_IP": "2.2.2.9"
+  },
+  "parser_platform": "h3c_comware_v7"
+}

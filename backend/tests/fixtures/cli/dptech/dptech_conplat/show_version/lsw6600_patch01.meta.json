@@ -1,0 +1,36 @@
+{
+  "vendor": "DPtech",
+  "platform": "dptech_conplat",
+  "parser_platform": "dptech_conplat",
+  "software_family": "ConPlat",
+  "platform_version": "V100R004",
+  "software_version": "S111C011D009P04PATCH01",
+  "conplat_version": "V100R004B01D009P04PATCH01",
+  "model": "LSW6600-48XGS4QXP",
+  "model_family": "LSW6600",
+  "command": "show version",
+  "source_type": "vendor_documentation_mirror",
+  "source_url": "https://oss.scwysa.com/%E4%BA%A4%E6%8D%A2%E8%B7%AF%E7%94%B1/%E4%BA%A4%E6%8D%A2%E8%B7%AF%E7%94%B1/DPtech%20LSW6600%E7%B3%BB%E5%88%97%E4%BB%A5%E5%A4%AA%E7%BD%91%E4%BA%A4%E6%8D%A2%E6%9C%BA%E5%91%BD%E4%BB%A4%E6%89%8B%E5%86%8Cv2.1.pdf",
+  "source_title": "DPtech LSW6600 系列以太网交换机命令手册 v2.1",
+  "source_section": "2.5.6 show version > 查看设备当前主控板的版本信息 > 2-94",
+  "documentation_release": "v2.1",
+  "source_note": "Vendor-authored Chinese command manual hosted by a third party. Five selected lines from the example; serial number replaced. Product release and underlying ConPlat release are both explicit in the output.",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "SOFTWARE_VERSION",
+    "CONPLAT_VERSION",
+    "HARDWARE",
+    "HARDWARE_VERSION",
+    "UPTIME",
+    "SERIAL_NUMBER"
+  ],
+  "expected_values": {
+    "SOFTWARE_VERSION": "S111C011D009P04PATCH01",
+    "CONPLAT_VERSION": "V100R004B01D009P04PATCH01",
+    "HARDWARE": "LSW6600-48XGS4QXP",
+    "HARDWARE_VERSION": "A",
+    "UPTIME": "3 week(s), 6 day(s),  2 hour(s), 37 minute(s)",
+    "SERIAL_NUMBER": "REDACTED"
+  },
+  "expected_template": "dptech_ios_show_version.textfsm"
+}

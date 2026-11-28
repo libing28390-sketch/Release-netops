@@ -1,0 +1,16 @@
+# nexora-action-code: get_interfaces
+Value Required INTERFACE ([A-Za-z][A-Za-z-]*[0-9]+(?:[/:.][0-9]+)*)
+Value Required STATUS (\S.*?)
+Value PROTOCOL (\S.*?)
+Value DESCRIPTION (\S.*?)
+Value MAC_ADDRESS ([0-9A-Fa-f]{4}(?:-[0-9A-Fa-f]{4}){2})
+Value SPEED (\d+(?:\.\d+)?[KMG]bps)
+
+Start
+  ^\s*[A-Za-z][A-Za-z-]*[0-9]+(?:[/:.][0-9]+)*\s*$$ -> Continue.Record
+  ^\s*${INTERFACE}\s*$$
+  ^\s*Current state:\s+${STATUS}\s*$$
+  ^\s*Line protocol state:\s+${PROTOCOL}\s*$$
+  ^\s*Description:\s+${DESCRIPTION}\s*$$
+  ^\s*IP packet frame type:[^,]+,\s+[Hh]ardware address:\s+${MAC_ADDRESS}\s*$$
+  ^\s*${SPEED}-speed mode(?:,.*)?\s*$$

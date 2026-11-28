@@ -3,7 +3,26 @@
   "source_url": "https://www.h3c.com/en/d_201905/1189999_294551_0.htm",
   "vendor": "H3C",
   "platform": "Comware7",
-  "model_family": "MSR810/2600/3600",
+  "model_family": "MSR810/MSR2600/MSR3600",
   "command": "display vlan brief",
-  "source_note": "Official VLAN command reference, brief VLAN output example."
+  "source_note": "CLI command: display vlan brief. Official brief VLAN output for the listed MSR series. R0707-6W301 is the command-reference release; no runtime build is stated.",
+  "source_title": "Support - 04-VLAN commands - H3C",
+  "source_section": "display vlan brief > Examples",
+  "documentation_release": "R0707-6W301",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "VLAN_ID",
+    "VLAN_NAME",
+    "PORTS"
+  ],
+  "expected_values": {
+    "VLAN_ID": "1",
+    "VLAN_NAME": "VLAN 0001"
+  },
+  "expected_template_prefix": "h3c_comware_v7_",
+  "expected_template": "h3c_comware_v7_display_vlan_brief.textfsm",
+  "expected_record_index": 0,
+  "parser_platform": "h3c_comware_v7"
 }

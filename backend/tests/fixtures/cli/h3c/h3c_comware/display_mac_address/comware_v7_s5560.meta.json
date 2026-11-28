@@ -5,5 +5,28 @@
   "platform": "Comware7",
   "model_family": "S5560X-EI/S5500V2-EI/MS4520V2/ES5500",
   "command": "display mac-address vlan 100",
-  "source_note": "Official MAC address table command reference, VLAN-filtered output example."
+  "source_note": "CLI command: display mac-address vlan 100. Official VLAN-filtered MAC table example for the listed series. The cited release is the command-reference/document release; the sample does not itself confirm the running device software build.",
+  "source_title": "Support - 01-MAC address table commands - H3C",
+  "source_section": "display mac-address vlan > Examples",
+  "documentation_release": "R68xx-6W101",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "expected_record_count": 4,
+  "expected_fields": [
+    "MAC_ADDRESS",
+    "VLAN_ID",
+    "STATUS",
+    "INTERFACE",
+    "AGING"
+  ],
+  "expected_template_prefix": "h3c_comware_v7_",
+  "expected_template": "h3c_comware_v7_display_mac_address.textfsm",
+  "expected_record_index": 0,
+  "expected_values": {
+    "MAC_ADDRESS": "0001-0101-0101",
+    "VLAN_ID": "100",
+    "STATUS": "Multiport",
+    "INTERFACE": "GE1/0/1"
+  },
+  "parser_platform": "h3c_comware_v7"
 }

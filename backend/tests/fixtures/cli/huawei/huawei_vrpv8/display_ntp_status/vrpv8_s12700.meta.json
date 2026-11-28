@@ -5,5 +5,32 @@
   "platform": "VRP8",
   "model_family": "CloudEngine 12800",
   "command": "display ntp status",
-  "source_note": "Official NTP status command reference example."
+  "source_note": "Official CloudEngine NTP status example; exact VRP build is not stated. Parser selects the shared VRP NTP status grammar for this VRP8 sample.",
+  "source_title": "NTP Configuration Commands - Huawei",
+  "source_section": "display ntp status > command output example",
+  "platform_version": "V8",
+  "software_version": "unknown",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "CLOCK_STATUS",
+    "CLOCK_STRATUM",
+    "REFERENCE_CLOCK_ID",
+    "NOMINAL_FREQUENCY",
+    "ACTUAL_FREQUENCY",
+    "CLOCK_PRECISION",
+    "CLOCK_OFFSET",
+    "CLOCK_DELAY",
+    "ROOT_DISPERSION",
+    "PEER_DISPERSION",
+    "REFERENCE_TIME",
+    "SYNCHRONIZATION_STATE"
+  ],
+  "expected_values": {
+    "CLOCK_STATUS": "synchronized",
+    "REFERENCE_CLOCK_ID": "LOCAL(0)",
+    "SYNCHRONIZATION_STATE": "clock synchronized"
+  },
+  "expected_template": "huawei_vrp_display_ntp_status.textfsm",
+  "expected_template_prefix": "huawei_vrp_",
+  "parser_platform": "huawei_vrp8"
 }

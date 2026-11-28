@@ -14,20 +14,6 @@ from services.network_access_limiter import NetworkAccessLimiter
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "cli"
 
 
-def fixture_platform(path: Path) -> str:
-    for platform in (
-        "h3c_comware_v3",
-        "h3c_comware_v5",
-        "h3c_comware_v9",
-        "h3c_comware",
-        "cisco_nxos",
-        "cisco_ios",
-    ):
-        if platform in path.parts:
-            return platform
-    raise AssertionError(f"No supported vendor platform in fixture path: {path}")
-
-
 def load_official_fixture(*parts: str, name: str) -> tuple[str, dict]:
     directory = FIXTURES.joinpath(*parts)
     output = (directory / f"{name}.txt").read_text(encoding="utf-8")
@@ -68,7 +54,7 @@ def test_every_official_h3c_and_cisco_fixture_has_a_working_parser(metadata_path
     result = smart_parse_cli(
         output,
         metadata["command"],
-        platform=fixture_platform(metadata_path),
+        platform=metadata["parser_platform"],
     )
 
     assert result["success"] is True
@@ -140,7 +126,7 @@ def test_comware_suggestions_keep_abbreviated_query_in_the_selected_version():
     v3_suggestions = list_template_suggestions("h3c_comware_v3", "dis ver", 8)
     assert any(
         item["command"] == "display version"
-        and item["filename"].startswith("h3c_comware_v5_")
+        and item["filename"].startswith("h3c_comware_v3_")
         for item in v3_suggestions
     )
     assert not any(item["filename"].startswith("h3c_comware_v7_") for item in v3_suggestions)
@@ -584,7 +570,7 @@ def test_comware7_real_world_bfd_down_session_is_structured(platform):
                     "comware_v7_s5130",
                 ),
                 "logs": ("h3c", "h3c_comware", "display_logbuffer", "comware_v7_s5130"),
-                "ospf": ("h3c", "h3c_comware", "display_ospf_peer", "comware_v7_s5130"),
+                "ospf": ("h3c", "h3c_comware", "display_ospf_peer", "comware_v7_msr"),
                 "power": ("h3c", "h3c_comware", "display_power", "comware_v7_s5130"),
                 "stack": ("h3c", "h3c_comware", "display_irf", "comware_v7_s5130"),
                 "version": ("h3c", "h3c_comware", "display_version", "comware_v7_wx2880x"),

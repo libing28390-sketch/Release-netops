@@ -1,0 +1,5 @@
+Software Release S111C011D009P04PATCH01
+Conplat Version is V100R004B01D009P04PATCH01
+LSW6600-48XGS4QXP Uptime is 3 week(s), 6 day(s),  2 hour(s), 37 minute(s)
+PCB Version: A
+Serial Number: REDACTED

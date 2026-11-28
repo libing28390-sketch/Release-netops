@@ -1,0 +1,37 @@
+{
+  "vendor": "Maipu",
+  "platform": "maipu_mypower",
+  "software_family": "MyPower",
+  "software_version": "unknown",
+  "source_type": "vendor_documentation_mirror",
+  "parser_platform": "maipu_mypower_v8",
+  "platform_version": "V8",
+  "model_family": "MP1800X",
+  "documentation_release": "8.11.32.45(R)-20220907",
+  "command": "show ip route",
+  "source_url": "https://support.marvel.ru/wp-content/uploads/2023/05/mp1800x-series-router.zip",
+  "source_title": "Maipu MP1800X Series Router Configuration Manual",
+  "source_section": "05 IP Protocol and Services/111.html > 13.3.1 Configure MGRE Basic Functions > Device3 routes",
+  "source_note": "Vendor-authored English CHM hosted by distributor Marvel. Three consecutive lines excerpted, starting with an OSPF route and two next hops. The sample does not identify the running build.",
+  "expected_record_count": 3,
+  "expected_fields": [
+    "NETWORK",
+    "PROTOCOL",
+    "DISTANCE",
+    "METRIC",
+    "NEXTHOP_IP",
+    "INTERFACE",
+    "UPTIME"
+  ],
+  "expected_record_index": 1,
+  "expected_values": {
+    "NETWORK": "1.0.0.0/24",
+    "PROTOCOL": "O",
+    "DISTANCE": "110",
+    "METRIC": "2",
+    "NEXTHOP_IP": "3.0.0.2",
+    "INTERFACE": "vlan3",
+    "UPTIME": "05:28:42"
+  },
+  "expected_template": "maipu_mypower_v8_show_ip_route.textfsm"
+}

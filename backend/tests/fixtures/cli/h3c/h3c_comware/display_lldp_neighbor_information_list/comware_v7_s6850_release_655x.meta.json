@@ -1,0 +1,32 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/Support/Resource_Center/HK/Home/Switches/00-Public/Reference_Guides/Command_References/H3C_S6850_S9850_CR-Release_655x-6W100/03/201910/1234788_294551_0.htm",
+  "vendor": "H3C",
+  "platform": "Comware7",
+  "model_family": "S6850/S9850",
+  "command": "display lldp neighbor-information list",
+  "source_title": "Support - 14-LLDP commands- H3C",
+  "source_section": "display lldp neighbor-information > Examples > list-form LLDP output",
+  "source_note": "Official S6850/S9850 Release 655x-6W100 command-reference sample. The documentation release identifies the reference document only; the running device software build is unknown.",
+  "documentation_release": "655x-6W100",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "running_build": "unknown",
+  "parser_platform": "h3c_comware_v7",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "NEIGHBOR_NAME",
+    "INTERFACE",
+    "CHASSIS_ID",
+    "NEIGHBOR_INTERFACE"
+  ],
+  "expected_template_prefix": "h3c_comware_v7_",
+  "expected_template": "h3c_comware_v7_display_lldp_neighbor_information_list.textfsm",
+  "expected_record_index": 0,
+  "expected_values": {
+    "NEIGHBOR_NAME": "System1",
+    "INTERFACE": "WGE1/0/1",
+    "CHASSIS_ID": "000f-e25d-ee91",
+    "NEIGHBOR_INTERFACE": "Twenty-FiveGigE1/0/1"
+  }
+}

@@ -23,6 +23,7 @@ data/spool/
 data/pam_audit/
 data/change_order_attachments/
 data/backups/
+data/textfsm_templates/.textfsm_templates.lock
 
 # Scratch and temporary files
 .bypy/

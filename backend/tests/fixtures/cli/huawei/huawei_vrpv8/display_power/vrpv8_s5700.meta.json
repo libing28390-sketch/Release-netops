@@ -5,5 +5,21 @@
   "platform": "VRP8",
   "model_family": "S300/S500/S2700/S5700/S6700",
   "command": "display power",
-  "source_note": "Official power supply status example, including Supply and NotSupply states."
+  "source_note": "Official Huawei power supply status example; exact software build is not stated.",
+  "source_title": "Displaying Power Supply Information - Huawei",
+  "source_section": "Displaying power supply information > display power output",
+  "platform_version": "V8",
+  "software_version": "unknown",
+  "expected_record_count": 2,
+  "expected_fields": [
+    "SLOT",
+    "POWER_ID",
+    "ONLINE",
+    "MODE",
+    "STATUS",
+    "POWER_W"
+  ],
+  "expected_template": "huawei_vrpv8_display_power.textfsm",
+  "expected_template_prefix": "huawei_vrpv8_",
+  "parser_platform": "huawei_vrp8"
 }

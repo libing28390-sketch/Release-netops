@@ -1,0 +1,11 @@
+Ruijie#show memory
+
+System Memory Statistic:
+
+  Free pages: 2898
+
+watermarks : min 433, lower 866, low 1299, high 1732
+
+  System Total Memory : 128MB, Current Free Memory : 14580KB
+
+  Used Rate : 89%

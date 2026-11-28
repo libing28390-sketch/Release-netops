@@ -1,0 +1,17 @@
+R1#show ip route vrf abc
+
+Routing Table: abc
+
+Codes:  C - connected, S - static, R - RIP, B - BGP
+        O - OSPF, IA - OSPF inter area
+        N1 - OSPF NSSA external type 1, N2 - OSPF NSSA external type 2
+        E1 - OSPF external type 1, E2 - OSPF external type 2
+        i - IS-IS, su - IS-IS summary, L1 - IS-IS level-1, L2 - IS-IS level-2
+        ia - IS-IS inter area, * - candidate default
+
+Gateway of last resort is no set
+C    10.1.1.0/24 is directly connected, FastEthernet 0/0
+C    10.1.1.1/32 is local host.
+R    10.2.1.0/24 [120/1] via 192.168.1.2, 00:02:53, FastEthernet 0/2
+C    192.168.1.0/24 is directly connected, FastEthernet 0/2
+C    192.168.1.1/32 is local host.

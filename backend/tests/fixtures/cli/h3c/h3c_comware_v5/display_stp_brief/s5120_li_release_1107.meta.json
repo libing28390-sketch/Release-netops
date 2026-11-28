@@ -1,0 +1,26 @@
+{
+  "vendor": "H3C",
+  "platform": "h3c_comware",
+  "parser_platform": "h3c_comware_v5",
+  "model_family": "S5120-LI switch series",
+  "platform_version": "V5",
+  "software_version": "unknown",
+  "documentation_release": "Release 1107-6W101",
+  "command": "display stp brief",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/cn/d_201108/723399_30005_0.htm",
+  "source_title": "H3C S5120-LI 系列以太网交换机配置指导 Release 1107-6W101",
+  "source_section": "MSTP 配置 > 查看 Device D 上生成树的简要信息 > display stp brief",
+  "source_note": "Device D 的官方回显，HTML 空白仅规范化为列间空格；手册未标注该样例对应的设备 build。",
+  "expected_record_count": 4,
+  "expected_fields": ["INSTANCE", "INTERFACE", "ROLE", "STATUS", "PROTECTION"],
+  "expected_record_index": 1,
+  "expected_values": {
+    "INSTANCE": "0",
+    "INTERFACE": "GigabitEthernet1/0/2",
+    "ROLE": "ALTE",
+    "STATUS": "DISCARDING",
+    "PROTECTION": "NONE"
+  },
+  "expected_template": "h3c_comware_v5_display_stp_brief.textfsm"
+}

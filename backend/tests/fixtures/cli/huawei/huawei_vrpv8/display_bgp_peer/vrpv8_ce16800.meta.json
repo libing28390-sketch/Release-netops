@@ -5,5 +5,25 @@
   "platform": "VRP8",
   "model_family": "CloudEngine 16800/9800/8800/6800",
   "command": "display bgp peer",
-  "source_note": "Official BGP troubleshooting output showing established IPv4 peers."
+  "source_note": "Official CloudEngine BGP troubleshooting example; the exact software build is not stated. Parser selects the shared VRP BGP peer grammar for this VRP8 sample.",
+  "source_title": "BGP Peer Relationship Fails to Be Established - Huawei",
+  "source_section": "Troubleshooting output > display bgp peer",
+  "platform_version": "V8",
+  "software_version": "unknown",
+  "expected_record_count": 2,
+  "expected_fields": [
+    "LOCAL_ROUTER_ID",
+    "LOCAL_AS_NUMBER",
+    "PEER",
+    "REMOTE_AS",
+    "MSG_RCVD",
+    "MSG_SENT",
+    "OUT_Q",
+    "UP_DOWN",
+    "STATUS",
+    "PREF_RCVD"
+  ],
+  "expected_template": "huawei_vrp_display_bgp_peer.textfsm",
+  "expected_template_prefix": "huawei_vrp_",
+  "parser_platform": "huawei_vrp8"
 }

@@ -1,0 +1,5 @@
+MST0
+Interface        Role       State      Cost      Prio.Nbr Type
+---------------- ---------- ---------- --------- -------- --------------------
+Et2              root       forwarding 2000      128.2    P2p
+Et3              alternate  discarding 2000      128.3    P2p

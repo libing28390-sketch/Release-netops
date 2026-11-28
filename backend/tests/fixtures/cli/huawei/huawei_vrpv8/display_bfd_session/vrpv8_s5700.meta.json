@@ -5,5 +5,25 @@
   "platform": "VRP8",
   "model_family": "S310/S5700 switch series",
   "command": "display bfd session all",
-  "source_note": "Official BFD command reference example and output field definitions."
+  "source_note": "Official Huawei BFD command reference sample for the S310/S5700 switch series; exact software build is not stated.",
+  "source_title": "BFD Configuration Commands - Huawei",
+  "source_section": "display bfd session all > command output example",
+  "platform_version": "V8",
+  "software_version": "unknown",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "LOCAL_DISCRIMINATOR",
+    "REMOTE_DISCRIMINATOR",
+    "PEER_IP",
+    "STATUS",
+    "SESSION_TYPE",
+    "INTERFACE"
+  ],
+  "expected_values": {
+    "PEER_IP": "10.1.1.2",
+    "STATUS": "Up"
+  },
+  "expected_template": "huawei_vrpv8_display_bfd_session.textfsm",
+  "expected_template_prefix": "huawei_vrpv8_",
+  "parser_platform": "huawei_vrp8"
 }

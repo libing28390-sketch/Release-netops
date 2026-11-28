@@ -3,7 +3,34 @@
   "source_url": "https://www.h3c.com/en/d_202603/2784953_294551_0.htm",
   "vendor": "H3C",
   "platform": "Comware9",
-  "model_family": "CR16000",
+  "model_family": "MSR5680-X3",
   "command": "display interface brief",
-  "source_note": "Official Comware V9 interface command reference example."
+  "source_note": "CLI command: display interface brief. Official Comware V9 interface brief examples for MSR5680-X3. R9160 identifies the documentation release; the sample does not report the running build.",
+  "source_title": "Support - 01-Spanning Tree Troubleshooting Guide - H3C",
+  "source_section": "display interface brief > Route mode and bridge mode examples",
+  "documentation_release": "R9160",
+  "platform_version": "V9",
+  "software_version": "unknown",
+  "expected_record_count": 5,
+  "expected_fields": [
+    "INTERFACE",
+    "LINK",
+    "PROTOCOL",
+    "MAIN_IP",
+    "SPEED",
+    "DUPLEX",
+    "TYPE",
+    "PVID",
+    "DESCRIPTION"
+  ],
+  "expected_template_prefix": "h3c_comware_v9_",
+  "expected_template": "h3c_comware_v9_display_interface_brief.textfsm",
+  "expected_record_index": 0,
+  "expected_values": {
+    "INTERFACE": "InLoop0",
+    "LINK": "UP",
+    "PROTOCOL": "UP(s)",
+    "MAIN_IP": "--"
+  },
+  "parser_platform": "h3c_comware_v9"
 }

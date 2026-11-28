@@ -1,0 +1,37 @@
+{
+  "vendor": "Ruijie",
+  "platform": "ruijie_rgos",
+  "parser_platform": "ruijie_rgos_v11",
+  "software_family": "RGOS",
+  "platform_version": "V11",
+  "software_version": "AC_RGOS 11.1(2)B1",
+  "model": "WS5302",
+  "model_family": "Wireless AC",
+  "command": "show ver detail",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www-file.ruijie.com.cn/Fu/Article/5c0472f6-ddb1-44d5-9e55-9a01762ee6f8/v3/02%20%E6%97%A0%E7%BA%BFWLAN%E4%BA%A7%E5%93%81%E4%B8%80%E6%9C%AC%E9%80%9A%E9%80%82%E7%94%A8%E4%BA%8E10.X%E8%BD%AF%E4%BB%B6%E7%89%88%E6%9C%AC20180131%E7%BB%88%E7%89%88/02%20%E6%97%A0%E7%BA%BFWLAN%E4%BA%A7%E5%93%81%E4%B8%80%E6%9C%AC%E9%80%9A%E9%80%82%E7%94%A8%E4%BA%8E10.X%E8%BD%AF%E4%BB%B6%E7%89%88%E6%9C%AC20180131%E7%BB%88%E7%89%88/2018092015282200086.html",
+  "source_title": "无线AC设备10.X到11.X软件升级",
+  "source_section": "检查版本是否升级成功",
+  "source_note": "The official sample is for a WS5302 wireless AC; it is evidence for this model and RGOS 11.1(2)B1 only, not every RGOS 11 product.",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "SYSTEM_DESCRIPTION",
+    "START_TIME",
+    "UPTIME",
+    "HARDWARE_VERSION",
+    "SOFTWARE_VERSION",
+    "PATCH_NUMBER",
+    "SOFTWARE_NUMBER",
+    "SERIAL_NUMBER",
+    "BOOT_VERSION",
+    "CORE_VERSION",
+    "CPU_PARTITION"
+  ],
+  "expected_values": {
+    "SYSTEM_DESCRIPTION": "Ruijie Gigabit Wireless Switch(WS5302) By Ruijie Networks.",
+    "SOFTWARE_VERSION": "AC_RGOS 11.1(2)B1",
+    "SERIAL_NUMBER": "9071EHC850002"
+  },
+  "expected_template_prefix": "ruijie_rgos_v11_",
+  "expected_template": "ruijie_rgos_v11_show_ver_detail.textfsm"
+}

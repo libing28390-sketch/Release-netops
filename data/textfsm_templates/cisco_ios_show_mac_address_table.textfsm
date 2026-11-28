@@ -1,0 +1,18 @@
+# nexora-action-code: get_mac_table
+Value Required VLAN (\S+)
+Value Required MAC_ADDRESS (\S+)
+Value Required TYPE (\S+)
+Value Required INTERFACE (\S+)
+
+Start
+  ^\s*Vlan\s+Mac\s+Address\s+Type\s+Ports\s*$$ -> Rows
+  ^.*
+
+Rows
+  ^\s*-+\s+-+\s+-+\s+-+\s*$$
+  ^\s*${VLAN}\s+${MAC_ADDRESS}\s+${TYPE}\s+${INTERFACE}\s*$$ -> Record
+  ^\s*Total\s+Mac\s+Addresses(?:\s+for\s+this\s+criterion)?:\s+\d+\s*$$
+  ^\s*$$
+  ^.*
+
+EOF

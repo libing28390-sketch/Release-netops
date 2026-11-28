@@ -1,0 +1,6 @@
+<Sysname> display interface route-aggregation 1
+
+Route-Aggregation1
+Current state: UP
+Line protocol state: UP
+Description: Route-Aggregation1 Interface

@@ -1,0 +1,6 @@
+System software version : S5750X_RGOS 12.6(4)B1002, Release(13132006)
+Module information:
+Slot 2/0 : S5750C-48GT4XS-X
+Serial number : REDACTED-1
+Slot 1/0 : S5750C-24GT8XS-X
+Serial number : REDACTED-2

@@ -1,0 +1,19 @@
+Ruijie#show version
+System description      : Ruijie 10G Edge Router(RG-RSR30-XA-24) by Ruijie Networks
+System start time       : 2023-02-26 10:56:47
+System uptime            : 0:00:04:12
+System hardware version : 1.00
+System software version : RSR30-XA_RGOS 12.6(1)B0904, Release(10142602)
+System patch number     : NA
+System serial number    : G1QS72G000033
+System boot version     : 1.4.49(Master) 1.4.31(Slave)
+System rboot version    : 1.1.47
+Module information:
+  Slot 0 : RG-RSR30-XA-24
+    System uptime       : 0:00:04:12
+  Cpu 0:
+    Hardware version    : 1.00
+    Boot version        : 1.4.49(Master) 1.4.31(Slave)
+    Rboot version       : 1.1.47
+    Software version    : RSR30-XA_RGOS 12.6(1)B0904, Release(10142602)
+    Serial number       : G1QS72G000033

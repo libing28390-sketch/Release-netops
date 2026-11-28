@@ -1,0 +1,8 @@
+Twenty-FiveGigE1/0/1
+Current state: Administratively DOWN
+IP packet frame type: Ethernet II, hardware address: 4005-6538-0100
+Bandwidth: 1000000 kbps
+Unknown-speed mode, unknown-duplex mode
+
+Twenty-FiveGigE1/0/2
+Current state: Administratively DOWN

@@ -1,0 +1,19 @@
+{
+  "vendor": "H3C",
+  "platform": "h3c_comware",
+  "model_family": "S6850/S9850",
+  "command": "display interface",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/Support/Resource_Center/EN/Home/Switches/00-Public/Reference_Guides/Command_References/H3C_S6850_S9850_CR-655X/03/202112/1500309_294551_0.htm",
+  "source_title": "H3C S6850 & S9850 Switch Series Command References-Release 655x-6W102",
+  "source_section": "03-Ethernet interface commands > display interface main > Examples",
+  "source_note": "Selected lines from two consecutive blocks of display interface main. The command omits subinterfaces, so this replay verifies the shared physical-interface block format only. The second block is deliberately truncated to check that missing values do not carry over.",
+  "documentation_release": "Release 655x-6W102",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "expected_record_count": 2,
+  "expected_fields": ["INTERFACE", "STATUS", "PROTOCOL", "DESCRIPTION", "MAC_ADDRESS", "SPEED"],
+  "expected_values": {"INTERFACE": "Twenty-FiveGigE1/0/1", "STATUS": "Administratively DOWN", "MAC_ADDRESS": "4005-6538-0100"},
+  "expected_template": "h3c_comware_v7_display_interface.textfsm",
+  "parser_platform": "h3c_comware_v7"
+}

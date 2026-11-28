@@ -1,0 +1,35 @@
+{
+  "vendor": "Huawei",
+  "platform": "huawei_vrpv8",
+  "parser_platform": "huawei_vrpv8",
+  "software_family": "VRP",
+  "platform_version": "unknown",
+  "software_version": "unknown",
+  "model_family": "CloudEngine data center switches",
+  "command": "display stp brief",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://info.support.huawei.com/network/ptmngsys/Web/tsrev_ce/cn/content/ce/25_edesk_dc_abnormal_vrrp_status/edesk_dc_abnormal_vrrp_status_edesk004.html",
+  "source_title": "检查是否存在STP震荡",
+  "source_section": "Procedure > display stp brief",
+  "source_note": "Huawei troubleshooting example. The document section identifies the switch family, while this output does not identify the exact platform generation or software build. The parser namespace is the target under test.",
+  "expected_record_count": 2,
+  "expected_fields": [
+    "INSTANCE",
+    "INTERFACE",
+    "ROLE",
+    "STATUS",
+    "PROTECTION",
+    "COST",
+    "EDGED"
+  ],
+  "expected_values": {
+    "INSTANCE": "0",
+    "INTERFACE": "10GE1/0/1",
+    "ROLE": "ROOT",
+    "STATUS": "forwarding",
+    "PROTECTION": "none",
+    "COST": "2000",
+    "EDGED": "disable"
+  },
+  "expected_template": "huawei_vrpv8_display_stp_brief.textfsm"
+}

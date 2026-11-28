@@ -1,0 +1,12 @@
+Ruijie#show ver detail
+System description      : Ruijie Gigabit Wireless Switch(WS5302) By Ruijie Networks.
+System start time       : 2014-12-29 11:32:01
+System uptime: 10:23:19:13
+System hardware version : 1.10
+System software version : AC_RGOS 11.1(2)B1
+System patch number     : NA
+System software number  : M02384312022014
+System serial number    : 9071EHC850002
+System boot version     : 1.1.6.ae7d9d6(140904)
+System core version     : 2.6.32.41e1f983ce19fb
+System cpu partition    : 0

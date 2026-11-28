@@ -1,0 +1,42 @@
+{
+  "vendor": "H3C",
+  "platform": "h3c_comware_v5",
+  "model_family": "S3610/S5510 Ethernet switch series",
+  "command": "display bgp vpnv4 vpn-instance vpn1 routing-table",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/d_200905/633390_294551_0.htm",
+  "source_title": "H3C S3610[S5510] Series Ethernet Switches Command Manual - Release 5309-6W100",
+  "source_section": "03-IP Routing Volume > 14-MCE Commands > display bgp vpnv4 vpn-instance routing-table > Example (page 1-7, Table 1-6)",
+  "source_note": "Official single-VPN BGP VPNv4 routing-table output. The S3610/S5510 system volume in the same 5309-6W100 manual identifies the product line as Comware Software Version 5.20 Release 5309, while this command example uses a generic Sysname prompt and does not show the running build; software_version is therefore unknown.",
+  "documentation_release": "Release 5309-6W100",
+  "platform_version": "V5.20",
+  "software_version": "unknown",
+  "platform_version_evidence_url": "https://wwwsg.h3c.com/cn/d_200904/631645_30005_0.htm",
+  "platform_version_evidence_title": "H3C S3610&S5510 Series Ethernet Switches Command Manual - Release 5309-6W100, System Volume",
+  "platform_version_evidence_note": "The official system-volume examples identify Comware Software Version 5.20 Release 5309 for the S3610/S5510 product line; a displayed S3610-28F build belongs to that separate system example and is not attributed to this BGP route sample.",
+  "expected_record_count": 5,
+  "expected_fields": [
+    "STATUS",
+    "PREFIX",
+    "NEXT_HOP",
+    "METRIC",
+    "LOCAL_PREF",
+    "WEIGHT",
+    "AS_PATH",
+    "ORIGIN"
+  ],
+  "expected_template_prefix": "h3c_comware_v5_",
+  "expected_template": "h3c_comware_v5_display_bgp_vpnv4_vpn_instance_routing_table.textfsm",
+  "expected_record_index": 0,
+  "expected_values": {
+    "STATUS": "*>i",
+    "PREFIX": "10.0.0.0",
+    "NEXT_HOP": "1.1.1.1",
+    "METRIC": "0",
+    "LOCAL_PREF": "100",
+    "WEIGHT": "0",
+    "AS_PATH": "",
+    "ORIGIN": "i"
+  },
+  "parser_platform": "h3c_comware_v5"
+}

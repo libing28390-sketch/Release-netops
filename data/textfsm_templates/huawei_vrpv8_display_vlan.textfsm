@@ -1,0 +1,26 @@
+# nexora-action-code: get_vlan_table
+# Official Huawei VRP V8 display vlan sample:
+# https://info.support.huawei.com/enterprise/en/doc/EDOC1100419268/221a9cda/configuration-examples-for-vlans
+Value Required VLAN_ID (\d+)
+Value VLAN_TYPE (\S+)
+Value VLAN_STATUS (\S+)
+Value PROPERTY (\S+)
+Value MAC_LEARNING (\S+)
+Value STATISTICS (\S+)
+Value BROADCAST_STATUS (\S+)
+Value MULTICAST_STATUS (\S+)
+Value UNICAST_STATUS (\S+)
+Value DESCRIPTION (.+?)
+
+Start
+  ^The\s+total\s+number\s+of\s+vlans\s+is\s*:\s*\d+\s*$$
+  ^VID\s+Type\s+Status\s+Property\s+MAC-LRN\s+STAT\s+BC\s+MC\s+UC\s+Description\s*$$ -> VLAN_TABLE
+  ^[- ]+$$
+  ^\s*$$
+  ^. -> Next
+
+VLAN_TABLE
+  ^\s*${VLAN_ID}\s+${VLAN_TYPE}\s+${VLAN_STATUS}\s+${PROPERTY}\s+${MAC_LEARNING}\s+${STATISTICS}\s+${BROADCAST_STATUS}\s+${MULTICAST_STATUS}\s+${UNICAST_STATUS}\s+${DESCRIPTION}\s*$$ -> Record
+  ^[- ]+$$
+  ^\s*$$
+  ^. -> Next

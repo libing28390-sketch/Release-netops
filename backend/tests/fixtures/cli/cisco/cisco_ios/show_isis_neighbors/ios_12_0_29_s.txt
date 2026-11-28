@@ -1,0 +1,3 @@
+System Id      Type Interface IP Address      State Holdtime Circuit Id
+0000.0000.0002 L1   Et0/0     192.168.128.2   UP    21       R5.02
+0000.0000.0002 L2   Et0/0     192.168.128.2   UP    28       R5.02

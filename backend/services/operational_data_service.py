@@ -848,7 +848,7 @@ _STP_COMMANDS = {
     'zte_zxros': ['show spanning-tree'],
     'dptech_ios': ['show spanning-tree'],
     'maipu': ['show spanning-tree'],
-    'juniper_junos': ['show spanning-tree bridge'],
+    'juniper_junos': ['show spanning-tree interface'],
 }
 for _platform_name, _commands in _STP_COMMANDS.items():
     COMMAND_CATALOG.setdefault(_platform_name, {})['stp'] = _commands
@@ -1040,6 +1040,7 @@ def resolve_textfsm_operation_fallback(
     never uses fuzzy command suggestions or another vendor's catalog.
     """
     from core.textfsm import (
+        _normalize_template_platform_family,
         _template_platform_candidates,
         list_templates,
         resolve_textfsm_platform,
@@ -1097,6 +1098,8 @@ def resolve_textfsm_operation_fallback(
     parser_family = resolve_textfsm_platform(parser_platform) or parser_platform
 
     def _version_for_namespace(namespace: str) -> str:
+        if namespace in {"maipu", "maipu_mypower"}:
+            return "common"
         exact = [
             item for item in all_templates
             if str(item.get("filename") or "").lower().startswith(f"{namespace.lower()}_")
@@ -1121,7 +1124,7 @@ def resolve_textfsm_operation_fallback(
 
     candidates: list[dict[str, Any]] = []
     for namespace in namespaces:
-        family = resolve_textfsm_platform(namespace) or namespace
+        family = _normalize_template_platform_family(namespace)
         expected_version = _version_for_namespace(namespace)
         exact_templates = [
             item for item in all_templates
@@ -1197,11 +1200,20 @@ def resolve_textfsm_template_for_command(
 ) -> dict[str, Any] | None:
     """Return the exact-version TextFSM template for an immutable command.
 
-    This lookup is metadata-only. It never replaces the supplied command and
-    accepts only an exact command match, optionally strengthened by matching
-    the template's action-code association.
+    This lookup never replaces the supplied command. It first checks the
+    template catalog's literal command, then asks the normal template finder
+    to apply its explicit filename aliases (for example Comware's optional
+    ``unicast`` keyword and parameterized VRF commands). Both paths remain
+    constrained to the Profile's exact parser version and Action association.
     """
-    from core.textfsm import _template_platform_candidates, list_templates, resolve_textfsm_platform
+    from core.textfsm import (
+        _find_template,
+        _normalize_template_platform_family,
+        _template_platform_candidates,
+        canonical_template_filename,
+        list_templates,
+        resolve_textfsm_platform,
+    )
     from services.platform_registry_service import PLATFORM_CATALOG_METADATA
 
     actual_command = " ".join(str(command or "").strip().lower().split())
@@ -1237,7 +1249,10 @@ def resolve_textfsm_template_for_command(
     wanted_action = str(action_code or "").strip().lower()
     for namespace in namespaces:
         family = resolve_textfsm_platform(namespace) or namespace
-        if namespace == parser_platform and not concrete and not profile_version:
+        catalog_family = _normalize_template_platform_family(namespace)
+        if namespace in {"maipu", "maipu_mypower"}:
+            expected_version = "common"
+        elif namespace == parser_platform and not concrete and not profile_version:
             expected_version = "common"
         elif namespace == family and not namespace.endswith(("_v3", "_v5", "_v7", "_v8", "_v9", "_v10", "_v11", "_v12")):
             expected_version = profile_version or "common"
@@ -1254,13 +1269,30 @@ def resolve_textfsm_template_for_command(
 
         same_version = [
             item for item in all_templates
-            if str(item.get("platform_family") or item.get("platform") or "").strip().lower() == family
+            if str(item.get("platform_family") or item.get("platform") or "").strip().lower() == catalog_family
             and str(item.get("version") or "").strip().lower() == expected_version
         ]
         exact = [
             item for item in same_version
             if " ".join(str(item.get("command") or "").strip().lower().split()) == actual_command
         ]
+        if not exact:
+            # Keep Preview/Quick Ops template status aligned with the parser's
+            # established command aliases without rewriting the Release CLI.
+            alias_path = _find_template(namespace, actual_command)
+            alias_filename = ""
+            if alias_path is not None:
+                try:
+                    alias_filename = canonical_template_filename(alias_path.name).lower()
+                except ValueError:
+                    # Legacy prefixes intentionally excluded from the public
+                    # catalog cannot satisfy an exact catalog association.
+                    pass
+            if alias_filename:
+                exact = [
+                    item for item in same_version
+                    if str(item.get("filename") or "").strip().lower() == alias_filename
+                ]
         if wanted_action:
             exact = [
                 item for item in exact
@@ -2709,6 +2741,12 @@ def collect_custom_command_data(device_info: dict[str, Any], command: str, auth_
                             context=context,
                         )
                         records = parse_result['records']
+                        if parse_result['parse_status'] == 'device_error':
+                            category_result['success'] = False
+                            category_result['error_code'] = 'DEVICE_COMMAND_ERROR'
+                            category_result['error'] = parse_result.get('message') or 'Device rejected the command'
+                            if not category_result['records']:
+                                category_result['parse_status'] = 'device_error'
                         category_result['parser'] = parse_result['parser']
                         category_result['parser_platform'] = parse_result['parser_platform']
                         logger.info(

@@ -5,5 +5,21 @@
   "platform": "VRP8",
   "model_family": "NetEngine 8000 M1A",
   "command": "display arp all",
-  "source_note": "Official ARP configuration example, verification output for static ARP entries."
+  "source_note": "Official Huawei ARP configuration example; exact VRP build is not stated by the available output/source metadata.",
+  "source_title": "Configuration Examples for ARP - Huawei",
+  "source_section": "display arp all > static ARP verification output",
+  "platform_version": "V8",
+  "software_version": "unknown",
+  "expected_record_count": 3,
+  "expected_fields": [
+    "IP_ADDRESS",
+    "MAC_ADDRESS",
+    "VLAN_ID",
+    "INTERFACE",
+    "AGING",
+    "TYPE"
+  ],
+  "expected_template": "huawei_vrpv8_display_arp_all.textfsm",
+  "expected_template_prefix": "huawei_vrpv8_",
+  "parser_platform": "huawei_vrp8"
 }

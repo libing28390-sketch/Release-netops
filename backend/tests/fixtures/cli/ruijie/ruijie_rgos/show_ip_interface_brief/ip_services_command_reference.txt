@@ -1,0 +1,3 @@
+Interface           IP-Address(Pri)   IP-Address(Sec)  Status  Protocol
+GigabitEthernet 0/10  2.2.2.2/24      3.3.3.3/24       down    down
+GigabitEthernet 0/11  no address      no address       down    down

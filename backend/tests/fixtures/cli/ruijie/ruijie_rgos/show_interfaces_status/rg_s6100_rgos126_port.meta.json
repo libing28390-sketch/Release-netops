@@ -1,0 +1,34 @@
+{
+  "vendor": "Ruijie",
+  "platform": "ruijie_rgos",
+  "parser_platform": "ruijie_rgos_v12",
+  "software_family": "RGOS",
+  "platform_version": "V12",
+  "software_version": "unknown",
+  "model_family": "RG-S6120 / RG-S6100",
+  "documentation_release": "12.6(4)B0103",
+  "source_type": "official_vendor_documentation",
+  "command": "show interfaces gigabitethernet 0/1 status",
+  "source_url": "https://www-file.ruijie.com.cn/Fu/Article/f95e9404-9272-4bb1-9869-39e99a11812a/v0/%E5%AE%98%E7%BD%91%E5%8F%91%E5%B8%83/HTML/04-%E6%8E%A5%E5%8F%A3/01-%E4%BB%A5%E5%A4%AA%E7%BD%91%E6%8E%A5%E5%8F%A3%E5%91%BD%E4%BB%A4.html",
+  "source_title": "锐捷 RG-S6120、RG-S6100 系列交换机 RGOS 12.6(4)B0103 命令参考：以太网接口命令",
+  "source_section": "1.51 show interfaces status > 配置举例",
+  "source_note": "The official example queries a single port. B0103 is the document target release; the CLI excerpt has no runtime build or exact switch model.",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "INTERFACE",
+    "STATUS",
+    "VLAN",
+    "DUPLEX",
+    "SPEED",
+    "TYPE"
+  ],
+  "expected_values": {
+    "INTERFACE": "GigabitEthernet 0/1",
+    "STATUS": "up",
+    "VLAN": "1",
+    "DUPLEX": "Full",
+    "SPEED": "1000M",
+    "TYPE": "copper"
+  },
+  "expected_template": "ruijie_rgos_v12_show_interfaces_status.textfsm"
+}

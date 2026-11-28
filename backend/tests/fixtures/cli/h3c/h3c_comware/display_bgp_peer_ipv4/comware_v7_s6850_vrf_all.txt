@@ -1,0 +1,19 @@
+<Sysname> display bgp peer ipv4 vpn-instance-all
+
+Local AS number: 100
+
+* - Dynamically created peer
+
+VPN instance: 1
+BGP local router ID: 111.1.1.1
+Total number of peers: 2 Peers in established state: 0
+Peer                    AS  MsgRcvd  MsgSent OutQ PrefRcv Up/Down  State
+111.1.1.1               100 0        0       0    0       00:00:34 Connect
+111.1.1.2               100 0        0       0    0       00:00:34 Connect
+
+VPN instance: 2
+BGP local router ID: 112.1.1.1
+Total number of peers: 2 Peers in established state: 0
+Peer                    AS  MsgRcvd  MsgSent OutQ PrefRcv Up/Down  State
+112.1.1.1               100 0        0       0    0       00:00:06 Idle
+112.1.1.2               100 0        0       0    0       00:00:06 Idle

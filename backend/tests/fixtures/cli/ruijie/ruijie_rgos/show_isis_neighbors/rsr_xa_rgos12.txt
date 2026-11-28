@@ -1,0 +1,3 @@
+Area (null):
+System Id       Type  IP Address        State   Holdtime  Circuit            Interface
+B               L1    192.168.20.2      Up      28        A.01               GigabitEthernet 0/0

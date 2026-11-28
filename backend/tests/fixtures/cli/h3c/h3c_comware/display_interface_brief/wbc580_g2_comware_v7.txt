@@ -1,0 +1,35 @@
+<Sysname> display interface brief
+
+Brief information on interfaces in route mode:
+
+Link: ADM - administratively down; Stby - standby
+
+Protocol: (s) – spoofing
+
+Interface            Link Protocol Primary IP      Description
+
+Loop0                UP   UP(s)    2.2.2.9
+NULL0                UP   UP(s)    --
+Vlan1                DOWN DOWN     --
+Vlan999              UP   UP       192.168.1.42
+
+Brief information on interfaces in bridge mode:
+
+Link: ADM - administratively down; Stby - standby
+
+Speed: (a) - auto
+
+Duplex: (a)/A - auto; H - half; F - full
+
+Type: A - access; T - trunk; H - hybrid
+
+Interface            Link Speed      Duplex Type PVID Description
+
+BAGG1                DOWN auto       A      A    1
+BAGG2                DOWN auto       A      A    1
+GE1/0/1              UP   1G         F      A    1
+GE1/0/2              DOWN 1G         F      A    1
+GE1/0/3              DOWN 1G         F      A    1
+GE1/0/4              DOWN 1G         F      A    1
+XGE1/0/5             DOWN auto       A      A    1
+XGE1/0/6             DOWN auto       A      A    1

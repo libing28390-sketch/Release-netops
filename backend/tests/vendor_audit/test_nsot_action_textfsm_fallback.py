@@ -10,6 +10,38 @@ from services import operational_data_service
 from services.platform_registry_service import PlatformRegistryError
 
 
+@pytest.mark.parametrize(
+    "profile, driver, category, action, command, filename",
+    [
+        ("dptech_fw_s211", "dptech_ios", "version", "get_version", "show version", "dptech_ios_show_version.textfsm"),
+        ("dptech_conplat_unknown", "dptech_ios", "version", "get_version", "show version", "dptech_ios_show_version.textfsm"),
+        ("maipu_mypower_v8", "maipu", "routing_table", "get_route_table", "show ip route", "maipu_mypower_v8_show_ip_route.textfsm"),
+        ("maipu_mypower_v8", "maipu", "version", "get_version", "show version", "maipu_show_version.textfsm"),
+        ("maipu_s3330_v9", "maipu", "version", "get_version", "show version", "maipu_mypower_v9_show_version.textfsm"),
+    ],
+)
+def test_catalog_uses_template_family_for_legacy_parser_aliases(
+    profile, driver, category, action, command, filename,
+):
+    device = {
+        "vendor": "Maipu" if driver == "maipu" else "DPtech",
+        "platform": driver,
+        "profile_platform_code": profile,
+        "profile_parser_platform": driver,
+        "profile_connection_driver": driver,
+    }
+
+    exact = operational_data_service.resolve_textfsm_template_for_command(device, command, action_code=action)
+    fallback = operational_data_service.resolve_textfsm_operation_fallback(
+        device, operational_category=category, action_code=action,
+    )
+
+    assert exact is not None
+    assert exact["textfsm_template"] == filename
+    assert fallback["status"] == "supported"
+    assert [(item["command"], item["textfsm_template"]) for item in fallback["commands"]] == [(command, filename)]
+
+
 def _profile_and_device(
     connection,
     *,

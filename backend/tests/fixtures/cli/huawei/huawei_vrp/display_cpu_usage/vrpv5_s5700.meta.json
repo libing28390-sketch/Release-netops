@@ -7,7 +7,26 @@
   "source_type": "official_vendor_documentation",
   "source_url": "https://support.huawei.com/enterprise/en/doc/DOC1000091883/3c3a4939/how-do-i-troubleshoot-a-spanning-tree-fault",
   "source_title": "How Do I Troubleshoot a Spanning Tree Fault - Huawei",
-  "source_section": "Check CPU Usage",
+  "source_section": "Check CPU Usage > display cpu-usage example",
   "expected_record_count": 1,
-  "expected_fields": ["CPU_5_SEC", "CPU_1_MIN", "CPU_5_MIN"]
+  "expected_fields": [
+    "CPU_5_SEC",
+    "CPU_1_MIN",
+    "CPU_5_MIN",
+    "SYSTEM_CPU",
+    "CPU_USAGE_PCT",
+    "CPU_USAGE_MAX"
+  ],
+  "platform_version": "V5",
+  "software_version": "unknown",
+  "model_family": "S5700/S6700",
+  "source_note": "Official Huawei troubleshooting sample. The source page could not be retrieved in this review and the fixture/source metadata does not confirm an exact software release.",
+  "expected_values": {
+    "CPU_5_SEC": "68",
+    "CPU_1_MIN": "60",
+    "CPU_5_MIN": "55"
+  },
+  "expected_template": "huawei_vrp_display_cpu_usage.textfsm",
+  "expected_template_prefix": "huawei_vrp_",
+  "parser_platform": "huawei_vrp5"
 }

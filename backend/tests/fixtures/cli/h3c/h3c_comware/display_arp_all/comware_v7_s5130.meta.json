@@ -5,5 +5,30 @@
   "platform": "Comware7",
   "model_family": "S5130S-HI/S5110V2/S3100V3-EI",
   "command": "display arp all",
-  "source_note": "Official ARP command reference, all-entry output example."
+  "source_note": "CLI command: display arp all. Official command-reference example for the listed S5130/S5110/S3100 series. The cited release is the command-reference/document release; the sample does not itself confirm the running device software build.",
+  "source_title": "Support - 01-ARP commands - H3C",
+  "source_section": "display arp > Examples > display arp all",
+  "documentation_release": "R612x-6W103",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "expected_record_count": 2,
+  "expected_fields": [
+    "IP_ADDRESS",
+    "MAC_ADDRESS",
+    "VLAN_ID",
+    "INTERFACE",
+    "AGING",
+    "TYPE"
+  ],
+  "expected_template_prefix": "h3c_comware_v7_",
+  "expected_template": "h3c_comware_v7_display_arp_all.textfsm",
+  "expected_record_index": 0,
+  "expected_values": {
+    "IP_ADDRESS": "1.1.1.1",
+    "MAC_ADDRESS": "02e0-f102-0023",
+    "VLAN_ID": "1",
+    "INTERFACE": "GE1/0/1",
+    "TYPE": "S"
+  },
+  "parser_platform": "h3c_comware_v7"
 }

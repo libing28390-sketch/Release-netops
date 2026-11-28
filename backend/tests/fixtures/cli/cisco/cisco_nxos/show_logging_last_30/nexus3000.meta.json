@@ -5,5 +5,21 @@
   "platform": "NX-OS",
   "model_family": "Nexus 3000",
   "command": "show logging last 30",
-  "source_note": "Official Cisco NX-OS logging output; source example uses show logging last 14 with the same grammar."
+  "source_note": "Official Cisco Nexus 3000 guide sample uses show logging last 14; this fixture uses last 30 with the same command grammar. The guide does not identify an NX-OS build.",
+  "source_title": "Cisco Plug-in for OpenFlow Configuration Guide 1.3",
+  "source_section": "Cisco Plug-in for OpenFlow > show logging last number-of-lines example",
+  "platform_version": "unknown",
+  "software_version": "unknown",
+  "expected_record_count": 3,
+  "expected_fields": [
+    "TIMESTAMP",
+    "HOSTNAME",
+    "FACILITY",
+    "SEVERITY",
+    "MNEMONIC",
+    "MESSAGE"
+  ],
+  "expected_template": "cisco_nxos_show_logging_last_30.textfsm",
+  "expected_template_prefix": "cisco_nxos_",
+  "parser_platform": "cisco_nxos"
 }

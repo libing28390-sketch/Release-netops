@@ -1,0 +1,39 @@
+{
+  "vendor": "Ruijie",
+  "platform": "ruijie_rgos",
+  "parser_platform": "ruijie_rgos_rsr_v10",
+  "software_family": "RGOS",
+  "platform_version": "v10",
+  "software_version": "unknown",
+  "documentation_release": "10.X",
+  "model_family": "RSR series",
+  "command": "show memory",
+  "source_command": "show memory",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www-file.ruijie.com.cn/Fu/Article/2163ca65-2e4f-4bdf-83d9-270ec0d3a629/v4/01%20%E9%94%90%E6%8D%B7RSR%E7%B3%BB%E5%88%97%E8%B7%AF%E7%94%B1%E5%99%A810.X%20%E4%BA%A7%E5%93%81%E4%B8%80%E6%9C%AC%E9%80%9A/01%20%E9%94%90%E6%8D%B7RSR%E7%B3%BB%E5%88%97%E8%B7%AF%E7%94%B1%E5%99%A810.X%20%E4%BA%A7%E5%93%81%E4%B8%80%E6%9C%AC%E9%80%9A/2018092015005900912.html",
+  "source_title": "锐捷 RSR 系列路由器 10.X 产品一本通",
+  "source_section": "示例：通过 show memory 观察内存使用",
+  "source_note": "官方 RSR 10.X 文档中的完整 show memory 示例。该文档未标明具体型号或软件子版本。",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "TOTAL_MEMORY_MB",
+    "CURRENT_FREE_MEMORY_KB",
+    "USED_RATE",
+    "FREE_PAGES",
+    "MIN_WATERMARK",
+    "LOWER_WATERMARK",
+    "LOW_WATERMARK",
+    "HIGH_WATERMARK"
+  ],
+  "expected_values": {
+    "TOTAL_MEMORY_MB": "128",
+    "CURRENT_FREE_MEMORY_KB": "14580",
+    "USED_RATE": "89%",
+    "FREE_PAGES": "2898",
+    "MIN_WATERMARK": "433",
+    "LOWER_WATERMARK": "866",
+    "LOW_WATERMARK": "1299",
+    "HIGH_WATERMARK": "1732"
+  },
+  "expected_template": "ruijie_rgos_rsr_v10_show_memory.textfsm"
+}

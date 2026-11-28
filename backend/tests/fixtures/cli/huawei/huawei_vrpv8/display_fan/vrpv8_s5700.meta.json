@@ -5,5 +5,28 @@
   "platform": "VRP8",
   "model_family": "S300/S500/S2700/S5700/S6700",
   "command": "display fan",
-  "source_note": "Official fan status example from the device management configuration guide."
+  "source_note": "Official Huawei fan status example for the listed S-series switches; exact software build is not stated.",
+  "source_title": "Displaying the Fan Status - Huawei",
+  "source_section": "Displaying the fan status > display fan output",
+  "platform_version": "V8",
+  "software_version": "unknown",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "SLOT",
+    "FAN_ID",
+    "ONLINE",
+    "STATUS",
+    "SPEED",
+    "MODE",
+    "AIRFLOW",
+    "AUTO_MIN_SPEED"
+  ],
+  "expected_values": {
+    "FAN_ID": "1",
+    "ONLINE": "Present",
+    "STATUS": "Normal"
+  },
+  "expected_template": "huawei_vrpv8_display_fan.textfsm",
+  "expected_template_prefix": "huawei_vrpv8_",
+  "parser_platform": "huawei_vrp8"
 }

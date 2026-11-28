@@ -1,0 +1,6 @@
+SG-6000# show version
+Hillstone Networks StoneOS software, Version 5.5
+Copyright (c) 2009-2015 by Hillstone Networks
+Product name: SG-6000-E2800 S/N: 2508311140001228 Assembly number: B045
+Boot file is SG6000-M-3-5.5R1P1.bin from flash
+Built by buildmaster8 2015/05/14 21:34:20

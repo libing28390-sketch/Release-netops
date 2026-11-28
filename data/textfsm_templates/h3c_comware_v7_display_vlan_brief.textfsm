@@ -1,9 +1,16 @@
 Value Required VLAN_ID (\d+)
 Value Required VLAN_NAME (\S+(?:\s+\S+)?)
-Value PORTS (.*)
+Value List PORTS (.*)
 
 Start
-  ^\s*${VLAN_ID}\s+${VLAN_NAME}\s{2,}${PORTS}\s*$$ -> Record
-  ^\s*${VLAN_ID}\s+${VLAN_NAME}\s*$$ -> Record
+  ^\s*Brief\s+information\s+about\s+all\s+VLANs:\s*$$ -> VLANTable
+  ^.*
+
+VLANTable
+  ^\s*VLAN\s+ID\s+Name\s+Port\s*$$
+  ^\s*\d+\s+\S+ -> Continue.Record
+  ^\s*${VLAN_ID}\s+${VLAN_NAME}\s{2,}${PORTS}\s*$$
+  ^\s*${VLAN_ID}\s+${VLAN_NAME}\s*$$
   ^\s*$$
+  ^\s+${PORTS}\s*$$
   ^.*

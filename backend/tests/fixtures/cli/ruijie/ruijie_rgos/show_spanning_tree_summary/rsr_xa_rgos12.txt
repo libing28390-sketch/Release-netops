@@ -1,0 +1,3 @@
+MST 0 vlans map : 1-9, 11-19, 21-4094
+Interface      Role Sts Cost      Prio     OperEdge Type
+Gi0/2          Altn BLK 20000    128      False    P2p

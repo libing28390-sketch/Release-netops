@@ -1,9 +1,30 @@
 {
-  "source_type": "official_vendor_documentation",
-  "source_url": "https://info.support.huawei.com/enterprise/en/doc/EDOC1100419268/221a9cda/configuration-examples-for-vlans",
   "vendor": "Huawei",
-  "platform": "VRP8",
+  "platform": "huawei_vrpv8",
+  "software_family": "VRP8",
+  "platform_version": "V8",
   "model_family": "NE40E-M2",
   "command": "display vlan",
-  "source_note": "Official display vlan verification example."
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://info.support.huawei.com/enterprise/en/doc/EDOC1100419268/221a9cda/configuration-examples-for-vlans",
+  "source_title": "Configuration Examples for VLANs - Huawei",
+  "source_section": "display vlan > VLAN verification example",
+  "source_note": "Official Huawei VLAN output sample; the source does not state an exact software build.",
+  "expected_record_count": 2,
+  "expected_fields": [
+    "VLAN_ID",
+    "VLAN_TYPE",
+    "VLAN_STATUS",
+    "PROPERTY",
+    "MAC_LEARNING",
+    "STATISTICS",
+    "BROADCAST_STATUS",
+    "MULTICAST_STATUS",
+    "UNICAST_STATUS",
+    "DESCRIPTION"
+  ],
+  "expected_template_prefix": "huawei_vrpv8_",
+  "software_version": "unknown",
+  "expected_template": "huawei_vrpv8_display_vlan.textfsm",
+  "parser_platform": "huawei_vrp8"
 }

@@ -1,0 +1,31 @@
+{
+  "vendor": "Ruijie",
+  "platform": "ruijie_rgos",
+  "software_family": "RGOS",
+  "software_version": "unknown",
+  "source_type": "official_vendor_documentation",
+  "parser_platform": "ruijie_rgos_unknown",
+  "platform_version": "unknown",
+  "model_family": "RGOS device (family unconfirmed)",
+  "command": "show ip interface brief",
+  "source_url": "https://www-file.ruijie.com.cn/Fu/Article/190bf85c-7c0d-4a3d-858d-fd6e60249433/v3/%E5%AE%98%E7%BD%91%E5%8F%91%E5%B8%83/PDF/00-pdf/04-IP%E4%B8%9A%E5%8A%A1.pdf?response-content-type=application%2Foctet-stream",
+  "source_title": "锐捷命令参考：IP 地址/服务",
+  "source_section": "IPv4 基础 > 1.19 show ip interface > 配置举例 1",
+  "source_note": "Two rows excerpted from the official example, including a configured interface and an unnumbered interface. The example does not identify the device family or software release.",
+  "expected_record_count": 2,
+  "expected_fields": [
+    "INTERFACE",
+    "IP_ADDRESS_PRI",
+    "IP_ADDRESS_SEC",
+    "STATUS",
+    "PROTOCOL"
+  ],
+  "expected_values": {
+    "INTERFACE": "GigabitEthernet 0/10",
+    "IP_ADDRESS_PRI": "2.2.2.2/24",
+    "IP_ADDRESS_SEC": "3.3.3.3/24",
+    "STATUS": "down",
+    "PROTOCOL": "down"
+  },
+  "expected_template": "ruijie_rgos_unknown_show_ip_interface_brief.textfsm"
+}

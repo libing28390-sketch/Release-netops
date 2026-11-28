@@ -1,0 +1,13 @@
+# nexora-action-code: get_version
+# H3C MSR 50-06 command reference, section 1.1.12:
+# https://www.h3c.com/cn/d_200809/615821_30005_0.htm
+Value Required SOFTWARE_VERSION (3(?:\.\d+)+)
+Value RELEASE (.+?)
+Value DEVICE (\S+)
+Value UPTIME (.+?)
+Value BOOTROM (\S+)
+
+Start
+  ^\s*(?i:(?:H3C\s+)?Comware\s+Software,\s+Version)\s+${SOFTWARE_VERSION},\s+${RELEASE}\s*$$
+  ^\s*H3C\s+${DEVICE}\s+uptime\s+is\s+${UPTIME}\s*$$
+  ^\s*(?i:BootROM)\s+Version:\s*${BOOTROM}\s*$$

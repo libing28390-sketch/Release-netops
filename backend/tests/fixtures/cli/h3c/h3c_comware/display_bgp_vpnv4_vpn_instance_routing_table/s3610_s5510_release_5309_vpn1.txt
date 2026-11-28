@@ -1,0 +1,21 @@
+<Sysname> display bgp vpnv4 vpn-instance vpn1 routing-table
+
+ Total Number of Routes: 5
+
+ BGP Local router ID is 2.2.2.2
+
+ Status codes: * - valid, > - best, d - damped,
+               h - history,  i - internal, s - suppressed, S - Stale
+
+ Origin : i - IGP, e - EGP, ? - incomplete
+
+ Network            NextHop         MED        LocPrf   PrefVal Path/Ogn
+ *>i 10.0.0.0        1.1.1.1         0          100       0      i
+
+ *>  10.1.1.0/24     0.0.0.0         0                    0      ?
+
+ *>  20.0.0.0        10.1.1.1        0                    99     200?
+
+ *>i 123.1.1.1/32    1.1.1.1         0          100       0      ?
+
+ *>  124.1.1.1/32    0.0.0.0         0                    0      ?

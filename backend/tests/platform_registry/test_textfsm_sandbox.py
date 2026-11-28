@@ -14,6 +14,22 @@ def test_textfsm_runs_in_bounded_child_process():
     assert parse_template_in_sandbox(VALID_TEMPLATE, "hello\n") == [{"FIELD": "hello"}]
 
 
+def test_textfsm_sandbox_preserves_legacy_surrogates_in_template_comments():
+    template = (
+        "# legacy malformed comment " + chr(0xDCAF) + "\n"
+        "Value Required FIELD (.+)\n\n"
+        "Start\n"
+        "  ^${FIELD}\\s*$$ -> Record\n"
+    )
+
+    output = "".join(chr(point) for point in (0x8BBE, 0x5907, 0x72B6, 0x6001, 0x6B63, 0x5E38))
+    assert parse_template_in_sandbox(
+        template,
+        output + "\n",
+        normalize_records=False,
+    ) == [{"FIELD": output}]
+
+
 def test_textfsm_reports_sandbox_failure_in_chinese():
     unmatched_template = "not a valid TextFSM template"
 
@@ -30,6 +46,12 @@ def test_textfsm_rejects_template_and_output_limits():
     with pytest.raises(TextFSMSandboxError, match="output") as output_error:
         parse_template_in_sandbox(VALID_TEMPLATE, "x" * 20, max_output_bytes=10)
     assert output_error.value.code == "OUTPUT_LIMIT_EXCEEDED"
+
+
+def test_textfsm_limits_worker_records_before_returning_them():
+    with pytest.raises(TextFSMSandboxError) as error:
+        parse_template_in_sandbox(VALID_TEMPLATE, "hello\nworld\n", max_records=1)
+    assert error.value.code == "RECORD_LIMIT_EXCEEDED"
 
 
 def test_field_contract_validates_normalized_records():

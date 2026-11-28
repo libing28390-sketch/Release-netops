@@ -1,0 +1,38 @@
+{
+  "vendor": "Ruijie",
+  "platform": "ruijie_rgos",
+  "parser_platform": "ruijie_rgos_v12",
+  "software_family": "RGOS",
+  "platform_version": "V12",
+  "software_version": "unknown",
+  "model_family": "RSR-XA",
+  "documentation_release": "12.X",
+  "command": "show spanning-tree summary",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www-file.ruijie.com.cn/Fu/Article/c469c12d-cec0-436e-98c2-3a62518435fa/v8/02%20%E9%94%90%E6%8D%B7RSR-XA%E7%B3%BB%E5%88%97%E8%B7%AF%E7%94%B1%E5%99%A812.X%20%E4%BA%A7%E5%93%81%E4%B8%80%E6%9C%AC%E9%80%9A/02%20%E9%94%90%E6%8D%B7RSR-XA%E7%B3%BB%E5%88%97%E8%B7%AF%E7%94%B1%E5%99%A812.X%20%E4%BA%A7%E5%93%81%E4%B8%80%E6%9C%AC%E9%80%9A/1589348668987670551.html",
+  "source_title": "锐捷 RSR-XA 系列路由器 12.X 产品一本通：配置 MSTP",
+  "source_section": "查看 Device B 的生成树拓扑 > 实例 0",
+  "source_note": "Abridged example retaining the MST instance and one port from the official RGOS 12.X output. Exact running build is unspecified.",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "INSTANCE",
+    "INTERFACE",
+    "ROLE",
+    "STATUS",
+    "COST",
+    "PORT_PRIORITY",
+    "OPER_EDGE",
+    "TYPE"
+  ],
+  "expected_values": {
+    "INSTANCE": "0",
+    "INTERFACE": "Gi0/2",
+    "ROLE": "Altn",
+    "STATUS": "BLK",
+    "COST": "20000",
+    "PORT_PRIORITY": "128",
+    "OPER_EDGE": "False",
+    "TYPE": "P2p"
+  },
+  "expected_template": "ruijie_rgos_v12_show_spanning_tree_summary.textfsm"
+}

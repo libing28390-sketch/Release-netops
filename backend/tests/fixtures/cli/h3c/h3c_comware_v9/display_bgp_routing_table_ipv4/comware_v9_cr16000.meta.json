@@ -3,7 +3,28 @@
   "source_url": "https://www.h3c.com/en/d_202406/2178715_294551_0.htm",
   "vendor": "H3C",
   "platform": "Comware9",
-  "model_family": "CR16000",
+  "model_family": "MSR5600-X3",
   "command": "display bgp routing-table ipv4",
-  "source_note": "Official Comware V9 basic BGP command reference route table example."
+  "source_note": "CLI command: display bgp routing-table ipv4. Official Comware V9 IPv4 BGP route-table example for MSR5600-X3. R9141 is the documentation release and is not a confirmed running software build.",
+  "source_title": "Support - 01-Basic BGP commands - H3C",
+  "source_section": "display bgp routing-table ipv4 > Examples",
+  "documentation_release": "R9141",
+  "platform_version": "V9",
+  "software_version": "unknown",
+  "expected_record_count": 2,
+  "expected_fields": [
+    "FLAGS",
+    "NETWORK",
+    "NEXT_HOP",
+    "ATTRIBUTES"
+  ],
+  "expected_template_prefix": "h3c_comware_v9_",
+  "expected_template": "h3c_comware_v9_display_bgp_routing_table_ipv4.textfsm",
+  "expected_record_index": 0,
+  "expected_values": {
+    "FLAGS": "* >",
+    "NETWORK": "10.2.1.0/24",
+    "NEXT_HOP": "10.2.1.1"
+  },
+  "parser_platform": "h3c_comware_v9"
 }

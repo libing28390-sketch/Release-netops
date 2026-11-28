@@ -1,0 +1,21 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/d_200806/607528_294551_0.htm",
+  "vendor": "H3C",
+  "platform": "h3c_comware_unknown",
+  "software_family": "Comware",
+  "platform_version": "unknown",
+  "software_version": "unknown",
+  "parser_platform": "h3c_comware_unknown",
+  "documentation_release": "Release 2132 [V2.03]",
+  "model_family": "S9500",
+  "command": "display transceiver interface GigabitEthernet 1/1/1",
+  "source_title": "H3C S9500 Command Manual - Release2132 [V2.03] - 01 IP Access Volume",
+  "source_section": "1.1.12 display transceiver interface > Examples",
+  "source_note": "The official S9500 command manual gives the output but does not state the exact software build; keep this sample in the unknown-version namespace.",
+  "expected_record_count": 1,
+  "expected_fields": ["INTERFACE", "TRANSCEIVER_TYPE", "CONNECTOR_TYPE", "WAVELENGTH", "TRANSFER_DISTANCE", "DIGITAL_DIAGNOSTIC_MONITORING", "VENDOR_NAME", "ORDERING_NAME"],
+  "expected_values": {"INTERFACE": "GigabitEthernet1/1/1", "TRANSCEIVER_TYPE": "1000_BASE_LX_SFP", "ORDERING_NAME": "SFP-GE-LX10-SM1310"},
+  "expected_template": "h3c_comware_unknown_display_transceiver_interface.textfsm",
+  "expected_template_prefix": "h3c_comware_unknown_"
+}

@@ -1,0 +1,3 @@
+ZXR10 5960
+ZTE ZXR10 Software, Version: 5900 V6.00.03.92P02, Release software
+Board Name : 5960X-56QU-HF

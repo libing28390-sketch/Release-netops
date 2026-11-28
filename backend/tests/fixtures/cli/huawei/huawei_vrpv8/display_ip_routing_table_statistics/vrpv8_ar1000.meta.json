@@ -7,7 +7,22 @@
   "source_type": "official_vendor_documentation",
   "source_url": "https://support.huawei.com/enterprise/en/doc/EDOC1100271769/88f1fc79/ip-routing-basic-configuration-commands",
   "source_title": "IP Routing Basic Configuration Commands - Huawei",
-  "source_section": "display ip routing-table statistics example",
+  "source_section": "display ip routing-table statistics > Example",
+  "source_note": "The official Huawei command-reference example is for a NetEngine AR1000 family; the exact running software build is not stated.",
+  "model_family": "NetEngine AR1000",
   "expected_record_count": 8,
-  "expected_fields": ["SUMMARY_PREFIXES", "PROTO", "ROUTE_COUNT", "ACTIVE_COUNT", "ADDED_COUNT", "DELETED_COUNT", "FREED_COUNT"]
+  "expected_fields": [
+    "SUMMARY_PREFIXES",
+    "PROTO",
+    "ROUTE_COUNT",
+    "ACTIVE_COUNT",
+    "ADDED_COUNT",
+    "DELETED_COUNT",
+    "FREED_COUNT"
+  ],
+  "platform_version": "V8",
+  "software_version": "unknown",
+  "expected_template": "huawei_vrpv8_display_ip_routing_table_statistics.textfsm",
+  "expected_template_prefix": "huawei_vrpv8_",
+  "parser_platform": "huawei_vrp8"
 }

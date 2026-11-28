@@ -283,7 +283,7 @@ PLATFORM_ACTION_COMMANDS: dict[str, dict[str, str]] = {
     "huawei_vrp": {"get_version": "display version", "get_lldp_neighbors": "display lldp neighbor brief", "get_interface_brief": "display interface brief", "get_interfaces": "display interface", "get_ip_interfaces": "display ip interface brief", "get_link_aggregation": "display eth-trunk", "get_arp_table": "display arp", "get_mac_table": "display mac-address", "get_vlan_table": "display vlan", "get_route_table": "display ip routing-table", "get_bgp_neighbors": "display bgp peer", "get_ospf_neighbors": "display ospf peer brief", "get_isis_neighbors": "display isis peer", "get_stp": "display stp brief", "get_cpu": "display cpu-usage", "get_memory": "display memory-usage", "get_fans": "dis fan", "get_power": "display power", "get_temperature": "display temperature", "get_clock": "display clock", "get_running_config": "display current-configuration", "get_startup_config": "display saved-configuration"},
     "huawei_yunshan": {"get_version": "display version", "get_lldp_neighbors": "display lldp neighbor brief", "get_interface_brief": "display interface brief", "get_ip_interfaces": "display ip interface brief", "get_arp_table": "display arp", "get_mac_table": "display mac-address"},
     "h3c_comware": {"get_version": "display version", "get_lldp_neighbors": "display lldp neighbor-information list", "get_interface_brief": "display interface brief", "get_interfaces": "display interface", "get_ip_interfaces": "display ip interface brief", "get_link_aggregation": "display link-aggregation verbose", "get_bfd_sessions": "display bfd session", "get_ntp_status": "display ntp-service status", "get_logbuffer": "display logbuffer", "get_interface_description": "display interface brief description", "get_irf": "display irf", "get_uptime": "display version", "get_arp_table": "display arp all", "get_mac_table": "display mac-address", "get_vlan_table": "display vlan brief", "get_route_table": "display ip routing-table", "get_bgp_neighbors": "display bgp peer ipv4 unicast", "get_ospf_neighbors": "display ospf peer", "get_isis_neighbors": "display isis peer", "get_stp": "display stp brief", "get_cpu": "display cpu-usage", "get_memory": "display memory", "get_fans": "display fan", "get_power": "display power", "get_temperature": "display environment", "get_clock": "display clock", "get_running_config": "display current-configuration", "get_startup_config": "display saved-configuration"},
-    "juniper_junos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors detail", "get_interfaces": "show interfaces detail", "get_interface_brief": "show interfaces terse", "get_ip_interfaces": "show interfaces terse", "get_route_table": "show route", "get_isis_neighbors": "show isis adjacency", "get_stp": "show spanning-tree bridge", "get_clock": "show system uptime", "get_running_config": "show configuration", "get_startup_config": "show configuration"},
+    "juniper_junos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors detail", "get_interfaces": "show interfaces detail", "get_interface_brief": "show interfaces terse", "get_ip_interfaces": "show interfaces terse", "get_route_table": "show route", "get_isis_neighbors": "show isis adjacency", "get_stp": "show spanning-tree interface", "get_clock": "show system uptime", "get_running_config": "show configuration", "get_startup_config": "show configuration"},
     "arista_eos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors detail", "get_interface_brief": "show ip interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface", "get_link_aggregation": "show port-channel summary", "get_arp_table": "show arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp summary", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_cpu": "show processes top once", "get_memory": "show version", "get_clock": "show clock", "get_running_config": "show running-config", "get_startup_config": "show startup-config"},
     "ruijie_rgos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp neighbors", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_cpu": "show cpu", "get_memory": "show memory", "get_fans": "show fan", "get_power": "show power", "get_temperature": "show temperature", "get_clock": "show clock", "get_running_config": "show running-config", "get_startup_config": "show startup-config"},
     "zte_zxros": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbor", "get_interface_brief": "show interface brief", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp", "get_mac_table": "show mac table", "get_route_table": "show ip forwarding route", "get_bgp_neighbors": "show ip bgp neighbors", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_fans": "show fan", "get_power": "show power", "get_temperature": "show temperature detail", "get_clock": "show clock", "get_running_config": "show running-config", "get_startup_config": "show startup-config"},
@@ -362,7 +362,24 @@ PROFILE_ACTION_COMMANDS["h3c_comware_v5"] = dict(PROFILE_ACTION_COMMANDS["hp_com
 # is available, use the verified legacy V5 command forms rather than the V7
 # address-family variants.
 PROFILE_ACTION_COMMANDS["h3c_comware_v3"] = dict(PROFILE_ACTION_COMMANDS["hp_comware"])
-PROFILE_ACTION_COMMANDS["h3c_comware9"] = dict(PROFILE_ACTION_COMMANDS["h3c_comware"])
+PROFILE_ACTION_COMMANDS["h3c_comware_v9"] = {
+    **PROFILE_ACTION_COMMANDS["h3c_comware"],
+    "get_bgp_routes_vrf": "display bgp routing-table ipv4 vpn-instance {{vrf}}",
+}
+PROFILE_ACTION_COMMANDS["h3c_comware9"] = dict(PROFILE_ACTION_COMMANDS["h3c_comware_v9"])
+PROFILE_ACTION_COMMANDS["h3c_comware_v7"] = {
+    **PLATFORM_ACTION_COMMANDS["h3c_comware"],
+    "get_bgp_routes": "display bgp routing-table ipv4",
+    "get_bgp_routes_vrf": "display bgp routing-table ipv4 unicast vpn-instance {{vrf}}",
+}
+PROFILE_ACTION_COMMANDS["ruijie_rgos_v12"] = {
+    **PLATFORM_ACTION_COMMANDS["ruijie_rgos"],
+    "get_stp": "show spanning-tree summary",
+}
+PROFILE_ACTION_COMMANDS["ruijie_rgos_v11"] = {
+    **PLATFORM_ACTION_COMMANDS["ruijie_rgos"],
+    "get_stp": "show spanning-tree summary",
+}
 
 
 def get_profile_action_commands(profile: dict[str, Any]) -> dict[str, str]:
@@ -452,9 +469,9 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "name": ("name", "interface_name", "sensor_name", "module", "fan_id", "power_id", "device_id", "vlan_name"),
     "prefix": ("prefix", "network", "destination", "route"),
     "usage": ("usage", "cpu_5_sec", "system_cpu", "dataplane_cpu", "used_rate", "memory_using_percentage", "memory_using_pct"),
-    "total": ("total", "total_kb", "total_bytes", "system_total_memory"),
+    "total": ("total", "total_kb", "total_bytes", "system_total_memory", "total_memory_mb"),
     "next_hop": ("next_hop", "nexthop", "next_hop_ip", "gateway"),
-    "neighbor": ("neighbor", "neighbor_id", "peer", "peer_address"),
+    "neighbor": ("neighbor", "neighbor_id", "peer", "peer_address", "system_id"),
     "asn": ("asn", "remote_as", "remote_asn", "peer_as"),
     "state": ("state", "status", "peer_state", "session_state"),
     "clock": ("clock", "time", "current_time"),
@@ -1947,6 +1964,10 @@ def _normalize_records(
         # A few vendor grammars intentionally keep compact columns instead of
         # inventing fields that are not present in the CLI output. Expand only
         # when the published action contract asks for the normalized field.
+        if {"system_id", "level"} <= expected and not normalized.get("level"):
+            adjacency_type = normalized.get("type")
+            if adjacency_type in ("L1", "L2", "L1L2"):
+                normalized["level"] = adjacency_type
         if "usage" in expected and normalized.get("usage") in (None, ""):
             free_ratio = str(normalized.get("free_ratio") or "").strip()
             if free_ratio.endswith("%"):

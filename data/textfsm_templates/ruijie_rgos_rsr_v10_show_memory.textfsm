@@ -1,0 +1,17 @@
+# nexora-action-code: get_memory
+Value Filldown FREE_PAGES (\d+)
+Value Filldown MIN_WATERMARK (\d+)
+Value Filldown LOWER_WATERMARK (\d+)
+Value Filldown LOW_WATERMARK (\d+)
+Value Filldown HIGH_WATERMARK (\d+)
+Value Filldown TOTAL_MEMORY_MB (\d+)
+Value Filldown CURRENT_FREE_MEMORY_KB (\d+)
+Value Required USED_RATE (\d+(?:\.\d+)?)
+
+Start
+  ^\s*Free pages:\s*${FREE_PAGES}\s*$$
+  ^\s*watermarks\s*:\s*min\s+${MIN_WATERMARK},\s*lower\s+${LOWER_WATERMARK},\s*low\s+${LOW_WATERMARK},\s*high\s+${HIGH_WATERMARK}\s*$$
+  ^\s*System Total Memory\s*:\s*${TOTAL_MEMORY_MB}MB,\s*Current Free Memory\s*:\s*${CURRENT_FREE_MEMORY_KB}KB\s*$$
+  ^\s*Used Rate\s*:\s*${USED_RATE}%\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next

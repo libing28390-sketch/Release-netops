@@ -1,0 +1,12 @@
+# nexora-action-code: get_ip_interfaces
+# Official Ruijie troubleshooting example; the page does not identify the OS version.
+# https://www.ruijie.com.cn/fw/wt/36825/
+Value Required INTERFACE (.+?)
+Value IP_ADDRESS_PRI ((?:no\s+address)|\S+)
+Value IP_ADDRESS_SEC ((?:no\s+address)|\S+)
+Value STATUS (administratively down|up|down|\S+)
+Value PROTOCOL (administratively down|up|down|\S+)
+
+Start
+  ^Interface\s+IP-Address\(Pri\)\s+IP-Address\(Sec\)\s+Status\s+Protocol\s*$$
+  ^\s*${INTERFACE}\s{2,}${IP_ADDRESS_PRI}\s{2,}${IP_ADDRESS_SEC}\s{2,}${STATUS}\s{2,}${PROTOCOL}\s*$$ -> Record

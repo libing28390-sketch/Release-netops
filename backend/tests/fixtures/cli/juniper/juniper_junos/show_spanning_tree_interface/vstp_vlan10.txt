@@ -1,0 +1,3 @@
+Spanning tree interface parameters for VLAN 10
+ge-1/0/1         128:1        128:1  28672.0090690b3fe0     20000  FWD    DESG
+ge-1/0/2         128:2        128:2  28672.0090690b3fe0     20000  FWD    DESG

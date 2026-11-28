@@ -1,0 +1,18 @@
+# nexora-action-code: get_version
+# Official StoneOS Cookbook V9, "Upgrading Firmware to Higher Version", page 8.
+# https://kb.hillstonenet.com/en/wp-content/uploads/2020/10/StoneOS-Cookbook-V9.pdf
+Value Required SYSTEM_VERSION ([0-9.]+)
+Value Required PRODUCT_MODEL (\S+)
+Value Required SERIAL_NUMBER (\S+)
+Value ASSEMBLY_NUMBER (\S+)
+Value Required BOOT_FILE (\S+)
+Value BUILDER (\S+)
+Value BUILD_TIMESTAMP (.+?)
+
+Start
+  ^.*#\s*show\s+version\s*$$
+  ^Hillstone Networks StoneOS software,\s+Version\s+${SYSTEM_VERSION}\s*$$
+  ^Product name:\s+${PRODUCT_MODEL}\s+S/N:\s+${SERIAL_NUMBER}\s+Assembly number:\s+${ASSEMBLY_NUMBER}\s*$$
+  ^Boot file is\s+${BOOT_FILE}\s+from flash\s*$$
+  ^Built by\s+${BUILDER}\s+${BUILD_TIMESTAMP}\s*$$ -> Record
+  ^. -> Next

@@ -1,0 +1,26 @@
+{
+  "vendor": "H3C",
+  "platform": "h3c_comware",
+  "software_family": "Comware 7",
+  "model": "S6850/S9850",
+  "command": "display clock",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/d_201910/1234766_294551_0.htm",
+  "source_title": "H3C S6850 & S9850 Switch Series Command References-Release 655x-6W100",
+  "source_section": "10-Device management commands > display clock > system time and date with time zone and daylight saving time",
+  "source_note": "Official S6850/S9850 command reference example. The documentation release is identified, but the sample does not report the running device software build.",
+  "model_family": "H3C S6850/S9850 switch series",
+  "documentation_release": "Release 655x-6W100",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "expected_record_count": 1,
+  "expected_fields": ["CLOCK", "TIMEZONE"],
+  "expected_values": {
+    "CLOCK": "15:11:00.211 Z5 Fri 03/16/2015",
+    "TIMEZONE": "Z5"
+  },
+  "expected_template_prefix": "h3c_comware_v7_",
+  "expected_template": "h3c_comware_v7_display_clock.textfsm",
+  "expected_record_index": 0,
+  "parser_platform": "h3c_comware_v7"
+}

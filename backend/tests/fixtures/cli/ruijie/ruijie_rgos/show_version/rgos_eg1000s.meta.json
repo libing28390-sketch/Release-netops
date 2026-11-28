@@ -1,13 +1,20 @@
 {
   "vendor": "Ruijie",
   "platform": "ruijie_rgos",
+  "parser_platform": "ruijie_rgos_v10",
   "software_family": "RGOS",
+  "platform_version": "V10",
+  "software_version": "RGOS 10.3(4b7), Release(83522)",
   "model": "EG1000S",
+  "model_family": "EG series",
+  "source_note": "The official page shows RGOS 10.3(4b7), mapped to the RGOS V10 namespace. Editorial notes appended to the web sample were not copied into the CLI fixture.",
   "command": "show version",
   "source_type": "official_vendor_documentation",
   "source_url": "https://www.ruijie.com.cn/fw/wt/18252/",
   "source_title": "新版NBR/EG如何查看软件和硬件版本",
   "source_section": "show version",
   "expected_record_count": 1,
-  "expected_fields": ["SYSTEM_DESCRIPTION", "SYSTEM_START_TIME", "SYSTEM_UPTIME", "SYSTEM_HARDWARE_VERSION", "SYSTEM_SOFTWARE_VERSION", "SYSTEM_BOOT_VERSION"]
+  "expected_fields": ["SYSTEM_DESCRIPTION", "SYSTEM_START_TIME", "SYSTEM_UPTIME", "SYSTEM_HARDWARE_VERSION", "SYSTEM_SOFTWARE_VERSION", "SYSTEM_BOOT_VERSION"],
+  "expected_values": {"SYSTEM_DESCRIPTION": "Ruijie EASY GATEWAY(EG1000S) by Ruijie Networks.", "SYSTEM_SOFTWARE_VERSION": "RGOS 10.3(4b7), Release(83522)", "SYSTEM_BOOT_VERSION": "10.3.83522"},
+  "expected_template": "ruijie_rgos_v10_show_version.textfsm"
 }

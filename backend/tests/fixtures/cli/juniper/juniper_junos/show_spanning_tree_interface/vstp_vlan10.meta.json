@@ -1,0 +1,25 @@
+{
+  "vendor": "Juniper",
+  "platform": "juniper_junos",
+  "parser_platform": "juniper_junos",
+  "platform_version": "unknown",
+  "software_version": "unknown",
+  "model_family": "Juniper switch (model unspecified)",
+  "command": "show spanning-tree interface",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://networkingdocs.hpe.com/documentation/us/en/software/junos/cli-reference/topics/ref/command/show-stp-interface-command.html",
+  "source_title": "Junos OS CLI Reference: show spanning-tree interface",
+  "source_section": "Sample Output > show spanning-tree interface (VSTP) > VLAN 10",
+  "source_note": "VLAN 10 section from the bare command's sample output. The sample does not identify a switch model or running build.",
+  "expected_record_count": 2,
+  "expected_fields": ["INSTANCE_TYPE", "INSTANCE", "INTERFACE", "DESIGNATED_BRIDGE", "STATUS", "ROLE"],
+  "expected_values": {
+    "INSTANCE_TYPE": "VLAN",
+    "INSTANCE": "10",
+    "INTERFACE": "ge-1/0/1",
+    "DESIGNATED_BRIDGE": "28672.0090690b3fe0",
+    "STATUS": "FWD",
+    "ROLE": "DESG"
+  },
+  "expected_template": "juniper_junos_show_spanning_tree_interface.textfsm"
+}

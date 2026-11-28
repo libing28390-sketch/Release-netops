@@ -5,5 +5,25 @@
   "platform": "VRP5",
   "model_family": "S5700",
   "command": "display environment",
-  "source_note": "Official troubleshooting example for switches earlier than V200R005; the page identifies the sample as VRP 5.130 / S5700 V200R003C00SPC300."
+  "source_note": "Official Huawei sample explicitly identifies VRP 5.130, S5700 V200R003C00SPC300, and S5700-28C-HI.",
+  "source_title": "Checking Whether the Switch Is Working in Intelligent Heat Dissipation Mode - Huawei",
+  "source_section": "Procedure > Check the switch current temperature > display environment",
+  "platform_version": "5.130",
+  "software_version": "V200R003C00SPC300",
+  "model": "S5700-28C-HI",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "SLOT_ID",
+    "CURRENT_TEMPERATURE",
+    "LOW_LIMIT",
+    "HIGH_LIMIT"
+  ],
+  "expected_values": {
+    "SLOT_ID": "1",
+    "CURRENT_TEMPERATURE": "40",
+    "HIGH_LIMIT": "55"
+  },
+  "expected_template": "huawei_vrp_display_environment.textfsm",
+  "expected_template_prefix": "huawei_vrp_",
+  "parser_platform": "huawei_vrp5"
 }

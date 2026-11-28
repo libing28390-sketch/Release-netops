@@ -1,0 +1,8 @@
+Device# show mac address-table
+              Mac Address Table
+-------------------------------------------
+Vlan    Mac Address       Type        Ports
+----    -----------       --------    -----
+All     0100.0ccc.cccc    STATIC      CPU
+1       780c.f0e1.1dc3    STATIC      Vl1
+1021    0002.02cc.0002    STATIC      Gi6/0/2

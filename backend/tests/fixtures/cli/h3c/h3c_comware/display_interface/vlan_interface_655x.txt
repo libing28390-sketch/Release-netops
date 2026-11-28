@@ -1,0 +1,6 @@
+<Sysname> display interface vlan-interface 2
+
+Vlan-interface2
+Current state: DOWN
+Line protocol state: DOWN
+Description: Vlan-interface2 Interface

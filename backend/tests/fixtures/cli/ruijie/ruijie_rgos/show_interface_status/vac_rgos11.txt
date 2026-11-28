@@ -1,0 +1,4 @@
+Interface                Status   Vlan   Duplex   Speed   Type
+-----------------------  -------  -----  -------  ------  ------
+GigabitEthernet 1/0/1    up       201    Full     100M    copper
+GigabitEthernet 1/0/4    up              Full     100M    copper

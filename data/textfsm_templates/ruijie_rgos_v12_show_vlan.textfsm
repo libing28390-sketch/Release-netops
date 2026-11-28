@@ -2,7 +2,7 @@
 Value Required VLAN_ID (\d+)
 Value VLAN_NAME (\S+)
 Value STATUS (\S+)
-Value PORTS (.*)
+Value List PORTS (\S(?:.*?\S)?)
 
 Start
   ^VLAN\s+Name\s+Status\s+Ports -> Table
@@ -12,7 +12,8 @@ Start
 
 Table
   ^-+ -> Next
-  ^\s*${VLAN_ID}\s+${VLAN_NAME}\s+${STATUS}\s*$$ -> Record
-  ^\s*${VLAN_ID}\s+${VLAN_NAME}\s+${STATUS}\s+${PORTS}\s*$$ -> Record
+  ^\s*\d+\s+\S+\s+\S+ -> Continue.Record
+  ^\s*${VLAN_ID}\s+${VLAN_NAME}\s+${STATUS}(?:\s+${PORTS})?\s*$$
+  ^\s+(?=[A-Za-z][A-Za-z-]*\s*\d+[/.])${PORTS}\s*$$
   ^\s*$$
   ^. -> Next

@@ -177,7 +177,8 @@ Start
 def test_create_api_uses_explicit_version_to_build_template_filename(monkeypatch):
     captured = {}
 
-    def fake_save(filename, content, *, action_code=None):
+    def fake_save(filename, content, *, action_code=None, create_only=False):
+        assert create_only is True
         captured.update(filename=filename, content=content, action_code=action_code)
         return {'filename': filename, 'version': 'v8'}
 

@@ -1,0 +1,5 @@
+Hostname# show vlan
+VLAN Name       Status   Ports
+---- ---------- -------- -------------------------
+1    VLAN0001   STATIC   Gi0/1, Gi0/2, Gi0/4, Gi0/5
+                         Gi0/6, Gi0/7, Gi0/8, Gi0/9

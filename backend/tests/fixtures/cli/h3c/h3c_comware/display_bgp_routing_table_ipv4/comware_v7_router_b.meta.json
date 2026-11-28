@@ -3,7 +3,28 @@
   "source_url": "https://www.h3c.com/en/d_202410/2284129_294551_0.htm",
   "vendor": "H3C",
   "platform": "Comware7",
-  "model_family": "MSR/S-series",
+  "model_family": "SR6602-I",
   "command": "display bgp routing-table ipv4",
-  "source_note": "Official Comware V7 basic BGP configuration example."
+  "source_note": "CLI command: display bgp routing-table ipv4. Official BGP configuration example for SR6602-I. R9141 identifies the documentation release here and is not treated as a confirmed running software build.",
+  "source_title": "Support - 08-Basic BGP Configuration Examples - H3C",
+  "source_section": "Basic BGP configuration examples > display bgp routing-table ipv4",
+  "documentation_release": "R9141",
+  "platform_version": "V7",
+  "software_version": "unknown",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "FLAGS",
+    "NETWORK",
+    "NEXT_HOP",
+    "ATTRIBUTES"
+  ],
+  "expected_values": {
+    "FLAGS": "* >e",
+    "NETWORK": "8.1.1.0/24",
+    "NEXT_HOP": "3.1.1.2"
+  },
+  "expected_template_prefix": "h3c_comware_v7_",
+  "expected_template": "h3c_comware_v7_display_bgp_routing_table_ipv4.textfsm",
+  "expected_record_index": 0,
+  "parser_platform": "h3c_comware_v7"
 }

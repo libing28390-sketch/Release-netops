@@ -1,0 +1,3 @@
+NO.  VID  VLAN-Name   Owner   Mode       Interface
+1    2    VLAN0002    static  Tagged     gi0/3
+                              Untagged   gi0/1

@@ -1,0 +1,26 @@
+{
+  "vendor": "Juniper",
+  "platform": "juniper_junos",
+  "parser_platform": "juniper_junos",
+  "platform_version": "unknown",
+  "software_version": "unknown",
+  "model_family": "Juniper EX Series",
+  "command": "show spanning-tree interface",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://networkingdocs.hpe.com/documentation/us/en/software/junos/cli-reference/topics/ref/command/show-stp-interface-command.html",
+  "source_title": "Junos OS CLI Reference: show spanning-tree interface",
+  "source_section": "Sample Output > show spanning-tree interface (EX Series) > instance 2",
+  "source_note": "Instance heading and two rows from the published example. The guide does not specify the model or running Junos build.",
+  "expected_record_count": 2,
+  "expected_fields": ["INSTANCE", "INTERFACE", "PORT_ID", "DESIGNATED_PORT_ID", "DESIGNATED_BRIDGE", "COST", "STATUS", "ROLE"],
+  "expected_values": {
+    "INSTANCE": "2",
+    "INTERFACE": "ge-0/0/4.0",
+    "DESIGNATED_BRIDGE": "16386.001b54013080",
+    "COST": "1000",
+    "STATUS": "BLK",
+    "ROLE": "ALT"
+  },
+  "expected_record_index": 1,
+  "expected_template": "juniper_junos_show_spanning_tree_interface.textfsm"
+}

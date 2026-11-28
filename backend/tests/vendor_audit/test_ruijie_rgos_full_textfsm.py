@@ -1,5 +1,11 @@
 import pytest
 from core.textfsm import smart_parse_cli
+from services.operational_data_service import resolve_textfsm_template_for_command
+
+
+# These legacy S6K output examples exercise the RGOS V12 template namespace.
+# They remain parser regression inputs and do not count as official-source
+# evidence or establish an exact device software build.
 
 
 def test_ruijie_show_lldp_neighbors():
@@ -17,12 +23,61 @@ JXYCH-ZSY-P19F26-KHZX-JR-S6 Te0/11              Te0/11                          
 231-1                       
 PTN6180-YZQ-yunshujuzhongxi Te0/39              gei-1/8/0/7                      B, R         1minutes 48seconds
 """
-    result = smart_parse_cli(output, "show lldp neighbors", platform="ruijie_os")
+    result = smart_parse_cli(output, "show lldp neighbors", platform="ruijie_rgos_v12")
     assert result["success"] is True
     assert len(result["data"]) == 4
     assert result["data"][0]["NEIGHBOR"] == "JXYCH-ZSY-P19F26-NET-VGW-S6"
     assert result["data"][0]["INTERFACE"] == "Te0/1"
     assert result["data"][0]["NEIGHBOR_INTERFACE"] == "TenGigabitEthernet 0/6"
+
+
+def test_ruijie_lldp_keeps_consecutive_neighbors_in_order():
+    output = """System Name    Local Intf    Port ID    Capability    Aging-time
+DeviceB        Gi0/2         Gi0/1      B, R          1minutes 49seconds
+DeviceC        Gi0/4         Gi0/3      B             1minutes 47seconds
+Total entries displayed: 2
+"""
+    result = smart_parse_cli(output, "show lldp neighbors", platform="ruijie_rgos_v12")
+    assert result["success"] is True
+    assert [(row["NEIGHBOR"], row["INTERFACE"]) for row in result["data"]] == [
+        ("DeviceB", "Gi0/2"),
+        ("DeviceC", "Gi0/4"),
+    ]
+
+
+def test_ruijie_v12_stp_summary_keeps_ports_with_their_mst_instance():
+    output = """MST 0 vlans map : 1
+Interface Role Sts Cost Prio OperEdge Type
+Gi0/1 Root FWD 1 128 False P2p
+MST 2 vlans map : 20
+Interface Role Sts Cost Prio OperEdge Type
+Gi0/1 Desg BLK 4 128 True P2p Bound(STP)
+"""
+    result = smart_parse_cli(output, "show spanning-tree summary", platform="ruijie_rgos_v12")
+    assert result["template"] == "ruijie_rgos_v12_show_spanning_tree_summary.textfsm"
+    assert [(row["INSTANCE"], row["STATUS"]) for row in result["data"]] == [("0", "FWD"), ("2", "BLK")]
+    assert result["data"][1]["TYPE"] == "P2p Bound(STP)"
+
+
+def test_ruijie_v11_stp_action_resolves_exactly_to_the_official_summary_template():
+    device = {
+        "platform": "ruijie_rgos",
+        "vendor": "Ruijie",
+        "profile_platform_code": "ruijie_rgos_v11",
+        "profile_parser_platform": "ruijie_rgos",
+        "profile_connection_driver": "ruijie_os",
+    }
+    result = resolve_textfsm_template_for_command(
+        device,
+        "show spanning-tree summary",
+        action_code="get_stp",
+    )
+
+    assert result == {
+        "textfsm_template": "ruijie_rgos_v11_show_spanning_tree_summary.textfsm",
+        "textfsm_source": "custom",
+        "template_action_code": "get_stp",
+    }
 
 
 def test_ruijie_show_vlan():
@@ -34,12 +89,16 @@ VLAN       Name                             Status    Ports
                                                       Gi1/0/5, Gi1/0/6, Gi1/0/7, Gi1/0/8    
       3499 vpn                              STATIC    Te2/0/49, Te2/0/50
 """
-    result = smart_parse_cli(output, "show vlan", platform="ruijie_os")
+    result = smart_parse_cli(output, "show vlan", platform="ruijie_rgos_v12")
     assert result["success"] is True
     assert len(result["data"]) == 2
     assert result["data"][0]["VLAN_ID"] == "1"
     assert result["data"][0]["VLAN_NAME"] == "VLAN0001"
+    assert result["data"][0]["PORTS"] == (
+        "Gi1/0/1, Gi1/0/2, Gi1/0/3, Gi1/0/4, Gi1/0/5, Gi1/0/6, Gi1/0/7, Gi1/0/8"
+    )
     assert result["data"][1]["VLAN_ID"] == "3499"
+    assert result["data"][1]["PORTS"] == "Te2/0/49, Te2/0/50"
 
 
 def test_ruijie_show_arp():
@@ -51,7 +110,7 @@ Internet  223.82.202.66    2         ccbb.fe1a.2104  arpa   AggregatePort 1.1
 Internet  223.82.202.67    18        ccbb.fe1a.2104  arpa   AggregatePort 1.1       
 Internet  223.82.202.69    57        ccbb.fe1a.2104  arpa   AggregatePort 1.1
 """
-    result = smart_parse_cli(output, "show arp", platform="ruijie_os")
+    result = smart_parse_cli(output, "show arp", platform="ruijie_rgos_v12")
     assert result["success"] is True
     assert len(result["data"]) == 4
     assert result["data"][0]["IP_ADDRESS"] == "223.82.202.65"
@@ -69,7 +128,7 @@ GigabitEthernet 1/0/47                   down      routed Unknown  Unknown   cop
 GigabitEthernet 1/0/48                   up        routed Full     1000M     copper
 TenGigabitEthernet 1/0/51                up               Full     10G       fiber
 """
-    result = smart_parse_cli(output, "show interfaces status", platform="ruijie_os")
+    result = smart_parse_cli(output, "show interfaces status", platform="ruijie_rgos_v12")
     assert result["success"] is True
     assert len(result["data"]) == 4
     assert result["data"][0]["INTERFACE"] == "GigabitEthernet 1/0/1"
@@ -100,7 +159,7 @@ RX power low warn
 RX loss of signal
 Interface TenGigabitEthernet 1/0/49 alarm detect.
 """
-    result = smart_parse_cli(output, "show interfaces transceiver", platform="ruijie_os")
+    result = smart_parse_cli(output, "show interfaces transceiver", platform="ruijie_rgos_v12")
     assert result["success"] is True
     assert len(result["data"]) == 1
     assert result["data"][0]["INTERFACE"] == "TenGigabitEthernet 1/0/49"
@@ -122,7 +181,7 @@ Gateway of last resort is no set
 C     10.88.1.0/24 is directly connected, VLAN 3499
 C     10.88.1.251/32 is local host.
 """
-    result = smart_parse_cli(output, "show ip route", platform="ruijie_os")
+    result = smart_parse_cli(output, "show ip route", platform="ruijie_rgos_v12")
     assert result["success"] is True
     assert len(result["data"]) == 2
     assert result["data"][0]["NETWORK"] == "10.88.1.0"
@@ -139,7 +198,7 @@ reference time is EE158146.19337799 (15:52:38.000 UTC Thu, Jul 30, 2026)
 clock offset is -0.00036 sec, root delay is 0.04226 sec
 root dispersion is 0.01201 msec, peer dispersion is 0.00371 msec
 """
-    result = smart_parse_cli(output, "show ntp status", platform="ruijie_os")
+    result = smart_parse_cli(output, "show ntp status", platform="ruijie_rgos_v12")
     assert result["success"] is True
     assert len(result["data"]) == 1
     assert result["data"][0]["SYNCHRONIZED"] == "synchronized"
@@ -155,7 +214,7 @@ Fan id Type             Status     Hardware Version Serial Number
 1      M1EFAN III-F     ok         1.20             G1T311H003743  
 2      M1EFAN III-F     ok         1.20             G1T311H003764  
 """
-    result = smart_parse_cli(output, "show fan", platform="ruijie_os")
+    result = smart_parse_cli(output, "show fan", platform="ruijie_rgos_v12")
     assert result["success"] is True
     assert len(result["data"]) == 2
     assert result["data"][0]["FAN_ID"] == "1"
@@ -171,7 +230,7 @@ Power-id Power-type           Status     Attribute Coexist  Hardware-Version Ser
 1        RG-PA550I-F          ok         N/A       no       21               R407A6A211910                   550       N/A
 2        RG-PA550I-F          ok         N/A       no       21               R407A65210927                   550       N/A
 """
-    result = smart_parse_cli(output, "show power", platform="ruijie_os")
+    result = smart_parse_cli(output, "show power", platform="ruijie_rgos_v12")
     assert result["success"] is True
     assert len(result["data"]) == 2
     assert result["data"][0]["POWER_ID"] == "1"
@@ -190,7 +249,7 @@ Slot    Card_type                        Temp_name     Warning         Shutdown 
 0       RG-S6231-48XS8CQ                 air_inlet       50              60              19           ok
 0       RG-S6231-48XS8CQ                 air_outlet      65              75              26           ok
 """
-    result = smart_parse_cli(output, "show temperature", platform="ruijie_os")
+    result = smart_parse_cli(output, "show temperature", platform="ruijie_rgos_v12")
     assert result["success"] is True
     assert len(result["data"]) == 2
     assert result["data"][0]["SLOT"] == "0"
@@ -206,7 +265,7 @@ Interface                                Status   Administrative Description
 TenGigabitEthernet 0/1                   up       up             dT:[JXYCH-ZSY-P19F26-NET-VGW-S6250-1]-10GE0/6-10G
 TenGigabitEthernet 0/3                   down     down           NO USE
 """
-    result = smart_parse_cli(output, "show interfaces description", platform="ruijie_os")
+    result = smart_parse_cli(output, "show interfaces description", platform="ruijie_rgos_v12")
     assert result["success"] is True
     assert len(result["data"]) == 2
     assert result["data"][0]["INTERFACE"] == "TenGigabitEthernet 0/1"
@@ -224,7 +283,7 @@ CPU utilization in five seconds:   1.10%
 CPU utilization in one minute:     0.80%
 CPU utilization in five minutes:   0.70%
 """
-    result = smart_parse_cli(output, "show cpu", platform="ruijie_os")
+    result = smart_parse_cli(output, "show cpu", platform="ruijie_rgos_v12")
     assert result["success"] is True
     assert len(result["data"]) == 1
     assert result["data"][0]["CPU_5SEC"] == "1.10"
@@ -238,7 +297,7 @@ show memory
 System Memory: 3962904KB total, 1015668KB used, 2947236KB free, 3739815KB available, 21.3% used rate
 Swap: 1981448KB total, 1981448KB free
 """
-    result = smart_parse_cli(output, "show memory", platform="ruijie_os")
+    result = smart_parse_cli(output, "show memory", platform="ruijie_rgos_v12")
     assert result["success"] is True
     assert len(result["data"]) == 1
     assert result["data"][0]["TOTAL_MEMORY"] == "3962904"

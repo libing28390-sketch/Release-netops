@@ -1,0 +1,36 @@
+{
+  "vendor": "H3C",
+  "platform": "h3c_comware_v7",
+  "parser_platform": "h3c_comware_v7",
+  "software_family": "Comware 7",
+  "platform_version": "v7",
+  "software_version": "unknown",
+  "documentation_release": "CR16000-F Configuration Guides R795x-6W100",
+  "platform_version_evidence_url": "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Routers/Products/WAN_Routers/CR/H3C_CR16000-F/",
+  "model_family": "CR16000-F",
+  "command": "display ip routing-table vpn-instance vpn1",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/Support/Resource_Center/EN/Routers/Catalog/CR16000-F/CR16000-F/Technical_Documents/Configure___Deploy/Configuration_Guides/H3C_CR16000-F_CG-795x/09/202001/1262549_294551_0.htm",
+  "source_title": "H3C CR16000-F Routers Configuration Guides R795x-6W100 - MPLS L3VPN Configuration",
+  "source_section": "Verifying the configuration > PE1 single VPN routing table, lines 3288-3317",
+  "source_note": "The official output is a single vpn1 route table. The CR16000-F product page documents the family as Comware 7, but this example does not identify an exact running software build; do not count it as a release-specific Quick Ops validation.",
+  "expected_record_count": 11,
+  "expected_fields": [
+    "DESTINATIONS",
+    "ROUTES",
+    "DESTINATION",
+    "PROTOCOL",
+    "PREFERENCE",
+    "COST",
+    "NEXTHOP",
+    "INTERFACE"
+  ],
+  "expected_values": {
+    "DESTINATION": "10.3.1.0/24",
+    "PROTOCOL": "BGP",
+    "NEXTHOP": "3.3.3.9",
+    "INTERFACE": "GE 3/1/4"
+  },
+  "expected_record_index": 5,
+  "expected_template": "h3c_comware_v7_display_ip_routing_table.textfsm"
+}

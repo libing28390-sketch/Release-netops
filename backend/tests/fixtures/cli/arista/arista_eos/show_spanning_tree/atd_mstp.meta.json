@@ -1,0 +1,28 @@
+{
+  "vendor": "Arista",
+  "platform": "arista_eos",
+  "parser_platform": "arista_eos",
+  "platform_version": "unknown",
+  "software_version": "unknown",
+  "model_family": "Arista EOS ATD lab switch",
+  "command": "show spanning-tree",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://labguides.testdrive.arista.com/2026.3.0/broadcaster_training/media_stp_svi/",
+  "source_title": "Arista ATD Media STP and SVI Lab",
+  "source_section": "Configure VLANs and Interfaces > expected show spanning-tree output on s1-Leaf4",
+  "source_note": "MST0 header and first two port rows from the published output. The lab guide does not identify the EOS build or switch model.",
+  "expected_record_count": 2,
+  "expected_fields": ["INSTANCE", "INTERFACE", "ROLE", "STATUS", "COST", "PORT_PRIORITY", "PORT_NUMBER", "TYPE"],
+  "expected_values": {
+    "INSTANCE": "0",
+    "INTERFACE": "Et3",
+    "ROLE": "alternate",
+    "STATUS": "discarding",
+    "COST": "2000",
+    "PORT_PRIORITY": "128",
+    "PORT_NUMBER": "3",
+    "TYPE": "P2p"
+  },
+  "expected_record_index": 1,
+  "expected_template": "arista_eos_show_spanning_tree.textfsm"
+}

@@ -1,0 +1,23 @@
+# nexora-action-code: get_route_table
+Value Filldown VRF_NAME ([\w.-]+)
+Value Required PROTOCOL ([A-Z]+(?:\s+[A-Z0-9]+)?)
+Value Required NETWORK (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})
+Value Required PREFIX_LENGTH (\d{1,2})
+Value DISTANCE (\d+)
+Value METRIC (\d+)
+Value NEXTHOP_IP (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})
+Value UPTIME (\S+)
+Value INTERFACE (.+?)
+
+Start
+  ^Routing Table:\s*${VRF_NAME}\s*$$ -> Next
+  ^.*#\s*show\s+ -> Next
+  ^Gateway of last resort is -> Next
+  ^\s*${PROTOCOL}\s+${NETWORK}/${PREFIX_LENGTH}\s+is\s+directly connected,\s*${INTERFACE}\s*$$ -> Record
+  ^\s*${PROTOCOL}\s+${NETWORK}/${PREFIX_LENGTH}\s+is\s+${INTERFACE}\.\s*$$ -> Record
+  ^\s*${PROTOCOL}\s+${NETWORK}/${PREFIX_LENGTH}\s+\[${DISTANCE}/${METRIC}\]\s+via\s+${NEXTHOP_IP},\s*${UPTIME},\s*${INTERFACE}\s*$$ -> Record
+  ^\s*${PROTOCOL}\s+${NETWORK}/${PREFIX_LENGTH}\s+\[${DISTANCE}/${METRIC}\]\s+via\s+${NEXTHOP_IP},\s*${UPTIME}\s*$$ -> Record
+  ^\s*${PROTOCOL}\s+${NETWORK}/${PREFIX_LENGTH}\s+\[${DISTANCE}/${METRIC}\]\s+via\s+${NEXTHOP_IP},\s*${INTERFACE}\s*$$ -> Record
+  ^\s*${PROTOCOL}\s+${NETWORK}/${PREFIX_LENGTH}\s+\[${DISTANCE}/${METRIC}\]\s+via\s+${NEXTHOP_IP}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next

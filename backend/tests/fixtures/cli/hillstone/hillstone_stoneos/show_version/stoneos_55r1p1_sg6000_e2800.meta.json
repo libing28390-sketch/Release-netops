@@ -1,0 +1,32 @@
+{
+  "vendor": "Hillstone",
+  "platform": "hillstone_stoneos",
+  "parser_platform": "hillstone_stoneos",
+  "software_family": "StoneOS",
+  "platform_version": "5.5",
+  "software_version": "5.5R1P1",
+  "model": "SG-6000-E2800",
+  "model_family": "SG-6000-E2800",
+  "source_note": "Transcribed from the official Cookbook V9 terminal screenshot description (page 8, figure e3). The output reports StoneOS Version 5.5 and the 5.5R1P1 image filename; this is a documentation sample, not a live-device capture.",
+  "command": "show version",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://kb.hillstonenet.com/en/wp-content/uploads/2020/10/StoneOS-Cookbook-V9.pdf",
+  "source_title": "StoneOS Cookbook",
+  "source_section": "Getting Started > Upgrading Firmware to Higher Version > Method 2: Upgrading from CLI, page 8",
+  "expected_record_count": 1,
+  "expected_fields": [
+    "SYSTEM_VERSION",
+    "PRODUCT_MODEL",
+    "SERIAL_NUMBER",
+    "ASSEMBLY_NUMBER",
+    "BOOT_FILE",
+    "BUILDER",
+    "BUILD_TIMESTAMP"
+  ],
+  "expected_values": {
+    "SYSTEM_VERSION": "5.5",
+    "PRODUCT_MODEL": "SG-6000-E2800",
+    "BOOT_FILE": "SG6000-M-3-5.5R1P1.bin"
+  },
+  "expected_template": "hillstone_stoneos_show_version.textfsm"
+}
