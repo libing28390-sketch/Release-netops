@@ -297,6 +297,9 @@ def _pipeline_versions(
         if target.get("snapshot") == "port":
             action_functions = (_lldp_interface_verbose_command, legacy._send_command)
             parser_functions = (_parse_lldp_verbose_neighbors,)
+        elif target.get("snapshot") == "lag_members":
+            action_functions = (_lag_member_command, legacy._send_command)
+            parser_functions = (_parse_lag_member_ports,)
         schema_kind = "neighbor"
     if target.get("transport") == "snmp_targeted":
         from services import ip_locator_fact_access as fact_access
@@ -346,7 +349,7 @@ def _trace_contract_version() -> str:
         getattr(legacy, "_collect_lldp_from_device", None), _lldp_neighbors,
         _load_lldp_snapshot, _record_topology_snapshot_dependency, lldp_snapshot_versions,
         _trace_ip_uncached, find_current_endpoint_evidence, _current_cross_device_fdb_path,
-        _parse_lag_member_ports, _expand_lag_member_ports_live, _topology_neighbors,
+        _parse_lag_member_ports, _expand_lag_member_ports_live, _leased_lag_member_query, _topology_neighbors,
         fact_access.TargetedFactReader.read, fact_access._scope_profile,
         fact_access._read_arp, fact_access._read_fdb,
     )
@@ -1583,6 +1586,7 @@ def _expand_lag_member_ports_live(
     *,
     result: dict[str, Any] | None = None,
     force_refresh: bool = False,
+    live_query: Any = None,
 ) -> tuple[set[str], list[str], bool]:
     """Expand a LAG to physical members via DB first, then live CLI if DB has no members.
 
@@ -1634,9 +1638,9 @@ def _expand_lag_member_ports_live(
 
     # Live CLI fallback: run lightweight vendor LAG member command
     cmd = _lag_member_command(device, port)
-    if cmd and _can_run_live_cli(device):
+    if cmd and _can_run_live_cli(device) and callable(live_query):
         try:
-            output = legacy._send_command(device, cmd, force_refresh=True)
+            output = live_query(cmd)
             parsed_members = _parse_lag_member_ports(str(output or ""), lag_norm=normalized)
             if parsed_members:
                 if force_refresh:
@@ -1651,10 +1655,11 @@ def _expand_lag_member_ports_live(
             _log_trace_step(result, f"[{label}] 聚合成员查询 `{cmd}` 失败（{_brief_query_error(exc)}）")
             logger.debug("[IPLocatorV2] live LAG member query failed for %s/%s: %s", label, port, exc)
 
+    if isinstance(result, dict):
+        result.setdefault("coverage_gaps", []).append(f"neighbor_parse_incomplete:{device_id}:lag_members")
     if physical_norms and force_refresh:
-        if isinstance(result, dict):
-            result.setdefault("coverage_gaps", []).append(f"neighbor_parse_incomplete:{device_id}:lag_members")
-        return expanded, physical_norms, False
+        # Stale members are hints only. Do not query them as current evidence.
+        return {normalized}, [], False
     return expanded, [], False
 
 
@@ -1868,6 +1873,51 @@ def _record_topology_snapshot_dependency(result: dict[str, Any], marker: Mapping
         dependencies.append(dependency)
 
 
+def _leased_lag_member_query(
+    device: dict[str, Any], command: str, *, port: str,
+    scope: dict[str, Any], scope_hash: str, target_ip: str,
+    force_refresh: bool, durable_run_id: str, run_owner_id: str,
+    cancel_check: Any, result: dict[str, Any], deadline: float,
+) -> str:
+    """Share the same durable task and exclusive SSH lease as other CLI reads."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0 or (callable(cancel_check) and cancel_check()):
+        raise TimeoutError("locator aggregation query budget exhausted")
+    target = {"snapshot": "lag_members", "port": legacy.normalize_interface_name(port).lower(),
+              "command": command, "platform": _normalise_platform(device)}
+    raw = _run_cli_with_device_lease(
+        device, "interface", lambda: legacy._send_command(device, command, force_refresh=True),
+        owner_id=f"{result.get('run_id')}:lag-members",
+        task_context=_cli_task_context(
+            device=device, scope=scope, scope_hash=scope_hash, target_ip="",
+            operation="interface", force_refresh=force_refresh,
+            durable_run_id=durable_run_id, run_owner_id=run_owner_id,
+            bridge_domain=f"lag-members:{target['port']}", target=target, cancel_check=cancel_check,
+        ),
+        wait_seconds=max(1, min(30, int(remaining))),
+    )
+    value, collected_at, task_id, _ = _cli_result_parts(raw)
+    if not collected_at or time.monotonic() >= deadline:
+        raise TimeoutError("locator aggregation query has no valid timestamp or exceeded deadline")
+    members = _parse_lag_member_ports(str(value or ""), target["port"])
+    if not members:
+        return ""
+    observation = _persist_observation(
+        tenant_id=str(scope.get("tenant_id") or "tenant-default"), scope_hash=scope_hash,
+        network_domain_id=str(scope.get("network_domain_id") or ""),
+        site_id=str(scope.get("site_id") or ""), vrf=str(scope.get("vrf") or "default"),
+        device_id=str(device["id"]), kind="interface",
+        bridge_domain=f"lag-members:{target['port']}", records={"members": members},
+        collected_at=collected_at, query_task_id=task_id, result=result,
+        device=device, target=target, fresh_seconds=120, retain_seconds=120,
+    )
+    if not observation:
+        result["coverage_gaps"].append(f"observation_persist_failed:{device['id']}:lag_members")
+        return ""
+    _include_evidence_timestamp(result, collected_at)
+    return str(value or "")
+
+
 def _load_lldp_snapshot(
     device: dict[str, Any],
     port: str,
@@ -1891,6 +1941,7 @@ def _load_lldp_snapshot(
 ) -> tuple[list[dict[str, Any]], str, str, dict[str, Any]]:
     """Reuse a complete topology snapshot before falling back to device CLI."""
     device_id = str(device.get("id") or "")
+    snapshot_deadline = time.monotonic() + max(1, wait_seconds)
     key = _cache_key(cache, "topology", scope_hash, device_id, "full")
     neighbor_target = {
         "snapshot": "full",
@@ -2141,6 +2192,12 @@ def _load_lldp_snapshot(
             try:
                 member_ports, phys_ports, _ = _expand_lag_member_ports_live(
                     lag_conn, device, port, result=result, force_refresh=force_refresh,
+                    live_query=lambda command: _leased_lag_member_query(
+                        device, command, port=port, scope=scope, scope_hash=scope_hash,
+                        target_ip=target_ip, force_refresh=force_refresh,
+                        durable_run_id=durable_run_id, run_owner_id=run_owner_id,
+                        cancel_check=cancel_check, result=result, deadline=snapshot_deadline,
+                    ),
                 )
             finally:
                 lag_conn.close()
@@ -2173,7 +2230,7 @@ def _load_lldp_snapshot(
         # member scan or unclassified empty output is incomplete evidence.
         label = _device_label(device)
         member_budget = 16
-        member_deadline = time.monotonic() + max(1, wait_seconds)
+        member_deadline = snapshot_deadline
         distinct_ports = list(dict.fromkeys(phys_ports))
         incomplete = len(distinct_ports) > member_budget
         by_neighbor = {}
@@ -4524,6 +4581,8 @@ def _trace_ip_uncached(
                         result.setdefault("warnings", []).append(
                             f"mac_vlan_translated:{current_id}:{vlan_hint}->{','.join(translated_vlans)}"
                         )
+                        # A VLAN change is a hint, not proof of QinQ/translation.
+                        result["coverage_gaps"].append(f"mac_vlan_translation_unverified:{current_id}")
                 if not records:
                     if isinstance(status, dict) and status.get("status") == "vlan_unknown":
                         result["errors"].append(f"{label} 的 MAC 记录缺少 VLAN，不能确认二层域")
@@ -4713,6 +4772,12 @@ def _trace_ip_uncached(
                     if not topology and is_lag_port:
                         expanded_member_ports, physical_member_names, lag_members_resolved = _expand_lag_member_ports_live(
                             conn, current, port, result=result, force_refresh=force_refresh,
+                            live_query=lambda command: _leased_lag_member_query(
+                                current, command, port=port, scope=scope, scope_hash=scope_hash,
+                                target_ip=target_ip, force_refresh=force_refresh,
+                                durable_run_id=durable_run_id, run_owner_id=run_owner_id,
+                                cancel_check=cancel_check, result=result, deadline=deadline,
+                            ),
                         )
                         if conn is not None and not force_refresh and lag_members_resolved and expanded_member_ports:
                             # Preserve all distinct neighbors across member interfaces.
@@ -4926,6 +4991,8 @@ def _trace_ip_uncached(
         "mac_parse_incomplete:",
         "mac_not_found:",
         "mac_vlan_evidence_missing:",
+        "mac_vlan_translation_unverified:",
+        "mac_port_missing:",
         "arp_failed:",
         "arp_query_failed:",
         "arp_unsupported:",
