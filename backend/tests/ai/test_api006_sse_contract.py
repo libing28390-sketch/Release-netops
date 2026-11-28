@@ -98,31 +98,35 @@ def test_chat_stream_covers_meta_progress_token_citation_done_and_error(monkeypa
     assert "internal parser detail" not in json.dumps(error_payload)
 
 
-def test_device_context_is_sent_to_provider_as_internal(monkeypatch):
-    # This contract mocks the intent-parser/legacy synthesis path explicitly.
+def test_device_count_stays_local_without_provider_egress(monkeypatch):
     monkeypatch.setattr(assistant_module.settings, "AI_COPILOT_AGENTIC_CHAT_ENABLED", False)
+    calls = []
+
     async def fake_parse_intent(message, user_id=None):
         return {"intent": "device_search", "filters": {}}
 
-    async def fake_query(message, filters, user_id=None, tenant_id=None):
-        return {
-            "data": [{"hostname": "core-1", "ip_address": "10.0.0.1", "vendor": "H3C"}],
-            "summary": "当前有 1 台设备",
-        }
+    async def fake_asset_analysis(message, filters, tenant_id=None):
+        calls.append((message, tenant_id))
+        return {"matched_count": 1, "summary": "当前有 1 台设备", "citations": []}
 
-    async def fake_chat_stream(**kwargs):
-        calls.append(kwargs)
-        yield "ok"
+    async def forbidden_provider(**kwargs):
+        pytest.fail("A deterministic CMDB count must not be sent to an external provider")
+        yield ""
 
-    calls: list[dict] = []
     monkeypatch.setattr(assistant_module.intent_parser, "parse_intent", fake_parse_intent)
-    monkeypatch.setattr(assistant_module.natural_query_service, "execute_query", fake_query)
-    monkeypatch.setattr(assistant_module.rag_retriever, "retrieve", lambda *args, **kwargs: [])
-    monkeypatch.setattr(assistant_module.llm_gateway, "chat_stream", fake_chat_stream)
+    monkeypatch.setattr(assistant_module.natural_query_service, "execute_asset_analysis", fake_asset_analysis)
+    monkeypatch.setattr(assistant_module.llm_gateway, "chat_stream", forbidden_provider)
 
     async def collect():
         return [event async for event in AIAssistantService().chat_stream("有多少台设备", tenant_id="tenant-a")]
 
     events = asyncio.run(collect())
-    assert any('"content": "ok"' in event for event in events)
-    assert calls[0]["data_classification"] == "INTERNAL"
+    parsed = [_parse_event(part) for event in events for part in event.split("\n\n") if part.strip()]
+    assert calls == [("有多少台设备", "tenant-a")]
+    assert any(name == "token" and payload["content"] == "当前有 1 台设备" for name, payload in parsed)
+    meta = next(payload for name, payload in parsed if name == "meta")
+    done = next(payload for name, payload in parsed if name == "done")
+    for payload in (meta, done):
+        assert payload["execution_mode"] == "local_operation"
+        assert payload["external_egress"] is False
+        assert payload["input_tokens"] == payload["output_tokens"] == 0

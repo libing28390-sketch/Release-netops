@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import yaml
@@ -7,7 +8,14 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_release_repository_push_uses_scoped_http_auth_header():
-    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8"))
+    workflow_path = ROOT / ".github" / "workflows" / "release.yml"
+    # The published distribution is the target of the source repository's
+    # publishing workflow, not its owner. Never copy publisher credentials
+    # or its workflow into the distribution just to satisfy this test.
+    if os.environ.get("GITHUB_REPOSITORY") == "libing28390-sketch/Release-netops":
+        assert not workflow_path.exists(), "Publisher workflow must not ship in the release tree"
+        return
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
     steps = workflow["jobs"]["release-ubuntu"]["steps"]
     publish_step = next(step for step in steps if step.get("name") == "Commit sanitized Ubuntu release tree")
 

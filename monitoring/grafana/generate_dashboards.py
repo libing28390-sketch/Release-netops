@@ -4577,11 +4577,11 @@ NOC_V3_DASHBOARD_DESCRIPTIONS = {
 
 NOC_V3_PANEL_DESCRIPTIONS = {
     # 01 网络总览
-    ("nexora-network-overview", 6): "统计近 24 小时内发生过链路变动且当前仍处于 Down 状态的已启用端口，帮你快速聚焦新发故障。",
+    ("nexora-network-overview", 6): "统计24小时内状态有变化且当前 Down 的已启用端口，帮助快速聚焦新发故障。",
     ("nexora-network-overview", 10): "已成功采集到内存指标的设备数；未覆盖设备可能是暂不支持对应采集规则。",
     ("nexora-network-overview", 11): "已成功采集到温度传感器的设备数；不同机型安全温度区间存在差异，可下钻设备详情核查。",
     ("nexora-network-overview", 12): "按近 5 分钟收发总吞吐速率排序，快速识别全网流量最繁忙的骨干设备。",
-    ("nexora-network-overview", 14): "仅列出近 24 小时内状态变动且当前仍 Down 的启用接口，自动过滤长期闲置端口；点击接口可直接下钻。",
+    ("nexora-network-overview", 14): "仅列出近 24 小时内状态变动且当前仍 Down 的启用接口，长期稳定 Down 的接口不在此列；点击接口可直接下钻。",
     ("nexora-network-overview", 15): "展示各设备最高核心 CPU 利用率 Top10，点击设备名可一键下钻单设备硬件详情。",
     # 02 设备详情
     ("nexora-network-device", 1): "展示当前选中设备的基础身份信息与 SNMP 连通状态，便于快速确认设备可达性。",

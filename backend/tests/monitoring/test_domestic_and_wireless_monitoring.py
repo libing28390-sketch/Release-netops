@@ -155,7 +155,7 @@ def test_dashboards_suite_completeness():
     assert "!= 1" not in interface_count_query
     assert "当前 Down" in interface_count_panel["description"]
     assert "24小时内状态有变化" in interface_count_panel["description"]
-    interface_candidates_panel = next(panel for panel in overview_dashboard["panels"] if panel["id"] == 14)
+    interface_candidates_panel = next(panel for panel in _iter_panels(overview_dashboard["panels"]) if panel["id"] == 14)
     candidate_query = interface_candidates_panel["targets"][0]["expr"]
     assert interface_candidates_panel["title"] == "近24h状态变动且当前仍 Down Top20"
     assert 'ifAdminStatus{' in candidate_query and "== 1" in candidate_query
@@ -733,7 +733,7 @@ def test_all_grafana_dashboards_have_consistent_kpi_and_section_layout():
     by_uid = {}
     for filename, dashboard in catalog:
         validate_dashboard(filename, dashboard)
-        by_uid[dashboard["uid"]] = {panel["id"]: panel for panel in dashboard["panels"]}
+        by_uid[dashboard["uid"]] = {panel["id"]: panel for panel in _iter_panels(dashboard["panels"])}
 
         panels = dashboard["panels"]
         assert any(panel["type"] == "row" for panel in panels)
