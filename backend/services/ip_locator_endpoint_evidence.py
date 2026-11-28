@@ -279,6 +279,62 @@ def _current_cross_device_fdb_path(
     return None
 
 
+def _resolve_current_vrf_id(conn, tenant: str, requested: str) -> str | None:
+    """Resolve a tenant-local VRF ID or name, rejecting ambiguous aliases."""
+    rows = conn.execute(
+        """SELECT id FROM vrfs WHERE tenant_id = ?
+             AND (id = ? OR LOWER(TRIM(vrf_name)) = LOWER(?))""",
+        (tenant, requested, requested),
+    ).fetchall()
+    ids = {_id(row["id"]) for row in rows if _id(row["id"])}
+    return next(iter(ids)) if len(ids) == 1 else None
+
+
+def _select_current_arp_scope(
+    rows: list[dict[str, Any]], requested_vrf: str, is_default: bool,
+) -> list[dict[str, Any]] | None:
+    """Exclude only positively mapped other VRFs; unknowns cannot hide conflicts."""
+    selected = []
+    for row in rows:
+        source = _id(row.get("source_vrf_context_status")).lower() or "unknown"
+        effective = _id(row.get("vrf_context_status")).lower() or "unknown"
+        scope = _id(row.get("scope_status"))
+        space = _id(row.get("address_space_id"))
+        vrf_id = _id(row.get("vrf_id"))
+        if scope == "conflict" or row.get("ip_mac_conflict"):
+            return None
+        if source == "global" and effective == "explicit_global" and scope == "resolved" and space and not vrf_id:
+            if is_default:
+                selected.append(row)
+        elif source == "vrf" and effective == "explicit_vrf" and scope == "resolved" and space and vrf_id:
+            if not is_default and vrf_id == requested_vrf:
+                selected.append(row)
+        elif source == effective == "unknown" and scope == "scope_pending" and not space and not vrf_id and is_default:
+            # Existing same-device compatibility, never a proven Global mapping.
+            selected.append(row)
+        else:
+            return None
+    return selected
+
+
+def _current_facts_are_compatible(arp: dict[str, Any], fdb: dict[str, Any]) -> bool:
+    """Require matching resolved address spaces or two explicitly unknown contexts."""
+    if _id(fdb.get("entry_type")).lower() != "dynamic":
+        return False
+    if arp.get("scope_status") == "resolved":
+        return bool(fdb.get("scope_status") == "resolved"
+                    and _id(arp.get("address_space_id"))
+                    and _id(arp.get("address_space_id")) == _id(fdb.get("address_space_id")))
+    return bool(arp.get("scope_status") == fdb.get("scope_status") == "scope_pending"
+                and arp.get("source_vrf_context_status") == fdb.get("source_vrf_context_status") == "unknown"
+                and not arp.get("address_space_id") and not fdb.get("address_space_id"))
+
+
+def _current_fact_is_fresh(row: dict[str, Any], now: datetime) -> bool:
+    _, observed_at = _iso_utc(row.get("observed_at"))
+    return bool(observed_at is not None and timedelta(0) <= now - observed_at <= timedelta(seconds=300))
+
+
 def find_current_endpoint_evidence(
     target_ip: str,
     *,
@@ -312,6 +368,11 @@ def find_current_endpoint_evidence(
     owns_connection = conn is None
     db_conn = conn if conn is not None else get_db_connection()
     try:
+        if not is_default_vrf:
+            requested_vrf = _resolve_current_vrf_id(db_conn, tenant, requested_vrf)
+            if requested_vrf is None:
+                return None
+        now = discovery._utc_now()
         allowed_ids = sorted(allowed)
         marks = ", ".join("?" for _ in allowed_ids)
         arp_sources = db_conn.execute(
@@ -336,7 +397,7 @@ def find_current_endpoint_evidence(
         if not arp_sources:
             return None
 
-        candidates: list[dict[str, Any]] = []
+        scoped_arp_rows: list[dict[str, Any]] = []
         for source in arp_sources:
             source_device_id = _id(source.get("source_device_id"))
             if not source_device_id or (start and source_device_id != start):
@@ -356,38 +417,29 @@ def find_current_endpoint_evidence(
                     start_device_id=start,
                 )
             ]
-            # An unresolved in-scope ARP source must not disappear from the
-            # uniqueness decision just because its FDB cannot confirm a port.
-            # Multiple current IP/context identities are ambiguous even if
-            # they happen to share the same MAC or physical port.
-            if len(arp_rows) != 1:
+            if not arp_rows:
                 return None
-            arp = arp_rows[0]
+            scoped_arp_rows.extend(arp_rows)
+
+        relevant = _select_current_arp_scope(scoped_arp_rows, requested_vrf, is_default_vrf)
+        # Multiple relevant sources are still ambiguous, even if they share a
+        # MAC. Other explicitly mapped VRFs do not compete for this lookup.
+        if relevant is None or len(relevant) != 1:
+            return None
+
+        candidates: list[dict[str, Any]] = []
+        for arp in relevant:
+            source_device_id = _id(arp.get("source_device_id"))
             mac = discovery._normalized_mac(arp.get("mac"))
             vlan = discovery._normalize_vlan_number(arp.get("vlan"))
-            source_context = _id(arp.get("source_vrf_context_status")).lower() or "unknown"
             effective_context = _id(arp.get("vrf_context_status")).lower() or "unknown"
             if (
                 not mac or not vlan or discovery._is_virtual_gateway_mac(mac)
                 or not arp.get("coverage_complete")
                 or _id(arp.get("evidence_status")).lower() != "recent"
                 or _id(arp.get("timestamp_status")).lower() != "valid"
+                or not _current_fact_is_fresh(arp, now)
             ):
-                return None
-
-            if source_context == "unknown":
-                if not is_default_vrf:
-                    return None
-            elif source_context == "global":
-                if not is_default_vrf or effective_context != "explicit_global":
-                    return None
-            elif source_context == "vrf":
-                if (
-                    is_default_vrf or effective_context != "explicit_vrf"
-                    or _id(arp.get("vrf_id")) != requested_vrf
-                ):
-                    return None
-            else:
                 return None
 
             fdb_rows = [
@@ -406,10 +458,10 @@ def find_current_endpoint_evidence(
             if len(fdb_rows) != 1:
                 return None
             fdb = fdb_rows[0]
+            if not _current_facts_are_compatible(arp, fdb) or not _current_fact_is_fresh(fdb, now):
+                return None
             fdb_path = [fdb]
             if _id(fdb.get("path_classification")).lower() != "access_edge":
-                if len(arp_sources) != 1:
-                    return None
                 cross_path = _current_cross_device_fdb_path(
                     db_conn, arp=arp, first_fdb=fdb, allowed=allowed,
                     tenant=tenant, mac=mac, vlan=vlan,
@@ -441,6 +493,7 @@ def find_current_endpoint_evidence(
                 dict(row)
                 for row in db_conn.execute(
                     """SELECT interface_name, interface_type, switchport_mode, access_vlan
+                         , admin_status, oper_status
                          FROM interfaces WHERE device_id = ?""",
                     (terminal_device_id,),
                 ).fetchall()
@@ -454,6 +507,8 @@ def find_current_endpoint_evidence(
                 not in {"physical", "ethernet", "ethernet_port", "port", "access"}
                 or _id(interface.get("switchport_mode")).lower() != "access"
                 or discovery._normalize_vlan_number(interface.get("access_vlan")) != vlan
+                or _id(interface.get("admin_status")).lower() in {"down", "shutdown", "admin_down", "administratively down"}
+                or _id(interface.get("oper_status")).lower() in {"down", "notpresent", "lowerlayerdown"}
             ):
                 return None
 
@@ -490,6 +545,7 @@ def find_current_endpoint_evidence(
                     "site_id": _id(arp.get("site_id")),
                     "vrf_id": _id(arp.get("vrf_id")),
                     "vrf_context_status": effective_context,
+                    "address_space_id": _id(arp.get("address_space_id")),
                     "observed_at": _id(arp.get("observed_at")),
                 }],
                 "fdb_evidence": [{
@@ -501,6 +557,7 @@ def find_current_endpoint_evidence(
                     "entry_type": _id(hop.get("entry_type")),
                     "path_classification": _id(hop.get("path_classification")),
                     "path_evidence": _id(hop.get("path_evidence")),
+                    "address_space_id": _id(hop.get("address_space_id")),
                     "generation": int(hop.get("generation") or 0),
                     "observed_at": _id(hop.get("observed_at")),
                     **({"interface_proof": hop["interface_proof"]} if hop.get("interface_proof") else {}),
