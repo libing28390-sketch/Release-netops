@@ -47,8 +47,8 @@ def _seed_access_device(*, device_id: str = DEVICE_ID, ports: tuple[str, ...] = 
             conn.execute(
                 """INSERT INTO interfaces
                        (id, device_id, interface_name, interface_type, description,
-                        switchport_mode, access_vlan)
-                   VALUES (?, ?, ?, 'physical', ?, 'access', 7)""",
+                        switchport_mode, access_vlan, admin_status, oper_status)
+                   VALUES (?, ?, ?, 'physical', ?, 'access', 7, 'up', 'up')""",
                 (f"{device_id}-interface-{index}", device_id, port, "TO-PC-7" if index == 0 else "duplicate path"),
             )
         conn.commit()
@@ -153,7 +153,7 @@ def test_current_unknown_context_arp_links_to_unique_same_device_vlan_access_por
     assert result["fdb_evidence"][0]["path_classification"] == "access_edge"
 
 
-@pytest.mark.parametrize("failure", ["multiple_ports", "latest_arp_attempt_failed", "other_device_only", "interface_vlan_mismatch"])
+@pytest.mark.parametrize("failure", ["multiple_ports", "latest_arp_attempt_failed", "other_device_only", "interface_vlan_mismatch", "interface_down"])
 def test_current_endpoint_locator_fails_closed_on_ambiguous_or_inconsistent_current_facts(isolated_db, failure):
     _seed_access_device(ports=("GigabitEthernet1/0/2", "GigabitEthernet1/0/3"))
     _publish_current_arp()
@@ -173,6 +173,11 @@ def test_current_endpoint_locator_fails_closed_on_ambiguous_or_inconsistent_curr
                 attempted_at=attempted_at,
                 run_id="arp-latest-failed",
             )
+            conn.commit()
+    elif failure == "interface_down":
+        _publish_current_fdb()
+        with get_db_connection() as conn:
+            conn.execute("UPDATE interfaces SET oper_status = 'down' WHERE device_id = ?", (DEVICE_ID,))
             conn.commit()
     elif failure == "interface_vlan_mismatch":
         _publish_current_fdb()
