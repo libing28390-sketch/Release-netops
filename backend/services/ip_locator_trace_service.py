@@ -348,7 +348,7 @@ def _trace_contract_version() -> str:
         getattr(legacy, "_parse_mac_output", None), getattr(legacy, "_parse_mac_table_line", None),
         getattr(legacy, "_collect_lldp_from_device", None), _lldp_neighbors,
         _load_lldp_snapshot, _record_topology_snapshot_dependency, lldp_snapshot_versions,
-        _trace_ip_uncached, find_current_endpoint_evidence, _current_cross_device_fdb_path,
+        _trace_ip_uncached, _may_reuse_locator_facts, find_current_endpoint_evidence, _current_cross_device_fdb_path,
         _parse_lag_member_ports, _parse_lag_member_states, _expand_lag_member_ports_live, _leased_lag_member_query, _topology_neighbors,
         fact_access.TargetedFactReader.read, fact_access._scope_profile,
         fact_access._read_arp, fact_access._read_fdb,
@@ -489,6 +489,11 @@ def _pending_fact_invalidation(scope_hash: str, target_ip: str) -> bool:
         # dependency-invalidation state.
         logger.debug("[IPLocatorV2] invalidation state unavailable (%s)", type(exc).__name__)
         return True
+
+
+def _may_reuse_locator_facts(force_refresh: bool, scope_hash: str, target_ip: str) -> bool:
+    """One freshness/invalidation policy for Redis and PostgreSQL lookup tiers."""
+    return not force_refresh and not _pending_fact_invalidation(scope_hash, target_ip)
 
 
 def _authorization_scope_hash(device_ids: Iterable[str] | None) -> str:
@@ -3040,10 +3045,9 @@ def _trace_ip_uncached(
             route_collected_at = ""
             route_task_id = ""
             if (
-                not force_refresh
-                and cache is not None
+                cache is not None
                 and route_key
-                and not _pending_fact_invalidation(scope_hash, target_ip)
+                and _may_reuse_locator_facts(force_refresh, scope_hash, target_ip)
             ):
                 cached_route = cache.get_json(route_key)
                 cached_route = _cached_observation_is_current(
@@ -3061,7 +3065,7 @@ def _trace_ip_uncached(
                     rows = list(cached_route.get("records") or [])
                     route_collected_at = str(cached_route.get("collected_at") or "")
                     _set_cache_source(result, "route", device, "redis", vrf=branch["vrf"])
-            if not force_refresh and not rows and not route_collected_at:
+            if not rows and not route_collected_at and _may_reuse_locator_facts(force_refresh, scope_hash, target_ip):
                 observation = _find_fresh_observation(
                     tenant_id=tenant_id,
                     scope_hash=scope_hash,
@@ -3462,6 +3466,7 @@ def _trace_ip_uncached(
     for item in direct_devices:
         unique_gateways.setdefault(str(item[0].get("id") or ""), item)
     arp_hits: list[tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]] = []
+    local_candidates: list[dict[str, Any]] = []
     for device, route, l3_path in unique_gateways.values():
         if not operation_budget_available():
             break
@@ -3483,7 +3488,7 @@ def _trace_ip_uncached(
             snapshot_source = ""
             redis_write_attempted = False
             redis_write_ack = None
-            if cache is not None and arp_key and not force_refresh and not _pending_fact_invalidation(scope_hash, target_ip):
+            if cache is not None and arp_key and _may_reuse_locator_facts(force_refresh, scope_hash, target_ip):
                 cached_arp = cache.get_json(arp_key)
                 cached_arp = _cached_observation_is_current(
                     cached_arp,
@@ -3505,7 +3510,7 @@ def _trace_ip_uncached(
                         "negative_redis" if arp_negative else "redis",
                         vrf=vrf,
                     )
-            if arp is None and not arp_negative and not force_refresh and not _pending_fact_invalidation(scope_hash, target_ip):
+            if arp is None and not arp_negative and _may_reuse_locator_facts(force_refresh, scope_hash, target_ip):
                 observation = _find_fresh_observation(
                     tenant_id=tenant_id,
                     scope_hash=scope_hash,
@@ -3550,7 +3555,7 @@ def _trace_ip_uncached(
             full_snapshot = None
             full_snapshot_at = ""
             full_snapshot_task_id = ""
-            if not force_refresh and not _pending_fact_invalidation(scope_hash, target_ip):
+            if _may_reuse_locator_facts(force_refresh, scope_hash, target_ip):
                 if cache is not None and arp_snapshot_key:
                     cached_snapshot = cache.get_json(arp_snapshot_key)
                     cached_snapshot = _cached_observation_is_current(
@@ -4031,13 +4036,8 @@ def _trace_ip_uncached(
                 "mac": arp_item.get("mac") or "",
                 "confidence": "device_interface",
             }
-            result["status"] = "completed"
-            result["conclusion"] = "device_interface"
-            result["found"] = True
-            result["location"] = local_location
-            result["terminal_candidates"].append(local_location)
-            result["completed_at"] = _now_iso()
-            return add_legacy_compatibility(result)
+            local_candidates.append(local_location)
+            continue
         result["arp_evidence"].append(arp_item)
         _include_evidence_timestamp(result, arp_item["collected_at"])
         arp_age = _route_age_seconds(arp_item["collected_at"])
@@ -4056,14 +4056,52 @@ def _trace_ip_uncached(
         result["conclusion"] = "cancelled"
         result["completed_at"] = _now_iso()
         return result
-    if not arp_hits:
-        historical = _lookup_historical_last_seen(
-            conn,
-            target_ip,
-            tenant_id=tenant_id,
-            site_id=site_id,
-            authorized_device_ids=authorized_device_ids,
+    # Compare all observed ARP identities before choosing a terminal. A
+    # local-interface hit or a successful downstream FDB must not erase a
+    # competing IP/MAC mapping from another gateway.
+    observed_macs = {
+        legacy._normalize_mac(str(item.get("mac") or ""))
+        for item in result["arp_evidence"]
+        if not item.get("is_proxy") and not _is_virtual_gateway_mac(item.get("mac"))
+    } - {""}
+    if (len(observed_macs) > 1 or len(local_candidates) > 1
+            or (local_candidates and arp_hits)):
+        result["status"] = "partial"
+        result["conclusion"] = "ambiguous_arp_source"
+        result["coverage_gaps"].append("arp_ambiguous:competing_gateway_evidence")
+        result["terminal_candidates"] = local_candidates
+        result["completed_at"] = _now_iso()
+        return result
+    if local_candidates:
+        incomplete = deadline_exceeded or any(
+            str(gap).startswith(("arp_failed:", "arp_query_failed:", "arp_parse_incomplete:",
+                                 "arp_ambiguous:", "arp_unsupported:", "observation_persist_failed:",
+                                 "route_failed:", "task_deadline_exceeded"))
+            for gap in result["coverage_gaps"]
         )
+        result["status"] = "partial" if incomplete else "completed"
+        result["conclusion"] = "path_has_unverified_branch" if incomplete else "device_interface"
+        result["found"] = not incomplete
+        result["location"] = local_candidates[0]
+        result["terminal_candidates"] = local_candidates
+        result["completed_at"] = _now_iso()
+        return add_legacy_compatibility(result)
+    if not arp_hits:
+        historical = None
+        # The L3 connection is already closed; open a short, separate read.
+        # Legacy history has no proven named-VRF binding.
+        if vrf.lower() in {"default", "global"}:
+            try:
+                history_conn = get_db_connection()
+                try:
+                    historical = _lookup_historical_last_seen(
+                        history_conn, target_ip, tenant_id=tenant_id, site_id=site_id,
+                        authorized_device_ids=authorized_device_ids,
+                    )
+                finally:
+                    history_conn.close()
+            except Exception:
+                logger.debug("[IPLocatorV2] historical lookup unavailable")
         if historical is not None:
             result["historical_last_seen"] = historical
         result["status"] = "partial" if deadline_exceeded or result["coverage_gaps"] else "failed"
@@ -4144,7 +4182,7 @@ def _trace_ip_uncached(
                     mac_collected_at = ""
                     mac_task_id = ""
                     mac_negative = False
-                    if cache is not None and mac_key and not force_refresh and not _pending_fact_invalidation(scope_hash, target_ip):
+                    if cache is not None and mac_key and _may_reuse_locator_facts(force_refresh, scope_hash, target_ip):
                         cached_mac = cache.get_json(mac_key)
                         cached_mac = _cached_observation_is_current(
                             cached_mac,
@@ -4167,7 +4205,7 @@ def _trace_ip_uncached(
                                     "negative_redis" if mac_negative else "redis",
                                     vrf=vrf,
                                 )
-                    if not records and not mac_negative and not force_refresh:
+                    if not records and not mac_negative and _may_reuse_locator_facts(force_refresh, scope_hash, target_ip):
                         observation = _find_fresh_observation(
                             tenant_id=tenant_id,
                             scope_hash=scope_hash,
@@ -4222,7 +4260,7 @@ def _trace_ip_uncached(
                             )
                     full_snapshot_records = None
                     full_snapshot_at = ""
-                    if not force_refresh and not _pending_fact_invalidation(scope_hash, target_ip):
+                    if _may_reuse_locator_facts(force_refresh, scope_hash, target_ip):
                         if cache is not None and mac_snapshot_key:
                             cached_snapshot = cache.get_json(mac_snapshot_key)
                             cached_snapshot = _cached_observation_is_current(
