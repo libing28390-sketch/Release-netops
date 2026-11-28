@@ -298,7 +298,7 @@ def test_structured_intent_adds_only_missing_operational_slots(monkeypatch: pyte
             "请提供目标设备、站点或告警时间范围。",
         ),
         (
-            "排查延迟指标",
+            "查询延迟指标",
             '{"intent":"troubleshooting","filters":{"device_id":"edge-01"},"confidence":0.84}',
             "metric",
             "请说明要关注的指标，例如延迟、丢包、CPU 或接口利用率。",
@@ -457,7 +457,9 @@ def test_new_read_only_knowledge_question_supersedes_stale_generic_clarification
 
 
 def test_parser_failure_returns_local_user_facing_reason_without_synthesis_provider(monkeypatch: pytest.MonkeyPatch) -> None:
-    from ai.services.assistant import AIAssistantService
+    from ai.services.assistant import AIAssistantService, settings
+    # Exercise the compatibility parser pipeline whose failure is mocked.
+    monkeypatch.setattr(settings, "AI_COPILOT_AGENTIC_CHAT_ENABLED", False)
 
     async def fake_parse(*args, **kwargs):
         return {
@@ -520,7 +522,8 @@ def test_parser_provider_failure_exposes_attempt_without_claiming_generated_answ
 def test_streaming_assistant_short_circuits_dangerous_intent_clarification(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from ai.services.assistant import AIAssistantService
+    from ai.services.assistant import AIAssistantService, settings
+    monkeypatch.setattr(settings, "AI_COPILOT_AGENTIC_CHAT_ENABLED", False)
 
     async def fake_parse_intent(*args, **kwargs):
         return {

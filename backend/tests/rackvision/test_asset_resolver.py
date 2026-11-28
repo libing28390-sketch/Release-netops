@@ -46,7 +46,12 @@ def test_unknown_model_never_returns_null_and_reports_generic_fallback():
     assert resolved["asset_key"]
     assert resolved["resolution_level"] == "global_generic"
     assert resolved["fidelity"] == "generic"
-    assert resolved["render_strategy"] in {"procedural", "procedural_until_glb_approved"}
+    if resolved["render_strategy"] == "glb":
+        # An approved generic mesh may render visually, but never upgrades the
+        # resolution_level or fidelity to an exact vendor/model match.
+        assert resolved["available"] is True
+    else:
+        assert resolved["render_strategy"] in {"procedural", "procedural_until_glb_approved"}
 
 
 def test_registry_model_alias_precedes_alphabetical_h3c_family_fallback():

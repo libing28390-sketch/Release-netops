@@ -124,9 +124,9 @@ def test_dashboards_suite_completeness():
         device_dashboard = json.load(f)
     port_status_panel = next(
         panel
-        for panel in device_dashboard["panels"]
+        for panel in _iter_panels(device_dashboard["panels"])
         if any(
-            target.get("expr", "").startswith("ifOperStatus{")
+            "ifOperStatus{" in target.get("expr", "")
             and "group_left(ifName, ifAlias)" in target.get("expr", "")
             for target in panel.get("targets", [])
         )
@@ -348,12 +348,13 @@ def test_wireless_dashboard_uses_hardware_inventory_job_and_joins_by_device():
 
     offline_ac_query = panels["离线 AC"]["targets"][0]["expr"]
     online_ac_query = panels["在线 AC"]["targets"][0]["expr"]
-    assert "count by (site_name,vendor,role,hostname)" in offline_ac_query
-    assert 'role="wireless_controller"' in offline_ac_query
-    assert "- count(count by (site_name,vendor,role,hostname)" in offline_ac_query
-    assert 'up{' in online_ac_query and '== 1' in online_ac_query
-    assert "* 0" in offline_ac_query
-    assert "* 0" in online_ac_query  # Existing but fully-down AC targets show 0.
+    # Both counts use the same binary up series, deduplicated by stable target identity.
+    assert online_ac_query.startswith("sum(max by (asset_id,instance) (")
+    assert offline_ac_query == "sum(1 - " + online_ac_query[4:]
+    for expression in (online_ac_query, offline_ac_query):
+        assert 'up{' in expression and 'role="wireless_controller"' in expression
+        assert 'and on(asset_id) nexora_hw_sensor_info{' in expression
+        assert "or vector(0)" not in expression  # No target is distinct from all targets down.
 
     panels_by_id = {panel["id"]: panel for panel in dashboard["panels"]}
     for panel_id in (9, 10):
@@ -748,7 +749,11 @@ def test_all_grafana_dashboards_have_consistent_kpi_and_section_layout():
         assert all(panel["gridPos"]["h"] == 4 for panel in first_summary_row)
 
         stat_panels = [panel for panel in panels if panel["type"] == "stat"]
-        assert all(panel["options"]["graphMode"] == "none" for panel in stat_panels)
+        # NOC v3 allows area presentation, with explicit no-sparkline exceptions.
+        from monitoring.grafana.generate_dashboards import NOC_V3_NO_SPARKLINE_STATS
+        for panel in stat_panels:
+            expected_mode = "none" if (dashboard["uid"], panel["id"]) in NOC_V3_NO_SPARKLINE_STATS else "area"
+            assert panel["options"]["graphMode"] == expected_mode
         assert all(
             target.get("instant") is True
             for panel in stat_panels

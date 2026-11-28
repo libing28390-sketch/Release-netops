@@ -4640,7 +4640,7 @@ NOC_V3_PANEL_DESCRIPTIONS = {
     ("nexora-postgres-performance", 4): "单位时间内消耗的 SQL 累计执行秒数；高并发场景下该值可能大于 1。",
     ("nexora-postgres-performance", 5): "单次 SQL 执行的加权平均耗时（毫秒），突增通常意味着出现锁等待或慢查询。",
     ("nexora-postgres-performance", 6): "每秒 SQL 返回或影响的记录行数，用于衡量批量读写压力。",
-    ("nexora-postgres-performance", 7): "数据库级 Shared Buffer 内存缓存命中率（通常建议 >95%）；该指标反映库级整体缓存效率，不属于单条 SQL。",
+    ("nexora-postgres-performance", 7): "数据库 Shared Buffer 缓存命中率（通常建议 >95%），反映整体缓存效率，非单条 SQL 指标。",
     ("nexora-postgres-performance", 10): "按累计耗时速率排名的 Top10 热点 Query ID（已脱敏，不展示原始 SQL 文本）。",
     ("nexora-postgres-performance", 11): "按平均单次执行耗时排名的 Top10 最慢 Query ID，建议优先针对性优化索引。",
 }
