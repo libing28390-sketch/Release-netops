@@ -76,8 +76,8 @@ jobs:
           PY
       - name: Native locator and IPAM regression
         run: python -m pytest backend/tests/ip_locator backend/tests/ipam backend/tests/ai/test_neural_memory_graph.py -q -s --junitxml=locator-native.xml
-      - name: Full backend regression (manual opt-in)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_backend }}
+      - name: Full backend regression (P0 merge gate)
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || inputs.full_backend) }}
         run: python -m pytest backend/tests -q --junitxml=backend-native.xml
       - name: Upload test results
         if: always()
