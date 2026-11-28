@@ -3767,15 +3767,27 @@ def generate_interface_prefixes(
                 )
                 updates: list[str] = []
                 params: list = []
-                if not (existing['gateway_device_id'] or '').strip() and inferred['gateway_device_id']:
-                    updates.append(f'gateway_device_id = {_PH}')
-                    params.append(inferred['gateway_device_id'])
-                if not (existing['gateway_interface_id'] or '').strip() and inferred['gateway_interface_id']:
-                    updates.append(f'gateway_interface_id = {_PH}')
-                    params.append(inferred['gateway_interface_id'])
-                if not (existing['gateway'] or '').strip() and inferred['gateway']:
-                    updates.append(f'gateway = {_PH}')
-                    params.append(inferred['gateway'])
+                # Do not attach an observed interface to a different configured
+                # gateway or overwrite a conflicting owner.
+                existing_gateway = str(existing['gateway'] or '').strip()
+                existing_device = str(existing['gateway_device_id'] or '').strip()
+                existing_interface = str(existing['gateway_interface_id'] or '').strip()
+                gateway_matches = (
+                    bool(inferred['gateway'])
+                    and (not existing_gateway or existing_gateway == inferred['gateway'])
+                    and (not existing_device or existing_device == inferred['gateway_device_id'])
+                    and (not existing_interface or existing_interface == inferred['gateway_interface_id'])
+                )
+                if gateway_matches:
+                    if not existing_device and inferred['gateway_device_id']:
+                        updates.append(f'gateway_device_id = {_PH}')
+                        params.append(inferred['gateway_device_id'])
+                    if not existing_interface and inferred['gateway_interface_id']:
+                        updates.append(f'gateway_interface_id = {_PH}')
+                        params.append(inferred['gateway_interface_id'])
+                    if not existing_gateway:
+                        updates.append(f'gateway = {_PH}')
+                        params.append(inferred['gateway'])
                 if not (existing['vlan_id'] or '').strip() and inferred['vlan_id']:
                     updates.append(f'vlan_id = {_PH}')
                     params.append(inferred['vlan_id'])
@@ -3849,6 +3861,15 @@ def generate_interface_prefixes(
             subnet_id = prefix_ids.get(candidate['candidate_id'])
             if not subnet_id:
                 continue
+            # Read the actual stored gateway, including ownership, rather than
+            # assuming that an inferred gateway was accepted for this Prefix.
+            gateway_row = conn.execute(
+                f'''SELECT prefix, gateway, gateway_device_id, gateway_interface_id
+                    FROM prefixes WHERE id = {_PH}''',
+                (subnet_id,),
+            ).fetchone()
+            gateway_info = dict(gateway_row) if gateway_row else {}
+            gateway = _configured_prefix_gateway(gateway_info)
             for interface in candidate['interfaces']:
                 existing_address = conn.execute(
                     f'''SELECT id FROM ip_addresses
@@ -3858,6 +3879,18 @@ def generate_interface_prefixes(
                 if existing_address:
                     existing_addresses += 1
                     continue
+                # Register a gateway only when the actual Prefix owner matches
+                # the collected device and (when set) its interface. All normal
+                # network/broadcast, pool, VIP and address-space checks still run.
+                gateway_device_id = str(gateway_info.get('gateway_device_id') or '').strip()
+                gateway_interface_id = str(gateway_info.get('gateway_interface_id') or '').strip()
+                is_gateway = bool(
+                    gateway and gateway == interface['address']
+                    and gateway_device_id
+                    and gateway_device_id == str(interface.get('device_id') or '').strip()
+                    and (not gateway_interface_id
+                         or gateway_interface_id == str(interface.get('interface_id') or '').strip())
+                )
                 try:
                     _create_address_with_conn(
                         conn,
@@ -3867,7 +3900,8 @@ def generate_interface_prefixes(
                         device_id=interface['device_id'],
                         interface_name=interface['interface_name'],
                         interface_id=interface['interface_id'],
-                        device_type='interface',
+                        device_type='gateway' if is_gateway else 'interface',
+                        purpose='gateway' if is_gateway else '',
                         status='active',
                         source_type='interface_collection',
                         source_ref=interface.get('source_ref') or interface.get('interface_id'),
