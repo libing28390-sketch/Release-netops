@@ -1374,6 +1374,7 @@ def test_lag_member_query_requires_coordinated_callback(monkeypatch):
     ("GE1/0/1 Selected\nGE1/0/2 Unselected\nGE1/0/3 Up", ["GE1/0/1", "GE1/0/3"], []),
     ("Gi1/0/1(P) Gi1/0/2(D) Gi1/0/3(I) Gi1/0/4(Z)", ["Gi1/0/1"], ["Gi1/0/4"]),
     ("GE1/0/1 S\nGE1/0/1 U", [], ["GE1/0/1"]),
+    ("GE1/0/1 S\nGigabitEthernet1/0/1 Unknown", [], ["GE1/0/1"]),
     ("GE1/0/1", [], ["GE1/0/1"]),
 ])
 def test_lag_state_parser_only_accepts_positive_members(output, selected, unresolved):
