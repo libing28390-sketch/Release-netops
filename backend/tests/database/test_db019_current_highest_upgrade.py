@@ -93,6 +93,32 @@ def test_db019_schema_bootstrap_calls_strict_runner_and_preserves_v1():
     assert "tracking_count_unchanged" in data["checks"]["repeat"]
 
 
+def test_legacy_textfsm_migration_339_is_reconciled_before_applying_347(isolated_db):
+    conn = get_db_connection()
+    try:
+        reference = get_applied_records(conn)
+        conn.execute("ALTER TABLE ai_messages DROP COLUMN cached_tokens")
+        conn.execute(
+            "UPDATE schema_migrations SET name = ? WHERE version = 339",
+            ("h3c_v7_bgp_vrf_route_command",),
+        )
+        conn.execute("DELETE FROM schema_migrations WHERE version = 347")
+        conn.commit()
+
+        plan = build_migration_plan(conn, use_pg=True)
+        assert plan.safe
+        assert plan.pending_versions == (339, 347)
+        assert run_migrations(conn, use_pg=True, strict_history=True) == 2
+        assert get_applied_records(conn) == reference
+        assert conn.execute(
+            "SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() "
+            "AND table_name = 'ai_messages' AND column_name = 'cached_tokens'"
+        ).fetchone()
+        assert run_migrations(conn, use_pg=True, strict_history=True) == 0
+    finally:
+        conn.close()
+
+
 def test_db019_failure_drift_and_evidence_boundaries_are_explicit():
     data = _load()
     assert "module_exception_rolls_back_data" in data["checks"]["failure"]

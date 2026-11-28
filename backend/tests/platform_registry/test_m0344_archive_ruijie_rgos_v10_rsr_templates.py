@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -8,6 +7,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+from backend.tests.pg_test_utils import PostgreSQLTestConnection, postgresql_test_driver  # noqa: E402
 from database.migrations import (  # noqa: E402
     discover_migrations,
     m0342_ruijie_rgos_v10_official_samples as legacy_migration,
@@ -16,9 +16,8 @@ from database.migrations import (  # noqa: E402
 from database.migrations.m0100_register_builtin_textfsm_templates import _checksum  # noqa: E402
 
 
-def _connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+def _connection() -> PostgreSQLTestConnection:
+    conn = postgresql_test_driver.connect()
     conn.executescript(
         """
         CREATE TABLE platform_profiles (
@@ -46,7 +45,7 @@ def _connection() -> sqlite3.Connection:
     return conn
 
 
-def _release_checksum(conn: sqlite3.Connection, release_id: str) -> str:
+def _release_checksum(conn: PostgreSQLTestConnection, release_id: str) -> str:
     actions = [
         dict(row)
         for row in conn.execute(

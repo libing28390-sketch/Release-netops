@@ -41,6 +41,8 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 _TRACKING_TABLE = "schema_migrations"
+_AI_CACHE_VERSION = 339
+_H3C_LEGACY_NAME = "h3c_v7_bgp_vrf_route_command"
 
 
 class MigrationHistoryError(RuntimeError):
@@ -62,6 +64,7 @@ class MigrationPlan:
     pending_versions: tuple[int, ...]
     unknown_applied_versions: tuple[int, ...]
     name_drift: tuple[tuple[int, str, str], ...]
+    replace_legacy_339: bool = False
 
     @property
     def safe(self) -> bool:
@@ -110,6 +113,15 @@ def build_migration_plan(conn, use_pg: bool | None = None) -> MigrationPlan:
         raise MigrationHistoryError("Duplicate migration versions discovered")
 
     records = get_applied_records(conn)
+    replace_legacy_339 = (
+        records.get(_AI_CACHE_VERSION) == _H3C_LEGACY_NAME
+        and getattr(discovered.get(_AI_CACHE_VERSION), "NAME", None) == "ai_message_cached_tokens"
+        and getattr(discovered.get(347), "NAME", None) == _H3C_LEGACY_NAME
+    )
+    if replace_legacy_339:
+        # The old H3C row does not prove the AI column was installed. Plan both
+        # migrations as needed, and replace that row only once AI DDL succeeds.
+        records.pop(_AI_CACHE_VERSION)
     unknown = tuple(sorted(set(records) - set(discovered)))
     drift_entries = []
     for version in sorted(set(records) & set(discovered)):
@@ -134,6 +146,7 @@ def build_migration_plan(conn, use_pg: bool | None = None) -> MigrationPlan:
         pending_versions=pending,
         unknown_applied_versions=unknown,
         name_drift=drift,
+        replace_legacy_339=replace_legacy_339,
     )
 
 
@@ -218,10 +231,18 @@ def run_migrations(
             continue
         try:
             module.upgrade(cursor, use_pg)
-            cursor.execute(
-                f"INSERT INTO {_TRACKING_TABLE} (version, name, applied_at) VALUES (?, ?, ?)",
-                (version, name, _utc_now_iso()),
-            )
+            if version == _AI_CACHE_VERSION and plan.replace_legacy_339:
+                cursor.execute(
+                    f"UPDATE {_TRACKING_TABLE} SET name = ?, applied_at = ? WHERE version = ? AND name = ?",
+                    (name, _utc_now_iso(), version, _H3C_LEGACY_NAME),
+                )
+                if cursor.rowcount != 1:
+                    raise MigrationHistoryError("Legacy migration 339 changed after planning")
+            else:
+                cursor.execute(
+                    f"INSERT INTO {_TRACKING_TABLE} (version, name, applied_at) VALUES (?, ?, ?)",
+                    (version, name, _utc_now_iso()),
+                )
             conn.commit()
             count += 1
             logger.info("[migrations] Applied %04d_%s", version, name)

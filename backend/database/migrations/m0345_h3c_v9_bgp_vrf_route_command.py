@@ -1,6 +1,6 @@
 """Repair the default single-VPN BGP route query in current system V9 releases."""
 
-from .m0339_h3c_v7_bgp_vrf_route_command import (
+from .m0347_h3c_v7_bgp_vrf_route_command import (
     OLD_COMMAND,
     _checksum,
     _normalize,

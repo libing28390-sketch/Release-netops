@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 
-from database.migrations import m0339_h3c_v7_bgp_vrf_route_command as migration
+from backend.tests.pg_test_utils import PostgreSQLTestConnection, postgresql_test_driver
+from database.migrations import m0347_h3c_v7_bgp_vrf_route_command as migration
 
 
-def _create_schema() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+def _create_schema() -> PostgreSQLTestConnection:
+    conn = postgresql_test_driver.connect()
     conn.executescript(
         """
         CREATE TABLE platform_profiles (
@@ -70,7 +69,7 @@ def test_migration_repairs_only_published_system_h3c_v7_route_actions_and_is_ide
     _insert_release(conn, "system-v9", "v9-published", "PUBLISHED", old)
     _insert_release(conn, "tenant-v7", "tenant-published", "PUBLISHED", old)
 
-    migration.upgrade(conn.cursor(), use_pg=False)
+    migration.upgrade(conn.cursor(), use_pg=True)
     first = conn.execute(
         "SELECT command, command_checksum FROM platform_release_actions WHERE id = 'action-v7-published'"
     ).fetchone()
@@ -106,7 +105,7 @@ def test_migration_repairs_only_published_system_h3c_v7_route_actions_and_is_ide
     updated_at = conn.execute(
         "SELECT updated_at FROM platform_releases WHERE id = 'v7-published'"
     ).fetchone()[0]
-    migration.upgrade(conn.cursor(), use_pg=False)
+    migration.upgrade(conn.cursor(), use_pg=True)
     assert conn.execute(
         "SELECT updated_at FROM platform_releases WHERE id = 'v7-published'"
     ).fetchone()[0] == updated_at

@@ -1,14 +1,13 @@
 import hashlib
 import json
-import sqlite3
 
+from backend.tests.pg_test_utils import postgresql_test_driver
 from database.migrations import m0340_ruijie_v12_stp_summary as migration
 from services.platform_registry_service import get_profile_action_commands
 
 
 def test_upgrades_only_unbound_default_stp_actions_in_current_v12_system_releases():
-    with sqlite3.connect(":memory:") as conn:
-        conn.row_factory = sqlite3.Row
+    with postgresql_test_driver.connect() as conn:
         conn.executescript(
             """
             CREATE TABLE platform_profiles (
@@ -44,9 +43,9 @@ def test_upgrades_only_unbound_default_stp_actions_in_current_v12_system_release
             (old,),
         )
 
-        migration.upgrade(conn.cursor(), use_pg=False)
+        migration.upgrade(conn.cursor(), use_pg=True)
         first = conn.execute("SELECT * FROM platform_release_actions ORDER BY id").fetchall()
-        migration.upgrade(conn.cursor(), use_pg=False)
+        migration.upgrade(conn.cursor(), use_pg=True)
         assert conn.execute("SELECT * FROM platform_release_actions ORDER BY id").fetchall() == first
 
         results = {row["id"]: row for row in first}

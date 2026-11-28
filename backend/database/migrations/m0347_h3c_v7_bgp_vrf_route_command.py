@@ -13,7 +13,7 @@ import json
 from datetime import datetime, timezone
 
 
-VERSION = 339
+VERSION = 347
 NAME = "h3c_v7_bgp_vrf_route_command"
 
 OLD_COMMAND = "display bgp vpnv4 vpn-instance {{vrf}} routing-table"
