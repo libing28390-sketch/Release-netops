@@ -6,6 +6,9 @@ FDB projection. This is not a PostgreSQL performance or full locator test.
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import sqlite3
+import os
+
+import pytest
 
 from services import ipam_discovery_service as discovery
 from services.ip_locator_endpoint_evidence import _current_cross_device_fdb_path
@@ -15,10 +18,18 @@ def _dict_row(cursor, row):
     return dict(zip((column[0] for column in cursor.description), row))
 
 
-def test_three_tier_300_devices_100k_fdb_100_parallel(tmp_path, monkeypatch):
+@pytest.mark.parametrize("devices, aggregations, hosts", [
+    (300, 9, 33334),
+    pytest.param(1000, 39, 333334, marks=pytest.mark.skipif(
+        os.getenv("IP_LOCATOR_SCALE_LARGE") != "1", reason="opt-in million-row scale test",
+    )),
+])
+def test_three_tier_fdb_100_parallel(tmp_path, monkeypatch, devices, aggregations, hosts):
     db = str(tmp_path / "fabric.db")
     stamp = datetime.now(timezone.utc).isoformat()
-    allowed = {f"d{i}" for i in range(300)}
+    first_access = aggregations + 1
+    access_count = devices - first_access
+    allowed = {f"d{i}" for i in range(devices)}
     conn = sqlite3.connect(db)
     try:
         conn.executescript("""
@@ -53,14 +64,14 @@ def test_three_tier_300_devices_100k_fdb_100_parallel(tmp_path, monkeypatch):
             return (a + ":" + b, a, b, p, q, "up", "physical", "lldp", stamp)
 
         interfaces, links = [], []
-        for i in range(1, 10):
+        for i in range(1, first_access):
             agg = f"d{i}"
             p, q = f"GE1/0/{i}", "GE1/0/1"
             interfaces.extend([port("d0", p, "trunk"), port(agg, q, "trunk")])
             links.append(link("d0", agg, p, q))
-        for i in range(10, 300):
-            agg, access = f"d{1 + (i - 10) % 9}", f"d{i}"
-            p, q = f"GE1/0/{2 + (i - 10) // 9}", "GE1/0/1"
+        for i in range(first_access, devices):
+            agg, access = f"d{1 + (i - first_access) % aggregations}", f"d{i}"
+            p, q = f"GE1/0/{2 + (i - first_access) // aggregations}", "GE1/0/1"
             interfaces.extend([port(agg, p, "trunk"), port(access, q, "trunk"),
                                port(access, "GE1/0/2", "access")])
             links.append(link(agg, access, p, q))
@@ -71,21 +82,24 @@ def test_three_tier_300_devices_100k_fdb_100_parallel(tmp_path, monkeypatch):
             return (device, mac, "7", name, classification, "tenant-default",
                     "site", "space", "resolved", "dynamic", 1, "recent", "valid", stamp)
 
-        records, targets = [], []
-        for h in range(33334):
-            i = 10 + h % 290
-            a, p = 1 + (i - 10) % 9, 2 + (i - 10) // 9
+        def target(h):
+            i = first_access + h % access_count
             mac = "02:" + ":".join(f"{(h >> shift) & 255:02x}" for shift in (32, 24, 16, 8, 0))
-            records.extend([
-                row("d0", mac, f"GE1/0/{a}", "trunk_tagged_interface"),
-                row(f"d{a}", mac, f"GE1/0/{p}", "trunk_tagged_interface"),
-                row(f"d{i}", mac, "GE1/0/2", "access_edge"),
-            ])
-            targets.append((mac, f"d{i}"))
-        conn.executemany("INSERT INTO fdb VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", records)
+            return mac, i
+
+        def records():
+            for h in range(hosts):
+                mac, i = target(h)
+                a = 1 + (i - first_access) % aggregations
+                p = 2 + (i - first_access) // aggregations
+                yield row("d0", mac, f"GE1/0/{a}", "trunk_tagged_interface")
+                yield row(f"d{a}", mac, f"GE1/0/{p}", "trunk_tagged_interface")
+                yield row(f"d{i}", mac, "GE1/0/2", "access_edge")
+
+        conn.executemany("INSERT INTO fdb VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", records())
         conn.commit()
-        assert len(records) == 100002
-        assert len(links) == 299
+        assert conn.execute("SELECT COUNT(*) FROM fdb").fetchone()[0] == hosts * 3
+        assert len(links) == devices - 1
     finally:
         conn.close()
 
@@ -119,4 +133,7 @@ def test_three_tier_300_devices_100k_fdb_100_parallel(tmp_path, monkeypatch):
             reader.close()
 
     with ThreadPoolExecutor(max_workers=100) as pool:
-        list(pool.map(locate, [targets[i * 331] for i in range(100)]))
+        targets = [(mac, f"d{device}") for mac, device in (
+            target(i * (hosts // 100)) for i in range(100)
+        )]
+        list(pool.map(locate, targets))
