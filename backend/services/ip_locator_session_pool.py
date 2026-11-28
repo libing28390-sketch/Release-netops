@@ -162,7 +162,6 @@ class ActiveLocatorSession:
         remaining = self._pool._operation_remaining()
         if remaining <= 0:
             raise TimeoutError("locator CLI task deadline exceeded")
-        selected_read_timeout = max(1, min(int(read_timeout), int(remaining)))
         from services.network_access_limiter import get_network_access_limiter
 
         with get_network_access_limiter().ssh(
@@ -175,6 +174,11 @@ class ActiveLocatorSession:
         ):
             if entry.lease_lost or entry.closing or not entry.network_lease.is_valid:
                 raise LocatorSessionLeaseLost("locator SSH session lease is no longer owned")
+            # Waiting for the shared command slot also consumes the budget.
+            remaining = self._pool._operation_remaining()
+            if remaining <= 0:
+                raise LocatorSessionError("locator CLI command budget exhausted")
+            selected_read_timeout = min(float(read_timeout), remaining)
             try:
                 output = entry.client.send_command(
                     command,
@@ -187,6 +191,9 @@ class ActiveLocatorSession:
                 if not _connection_alive(entry.client):
                     self._pool._mark_for_close(entry)
                 raise
+        if self._pool._operation_remaining() <= 0:
+            self._pool._mark_for_close(entry)
+            raise LocatorSessionError("locator CLI command exceeded deadline")
         return str(output or "")
 
     def send_command(self, command: str) -> SimpleNamespace:
@@ -276,13 +283,16 @@ class IPLocatorSessionPool:
         if not attempts:
             raise PermissionError("No usable SSH credentials are configured for this device")
         last_auth_error: Exception | None = None
+        deadline = time.monotonic() + max(0.0, timeout)
         for username, password in attempts:
             attempt = dict(device)
             attempt["platform"] = platform
             attempt["_ssh_username"] = username
             attempt["_ssh_password"] = password
             params = legacy._build_ssh_params(attempt)
-            remaining = max(0.1, timeout)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise LocatorSessionError("locator SSH connect deadline exceeded")
             client = None
             try:
                 with get_network_access_limiter().ssh(
@@ -293,12 +303,26 @@ class IPLocatorSessionPool:
                     timeout=remaining,
                     coordinated=False,
                 ):
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise LocatorSessionError("locator SSH connect budget exhausted")
+                    # Bound each driver phase by the remaining total time.
+                    # Netmiko/Paramiko can still spend time in multiple phases;
+                    # never accept a connection that completes after deadline.
+                    for key in ("timeout", "conn_timeout", "auth_timeout", "banner_timeout",
+                                "blocking_timeout", "session_timeout"):
+                        configured = float(params.get(key) or remaining)
+                        params[key] = min(configured, remaining)
                     client = legacy.ConnectHandler(**params)
+                if time.monotonic() >= deadline:
+                    raise LocatorSessionError("locator SSH connection exceeded deadline")
                 if params.get("secret"):
                     try:
                         client.enable()
                     except Exception:
                         pass
+                if time.monotonic() >= deadline:
+                    raise LocatorSessionError("locator SSH enable exceeded deadline")
                 return client, username
             except NetmikoAuthenticationException as exc:
                 last_auth_error = exc
@@ -616,6 +640,9 @@ class IPLocatorSessionPool:
                 result = callback()
                 if entry.lease_lost:
                     raise LocatorSessionLeaseLost("locator SSH session lease was lost during the command")
+                if time.monotonic() >= deadline:
+                    entry.close_after_use = True
+                    raise LocatorSessionError("locator CLI callback exceeded deadline")
                 return result
             except Exception:
                 if not _connection_alive(entry.client):
