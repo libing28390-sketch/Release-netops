@@ -112,6 +112,11 @@ def _current_cross_device_fdb_path(
         return None
     if arp.get("source_vrf_context_status") not in {"global", "vrf"}:
         return None
+    if (_id(arp.get("source_device_id"))
+            and _id(arp.get("source_device_id")) != _id(first_fdb.get("source_device_id"))):
+        return None
+    if discovery._normalized_mac(arp.get("mac")) != mac or discovery._normalize_vlan_number(arp.get("vlan")) != vlan:
+        return None
     target_vlan = int(vlan)
     now = discovery._utc_now()
     max_age = timedelta(seconds=300)
@@ -123,16 +128,23 @@ def _current_cross_device_fdb_path(
     def port_key(value: Any) -> str:
         return normalize_interface_name(_id(value)).strip().lower()
 
+    # Request-local only: each device's interface inventory is read once.
+    # Do not reuse across requests; publication revalidates the full path.
+    interface_cache: dict[str, dict[str, list[dict[str, Any]]]] = {}
+
     def interface(device_id: str, port: str) -> dict[str, Any] | None:
-        rows = [
-            dict(row) for row in conn.execute(
+        if device_id not in interface_cache:
+            indexed: dict[str, list[dict[str, Any]]] = {}
+            for raw in conn.execute(
                 """SELECT id, interface_name, interface_type, switchport_mode,
                           access_vlan, native_vlan, allowed_vlans, admin_status,
                           oper_status, last_seen
                      FROM interfaces WHERE device_id = ?""", (device_id,),
-            ).fetchall()
-            if port_key(row.get("interface_name")) == port_key(port)
-        ]
+            ).fetchall():
+                row = dict(raw)
+                indexed.setdefault(port_key(row.get("interface_name")), []).append(row)
+            interface_cache[device_id] = indexed
+        rows = interface_cache[device_id].get(port_key(port), [])
         if len(rows) != 1:
             return None
         row = rows[0]
@@ -146,8 +158,8 @@ def _current_cross_device_fdb_path(
     def tagged(row: dict[str, Any] | None) -> bool:
         return bool(row and _id(row.get("switchport_mode")).lower() == "trunk"
                     and target_vlan in parse_vlan_values(row.get("allowed_vlans"))
-                    and row.get("native_vlan") is not None
-                    and str(row["native_vlan"]) != vlan)
+                    and discovery._normalize_vlan_number(row.get("native_vlan"))
+                    and discovery._normalize_vlan_number(row.get("native_vlan")) != vlan)
 
     def interface_proof(row: dict[str, Any]) -> dict[str, Any]:
         return {key: _id(row.get(key)) for key in (
@@ -226,7 +238,10 @@ def _current_cross_device_fdb_path(
                 local = link.get(f"{side}_port_normalized") or link.get(f"{side}_port")
                 if port_key(local) != port_key(port):
                     continue
-                if _id(link.get("status")).lower() != "up":
+                status = _id(link.get("status")).lower()
+                if status == "degraded":
+                    return None
+                if status != "up":
                     continue
                 if (_id(link.get("link_kind")).lower() != "physical"
                         or _id(link.get("discovery_source")).lower() not in {"lldp", "cdp"}
