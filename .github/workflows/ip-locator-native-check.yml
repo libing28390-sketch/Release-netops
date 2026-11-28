@@ -40,6 +40,8 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - name: Enforce PostgreSQL-only source policy
+        id: pg_policy
+        continue-on-error: true
         run: python scripts/validate_postgresql_only.py --list
       - name: Install test dependencies
         run: |
@@ -87,3 +89,8 @@ jobs:
       - name: Remove isolated containers
         if: always()
         run: docker rm -f locator-ci-pg locator-ci-redis || true
+      # A source-policy failure still fails the job, but must not suppress
+      # useful native regression results for existing unrelated debt.
+      - name: Enforce source-policy result
+        if: always() && steps.pg_policy.outcome == 'failure'
+        run: exit 1
