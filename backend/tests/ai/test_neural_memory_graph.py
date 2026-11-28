@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
-from contextlib import contextmanager
-from unittest.mock import patch
-
 import pytest
 
 from ai.services import memory_graph
@@ -13,20 +9,15 @@ from ai.services.assistant import AIAssistantService
 
 
 @pytest.fixture
-def isolated_memory_db(tmp_path):
-    """Provide an isolated SQLite DB implementing the same SQL interface for fast unit testing."""
-    db_file = tmp_path / "memory_test.db"
-    conn = sqlite3.connect(str(db_file))
+def isolated_memory_db(isolated_db):
+    """Use the fully isolated PostgreSQL database supplied by backend pytest."""
     memory_graph._MEMORY_TABLES_READY = False
-
-    @contextmanager
-    def _fake_conn():
-        yield conn
-
-    with patch.object(memory_graph, "get_db_connection", _fake_conn):
-        yield conn
-    conn.close()
-    memory_graph._MEMORY_TABLES_READY = False
+    try:
+        yield isolated_db
+    finally:
+        # The next test may use another cloned database, so never reuse this
+        # process-level schema flag across fixture boundaries.
+        memory_graph._MEMORY_TABLES_READY = False
 
 
 def test_short_term_rolling_summary_preserves_evicted_entities_in_long_sessions():
