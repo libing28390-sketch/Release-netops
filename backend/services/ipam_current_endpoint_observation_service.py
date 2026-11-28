@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core.interface_utils import normalize_interface_name
+from services.ipam_snapshot_write_service import reconcile_current_snapshot
 
 
 _ADDRESS_OBSERVATION_SOURCES = {"arp", "ndp"}
@@ -334,31 +335,10 @@ def finish_current_endpoint_collection(
         raise ValueError("collection_generation_superseded")
 
     if normalized_status in _REPLACE_STATUSES:
-        conn.execute(
-            """DELETE FROM ipam_current_endpoint_observations
-                WHERE source_device_id = ? AND observation_source = ?
-                  AND context_source = ? AND context_type = ? AND local_context_key = ?""",
-            (normalized_device_id, normalized_source, *normalized_context),
+        reconcile_current_snapshot(
+            conn, scope=(normalized_device_id, normalized_source, *normalized_context),
+            generation=normalized_generation, rows=normalized_rows,
         )
-        for row in normalized_rows:
-            conn.execute(
-                """INSERT INTO ipam_current_endpoint_observations (
-                       source_device_id, observation_source, context_source,
-                       context_type, local_context_key, local_context_name,
-                       ip_address, mac_address, interface_name,
-                       normalized_interface_name, vlan_key, generation,
-                       observed_at, run_id, metadata_json
-                   ) VALUES (
-                       ?, ?, ?, ?, ?, ?, ?::inet, ?, ?, ?, ?, ?, ?, ?, ?::jsonb
-                   )""",
-                (
-                    row["source_device_id"], row["observation_source"], row["context_source"],
-                    row["context_type"], row["local_context_key"], row["local_context_name"],
-                    row["ip_address"], row["mac_address"], row["interface_name"],
-                    row["normalized_interface_name"], row["vlan_key"], row["generation"],
-                    row["observed_at"], row["run_id"], row["metadata_json"],
-                ),
-            )
 
     conn.execute(
         """UPDATE ipam_endpoint_collection_states
