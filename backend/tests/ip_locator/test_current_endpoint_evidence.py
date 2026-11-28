@@ -233,7 +233,7 @@ def test_targeted_current_projection_retains_same_target_conflicts(isolated_db):
 @pytest.mark.parametrize("failure", [
     "", "unknown_scope", "wrong_space", "unauthorized", "wrong_vlan",
     "stale_link", "stale_interface", "ambiguous_fdb", "inferred_link",
-    "edge_has_neighbor",
+    "edge_has_neighbor", "wrong_native", "degraded_second_link", "root_mismatch",
 ])
 def test_cross_device_current_fdb_requires_positive_tagged_path(monkeypatch, failure):
     from services.ip_locator_endpoint_evidence import _current_cross_device_fdb_path
@@ -254,7 +254,7 @@ def test_cross_device_current_fdb_requires_positive_tagged_path(monkeypatch, fai
                 path_classification="trunk_tagged_interface")
     edge = dict(common, source_device_id=access, switch_port="GE1/0/2",
                 path_classification="access_edge")
-    arp = dict(common, source_vrf_context_status="global")
+    arp = dict(common, source_device_id=gateway, source_vrf_context_status="global")
     def port(name, mode):
         return {
             "id": name, "interface_name": name, "interface_type": "physical",
@@ -294,6 +294,12 @@ def test_cross_device_current_fdb_requires_positive_tagged_path(monkeypatch, fai
     elif failure == "edge_has_neighbor":
         links.append(dict(link, id="link-2", source_device_id=access,
                           source_port="GE1/0/2", target_device_id="third"))
+    elif failure == "wrong_native":
+        interfaces[access][0]["native_vlan"] = 0
+    elif failure == "degraded_second_link":
+        links.append(dict(link, id="link-2", status="degraded", target_device_id="third"))
+    elif failure == "root_mismatch":
+        arp["source_device_id"] = "third"
 
     class Rows:
         def __init__(self, rows):
