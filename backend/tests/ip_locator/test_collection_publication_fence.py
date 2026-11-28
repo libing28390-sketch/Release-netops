@@ -144,3 +144,70 @@ def test_lock_contention_recovers_savepoint(setup, monkeypatch):
         "SAVEPOINT locator_current_fence", "lock",
         "ROLLBACK TO SAVEPOINT locator_current_fence", "RELEASE SAVEPOINT locator_current_fence",
     ]
+
+def test_native_postgresql_collector_lock_and_savepoint(isolated_db, monkeypatch):
+    """Use two independent PG transactions; never substitute a mock SQL engine."""
+    from database import get_db_connection
+    from psycopg2.errors import LockNotAvailable
+    from services import ip_locator_endpoint_evidence as evidence
+
+    device = "native-pg-fence-test"
+    with get_db_connection() as conn:
+        conn.execute("INSERT INTO tenants (id, name) VALUES ('tenant-default', 'Default') ON CONFLICT(id) DO NOTHING")
+        conn.execute("INSERT INTO devices (id, hostname, tenant_id) VALUES (?, ?, 'tenant-default')", (device, device))
+        for kind in ("arp", "fdb"):
+            conn.execute(
+                """INSERT INTO ipam_endpoint_collection_states
+                   (device_id, observation_source, context_source, context_type,
+                    local_context_key, latest_attempt_generation, last_success_generation, latest_status)
+                   VALUES (?, ?, 'snmp', 'unknown', '', 7, 7, 'scope_unknown')""",
+                (device, kind),
+            )
+        conn.commit()
+
+    expected = {"arp_evidence": [fact(device, context_type="unknown")],
+                "fdb_evidence": [fact(device, context_type="unknown")]}
+    manifest = {"type": "current_endpoint", "version": 1, "target_ip": "192.0.2.1",
+                "context": {"authorized_device_ids": [device]}, "evidence": expected}
+    monkeypatch.setattr(evidence, "find_current_endpoint_evidence", lambda *a, **kw: deepcopy(expected))
+
+    collector = get_db_connection()
+    publisher = get_db_connection()
+    try:
+        # A real FOR UPDATE blocks the publisher's FOR SHARE NOWAIT.
+        collector.execute(
+            "SELECT * FROM ipam_endpoint_collection_states WHERE device_id=? AND observation_source='arp' FOR UPDATE",
+            (device,),
+        ).fetchone()
+        assert tasks._dependency_manifest_current_in_transaction(publisher, manifest, lock=True) == (
+            False, ["dependency_changed:current_endpoint"],
+        )
+        # The savepoint must restore the transaction after the PG lock error.
+        assert publisher.execute("SELECT 1").fetchone()[0] == 1
+        publisher.rollback()
+        collector.rollback()
+
+        assert tasks._dependency_manifest_current_in_transaction(publisher, manifest, lock=True) == (True, [])
+        # The publication fence must prevent a collector from acquiring an
+        # exclusive lock until publication commits or rolls back.
+        with pytest.raises(LockNotAvailable):
+            collector.execute(
+                "SELECT * FROM ipam_endpoint_collection_states WHERE device_id=? AND observation_source='arp' FOR UPDATE NOWAIT",
+                (device,),
+            ).fetchone()
+        collector.rollback()
+        publisher.commit()
+        collector.execute(
+            """UPDATE ipam_endpoint_collection_states
+               SET latest_attempt_generation=8, latest_status='running'
+               WHERE device_id=? AND observation_source='arp'""", (device,),
+        )
+        collector.commit()
+        assert tasks._dependency_manifest_current_in_transaction(publisher, manifest, lock=True) == (
+            False, ["dependency_changed:current_endpoint"],
+        )
+    finally:
+        publisher.rollback()
+        collector.rollback()
+        publisher.close()
+        collector.close()
