@@ -145,6 +145,11 @@ async def _read_arp(client, target_ip: str, if_index: int, expected_port: str, v
     mac = _mac(await _get(client, f"{IP_NET_TO_MEDIA_PHYS_ADDRESS}.{suffix}"))
     if kind != 3 or not mac:
         return None
+    # Re-read the identity and the ARP entry: independent GETs are not atomic.
+    if (_port_key(await _if_name(client, if_index)) != _port_key(name)
+            or _integer(await _get(client, f"{IP_NET_TO_MEDIA_TYPE}.{suffix}")) != 3
+            or _mac(await _get(client, f"{IP_NET_TO_MEDIA_PHYS_ADDRESS}.{suffix}")) != mac):
+        return None
     return {"ip": target_ip, "mac": mac, "interface": name, "vlan": str(vlan),
             "type": "dynamic"}
 
@@ -200,7 +205,10 @@ async def _read_fdb(client, version: str, mac: str, vlan: int):
         return None
     # Do not accept a MAC that moved while bridge/ifIndex was being resolved.
     if (_integer(await _get(client, f"{DOT1Q_TP_FDB_PORT}.{suffix}")) != bridge_port
-            or _integer(await _get(client, f"{DOT1Q_TP_FDB_STATUS}.{suffix}")) != 3):
+            or _integer(await _get(client, f"{DOT1Q_TP_FDB_STATUS}.{suffix}")) != 3
+            or _integer(await _get(client, f"{DOT1D_BASE_PORT_IF_INDEX}.{bridge_port}")) != index
+            or _integer(await _get(client, f"{IF_OPER_STATUS}.{index}")) != 1
+            or _port_key(await _if_name(client, index)) != _port_key(port)):
         return None
     return {"mac": mac, "port": port, "vlan": str(vlan), "type": "dynamic",
             "if_index": index, "fdb_id": fid}
