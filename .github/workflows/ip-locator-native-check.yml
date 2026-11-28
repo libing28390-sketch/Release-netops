@@ -75,7 +75,7 @@ jobs:
               raise SystemExit("PostgreSQL/Redis not ready")
           PY
       - name: Native locator and IPAM regression
-        run: python -m pytest backend/tests/ip_locator backend/tests/ipam -q -s --junitxml=locator-native.xml
+        run: python -m pytest backend/tests/ip_locator backend/tests/ipam backend/tests/ai/test_neural_memory_graph.py -q -s --junitxml=locator-native.xml
       - name: Full backend regression (manual opt-in)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_backend }}
         run: python -m pytest backend/tests -q --junitxml=backend-native.xml
